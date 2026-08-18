@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sparkora S0 原型</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card:#ffffff; --ink:#1a202c; --muted:#718096;
+    --line:#e2e8f0; --brand:#4f46e5; --brand-weak:#eef2ff; --ok:#059669; --warn:#d97706;
+    --accent:#ec4899;
+  }
+  /*
+    深色主题：仅在显式 data-theme="dark" 或系统偏好（未显式 light）时覆盖 token。
+    所有颜色都先在 :root 有基础定义，不在媒体/属性块里唯一定义。
+  */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#0b0f19; --card:#151a26; --ink:#e7ecf3; --muted:#94a3b8;
+      --line:#263041; --brand:#818cf8; --brand-weak:#1e2740; --ok:#34d399; --warn:#fbbf24; --accent:#f472b6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0b0f19; --card:#151a26; --ink:#e7ecf3; --muted:#94a3b8;
+    --line:#263041; --brand:#818cf8; --brand-weak:#1e2740; --ok:#34d399; --warn:#fbbf24; --accent:#f472b6;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:32px 16px 64px;
+  }
+  body > * { width:100%; max-width:1100px; }
+  .doc-bar { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+  h1 { font-size:20px; margin:0; }
+  .doc-bar p { margin:0; font-size:12px; color:var(--muted); }
+  .note { font-size:12px; color:var(--muted); margin:0 0 24px; line-height:1.7; }
+  .note b { color:var(--brand); }
+  h2 { font-size:14px; margin:28px 0 12px; color:var(--muted); letter-spacing:.02em; }
+  .card {
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.04);
+  }
+  .phone {
+    display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;
+  }
+  .screen { flex:1 1 300px; min-width:300px; }
+  .screen .cap { font-size:12px; color:var(--muted); text-align:center; margin-top:8px; }
+  .screen .cap b { color:var(--brand); }
+  .mock { border:1px dashed var(--brand); border-radius:10px; min-height:330px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .mock .lbl { font-size:11px; color:var(--brand); letter-spacing:.05em; text-transform:uppercase; margin:0; }
+  .bar { display:flex; align-items:center; justify-content:space-between; }
+  .logo { font-weight:800; font-size:15px; }
+  .logo span { color:var(--accent); }
+  .chip { font-size:11px; padding:3px 8px; border-radius:999px; background:var(--brand-weak); color:var(--brand); }
+  .btn { font-size:12px; padding:6px 12px; border-radius:8px; background:var(--brand); color:#fff; border:none; font-weight:600; }
+  .btn.ghost { background:transparent; color:var(--brand); border:1px solid var(--line); }
+  .btn.block { width:100%; padding:10px; }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field label { font-size:11px; color:var(--muted); }
+  .input { font-size:12px; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--ink); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .proj { border:1px solid var(--line); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:6px; }
+  .proj .title { font-size:12px; font-weight:700; }
+  .proj .sub { font-size:11px; color:var(--muted); }
+  .steps { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+  .step { font-size:10px; padding:3px 7px; border-radius:6px; background:var(--brand-weak); color:var(--brand); }
+  .step.on { background:var(--brand); color:#fff; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .tag { font-size:10px; padding:2px 6px; border-radius:5px; background:var(--line); color:var(--muted); }
+  .legend { font-size:11px; color:var(--muted); margin-top:20px; line-height:1.8; }
+  .legend b { color:var(--ink); }
+  .legend .tag { margin-right:4px; }
+  hr { border:none; border-top:1px solid var(--line); margin:8px 0; }
+</style>
+</head>
+<body data-theme="light">
+
+<div class="doc-bar"><h1>Sparkora · S0 骨架原型</h1><p>登录 → 工作台 → 新建任务 → 项目详情</p></div>
+<p class="note">说明：本原型为 <b>S0（项目骨架 + Spring Security）</b> 范围的可点击线框，用于在进入编码前与你对齐。S0 只要求"能登录、能建项目、能看到生成入口"，后续阶段的生成/编辑/配图/发布屏不在本原型内。</p>
+
+<h2>① 登录（Spring Security）</h2>
+<div class="phone">
+  <div class="screen"><div class="mock">
+    <p class="lbl">Screen 1 · 登录页</p>
+    <div class="bar"><div class="logo">Sparkora<span>☆</span></div></div>
+    <div class="field"><label>邮箱 / 用户名</label><div class="input">admin@example.com</div></div>
+    <div class="field"><label>密码</label><div class="input">••••••••</div></div>
+    <div class="bar" style="justify-content:space-between"><a style="font-size:11px;color:var(--brand)">忘记密码？</a></div>
+    <button class="btn block">登 录</button>
+    <p style="font-size:10px;color:var(--muted);margin:0">会话：服务端 Session/SecurityContext · 角色 admin / editor / viewer</p>
+  </div><div class="cap"><b>S1</b> 登录页</div></div>
+
+  <div class="screen"><div class="mock">
+    <p class="lbl">Screen 2 · 登录后初始化</p>
+    <div class="bar">
+      <div class="chip">已登录：admin</div>
+      <div class="chip" style="background:none;color:var(--ok)">● 会话有效</div>
+    </div>
+    <hr>
+    <p style="font-size:11px;color:var(--muted);margin:4px 0">第一次登录时：若不存在数据 → 创建默认 Workspace 与 默认用户。</p>
+    <p style="font-size:11px;color:var(--muted);margin:4px 0">后续进入工作台（见②）。</p>
+    <div style="flex:1"></div>
+    <p style="font-size:10px;color:var(--muted)">Spring Security 过滤链 / `/api/**` 受保护 · 未登录 → 302 到 `/login`</p>
+  </div><div class="cap"><b>S2</b> 初始化跳转</div></div>
+</div>
+
+<h2>② 工作台（项目列表）</h2>
+<div class="phone">
+  <div class="screen"><div class="mock">
+    <p class="lbl">Screen 3 · 工作台</p>
+    <div class="bar">
+      <div class="logo">Sparkora<span>☆</span></div>
+      <div class="bar" style="gap:8px"><span class="chip">▢ 品牌语气</span><span class="chip">▢ 图库</span><span class="chip">@admin</span></div>
+    </div>
+    <div class="bar" style="justify-content:space-between;margin-top:2px">
+      <div style="font-size:13px;font-weight:700">创作项目</div>
+      <button class="btn">＋ 新建创作任务</button>
+    </div>
+    <div class="proj"><div class="title">短视频生态趋势解读（示例）</div>
+      <div class="sub">主题 / 关键词 · 2026-08-18 · 更新于 5 分钟前</div>
+      <div class="steps"><span class="step on">brief</span><span class="step">版本</span><span class="step">校验</span><span class="step">配图</span><span class="step">预览</span><span class="step">发布</span></div>
+    </div>
+    <div class="proj"><div class="title">本地部署 AI 工具清单（示例草稿）</div>
+      <div class="sub">主题 / 关键词 · 2026-08-17</div>
+      <div class="steps"><span class="step on">brief</span><span class="step on">版本</span><span class="step">校验</span><span class="step">配图</span><span class="step">预览</span><span class="step">发布</span></div>
+    </div>
+    <div style="flex:1"></div>
+    <p style="font-size:10px;color:var(--muted);margin:0">空态提示：还没有创作任务，点击右上"新建"开始。</p>
+  </div><div class="cap"><b>S3</b> 工作台 / 项目列表</div></div>
+
+  <div class="screen"><div class="mock">
+    <p class="lbl">Screen 4 · 新建创作任务（表单）</p>
+    <div class="field"><label>主题 *</label><div class="input">如何选择自部署的国产 AI 模型</div></div>
+    <div class="field"><label>关键词（可选）</label><div class="input">自部署, 大模型, 成本, 国产替代</div></div>
+    <div class="row">
+      <div class="field"><label>目标读者</label><div class="input">技术团队 / 个人开发者</div></div>
+      <div class="field"><label>文章长度</label><div class="input">1500–2500 字</div></div>
+    </div>
+    <div class="field"><label>语气 / 品牌画像（可选）</label><div class="input">选择已保存的风格画 📄</div></div>
+    <div class="field"><label>参考文章 / 素材（可选，轻量资料库）</label><div class="input">粘贴文章或上传素材 +</div></div>
+    <div class="bar" style="justify-content:flex-end;gap:8px">
+      <button class="btn ghost">保存草稿</button>
+      <button class="btn">创建并生成 Brief →</button>
+    </div>
+    <hr>
+    <p style="font-size:10px;color:var(--muted);margin:0">本屏"创建并生成 Brief"即进入 <b>S1 生成闭环</b> 的入口；S0 先落库项目并展示创建成功。</p>
+  </div><div class="cap"><b>S4</b> 新建创作任务</div></div>
+</div>
+
+<h2>③ 项目详情（S0 只要求能看到 & 生成入口）</h2>
+<div class="phone">
+  <div class="screen"><div class="mock">
+    <p class="lbl">Screen 5 · 项目详情</p>
+    <div class="bar"><a style="font-size:11px;color:var(--brand)">← 返回工作台</a><span class="chip">状态：草稿</span></div>
+    <div style="font-size:14px;font-weight:800">如何选择自部署的国产 AI 模型</div>
+    <div class="steps"><span class="step on">① Brief</span><span class="step">② 生成版本</span><span class="step">③ 校验</span><span class="step">④ 配图</span><span class="step">⑤ 预览</span><span class="step">⑥ 发布</span></div>
+    <div class="card" style="border:dashed 1px var(--line);border-radius:10px;padding:12px;background:transparent">
+      <p style="font-size:12px;margin:0 0 8px;font-weight:700">Step 1 · 生成创作 Brief</p>
+      <p style="font-size:11px;color:var(--muted);margin:0 0 10px">由 AI 生成标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入多版本生成。</p>
+      <button class="btn block">生成 Brief（SSE 流式）</button>
+    </div>
+    <div style="flex:1"></div>
+    <p style="font-size:10px;color:var(--muted);margin:0">后续步骤的卡片在对应里程碑实现；S0 此屏可点按钮并发起请求、落库。</p>
+  </div><div class="cap"><b>S5</b> 项目详情 / 生成入口</div></div>
+
+  <div class="screen"><div class="mock">
+    <p class="lbl">Screen 6 · 生成中（占位/流式）</p>
+    <div class="chip" style="width:fit-content;background:var(--brand-weak);color:var(--brand)">● 正在生成 Brief…</div>
+    <hr>
+    <div class="field"><label>标题候选</label><div class="input" style="color:var(--muted)">自部署国产大模型，怎么选不会后悔？</div></div>
+    <div class="field"><label>核心观点</label><div class="input" style="color:var(--muted)">1. 先想清楚部署目的…</div></div>
+    <div class="field"><label>大纲</label><div class="input" style="color:var(--muted)"># 引言 / ## 为什么自部署 / ...</div></div>
+    <p style="font-size:10px;color:var(--muted);margin:0">SSE 增量渲染 · 完成后落 `ArticleBrief` 并推进到版本生成。</p>
+  </div><div class="cap"><b>S6</b> 生成中占位</div></div>
+</div>
+
+<div class="legend">
+  <b>图例</b> <span class="tag">step on</span> 已完成步骤 · <span class="tag">step</span> 待办步骤 · <b>S0 交付物</b>：Spring Security 登录、工作台项目列表、新建创作任务表单、项目详情与生成入口占位、基础 API 与数据迁移。
+</div>
+
+</body>
+</html>

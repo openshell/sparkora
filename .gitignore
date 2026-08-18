@@ -1,0 +1,48 @@
+# ===== 敏感配置（绝不提交）=====
+.env
+.env.*
+!.env.example
+
+# ===== Java / Maven =====
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# ===== Node / Vue =====
+node_modules/
+dist/
+dist-ssr/
+.npm/
+.pnpm-store/
+*.local
+.vite/
+
+# ===== IDE =====
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== 构建产物 / 缓存 =====
+build/
+.cache/
+coverage/

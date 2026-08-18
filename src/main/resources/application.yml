@@ -1,0 +1,57 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: sparkora
+  datasource:
+    url: jdbc:postgresql://${SPARKORA_DB_HOST:localhost}:${SPARKORA_DB_PORT:5432}/${SPARKORA_DB_NAME:sparkora}
+    username: ${SPARKORA_DB_USER:sparkora}
+    password: ${SPARKORA_DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      continue-on-error: false
+  jackson:
+    default-property-inclusion: non_null
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      table-prefix: sparkora_
+      logic-delete-field: deleted
+      logic-not-delete-value: 0
+      logic-delete-value: 1
+
+# ===== Sparkora 业务配置 =====
+sparkora:
+  jwt:
+    secret: ${JWT_SECRET:change-me-to-a-long-random-string}
+    expire-minutes: ${JWT_EXPIRE_MINUTES:1440}
+  ai:
+    base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
+    api-key: ${AI_API_KEY:}
+    model: ${AI_MODEL:}
+    image-model: ${AI_IMAGE_MODEL:}
+    timeout-ms: ${AI_TIMEOUT_MS:120000}
+    temperature: ${AI_TEMPERATURE:0.7}
+  wechat:
+    enabled: ${WECHAT_MP_ENABLED:false}
+    app-id: ${WECHAT_APP_ID:}
+    app-secret: ${WECHAT_APP_SECRET:}
+  wenyan:
+    enabled: ${WENYAN_MCP_ENABLED:false}
+    bin: ${WENYAN_MCP_BIN:wenyan-mcp}
+    server-url: ${WENYAN_MCP_SERVER_URL:}
+    server-api-key: ${WENYAN_MCP_SERVER_API_KEY:}
+
+logging:
+  level:
+    com.sparkora: INFO
+    org.springframework.security: INFO
