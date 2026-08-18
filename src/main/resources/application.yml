@@ -39,6 +39,7 @@ sparkora:
     api-key: ${AI_API_KEY:}
     model: ${AI_MODEL:}
     image-model: ${AI_IMAGE_MODEL:}
+    image-models: ${AI_IMAGE_MODELS:}   # 逗号分隔，按序轮询（图片模型不稳定）
     timeout-ms: ${AI_TIMEOUT_MS:120000}
     temperature: ${AI_TEMPERATURE:0.7}
   wechat:

@@ -22,6 +22,8 @@ public class ArticleProjectEntity {
     private Integer wordCountTarget;
     private Long brandVoiceProfileId;
     private String status;  // DRAFT / GENERATING_BRIEF / READY / ...
+    private Long currentBriefId;       // S1：指向当前 brief（sparkora_article_brief.id）
+    private String lastBriefError;     // S1：最近一次生成失败原因（成功后清空）
     private String remark;
     private String createdBy;
     private LocalDateTime createdAt;

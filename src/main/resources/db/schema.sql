@@ -29,12 +29,33 @@ CREATE TABLE IF NOT EXISTS sparkora_article_project (
     word_count_target        INTEGER,
     brand_voice_profile_id   BIGINT,                -- S0 先存不启用
     status                   VARCHAR(20)  NOT NULL DEFAULT 'DRAFT',  -- DRAFT/GENERATING_BRIEF/READY/...
+    current_brief_id         BIGINT,                -- S1：指向当前 brief（sparkora_article_brief.id）
+    last_brief_error         VARCHAR(1000),         -- S1：最近一次生成失败原因（成功后清空）
     remark                   VARCHAR(500),
     created_by               VARCHAR(64)  NOT NULL,
     created_at               TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at               TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted                  SMALLINT     NOT NULL DEFAULT 0        -- 逻辑删除
 );
+
+-- 创作 Brief 表（S1：一个项目可多次重生成，保留历史；project.current_brief_id 指向当前）
+CREATE TABLE IF NOT EXISTS sparkora_article_brief (
+    id                 BIGSERIAL PRIMARY KEY,
+    project_id         BIGINT       NOT NULL,
+    title_candidates   TEXT,        -- JSON 数组 ["标题1","标题2"]
+    audience_refine    VARCHAR(500),-- AI 细化的目标读者
+    core_viewpoints    TEXT,        -- JSON 数组 ["观点1","观点2"]
+    outline            TEXT,        -- JSON 数组 [{heading, subPoints:[...]}]
+    fact_risks         TEXT,        -- JSON 数组 [{claim, riskLevel, suggestion}]
+    ai_model           VARCHAR(64), -- 实际使用的模型
+    token_usage        INTEGER,     -- total tokens
+    created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_brief_project ON sparkora_article_brief(project_id);
+
+-- S1 增量迁移（已部署的旧库通过 ALTER 补列；IF NOT EXISTS 幂等，新库执行也无副作用）
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_brief_id BIGINT;
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_brief_error VARCHAR(1000);
 
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
