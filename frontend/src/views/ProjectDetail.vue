@@ -78,13 +78,51 @@
 
           <div class="brief-actions">
             <el-button :loading="generating" @click="onGenerateBrief">重新生成</el-button>
-            <el-button type="success" disabled>进入多版本生成（S2）</el-button>
+            <el-button type="success" :disabled="!brief || generatingVersions" :loading="generatingVersions" @click="onGenerateVersions">进入多版本生成 →</el-button>
           </div>
         </div>
       </el-card>
 
-      <el-card v-for="i in 5" :key="i" class="step-card disabled" shadow="never">
-        <template #header><span>Step {{ i + 1 }} · {{ ['版本','校验','配图','预览','发布'][i-1] }}（待后续阶段）</span></template>
+      <!-- Step 2：多版本正文生成 -->
+      <el-card class="step-card" shadow="never">
+        <template #header>
+          <span class="card-head">
+            Step 2 · 多版本正文生成
+            <span v-if="versions.length" class="meta">共 {{ versions.length }} 版 · 当前：{{ currentVersionLabel }}</span>
+          </span>
+        </template>
+
+        <el-alert v-if="project && project.lastVersionError" type="warning" :closable="false" show-icon
+                  :title="`版本生成提示：${project.lastVersionError}`" class="brief-alert" />
+
+        <el-skeleton v-if="generatingVersions" :rows="8" animated />
+
+        <div v-else-if="!versions.length" class="muted">
+          <p>基于简报生成 2 版正文（正式/活泼），逐版对比后选定一版。</p>
+          <el-button type="primary" :disabled="!brief" :loading="generatingVersions" @click="onGenerateVersions">生成 2 版</el-button>
+        </div>
+
+        <div v-else class="version-grid">
+          <div v-for="v in versions" :key="v.id" class="version-card" :class="{ active: v.id === project?.currentVersionId }">
+            <div class="version-head">
+              <el-tag size="small">{{ v.versionLabel }}</el-tag>
+              <el-tag size="small" type="info" effect="plain">{{ v.styleTag }}</el-tag>
+              <span class="version-meta">{{ v.wordCount }}字 · {{ v.aiModel }}</span>
+            </div>
+            <div class="version-title">{{ v.title }}</div>
+            <div class="version-content markdown-body" v-html="renderMd(v.contentMd)"></div>
+            <div class="version-actions">
+              <el-button size="small" :type="v.id === project?.currentVersionId ? 'success' : 'default'" @click="onSetCurrent(v.id)">
+                {{ v.id === project?.currentVersionId ? '✓ 当前' : '设为当前' }}
+              </el-button>
+              <el-button size="small" @click="onRegenerateVersion" :loading="generatingVersions">重生成</el-button>
+            </div>
+          </div>
+        </div>
+      </el-card>
+
+      <el-card v-for="i in 4" :key="i" class="step-card disabled" shadow="never">
+        <template #header><span>Step {{ i + 2 }} · {{ ['校验','配图','预览','发布'][i-1] }}（待后续阶段）</span></template>
         <p class="muted">此步骤在后续里程碑实现，当前暂不可用。</p>
       </el-card>
     </div>
@@ -94,21 +132,37 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
+import MarkdownIt from 'markdown-it'
 import { projectApi } from '../api'
 import { ElMessage } from 'element-plus'
 import TopBar from '../layouts/TopBar.vue'
 
+const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
+const renderMd = (src) => { try { return md.render(src || '') } catch { return '' } }
+
 const route = useRoute()
 const project = ref(null)
 const brief = ref(null)
+const versions = ref([])
 const generating = ref(false)
+const generatingVersions = ref(false)
 
+// 步骤条激活位：GENETATING_BRIEF/DRAFT→0, READY→1, GENERATING_VERSIONS→1, VERSIONS_READY→2
 const activeStep = computed(() => {
   const s = project.value?.status
+  if (s === 'VERSIONS_READY' || s === 'GENERATING_VERSIONS') return s === 'VERSIONS_READY' ? 2 : 1
   return s === 'READY' ? 1 : 0
 })
 
-const statusLabel = (s) => ({ DRAFT: '草稿', GENERATING_BRIEF: '生成中', READY: '就绪' }[s] || s)
+const currentVersionLabel = computed(() => {
+  const cur = versions.value.find(v => v.id === project.value?.currentVersionId)
+  return cur ? `${cur.versionLabel}·${cur.styleTag}` : '未选'
+})
+
+const statusLabel = (s) => ({
+  DRAFT: '草稿', GENERATING_BRIEF: '简报生成中', READY: '简报就绪',
+  GENERATING_VERSIONS: '版本生成中', VERSIONS_READY: '版本就绪'
+}[s] || s)
 const riskType = (l) => ({ high: 'danger', medium: 'warning', low: 'info' }[l] || 'info')
 const riskLabel = (l) => ({ high: '高风险', medium: '中风险', low: '低风险' }[l] || l)
 
@@ -149,9 +203,41 @@ const onGenerateBrief = async () => {
     await loadProject()
   } finally { generating.value = false }
 }
+
+const loadVersions = async () => {
+  const res = await projectApi.listVersions(route.params.id)
+  versions.value = res.data || []
+}
+const onGenerateVersions = async () => {
+  generatingVersions.value = true
+  try {
+    const res = await projectApi.generateVersions(route.params.id, 2)
+    if (res.code === 0) {
+      versions.value = res.data || []
+      ElMessage.success(`已生成 ${versions.value.length} 版`)
+    } else {
+      ElMessage.error(res.msg || '生成失败')
+    }
+    await loadProject()
+  } catch (e) {
+    ElMessage.error('生成失败：' + (e.message || e))
+    await loadProject()
+  } finally { generatingVersions.value = false }
+}
+const onSetCurrent = async (versionId) => {
+  const res = await projectApi.setCurrentVersion(route.params.id, versionId)
+  if (res.code === 0) {
+    await loadProject()
+    ElMessage.success('已设为当前版本')
+  } else {
+    ElMessage.error(res.msg || '设置失败')
+  }
+}
+const onRegenerateVersion = () => onGenerateVersions()
 onMounted(async () => {
   await loadProject()
   await loadBrief()
+  await loadVersions()
 })
 </script>
 
@@ -187,9 +273,27 @@ onMounted(async () => {
 .risk-claim { font-size: 14px; margin: 4px 0; }
 .risk-sug { font-size: 12px; color: var(--muted); }
 .brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+/* Step2 版本对比 */
+.version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.version-card { border: 1px solid var(--el-border-color); border-radius: 8px; padding: 12px; background: var(--el-bg-color); }
+.version-card.active { border-color: var(--el-color-success); box-shadow: 0 0 0 2px var(--el-color-success-light-7); }
+.version-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.version-meta { font-size: 12px; color: var(--muted); margin-left: auto; }
+.version-title { font-weight: 600; font-size: 15px; margin-bottom: 8px; line-height: 1.4; }
+.version-content { font-size: 14px; line-height: 1.7; max-height: 520px; overflow-y: auto; }
+.version-content :deep(h1) { font-size: 18px; margin: 12px 0 6px; }
+.version-content :deep(h2) { font-size: 16px; margin: 10px 0 5px; }
+.version-content :deep(h3) { font-size: 15px; margin: 8px 0 4px; }
+.version-content :deep(p) { margin: 6px 0; }
+.version-content :deep(ul), .version-content :deep(ol) { padding-left: 20px; margin: 6px 0; }
+.version-content :deep(code) { background: var(--el-fill-color-light); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
+.version-actions { display: flex; gap: 8px; margin-top: 10px; }
 @media (max-width: 768px) {
   .steps :deep(.el-step__title) { font-size: 12px; }
   .title-tag { width: 100%; }
   .brief-actions .el-button { flex: 1; }
+  .version-grid { grid-template-columns: 1fr; }
+  .version-actions .el-button { flex: 1; }
 }
 </style>

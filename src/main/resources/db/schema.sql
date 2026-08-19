@@ -57,6 +57,26 @@ CREATE INDEX IF NOT EXISTS idx_brief_project ON sparkora_article_brief(project_i
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_brief_id BIGINT;
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_brief_error VARCHAR(1000);
 
+-- 文章版本表（S1b：基于 brief 循环生成 2-3 版正文，风格各异；project.current_version_id 指向选定版）
+CREATE TABLE IF NOT EXISTS sparkora_article_version (
+    id                 BIGSERIAL PRIMARY KEY,
+    project_id         BIGINT       NOT NULL,
+    brief_id           BIGINT,                       -- 基于哪个 brief 生成
+    title              VARCHAR(200),                 -- 该版本标题（可不同于 brief 候选）
+    content_md         TEXT,                         -- 正文 Markdown
+    version_label      VARCHAR(10),                  -- A / B / C
+    style_tag          VARCHAR(20),                  -- 风格标记：正式 / 活泼 / 干货 等
+    ai_model           VARCHAR(64),
+    token_usage        INTEGER,
+    word_count         INTEGER,
+    created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_version_project ON sparkora_article_version(project_id);
+
+-- S1b 增量迁移
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_version_id BIGINT;
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_version_error VARCHAR(1000);
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'

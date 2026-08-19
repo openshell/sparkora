@@ -7,10 +7,12 @@ import com.sparkora.domain.dto.PageResult;
 import com.sparkora.domain.dto.ProjectRequest;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
+import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.security.CurrentUser;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.service.BriefService;
+import com.sparkora.service.VersionService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -27,10 +29,12 @@ public class ArticleProjectController {
 
     private final ArticleProjectMapper mapper;
     private final BriefService briefService;
+    private final VersionService versionService;
 
-    public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService) {
+    public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService) {
         this.mapper = mapper;
         this.briefService = briefService;
+        this.versionService = versionService;
     }
 
     @GetMapping
@@ -128,5 +132,41 @@ public class ArticleProjectController {
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
     public R<ArticleBriefEntity> currentBrief(@PathVariable Long id) {
         return R.ok(briefService.currentBrief(id));
+    }
+
+    // ==================== 文章版本（S1b）====================
+
+    /**
+     * 生成多版本正文（基于当前 brief）。?count 默认 2，最多 3。
+     * 同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
+     */
+    @PostMapping("/{id}/generate/versions")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<List<ArticleVersionEntity>> generateVersions(@PathVariable Long id,
+                                                          @RequestParam(defaultValue = "2") int count) {
+        try {
+            return R.ok(versionService.generate(id, count));
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
+        }
+    }
+
+    /** 列出项目全部版本。 */
+    @GetMapping("/{id}/versions")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<List<ArticleVersionEntity>> listVersions(@PathVariable Long id) {
+        return R.ok(versionService.list(id));
+    }
+
+    /** 设定当前版本（用于后续预览/发布）。 */
+    @PutMapping("/{id}/current-version")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> setCurrentVersion(@PathVariable Long id, @RequestParam Long versionId) {
+        try {
+            versionService.setCurrent(id, versionId);
+            return R.ok();
+        } catch (Exception ex) {
+            return R.fail(400, ex.getMessage());
+        }
     }
 }

@@ -24,6 +24,8 @@ public class ArticleProjectEntity {
     private String status;  // DRAFT / GENERATING_BRIEF / READY / ...
     private Long currentBriefId;       // S1：指向当前 brief（sparkora_article_brief.id）
     private String lastBriefError;     // S1：最近一次生成失败原因（成功后清空）
+    private Long currentVersionId;      // S1b：指向选定版本（sparkora_article_version.id）
+    private String lastVersionError;    // S1b：最近一次版本生成失败原因（成功后清空）
     private String remark;
     private String createdBy;
     private LocalDateTime createdAt;
