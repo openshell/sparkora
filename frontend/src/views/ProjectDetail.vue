@@ -8,8 +8,9 @@
       </div>
       <h2 v-if="project">{{ project.topic }}</h2>
 
-      <!-- 六步步骤条 -->
-      <el-steps :active="activeStep" finish-status="success" class="steps" simple>
+      <!-- 六步步骤条：桌面横向，移动端竖向避免拥挤 -->
+      <el-steps :active="activeStep" finish-status="success" class="steps"
+                :direction="isMobile ? 'vertical' : 'horizontal'" :simple="!isMobile">
         <el-step title="Brief" />
         <el-step title="版本" />
         <el-step title="校验" />
@@ -92,7 +93,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { projectApi } from '../api'
 import { ElMessage } from 'element-plus'
@@ -102,6 +103,12 @@ const route = useRoute()
 const project = ref(null)
 const brief = ref(null)
 const generating = ref(false)
+
+// 移动端判定：≤768px 时步骤条改竖向，避免六步横向拥挤
+const isMobile = ref(window.innerWidth <= 768)
+const onResize = () => { isMobile.value = window.innerWidth <= 768 }
+onMounted(() => window.addEventListener('resize', onResize))
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
 const activeStep = computed(() => {
   const s = project.value?.status
@@ -168,7 +175,14 @@ onMounted(async () => {
 .brief-label { font-weight: 600; margin-bottom: 6px; font-size: 14px; }
 .brief-text { font-size: 14px; line-height: 1.6; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.title-tag { white-space: normal; line-height: 1.4; }
+.title-tag {
+  max-width: 100%;
+  height: auto;
+  white-space: normal !important;
+  word-break: break-word;
+  line-height: 1.4;
+  padding: 4px 10px;
+}
 .list, .sub-list { margin: 0; padding-left: 18px; }
 .list li, .sub-list li { font-size: 14px; line-height: 1.7; }
 .outline-item { margin-bottom: 8px; }
