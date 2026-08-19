@@ -137,15 +137,15 @@ public class ArticleProjectController {
     // ==================== 文章版本（S1b）====================
 
     /**
-     * 生成多版本正文（基于当前 brief）。?count 默认 2，最多 3。
-     * 同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
+     * 生成多版本正文（基于当前 brief + 用户选择的风络）。body: {"styleIds":[1,2]}（风格库 id 列表）。
+     * 每选一个风格生成一版。同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
      */
     @PostMapping("/{id}/generate/versions")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<List<ArticleVersionEntity>> generateVersions(@PathVariable Long id,
-                                                          @RequestParam(defaultValue = "2") int count) {
+                                                          @RequestBody java.util.Map<String, java.util.List<Long>> body) {
         try {
-            return R.ok(versionService.generate(id, count));
+            return R.ok(versionService.generate(id, body.get("styleIds")));
         } catch (Exception ex) {
             return R.fail(500, ex.getMessage());
         }

@@ -5,7 +5,17 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
   { path: '/', name: 'home', component: () => import('../views/ProjectList.vue'), meta: { auth: true } },
   { path: '/projects/new', name: 'project-new', component: () => import('../views/ProjectEdit.vue'), meta: { auth: true } },
-  { path: '/projects/:id', name: 'project-detail', component: () => import('../views/ProjectDetail.vue'), meta: { auth: true } }
+  {
+    path: '/projects/:id',
+    component: () => import('../views/project/ProjectLayout.vue'),
+    meta: { auth: true },
+    children: [
+      { path: '', redirect: { name: 'project-brief' } },
+      { path: 'brief', name: 'project-brief', component: () => import('../views/project/StepBrief.vue') },
+      { path: 'versions', name: 'project-versions', component: () => import('../views/project/StepVersions.vue') }
+    ]
+  },
+  { path: '/styles', name: 'styles', component: () => import('../views/StyleLibrary.vue'), meta: { auth: true } }
 ]
 
 const router = createRouter({

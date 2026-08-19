@@ -77,6 +77,17 @@ CREATE INDEX IF NOT EXISTS idx_version_project ON sparkora_article_version(proje
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_version_id BIGINT;
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_version_error VARCHAR(1000);
 
+-- 风格库表（S2：用户提供的文章由 AI 提炼为风格画像入库；生成版本时用户从库中选风格）
+CREATE TABLE IF NOT EXISTS sparkora_style_profile (
+    id             BIGSERIAL PRIMARY KEY,
+    name           VARCHAR(64)  NOT NULL,         -- 风格名（用户可改）
+    description    VARCHAR(500),                  -- 风格简述
+    tone_guidance  TEXT,                          -- 提供给生成模型的语气/结构指令（system prompt 片段）
+    source_excerpt TEXT,                          -- 提炼自哪段原文（截断保留，便于回溯）
+    enabled        BOOLEAN      NOT NULL DEFAULT TRUE,
+    created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'

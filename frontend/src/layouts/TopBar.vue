@@ -1,6 +1,10 @@
 <template>
   <div class="topbar">
     <div class="brand">Sparkora<span>☆</span></div>
+    <div class="nav">
+      <router-link v-if="user.isLoggedIn" to="/" class="nav-link">项目</router-link>
+      <router-link v-if="user.isEditorOrAbove" to="/styles" class="nav-link">风格库</router-link>
+    </div>
     <div class="actions">
       <template v-if="user.isLoggedIn">
         <span class="user-info desktop-only">
@@ -29,6 +33,9 @@ const onLogout = () => {
 
 <style scoped>
 .actions { display: flex; align-items: center; gap: 12px; }
+.nav { display: flex; gap: 16px; margin-left: 24px; }
+.nav-link { color: inherit; text-decoration: none; font-size: 14px; opacity: .85; }
+.nav-link.router-link-active { opacity: 1; font-weight: 600; }
 .user-info { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 @media (max-width: 768px) {
   .desktop-only { display: none; }
