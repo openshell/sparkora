@@ -8,9 +8,9 @@
       </div>
       <h2 v-if="project">{{ project.topic }}</h2>
 
-      <!-- 六步步骤条：桌面默认横向；移动端横向滚动（不竖向、不挤压、不留白） -->
-      <el-steps :active="activeStep" finish-status="success" class="steps">
-        <el-step title="Brief" />
+      <!-- 六步步骤条 -->
+      <el-steps :active="activeStep" finish-status="success" class="steps" simple>
+        <el-step title="简报" />
         <el-step title="版本" />
         <el-step title="校验" />
         <el-step title="配图" />
@@ -188,13 +188,6 @@ onMounted(async () => {
 .risk-sug { font-size: 12px; color: var(--muted); }
 .brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 @media (max-width: 768px) {
-  /* 步骤条横向滚动：步骤按内容宽度不压缩，超出可滑动，不留白不拥挤 */
-  .steps {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 4px;
-  }
-  .steps :deep(.el-step) { flex: 0 0 auto !important; }
   .steps :deep(.el-step__title) { font-size: 12px; }
   .title-tag { width: 100%; }
   .brief-actions .el-button { flex: 1; }
