@@ -50,14 +50,16 @@
 
       <div class="brief-actions">
         <el-button :loading="generating" @click="onGenerateBrief">重新生成</el-button>
-        <el-button type="success" :disabled="!brief" @click="gotoVersions">进入多版本生成 →</el-button>
+        <el-button type="success" :disabled="!brief" @click="gotoVersions">
+          {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
+        </el-button>
       </div>
     </div>
   </el-card>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
@@ -68,6 +70,9 @@ const route = useRoute()
 const router = useRouter()
 const brief = ref(null)
 const generating = ref(false)
+
+// 已生成版本时，按钮文案改为「查看版本」
+const hasVersions = computed(() => props.project?.status === 'VERSIONS_READY' || props.project?.status === 'GENERATING_VERSIONS')
 
 const gotoVersions = () => router.push({ name: 'project-versions', params: { id: route.params.id } })
 

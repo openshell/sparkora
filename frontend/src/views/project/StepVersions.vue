@@ -32,8 +32,9 @@
       <!-- 版本对比区 -->
       <div v-else>
         <div class="regen-row">
-          <el-button size="small" :loading="generatingVersions" @click="onReopenPick">重新选风格</el-button>
+          <el-button size="small" @click="onReopenPick">重新选风格</el-button>
           <el-button size="small" :loading="generatingVersions" @click="onRegenerate">用同样风格重生成</el-button>
+          <span v-if="project?.currentVersionId" class="regen-tip">当前已选定版本，可进入下一步</span>
         </div>
         <div class="version-grid">
           <div v-for="v in versions" :key="v.id" class="version-card" :class="{ active: v.id === project?.currentVersionId }">
@@ -51,6 +52,11 @@
             </div>
           </div>
         </div>
+        <div class="next-row">
+          <el-button type="success" :disabled="!project?.currentVersionId" @click="gotoNext">
+            选定当前版本 · 进入下一步（事实校验）→
+          </el-button>
+        </div>
       </div>
     </template>
   </el-card>
@@ -58,10 +64,10 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import { projectApi, styleApi } from '../../api'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps({ project: Object, reloadProject: Function })
 
@@ -69,9 +75,11 @@ const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const renderMd = (src) => { try { return md.render(src || '') } catch { return '' } }
 
 const route = useRoute()
+const router = useRouter()
 const versions = ref([])
 const styleOptions = ref([])
 const selectedStyleIds = ref([])
+const lastStyleIds = ref([])          // 上次实际用于生成的风格 id（供「用同样风格重生成」）
 const generatingVersions = ref(false)
 
 const currentVersionLabel = computed(() => {
@@ -87,23 +95,45 @@ const loadStyles = async () => {
   const res = await styleApi.list(true)
   styleOptions.value = res.data || []
 }
-const onGenerate = async () => {
-  if (!selectedStyleIds.value.length) return
+const doGenerate = async (styleIds) => {
   generatingVersions.value = true
   try {
-    const res = await projectApi.generateVersions(route.params.id, selectedStyleIds.value)
-    if (res.code === 0) { versions.value = res.data || []; ElMessage.success(`已生成 ${versions.value.length} 版`) }
-    else ElMessage.error(res.msg || '生成失败')
+    const res = await projectApi.generateVersions(route.params.id, styleIds)
+    if (res.code === 0) {
+      versions.value = res.data || []
+      lastStyleIds.value = [...styleIds]
+      ElMessage.success(`已生成 ${versions.value.length} 版`)
+    } else ElMessage.error(res.msg || '生成失败')
     await props.reloadProject()
   } catch (e) { ElMessage.error('生成失败：' + (e.message || e)); await props.reloadProject() }
   finally { generatingVersions.value = false }
 }
-const onRegenerate = () => onGenerate()
-const onReopenPick = () => { versions.value = [] }
+const onGenerate = () => {
+  if (!selectedStyleIds.value.length) { ElMessage.warning('请至少选择一个风格'); return }
+  doGenerate(selectedStyleIds.value)
+}
+const onRegenerate = () => {
+  if (!lastStyleIds.value.length) { ElMessage.warning('没有可重生成的风格，请重新选择'); return }
+  doGenerate(lastStyleIds.value)
+}
+const onReopenPick = async () => {
+  try {
+    await ElMessageBox.confirm(
+      `将清空当前 ${versions.value.length} 版本回到风格选择，确认？`,
+      '重新选风格', { type: 'warning' })
+    versions.value = []
+    // 保留 selectedStyleIds 为上次选择，便于微调
+    selectedStyleIds.value = [...lastStyleIds.value]
+  } catch (e) { /* 取消 */ }
+}
 const onSetCurrent = async (versionId) => {
   const res = await projectApi.setCurrentVersion(route.params.id, versionId)
   if (res.code === 0) { await props.reloadProject(); ElMessage.success('已设为当前版本') }
   else ElMessage.error(res.msg || '设置失败')
+}
+const gotoNext = () => {
+  // S3 事实校验待后续阶段；步骤条也会置灰，这里给明确提示
+  ElMessage.info('下一步「事实校验」待后续阶段实现')
 }
 onMounted(async () => { await loadVersions(); await loadStyles() })
 </script>
@@ -135,5 +165,7 @@ onMounted(async () => { await loadVersions(); await loadStyles() })
 .version-content :deep(ul), .version-content :deep(ol) { padding-left: 20px; margin: 6px 0; }
 .version-content :deep(code) { background: var(--el-fill-color-light); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
 .version-actions { display: flex; gap: 8px; margin-top: 10px; }
-@media (max-width: 768px) { .version-grid { grid-template-columns: 1fr; } .version-actions .el-button { flex: 1; } }
+.regen-tip { font-size: 12px; color: var(--muted); align-self: center; }
+.next-row { margin-top: 16px; display: flex; justify-content: flex-end; }
+@media (max-width: 768px) { .version-grid { grid-template-columns: 1fr; } .version-actions .el-button { flex: 1; } .next-row { justify-content: stretch; } .next-row .el-button { flex: 1; } }
 </style>
