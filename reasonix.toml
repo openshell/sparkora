@@ -1,0 +1,49 @@
+# Reasonix 项目配置 —— Sparkora
+# 权限规则提炼自 .claude/settings.local.json 的高频操作(编译验证、联调、git 只读)。
+# 匹配语法:工具名(参数前缀*),与 anthropic 风格规则一致。
+
+[permissions]
+mode  = "ask"                                      # 未匹配规则的写操作仍需确认(默认安全)
+deny  = ["Bash(rm -rf *)", "Bash(git push*)", "Bash(mvn deploy*)"]
+allow = [
+  # ---- 后端构建 / 验证 ----
+  "Bash(mvn -q -DskipTests compile*)",
+  "Bash(mvn -f pom.xml -q compile*)",
+  "Bash(mvn test*)",
+  "Bash(mvn -q test*)",
+  "Bash(mvn dependency*)",
+  "Bash(mvn -q dependency*)",
+  "Bash(mvn -q -o help*)",
+  "Bash(mvn help*)",
+  # ---- 后端联调(后台起停) ----
+  "Bash(nohup mvn -q spring-boot:run*)",
+  "Bash(nohup mvn -f pom.xml spring-boot:run*)",
+  "Bash(pkill -f spring-boot:run*)",
+  "Bash(pkill -9 -f spring-boot:run*)",
+  "Bash(pkill -f SparkoraApplication*)",
+  "Bash(pkill -9 -f SparkoraApplication*)",
+  # ---- 前端 ----
+  "Bash(npm run build*)",
+  "Bash(npm run dev*)",
+  "Bash(nohup npm run dev*)",
+  "Bash(npm install*)",
+  "Bash(pkill -f vite*)",
+  # ---- git 只读 ----
+  "Bash(git status*)",
+  "Bash(git log*)",
+  "Bash(git diff*)",
+  "Bash(git show*)",
+  "Bash(git branch*)",
+  "Bash(git ls-files*)",
+  "Bash(git check-ignore*)",
+  # ---- 联调探活 ----
+  "Bash(curl -s http://localhost:5661/*)",
+  "Bash(curl -s http://localhost:8080/*)",
+  "Bash(curl -s http://localhost:5173/*)",
+  "Bash(curl -s -o /dev/null*)",
+]
+
+[sandbox]
+# 文件写入限定在本仓库;需要写 /tmp 日志时用 bash 的 additional_write_dirs 声明
+allow_write = ["/tmp"]
+forbid_read = ["${HOME}/.ssh", "${HOME}/.gnupg"]

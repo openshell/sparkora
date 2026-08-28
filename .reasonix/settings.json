@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "match": ".*file",
+        "command": ".reasonix/hooks/secret-guard.sh",
+        "description": "编辑文件后检测 .env 密钥是否被带入代码,发现即告警",
+        "timeout": 5000
+      }
+    ]
+  }
+}
