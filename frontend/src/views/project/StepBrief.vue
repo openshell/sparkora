@@ -10,6 +10,14 @@
     <el-alert v-if="project && project.lastBriefError && !generatingBrief" type="error" :closable="false" show-icon
               :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
 
+    <!-- 简报加载失败(网络抖动/后端重启窗口):可见化 + 重试,不再静默退化成引导语 -->
+    <div v-else-if="briefError" class="state-error">
+      <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
+      <div class="state-title">简报加载失败</div>
+      <div class="state-msg">{{ briefError }}</div>
+      <el-button type="primary" plain @click="loadBrief">重试</el-button>
+    </div>
+
     <!-- 生成中:以 project.status 为唯一事实源(刷新/切页返回也能恢复),轮询直至状态翻转 -->
     <div v-if="generatingBrief" class="generating">
       <el-skeleton :rows="6" animated />
@@ -75,13 +83,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingBrief } from '../../constants/project'
-import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning } from '@element-plus/icons-vue'
+import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled } from '@element-plus/icons-vue'
 
 const props = defineProps({ project: Object, reloadProject: Function })
 
 const route = useRoute()
 const router = useRouter()
 const brief = ref(null)
+const briefError = ref('')      // 简报拉取失败信息(网络层);空=加载正常
 const submitting = ref(false)   // 本轮会话内主动点击的 loading(按钮态)
 const polling = ref(null)       // 生成中轮询定时器
 
@@ -103,10 +112,15 @@ const parseBrief = (b) => {
     outline: j(b.outline), factRisks: j(b.factRisks) }
 }
 const loadBrief = async () => {
+  briefError.value = ''
   try {
     const res = await projectApi.getBrief(route.params.id)
+    // 无 brief 时后端返回 HTTP 200 + data:null(正常路径,不抛错),展示引导语属预期
     brief.value = parseBrief(res.data)
-  } catch (e) { /* 生成失败回退态下 brief 本就不存在,静默即可 */ }
+  } catch (e) {
+    // 只有网络层失败才会到这:可见化并提供重试,不再静默退化成引导语
+    briefError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
+  }
 }
 
 // 轮询 project 详情:GENERATING_BRIEF 翻转后(READY/DRAFT=失败回退)拉取简报
@@ -148,6 +162,7 @@ const onGenerateBrief = async () => {
 .muted { color: var(--muted); font-size: 13px; }
 .intro p { line-height: 1.7; }
 .brief-alert { margin-bottom: 12px; }
+.state-error { padding: 36px 16px; }
 .btn-icon { margin-right: 2px; }
 
 .generating { padding: 4px 0; }

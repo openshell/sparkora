@@ -17,14 +17,25 @@
     </div>
 
     <template v-else>
+      <!-- 版本列表加载失败:可见化 + 重试,不再静默退化成风格选择区 -->
+      <div v-if="versionsError && !appending" class="state-error">
+        <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
+        <div class="state-title">版本列表加载失败</div>
+        <div class="state-msg">{{ versionsError }}</div>
+        <el-button type="primary" plain @click="loadVersions">重试</el-button>
+      </div>
+
       <!-- 风格选择区:首次生成 / 追加生成共用 -->
-      <div v-if="!versions.length || appending" class="style-pick">
+      <div v-else-if="!versions.length || appending" class="style-pick">
         <p class="muted">
           {{ versions.length
             ? '再选择风格，将在现有版本基础上追加生成（不会清空已有版本）。'
             : '从风格库选择 1~N 个风格，每个选中的风格生成一版正文用于对比。' }}
         </p>
-        <div v-if="!styleOptions.length" class="empty-style">
+        <div v-if="stylesError" class="empty-style">
+          风格库加载失败：{{ stylesError }} <el-button size="small" text type="primary" @click="loadStyles">重试</el-button>
+        </div>
+        <div v-else-if="!styleOptions.length" class="empty-style">
           风格库为空，请先到 <router-link to="/styles">风格库</router-link> 提炼入库。
         </div>
         <el-checkbox-group v-else v-model="selectedStyleIds" class="style-list">
@@ -95,7 +106,7 @@ import MarkdownIt from 'markdown-it'
 import { projectApi, styleApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingVersions } from '../../constants/project'
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, WarningFilled } from '@element-plus/icons-vue'
 
 const props = defineProps({ project: Object, reloadProject: Function })
 
@@ -106,6 +117,8 @@ const route = useRoute()
 const router = useRouter()
 const versions = ref([])
 const styleOptions = ref([])
+const versionsError = ref('')    // 版本列表拉取失败信息(网络层);空=加载正常
+const stylesError = ref('')      // 风格库拉取失败信息(网络层)
 const selectedStyleIds = ref([])
 const lastStyleIds = ref([])      // 上次实际用于生成的风格 id(供追加面板预选)
 const appending = ref(false)      // 追加生成面板展开
@@ -141,16 +154,23 @@ const onChipClick = (v) => {
 }
 
 const loadVersions = async () => {
+  versionsError.value = ''
   try {
     const res = await projectApi.listVersions(route.params.id)
     versions.value = res.data || []
-  } catch (e) { /* 状态恢复期间由轮询兜底 */ }
+  } catch (e) {
+    // 网络层失败可见化(此前静默导致切步骤后内容"消失"且无法恢复)
+    versionsError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
+  }
 }
 const loadStyles = async () => {
+  stylesError.value = ''
   try {
     const res = await styleApi.list(true)
     styleOptions.value = res.data || []
-  } catch (e) { /* 拦截器已提示 */ }
+  } catch (e) {
+    stylesError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
+  }
 }
 
 const doGenerate = async (styleIds) => {
@@ -217,6 +237,7 @@ onMounted(async () => { await loadVersions(); await loadStyles() })
 .step-title { font-size: 16px; font-weight: 700; }
 .card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
 .muted { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.state-error { padding: 36px 16px; }
 
 .generating { padding: 4px 0; }
 .gen-tip { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
