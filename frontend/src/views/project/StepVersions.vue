@@ -2,17 +2,28 @@
   <el-card class="step-card" shadow="never">
     <template #header>
       <span class="card-head">
-        Step 2 · 多版本正文生成
+        <span class="step-title serif">Step 2 · 多版本正文生成</span>
         <span v-if="versions.length" class="meta">共 {{ versions.length }} 版 · 当前：{{ currentVersionLabel }}</span>
       </span>
     </template>
 
-    <el-skeleton v-if="generatingVersions" :rows="8" animated />
+    <!-- 生成中:以 project.status 为唯一事实源(刷新/切页返回也能恢复),轮询直至状态翻转 -->
+    <div v-if="generatingVersions" class="generating">
+      <el-skeleton :rows="8" animated />
+      <p class="gen-tip">
+        <el-icon class="spin"><Loading /></el-icon>
+        AI 正在按所选风格逐版生成正文（共 {{ estVersions }} 版，约 {{ estMinutes }} 分钟），请勿关闭页面…
+      </p>
+    </div>
 
     <template v-else>
-      <!-- 风格选择区 -->
-      <div v-if="!versions.length" class="style-pick">
-        <p class="muted">从风格库选择 1~N 个风格，每个选中的风格生成一版正文用于对比。</p>
+      <!-- 风格选择区:首次生成 / 追加生成共用 -->
+      <div v-if="!versions.length || appending" class="style-pick">
+        <p class="muted">
+          {{ versions.length
+            ? '再选择风格，将在现有版本基础上追加生成（不会清空已有版本）。'
+            : '从风格库选择 1~N 个风格，每个选中的风格生成一版正文用于对比。' }}
+        </p>
         <div v-if="!styleOptions.length" class="empty-style">
           风格库为空，请先到 <router-link to="/styles">风格库</router-link> 提炼入库。
         </div>
@@ -23,7 +34,8 @@
           </el-checkbox>
         </el-checkbox-group>
         <div class="gen-actions">
-          <el-button type="primary" :disabled="!selectedStyleIds.length" :loading="generatingVersions" @click="onGenerate">
+          <el-button v-if="appending && versions.length" @click="appending = false">取消</el-button>
+          <el-button type="primary" :disabled="!selectedStyleIds.length" :loading="submitting" @click="onGenerate">
             生成 {{ selectedStyleIds.length || '' }} 版
           </el-button>
         </div>
@@ -31,28 +43,42 @@
 
       <!-- 版本对比区 -->
       <div v-else>
-        <div class="regen-row">
-          <el-button size="small" @click="onReopenPick">重新选风格</el-button>
-          <el-button size="small" :loading="generatingVersions" @click="onRegenerate">用同样风格重生成</el-button>
-          <span v-if="project?.currentVersionId" class="regen-tip">当前已选定版本，可进入下一步</span>
+        <!-- 汇总条:全部版本一览 + 对比模式入口 -->
+        <div class="summary-bar">
+          <div class="s-chips">
+            <button v-for="v in versions" :key="v.id" type="button" class="s-chip"
+                    :class="{ active: v.id === project?.currentVersionId, picked: compareIds.includes(v.id) }"
+                    @click="onChipClick(v)">
+              <span class="chip-label">{{ v.versionLabel }}</span>{{ v.styleTag }} · {{ v.wordCount }}字
+            </button>
+          </div>
+          <el-select v-model="compareIds" multiple collapse-tags collapse-tags-tooltip
+                     placeholder="选 2 版对比" size="small" class="compare-select">
+            <el-option v-for="v in versions" :key="v.id" :label="`${v.versionLabel}·${v.styleTag}`" :value="v.id" />
+          </el-select>
         </div>
-        <div class="version-grid">
-          <div v-for="v in versions" :key="v.id" class="version-card" :class="{ active: v.id === project?.currentVersionId }">
+        <p v-if="compareIds.length === 1" class="compare-hint">再勾选 1 版即可并排对比</p>
+
+        <div class="version-grid" :class="{ compare: compareIds.length >= 2 }">
+          <div v-for="v in displayedVersions" :key="v.id" class="version-card"
+               :class="{ active: v.id === project?.currentVersionId }">
             <div class="version-head">
-              <el-tag size="small">{{ v.versionLabel }}</el-tag>
-              <el-tag size="small" type="info" effect="plain">{{ v.styleTag }}</el-tag>
+              <el-tag size="small" effect="dark" round class="v-label">{{ v.versionLabel }}</el-tag>
+              <el-tag size="small" type="info" effect="plain" round>{{ v.styleTag }}</el-tag>
               <span class="version-meta">{{ v.wordCount }}字 · {{ v.aiModel }}</span>
             </div>
-            <div class="version-title">{{ v.title }}</div>
+            <div class="version-title serif">{{ v.title }}</div>
             <div class="version-content markdown-body" v-html="renderMd(v.contentMd)"></div>
             <div class="version-actions">
               <el-button size="small" :type="v.id === project?.currentVersionId ? 'success' : 'default'" @click="onSetCurrent(v.id)">
-                {{ v.id === project?.currentVersionId ? '✓ 当前' : '设为当前' }}
+                {{ v.id === project?.currentVersionId ? '✓ 当前版本' : '设为当前' }}
               </el-button>
             </div>
           </div>
         </div>
+
         <div class="next-row">
+          <el-button :loading="submitting" @click="openAppend">再生成其他风格</el-button>
           <el-button type="success" :disabled="!project?.currentVersionId" @click="gotoNext">
             选定当前版本 · 进入下一步（事实校验）→
           </el-button>
@@ -63,11 +89,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import { projectApi, styleApi } from '../../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
+import { isGeneratingVersions } from '../../constants/project'
+import { Loading } from '@element-plus/icons-vue'
 
 const props = defineProps({ project: Object, reloadProject: Function })
 
@@ -79,93 +107,173 @@ const router = useRouter()
 const versions = ref([])
 const styleOptions = ref([])
 const selectedStyleIds = ref([])
-const lastStyleIds = ref([])          // 上次实际用于生成的风格 id（供「用同样风格重生成」）
-const generatingVersions = ref(false)
+const lastStyleIds = ref([])      // 上次实际用于生成的风格 id(供追加面板预选)
+const appending = ref(false)      // 追加生成面板展开
+const compareIds = ref([])        // 对比模式选中的版本(>=2 生效)
+const submitting = ref(false)     // 本轮会话内主动点击的 loading
+const polling = ref(null)
+
+// 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
+const generatingVersions = computed(() => isGeneratingVersions(props.project?.status))
+
+// 生成进度提示(按风格数粗估:每版约 1 分钟,总时长 = 版数 × 1 分钟)
+const estVersions = computed(() => selectedStyleIds.value.length || 1)
+const estMinutes = computed(() => Math.max(1, estVersions.value))
 
 const currentVersionLabel = computed(() => {
   const cur = versions.value.find(v => v.id === props.project?.currentVersionId)
   return cur ? `${cur.versionLabel}·${cur.styleTag}` : '未选'
 })
 
+// 对比模式(勾选 >=2)只显示选中版本并排全高;平时显示全部版本
+const displayedVersions = computed(() => {
+  if (compareIds.value.length >= 2) {
+    const picked = new Set(compareIds.value)
+    return versions.value.filter(v => picked.has(v.id))
+  }
+  return versions.value
+})
+
+const onChipClick = (v) => {
+  const i = compareIds.value.indexOf(v.id)
+  if (i >= 0) compareIds.value.splice(i, 1)
+  else compareIds.value.push(v.id)
+}
+
 const loadVersions = async () => {
-  const res = await projectApi.listVersions(route.params.id)
-  versions.value = res.data || []
+  try {
+    const res = await projectApi.listVersions(route.params.id)
+    versions.value = res.data || []
+  } catch (e) { /* 状态恢复期间由轮询兜底 */ }
 }
 const loadStyles = async () => {
-  const res = await styleApi.list(true)
-  styleOptions.value = res.data || []
+  try {
+    const res = await styleApi.list(true)
+    styleOptions.value = res.data || []
+  } catch (e) { /* 拦截器已提示 */ }
 }
+
 const doGenerate = async (styleIds) => {
-  generatingVersions.value = true
+  submitting.value = true
   try {
     const res = await projectApi.generateVersions(route.params.id, styleIds)
     if (res.code === 0) {
-      versions.value = res.data || []
+      // 以服务器全量列表为准(本次返回仅含新增,追加时直接拼会漏失败重试的历史)
+      await loadVersions()
       lastStyleIds.value = [...styleIds]
-      ElMessage.success(`已生成 ${versions.value.length} 版`)
+      ElMessage.success(`已生成 ${res.data?.length || 0} 版，默认选中本次第一版，可重新设定`)
     } else ElMessage.error(res.msg || '生成失败')
     await props.reloadProject()
-  } catch (e) { ElMessage.error('生成失败：' + (e.message || e)); await props.reloadProject() }
-  finally { generatingVersions.value = false }
+  } catch (e) {
+    ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
+    await props.reloadProject()
+  } finally { submitting.value = false }
 }
 const onGenerate = () => {
   if (!selectedStyleIds.value.length) { ElMessage.warning('请至少选择一个风格'); return }
   doGenerate(selectedStyleIds.value)
 }
-const onRegenerate = () => {
-  if (!lastStyleIds.value.length) { ElMessage.warning('没有可重生成的风格，请重新选择'); return }
-  doGenerate(lastStyleIds.value)
+
+// 追加生成:预选上次风格,微调后生成;不清空已有版本
+const openAppend = async () => {
+  appending.value = true
+  selectedStyleIds.value = [...lastStyleIds.value]
 }
-const onReopenPick = async () => {
-  try {
-    await ElMessageBox.confirm(
-      `将清空当前 ${versions.value.length} 版本回到风格选择，确认？`,
-      '重新选风格', { type: 'warning' })
-    versions.value = []
-    // 保留 selectedStyleIds 为上次选择，便于微调
-    selectedStyleIds.value = [...lastStyleIds.value]
-  } catch (e) { /* 取消 */ }
-}
+watch(appending, (on) => { if (on) compareIds.value = [] })
+
 const onSetCurrent = async (versionId) => {
   const res = await projectApi.setCurrentVersion(route.params.id, versionId)
   if (res.code === 0) { await props.reloadProject(); ElMessage.success('已设为当前版本') }
   else ElMessage.error(res.msg || '设置失败')
 }
 const gotoNext = () => {
-  // S3 事实校验待后续阶段；步骤条也会置灰，这里给明确提示
+  // S3 事实校验待后续阶段;步骤导航也已置灰,这里给明确提示
   ElMessage.info('下一步「事实校验」待后续阶段实现')
 }
+
+// 轮询 project 详情:GENERATING_VERSIONS 翻转后拉取版本列表
+const stopPolling = () => { if (polling.value) { clearInterval(polling.value); polling.value = null } }
+const startPolling = () => {
+  stopPolling()
+  polling.value = setInterval(async () => {
+    try {
+      const before = props.project?.status
+      await props.reloadProject()
+      if (props.project?.status !== before && !isGeneratingVersions(props.project?.status)) {
+        stopPolling()
+        await loadVersions()
+      }
+    } catch (e) { /* 轮询期间网络抖动静默,下一 tick 重试;401 由拦截器处理 */ }
+  }, 5000)
+}
+watch(generatingVersions, (on) => { on ? startPolling() : stopPolling() }, { immediate: true })
+onUnmounted(stopPolling)
+
 onMounted(async () => { await loadVersions(); await loadStyles() })
 </script>
 
 <style scoped>
-.step-card { margin-bottom: 12px; }
-.card-head { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-.card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; }
-.muted { color: var(--muted); font-size: 13px; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
+.step-title { font-size: 16px; font-weight: 700; }
+.card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
+.muted { color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+.generating { padding: 4px 0; }
+.gen-tip { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.spin { animation: spin 1.2s linear infinite; color: var(--brand); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .style-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
-.style-cb { display: flex; align-items: flex-start; height: auto; white-space: normal; }
+.style-cb { display: flex; align-items: flex-start; height: auto; white-space: normal; margin-right: 0; }
 .style-cb :deep(.el-checkbox__label) { white-space: normal; line-height: 1.5; }
 .style-name { font-weight: 600; margin-right: 6px; }
 .style-desc { color: var(--muted); font-size: 12px; }
 .empty-style { font-size: 13px; color: var(--muted); margin: 8px 0; }
-.gen-actions { margin-top: 8px; }
-.regen-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
-.version-card { border: 1px solid var(--el-border-color); border-radius: 8px; padding: 12px; }
-.version-card.active { border-color: var(--el-color-success); box-shadow: 0 0 0 2px var(--el-color-success-light-7); }
-.version-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.gen-actions { display: flex; gap: 8px; }
+
+/* 汇总条 */
+.summary-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.s-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.s-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 30px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--card); color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.s-chip .chip-label { font-weight: 700; color: var(--ink); }
+.s-chip.active { border-color: var(--ok); color: var(--ok); background: transparent; }
+.s-chip.active .chip-label { color: var(--ok); }
+.s-chip.picked { border-color: var(--brand); color: var(--brand); }
+.compare-select { width: 150px; flex-shrink: 0; }
+.compare-hint { margin: 0 0 10px; font-size: 12px; color: var(--faint); }
+
+.version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.version-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px; background: var(--card); transition: box-shadow .2s, border-color .2s; }
+.version-card:hover { box-shadow: var(--shadow-hover); }
+.version-card.active { border-color: var(--ok); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 18%, transparent); }
+/* 对比模式:等高铺开,长文完整滚动阅读 */
+.version-grid.compare { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: stretch; }
+.version-grid.compare .version-card { display: flex; flex-direction: column; }
+.version-grid.compare .version-content { flex: 1; max-height: none; }
+.version-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.v-label { font-weight: 600; }
 .version-meta { font-size: 12px; color: var(--muted); margin-left: auto; }
-.version-title { font-weight: 600; font-size: 15px; margin-bottom: 8px; line-height: 1.4; }
-.version-content { font-size: 14px; line-height: 1.7; max-height: 520px; overflow-y: auto; }
+.version-title { font-weight: 700; font-size: 15px; margin-bottom: 8px; line-height: 1.45; }
+.version-content { font-size: 14px; line-height: 1.8; max-height: 520px; overflow-y: auto; }
 .version-content :deep(h1) { font-size: 18px; margin: 12px 0 6px; }
 .version-content :deep(h2) { font-size: 16px; margin: 10px 0 5px; }
 .version-content :deep(h3) { font-size: 15px; margin: 8px 0 4px; }
 .version-content :deep(p) { margin: 6px 0; }
 .version-content :deep(ul), .version-content :deep(ol) { padding-left: 20px; margin: 6px 0; }
 .version-content :deep(code) { background: var(--el-fill-color-light); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
-.version-actions { display: flex; gap: 8px; margin-top: 10px; }
-.regen-tip { font-size: 12px; color: var(--muted); align-self: center; }
-.next-row { margin-top: 16px; display: flex; justify-content: flex-end; }
-@media (max-width: 768px) { .version-grid { grid-template-columns: 1fr; } .version-actions .el-button { flex: 1; } .next-row { justify-content: stretch; } .next-row .el-button { flex: 1; } }
+.version-actions { display: flex; gap: 8px; margin-top: 12px; }
+.next-row { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
+.next-row .el-button:last-child { margin-left: auto; }
+
+@media (max-width: 768px) {
+  .version-grid, .version-grid.compare { grid-template-columns: 1fr; }
+  .version-actions .el-button, .next-row .el-button { flex: 1; }
+  .next-row .el-button:last-child { margin-left: 0; }
+  .compare-select { width: 100%; }
+}
 </style>

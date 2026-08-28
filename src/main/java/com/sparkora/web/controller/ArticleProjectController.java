@@ -12,6 +12,7 @@ import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.security.CurrentUser;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.service.BriefService;
+import com.sparkora.service.NotReadyException;
 import com.sparkora.service.VersionService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -119,6 +120,9 @@ public class ArticleProjectController {
         try {
             ArticleBriefEntity b = briefService.generate(id);
             return R.ok(b);
+        } catch (IllegalStateException ex) {
+            // 状态冲突(并发生成中)→ 409;状态已由 service 原样保留,前端恢复生成中视图
+            return R.fail(409, ex.getMessage());
         } catch (Exception ex) {
             // 状态已由 service 回滚为 DRAFT；这里返回错误信息供前端展示
             return R.fail(500, ex.getMessage());
@@ -146,6 +150,12 @@ public class ArticleProjectController {
                                                           @RequestBody java.util.Map<String, java.util.List<Long>> body) {
         try {
             return R.ok(versionService.generate(id, body.get("styleIds")));
+        } catch (NotReadyException ex) {
+            // 前置状态不满足(未生成 brief 等)→ 400 客户端错误
+            return R.fail(400, ex.getMessage());
+        } catch (IllegalStateException ex) {
+            // 状态冲突(并发生成中)→ 409
+            return R.fail(409, ex.getMessage());
         } catch (Exception ex) {
             return R.fail(500, ex.getMessage());
         }

@@ -46,3 +46,6 @@ logs/
 build/
 .cache/
 coverage/
+
+# ===== Reasonix 本地运行时记录(技能/hooks/配置属项目资产,正常提交;tasks 为本机会话记录) =====
+.reasonix/tasks/

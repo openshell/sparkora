@@ -59,6 +59,18 @@ public class VersionService {
      * @param styleIds 用户从风格库选中的风格 id 列表（至少 1 个，最多 10 个）
      * @return 生成的版本列表（可能少于 styleIds 数，若某版失败则跳过）
      */
+    /** 生成中状态超过该时长视为陈旧（JVM 中途死亡/重启残留），允许重新触发以自愈。 */
+    private static final long STALE_GENERATING_MS = 10 * 60 * 1000L;
+
+    /** 项目是否卡在生成中状态（未过期）。 */
+    private boolean stuckGenerating(ArticleProjectEntity p) {
+        String s = p.getStatus();
+        boolean generating = "GENERATING_BRIEF".equals(s) || "GENERATING_VERSIONS".equals(s);
+        if (!generating) return false;
+        return p.getUpdatedAt() != null
+                && p.getUpdatedAt().isAfter(LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS)));
+    }
+
     public List<ArticleVersionEntity> generate(Long projectId, List<Long> styleIds) {
         if (styleIds == null || styleIds.isEmpty())
             throw new IllegalArgumentException("至少选择一个风格");
@@ -67,18 +79,30 @@ public class VersionService {
 
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
-        if (p.getCurrentBriefId() == null) throw new IllegalStateException("尚未生成 brief，无法生成版本");
+        // 并发防护:正在生成中（未过期）时拒绝重复触发;陈旧状态(超 10 分钟,进程已死)放行自愈
+        if (stuckGenerating(p)) {
+            throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        }
+        if (p.getCurrentBriefId() == null) throw new NotReadyException("尚未生成 brief，无法生成版本");
         ArticleBriefEntity brief = briefMapper.selectById(p.getCurrentBriefId());
-        if (brief == null) throw new IllegalStateException("brief 不存在");
+        if (brief == null) throw new NotReadyException("brief 不存在");
 
         List<StyleProfileEntity> styles = styleMapper.selectBatchIds(styleIds);
         if (styles.isEmpty()) throw new IllegalArgumentException("所选风格不存在");
 
-        // 1) 置进行中
+        // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
+        //    仅当「处于非生成中状态」或「生成中但已陈旧(超阈值,进程已死)」才生效;
+        //    陈旧判定与抢占在同一 WHERE,无竞态窗口,卡死项目可自愈
+        java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
+        int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                .eq("id", projectId)
+                .and(w -> w.notIn("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                        .or().lt("updated_at", staleCutoff))
+                .set("status", "GENERATING_VERSIONS")
+                .set("last_version_error", null)
+                .set("updated_at", LocalDateTime.now()));
+        if (claimed == 0) throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
         p.setStatus("GENERATING_VERSIONS");
-        p.setLastVersionError(null);
-        p.setUpdatedAt(LocalDateTime.now());
-        projectMapper.updateById(p);
 
         List<ArticleVersionEntity> created = new ArrayList<>();
         List<String> perVersionErrors = new ArrayList<>();

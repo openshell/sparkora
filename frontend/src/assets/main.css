@@ -1,33 +1,202 @@
-/* ===== 全局基础 + 移动端响应式 ===== */
+/* ============================================================
+   Sparkora 全局样式 —— 「纸墨」设计 token + 杂志感排版
+   - 设计 token 全部收敛在 :root / html.dark,组件只引用变量
+   - Element Plus 主色经 --el-color-primary 系列覆盖,全组件库跟随品牌
+   - 标题用衬线(杂志感),正文用黑体,移动端触控目标 ≥44px
+   ============================================================ */
+
+/* ---------- 设计 token:浅色(纸白) ---------- */
 :root {
+  /* 品牌色(墨蓝) */
   --brand: #4f46e5;
+  --brand-strong: #4338ca;
   --brand-weak: #eef2ff;
-  --ink: #1a202c;
-  --muted: #718096;
-  --line: #e2e8f0;
-  --bg: #f5f6f8;
+  --brand-gradient: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+
+  /* 纸墨中性色 */
+  --paper: #faf9f7;        /* 页面底:暖纸白 */
+  --card: #ffffff;         /* 卡片面 */
+  --ink: #1a1714;          /* 主墨色 */
+  --muted: #6f6a63;        /* 次级文字 */
+  --faint: #a39d93;        /* 三级文字 */
+  --line: #e7e2da;         /* 纸线(边框) */
+  --line-strong: #d8d2c8;
+
+  /* 功能色 */
+  --ok: #15803d;
+  --warn: #b45309;
+  --err: #b91c1c;
+
+  /* 形状与阴影 */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --shadow-card: 0 1px 2px rgba(26, 23, 20, .04), 0 4px 16px rgba(26, 23, 20, .04);
+  --shadow-hover: 0 2px 6px rgba(26, 23, 20, .06), 0 10px 28px rgba(26, 23, 20, .08);
+  --shadow-pop: 0 12px 40px rgba(26, 23, 20, .16);
+
+  /* 字体:标题衬线(杂志感)/ 正文黑体 */
+  --font-serif: "Noto Serif SC", "Songti SC", "STSong", SimSun, Georgia, serif;
+  --font-sans: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+
+  /* Element Plus 主色系覆盖:让整个组件库跟随品牌墨蓝 */
+  --el-color-primary: var(--brand);
+  --el-color-primary-light-3: #7a74ec;
+  --el-color-primary-light-5: #a5a2f3;
+  --el-color-primary-light-7: #cfcefa;
+  --el-color-primary-light-8: #e0dffc;
+  --el-color-primary-light-9: var(--brand-weak);
+  --el-color-primary-dark-2: var(--brand-strong);
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-font-family: var(--font-sans);
+  --el-text-color-primary: var(--ink);
+  --el-text-color-regular: #45403a;
+  --el-text-color-secondary: var(--muted);
+  --el-border-color: var(--line);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: var(--line);
+  --el-fill-color-light: #f4f1ec;
+  --el-fill-color-lighter: #f8f6f2;
+  --el-bg-color: var(--card);
+  --el-bg-color-page: var(--paper);
 }
 
+/* ---------- 设计 token:暗色(纸黑) ---------- */
+html.dark {
+  --brand: #818cf8;
+  --brand-strong: #a5b4fc;
+  --brand-weak: #26264a;
+  --brand-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+
+  --paper: #161412;
+  --card: #1e1c19;
+  --ink: #ece7df;
+  --muted: #a39d93;
+  --faint: #6f6a63;
+  --line: #322e29;
+  --line-strong: #3f3a34;
+
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-hover: 0 2px 8px rgba(0, 0, 0, .4);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, .5);
+
+  --el-color-primary: var(--brand);
+  --el-color-primary-light-3: #4d4e9e;
+  --el-color-primary-light-5: #383a75;
+  --el-color-primary-light-7: #27284d;
+  --el-color-primary-light-8: #20213f;
+  --el-color-primary-light-9: var(--brand-weak);
+  --el-color-primary-dark-2: var(--brand-strong);
+  --el-bg-color: var(--card);
+  --el-bg-color-page: var(--paper);
+  --el-bg-color-overlay: #242220;
+  --el-text-color-primary: var(--ink);
+  --el-text-color-regular: #cfc9c0;
+  --el-text-color-secondary: var(--muted);
+  --el-border-color: var(--line);
+  --el-border-color-light: var(--line);
+  --el-border-color-lighter: var(--line);
+  --el-fill-color-light: #292521;
+  --el-fill-color-lighter: #232019;
+  --el-fill-color-blank: var(--card);
+}
+
+/* ---------- 基础 ---------- */
 * { box-sizing: border-box; }
 
 html, body, #app {
   margin: 0;
   padding: 0;
-  height: 100%;
-  background: var(--bg);
+  min-height: 100%;
+  background: var(--paper);
   color: var(--ink);
-  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
 a { color: var(--brand); text-decoration: none; }
 
-/* 触控目标 ≥44px（移动端） */
+::selection { background: var(--brand-weak); color: var(--brand-strong); }
+
+/* 标题统一走衬线,做出「刊头」气质 */
+h1, h2, h3, .serif {
+  font-family: var(--font-serif);
+  letter-spacing: .01em;
+}
+
+/* ---------- 页面骨架通用类(收敛自各页 scoped 重复) ---------- */
+.container {
+  padding: 20px 16px 48px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+/* 页头: kicker + 衬线大标题 + 操作区,底部细线(杂志刊头) */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.page-header h2 { margin: 0; font-size: 26px; font-weight: 700; line-height: 1.2; }
+.page-kicker {
+  display: block;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 4px;
+}
+.page-header .actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* 卡片:纸面 + 细线 + 浅阴影 */
+.el-card {
+  border-radius: var(--radius);
+  border-color: var(--line);
+  box-shadow: var(--shadow-card);
+}
+.el-card.is-hover-shadow:hover, .el-card[shadow="hover"]:hover { box-shadow: var(--shadow-hover); }
+
+/* 步骤卡片(创作向导内) */
+.step-card { margin-bottom: 12px; }
+.step-card > .el-card__header {
+  border-bottom: 1px dashed var(--line);
+  padding: 14px 18px;
+}
+
+/* 空态 / 加载态 */
+.empty, .loading { padding: 48px 0; }
+.state-error {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.state-error .state-title { font-family: var(--font-serif); font-size: 17px; color: var(--ink); margin: 12px 0 4px; }
+.state-error .state-msg { font-size: 13px; margin-bottom: 16px; word-break: break-all; }
+
+/* 分页 */
+.pager { margin-top: 20px; justify-content: center; }
+
+/* ---------- 触控目标 ≥44px(移动端) ---------- */
 @media (max-width: 768px) {
   .el-button { min-height: 44px; }
   .el-button--small { min-height: 40px; }
+  .el-input__inner, .el-textarea__inner { font-size: 16px; } /* 防 iOS 聚焦自动放大 */
+  .container { padding: 14px 14px 40px; }
+  .page-header h2 { font-size: 22px; }
+  .pager { flex-wrap: wrap; }
 }
 
-/* 移动端表格转卡片：通过 .responsive-table 类切换 */
+/* ---------- 列表响应式:桌面表格 / 移动卡片 ---------- */
 .responsive-table .el-table { display: none; }
 .responsive-table .card-list { display: grid; gap: 12px; }
 @media (min-width: 769px) {
@@ -35,25 +204,41 @@ a { color: var(--brand); text-decoration: none; }
   .responsive-table .card-list { display: none; }
 }
 
-/* 顶栏 */
+/* ---------- 顶栏 ---------- */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  height: 56px;
-  background: #fff;
+  padding: 0 20px;
+  height: 60px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
 }
-.topbar .brand { font-weight: 800; font-size: 18px; }
+.topbar .brand {
+  font-family: var(--font-serif);
+  font-weight: 800;
+  font-size: 19px;
+  letter-spacing: .02em;
+}
 .topbar .brand span { color: var(--brand); }
 
-/* 内容容器：移动端单列，桌面端居中限宽 */
-.container {
-  padding: 16px;
-  max-width: 1100px;
-  margin: 0 auto;
+/* ---------- 通用小元件 ---------- */
+.divider-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--faint);
+  font-size: 12px;
+  letter-spacing: .12em;
+  margin: 20px 0 12px;
+}
+.divider-label::before, .divider-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }

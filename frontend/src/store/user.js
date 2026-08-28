@@ -14,6 +14,10 @@ export const useUserStore = defineStore('user', {
   actions: {
     async login(username, password) {
       const res = await authApi.login({ username, password })
+      // 后端登录失败返回 HTTP 200 + R.fail(401),不会触发 axios 错误拦截器,必须在这里检查业务码
+      if (res.code !== 0) {
+        throw new Error(res.msg || '登录失败')
+      }
       this.token = res.data.token
       this.user = {
         userId: res.data.userId,

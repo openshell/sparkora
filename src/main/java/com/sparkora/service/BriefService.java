@@ -40,6 +40,19 @@ public class BriefService {
         this.json = json;
     }
 
+    /** 生成中状态超过该时长视为陈旧（JVM 中途死亡/重启残留），允许重新触发以自愈。 */
+    private static final long STALE_GENERATING_MS = 10 * 60 * 1000L;
+
+    /** 项目是否卡在生成中状态（未过期）。 */
+    private boolean stuckGenerating(ArticleProjectEntity p) {
+        String s = p.getStatus();
+        boolean generating = "GENERATING_BRIEF".equals(s) || "GENERATING_VERSIONS".equals(s);
+        if (!generating) return false;
+        // updated_at 超过阈值 = 生成进程已不存在（正常生成最长 AI_TIMEOUT_MS 级别，10 分钟足够宽裕）
+        return p.getUpdatedAt() != null
+                && p.getUpdatedAt().isAfter(LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS)));
+    }
+
     /**
      * 同步生成 brief（S1 阶段同步即可；前端 loading 等待。后续 S2 若要可改异步+轮询）。
      * @return 新生成的 brief 实体（已含 id）
@@ -47,12 +60,25 @@ public class BriefService {
     public ArticleBriefEntity generate(Long projectId) {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
+        // 并发防护:正在生成中（未过期）时拒绝重复触发(双开页面/前端状态恢复失效场景的接口层兜底);
+        // JVM 中途死亡遗留的 GENERATING_* 状态(超过 10 分钟)视为陈旧,放行重新生成以自愈
+        if (stuckGenerating(p)) {
+            throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        }
 
-        // 1) 置进行中（短事务，立即持久化，便于前端观察）
+        // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
+        //    仅当「处于非生成中状态」或「生成中但已陈旧(超阈值,进程已死)」才生效;
+        //    陈旧判定与抢占在同一 WHERE,无竞态窗口,卡死项目可自愈
+        java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
+        int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                .eq("id", projectId)
+                .and(w -> w.notIn("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                        .or().lt("updated_at", staleCutoff))
+                .set("status", "GENERATING_BRIEF")
+                .set("last_brief_error", null)
+                .set("updated_at", LocalDateTime.now()));
+        if (claimed == 0) throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
         p.setStatus("GENERATING_BRIEF");
-        p.setLastBriefError(null);
-        p.setUpdatedAt(LocalDateTime.now());
-        projectMapper.updateById(p);
 
         try {
             // 2) 调 AI（无事务，慢操作）

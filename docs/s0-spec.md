@@ -1,6 +1,7 @@
 # Sparkora · S0 可审规格（屏幕清单 + 字段级 + 接口契约 + 状态机）
 
 **范围**：S0 项目骨架 + Spring Security 登录 + 流程化工作台（项目列表）+ 新建创作任务 + 项目详情（生成入口占位）。
+**当前进度**：S0~S2a 已实现（登录、项目 CRUD、简报生成、多版本正文、风格库）；本文档 §1/§3/§4/§6 已同步更新至 S2a 现状（2026-08-27 核对）。
 **技术栈**：Spring Boot 3 + MyBatis-Plus + Spring Security + Vue3/Element Plus（流程化创作工作台，不套重型 admin 外壳）。包结构 `com.sparkora`。
 **前端适配**：**移动端适配**（响应式，移动优先）。Element Plus 响应式栅格 + 断点（xs/sm/md/lg）；移动端单列、汉堡顶栏、表格转卡片、表单单列堆叠、触控目标≥44px。不引 Vant 等额外移动端框架。
 **用途**：在真机上逐条打勾验收。S0 目标——能登录、能建项目、能看到生成入口。
@@ -38,19 +39,30 @@ S0 是从零搭骨架，以下能力**全部自建**（不引入若依等重型�
 /projects/new                  新建创作任务（表单）
 /projects/:id                  项目详情（向导步骤条，S0 仅 step1 可点）
 
-后端 API（/api 前缀，Spring Security）
-POST /api/auth/login           登录
-POST /api/auth/logout          登出
+后端 API（/api 前缀，Spring Security；接口清单截至 S2a）
+POST /api/auth/login           登录（permitAll）
+POST /api/auth/logout          登出（JWT 无状态，前端丢弃 token）
 GET  /api/auth/me              当前用户
-GET   /api/projects            列表（分页）          权限 ROLE_EDITOR+
-GET   /api/projects/{id}       详情                  权限 ROLE_EDITOR+
-POST  /api/projects            新建                  权限 ROLE_EDITOR+
-PUT   /api/projects/{id}       编辑                  权限 ROLE_EDITOR+
-DELETE /api/projects/{ids}     删除                  权限 ROLE_ADMIN
-POST  /api/projects/{id}/generate/brief   S0 占位（不接 AI）
+GET   /api/projects            列表（分页）          权限 ADMIN/EDITOR/VIEWER
+GET   /api/projects/{id}       详情                  权限 ADMIN/EDITOR/VIEWER
+POST  /api/projects            新建                  权限 ADMIN/EDITOR
+PUT   /api/projects/{id}       编辑                  权限 ADMIN/EDITOR
+DELETE /api/projects/{ids}     删除                  权限 ADMIN
+POST  /api/projects/{id}/generate/brief    简报生成（S1 起真实 AI）  权限 ADMIN/EDITOR
+GET   /api/projects/{id}/brief             取当前简报           权限 ADMIN/EDITOR/VIEWER
+POST  /api/projects/{id}/generate/versions 多版本生成           权限 ADMIN/EDITOR
+GET   /api/projects/{id}/versions          版本列表             权限 ADMIN/EDITOR/VIEWER
+PUT   /api/projects/{id}/current-version   设定当前版本         权限 ADMIN/EDITOR
+GET   /api/styles              风格库列表            权限 ADMIN/EDITOR/VIEWER
+GET   /api/styles/{id}         风格详情              权限 ADMIN/EDITOR/VIEWER
+POST  /api/styles              新建风格              权限 ADMIN/EDITOR
+PUT   /api/styles/{id}         编辑风格              权限 ADMIN/EDITOR
+DELETE /api/styles/{id}        删除风格              权限 ADMIN
+POST  /api/styles/extract      样文提炼风格入库      权限 ADMIN/EDITOR
 ```
 
-- 角色：`ROLE_ADMIN` / `ROLE_EDITOR` / `ROLE_VIEWER`。MVP：viewer 只读、editor 可建可改、admin 全权。
+- 角色：`ADMIN` / `EDITOR` / `VIEWER`。权限矩阵（S1/S2 实现并真机验证）：**读接口（GET）三角色放行（viewer 只读），写接口（POST/PUT）限 ADMIN/EDITOR，DELETE 仅 ADMIN**。
+- 生成接口并发防护（S2a 补）：项目处于 GENERATING_BRIEF / GENERATING_VERSIONS 时再次触发，返回 `R.fail(409, "该项目正在生成中…")`，不重复调 AI；若生成中状态已陈旧（updated_at 超过 10 分钟，如 JVM 中途死亡/重启遗留），原子条件更新放行重新生成以自愈。brief 未就绪时触发版本生成返回 `R.fail(400)`。
 - 前端用 `v-if`/路由守卫判断角色（从 `/api/auth/me` 取），不做若依那种菜单权限点。
 
 ---
@@ -82,7 +94,11 @@ POST  /api/projects/{id}/generate/brief   S0 占位（不接 AI）
 | audience | String(200) | 选填 | — | 目标读者 |
 | word_count_target | Integer | 选填 | — | 目标字数 |
 | brand_voice_profile_id | Long | 选填 | — | 可选品牌语气（S0 先存不启用） |
-| status | String(20) | — | ✅ | 见状态机 §4 |
+| status | String(20) | — | ✅ | 见状态机 §4（S1/S1b 扩展后含 5 态） |
+| current_brief_id | Long | — | — | S1：指向当前简报（sparkora_article_brief.id） |
+| last_brief_error | String(1000) | — | — | S1：最近一次简报生成失败原因（成功后清空，前端详情页展示） |
+| current_version_id | Long | — | — | S1b：指向选定版本（sparkora_article_version.id） |
+| last_version_error | String(1000) | — | — | S1b：最近一次版本生成失败原因（成功后清空；部分成功时记录失败明细） |
 | created_by | String | — | ✅ | 审计字段 |
 | created_at / updated_at | Datetime | — | ✅ | 审计字段 |
 | remark | String(500) | 选填 | — | 备注 |
@@ -91,29 +107,43 @@ POST  /api/projects/{id}/generate/brief   S0 占位（不接 AI）
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/projects` | ROLE_EDITOR+ | `page,size,topic,status` | `{rows[],total,page,size}` |
-| GET | `/api/projects/{id}` | ROLE_EDITOR+ | — | `{project}` |
-| POST | `/api/projects` | ROLE_EDITOR+ | §3.2 表单 JSON | `{id}` |
-| PUT | `/api/projects/{id}` | ROLE_EDITOR+ | 表单 JSON | `{ok:true}` |
-| DELETE | `/api/projects/{ids}` | ROLE_ADMIN | — | `{ok:true}` |
+| GET | `/api/projects` | 三角色 | `page,size,topic,status` | `{rows[],total,page,size}` |
+| GET | `/api/projects/{id}` | 三角色 | — | `{project}`（S1/S1b 起含 current_brief_id / current_version_id / last_*_error） |
+| POST | `/api/projects` | ADMIN/EDITOR | §3.2 表单 JSON | `{id}` |
+| PUT | `/api/projects/{id}` | ADMIN/EDITOR | 表单 JSON | `{ok:true}` |
+| DELETE | `/api/projects/{ids}` | ADMIN | — | `{ok:true}` |
+| POST | `/api/projects/{id}/generate/brief` | ADMIN/EDITOR | — | `{brief}`；失败 `R.fail(500)`；生成中重触发 `R.fail(409)`（HTTP 均为 200，前端必须检查 `code`） |
+| GET | `/api/projects/{id}/brief` | 三角色 | — | `{brief}`（无则 `data:null`） |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | `{versions[]}`（仅本次新增，部分失败跳过并在 last_version_error 记录）；brief 未就绪 `R.fail(400)`；生成中重触发 `R.fail(409)` |
+| GET | `/api/projects/{id}/versions` | 三角色 | — | `{versions[]}`（全量，按 id 升序） |
+| PUT | `/api/projects/{id}/current-version` | ADMIN/EDITOR | `?versionId=` | `{ok:true}` |
+| GET | `/api/styles` | 三角色 | `?enabledOnly=` | `{styles[]}` |
+| POST | `/api/styles/extract` | ADMIN/EDITOR | `{name, sourceText}` | `{style}` |
 
-> S0 聚焦 `list` + `query` + `add`；`edit`/`delete` 顺带补。
+> 所有响应统一 `R<T>` = `{code, msg, data}`，`code=0` 成功。**注意：业务失败（含登录失败、生成失败）均为 HTTP 200 + `R.fail`，前端不能只依赖 axios 错误拦截器，必须检查 `code`**（S2a 已在 store.login / ProjectEdit / StepBrief / StepVersions 逐处落实）。
 
 ---
 
 ## 4. 状态机（ArticleProject.status）
 
-S0 只实现两态，预留链路状态：
+S1/S1b 起共 5 态（S0 原为两态，已扩展；实现见 BriefService / VersionService）：
 
 ```
-DRAFT ──(创建并生成 Brief)→ GENERATING_BRIEF ──(落库 brief)→ READY
-                                    │
-   （S1 起展开：brief→VERSIONS→FACT_CHECK→IMAGES→PREVIEW→PUBLISHED）
+DRAFT ──(生成简报)──▶ GENERATING_BRIEF ──(落库 brief)──▶ READY
+              ▲                    │
+              └────(失败回退+写 last_brief_error)
+READY ──(多版本生成)──▶ GENERATING_VERSIONS ──(落库版本+默认选第一版)──▶ VERSIONS_READY
+              ▲                       │
+              └────(失败回退+写 last_version_error；部分成功也进 VERSIONS_READY 并记录明细)
+（S3 起展开：VERSIONS_READY→FACT_CHECK→IMAGES→PREVIEW→PUBLISHED）
 ```
 
-- **DRAFT**：刚创建（`add` 即 DRAFT）。
-- **GENERATING_BRIEF**：S0 点「生成 Brief」置此态（占位，不真正调 AI）。
-- **READY**：S0 记录创建成功回到列表。
+- **DRAFT**：刚创建（`add` 即 DRAFT）；简报生成失败也回退到此态。
+- **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发返回 409）。
+- **READY**：简报就绪（`current_brief_id` 指向最新简报；S0 语义「记录创建成功」已由 S1 取代）。
+- **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发返回 409）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。
+- 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定）。
 
 ---
 
@@ -127,8 +157,9 @@ DRAFT ──(创建并生成 Brief)→ GENERATING_BRIEF ──(落库 brief)→ 
 
 ## 6. 项目详情 / 生成入口占位 `/projects/:id`
 
-- 顶部六步步骤条（brief→版本→校验→配图→预览→发布），S0 仅第一步「生成 Brief」可点，其余灰。
-- 「生成 Brief」按钮 → 调 `POST /api/projects/{id}/generate/brief` → S0 占位返回 `{ok:true}`（不接 AI）。
+- 顶部六步步骤条（brief→版本→校验→配图→预览→发布）；S2a 已实现 brief / versions 两步为子路由（`ProjectLayout.vue` 外层步骤导航 + `Step*.vue` 子路由），「校验」起为 S3 占位置灰（未解锁上锁不可点）。
+- 步骤推进与可达范围由 `frontend/src/constants/project.js` 依据 `project.status` 计算；生成中停留当前步骤。
+- 「生成简报」→ `POST /api/projects/{id}/generate/brief`（S1 起真实 AI，同步调用，前端 loading + 以 project.status 为事实源轮询恢复）。
 
 ---
 

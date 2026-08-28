@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.web.client.ClientHttpRequestFactories;
+import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -34,8 +37,13 @@ public class AiImageClient {
 
     public AiImageClient(AiProperties props) {
         this.props = props;
+        // 读超时消费 AI_TIMEOUT_MS(.env);图片生成较慢,读超时放宽一倍,连接超时仍 10s
+        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
+                .withConnectTimeout(Duration.ofSeconds(10))
+                .withReadTimeout(Duration.ofMillis(props.getTimeoutMs() * 2));
         this.rest = RestClient.builder()
                 .baseUrl(props.getBaseUrl())
+                .requestFactory(ClientHttpRequestFactories.get(settings))
                 .defaultHeader("Authorization", "Bearer " + props.getApiKey())
                 .build();
     }

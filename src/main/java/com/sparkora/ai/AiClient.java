@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.web.client.ClientHttpRequestFactories;
+import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -31,8 +33,13 @@ public class AiClient {
 
     public AiClient(AiProperties props) {
         this.props = props;
+        // 读超时/连接超时消费 AI_TIMEOUT_MS(.env),默认 120s;AI 卡死不再无限占用请求线程
+        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
+                .withConnectTimeout(Duration.ofSeconds(10))
+                .withReadTimeout(Duration.ofMillis(props.getTimeoutMs()));
         this.rest = RestClient.builder()
                 .baseUrl(props.getBaseUrl())
+                .requestFactory(ClientHttpRequestFactories.get(settings))
                 .defaultHeader("Authorization", "Bearer " + props.getApiKey())
                 .defaultHeader("Content-Type", "application/json")
                 .build();
