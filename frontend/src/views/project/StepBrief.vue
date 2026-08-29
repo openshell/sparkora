@@ -82,7 +82,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
@@ -114,8 +114,10 @@ const riskLabel = (l) => ({ high: '高风险', medium: '中风险', low: '低风
 // 重试入口:store 层做并发去重,失败信息落在 store.briefError
 const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 
-// 挂载即确保简报就位(有缓存瞬时直出,无缓存拉取);轮询已收敛到布局层
-onMounted(() => { if (props.project) loadBrief() })
+// 挂载即装载简报;project 详情由布局层异步加载,挂载时可能尚未就位——
+// watch 兜底等它到位后立即补拉(刷新直进页面时必经此路径)
+onMounted(() => store.ensureBrief(route.params.id))
+watch(() => props.project, (p) => { if (p) loadBrief() })
 
 const onGenerateBrief = async () => {
   submitting.value = true

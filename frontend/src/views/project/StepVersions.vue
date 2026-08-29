@@ -196,8 +196,10 @@ const gotoNext = () => {
   ElMessage.info('下一步「事实校验」待后续阶段实现')
 }
 
-// 挂载即确保版本列表与风格库就位(有缓存瞬时直出);轮询已收敛到布局层
-onMounted(() => { if (props.project) { loadVersions(); loadStyles() } })
+// 挂载即装载版本列表与风格库;project 详情由布局层异步加载,挂载时可能尚未就位——
+// watch 兜底等它到位后立即补拉(刷新直进页面时必经此路径)
+onMounted(() => { store.ensureVersions(route.params.id); store.ensureStyles(route.params.id) })
+watch(() => props.project, (p) => { if (p) { loadVersions(); loadStyles() } })
 </script>
 
 <style scoped>
