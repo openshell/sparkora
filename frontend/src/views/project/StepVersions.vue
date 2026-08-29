@@ -100,36 +100,38 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
-import { projectApi, styleApi } from '../../api'
+import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingVersions } from '../../constants/project'
+import { useProjectDetailStore } from '../../store/project-detail'
 import { Loading, WarningFilled } from '@element-plus/icons-vue'
 
-const props = defineProps({ project: Object, reloadProject: Function })
+// 数据全部来自 project-detail store(布局层已负责项目详情与轮询,这里只读 + 触发动作)
+const props = defineProps({ project: Object })
+const store = useProjectDetailStore()
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const renderMd = (src) => { try { return md.render(src || '') } catch { return '' } }
 
 const route = useRoute()
 const router = useRouter()
-const versions = ref([])
-const styleOptions = ref([])
-const versionsError = ref('')    // 版本列表拉取失败信息(网络层);空=加载正常
-const stylesError = ref('')      // 风格库拉取失败信息(网络层)
+const versions = computed(() => props.project ? store.versions(route.params.id) : [])
+const styleOptions = computed(() => props.project ? store.styles(route.params.id) : [])
+const versionsError = computed(() => props.project ? store.versionsError(route.params.id) : '')
+const stylesError = computed(() => props.project ? store.stylesError(route.params.id) : '')
 const selectedStyleIds = ref([])
 const lastStyleIds = ref([])      // 上次实际用于生成的风格 id(供追加面板预选)
 const appending = ref(false)      // 追加生成面板展开
 const compareIds = ref([])        // 对比模式选中的版本(>=2 生效)
 const submitting = ref(false)     // 本轮会话内主动点击的 loading
-const polling = ref(null)
 
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingVersions = computed(() => isGeneratingVersions(props.project?.status))
 
-// 生成进度提示(按风格数粗估:每版约 1 分钟,总时长 = 版数 × 1 分钟)
+// 生成进度提示(按风格数粗估:每版约 1 分钟,总时长 = 版数 × 1 分钟;追加模式同样按本次所选风格数估)
 const estVersions = computed(() => selectedStyleIds.value.length || 1)
 const estMinutes = computed(() => Math.max(1, estVersions.value))
 
@@ -153,25 +155,8 @@ const onChipClick = (v) => {
   else compareIds.value.push(v.id)
 }
 
-const loadVersions = async () => {
-  versionsError.value = ''
-  try {
-    const res = await projectApi.listVersions(route.params.id)
-    versions.value = res.data || []
-  } catch (e) {
-    // 网络层失败可见化(此前静默导致切步骤后内容"消失"且无法恢复)
-    versionsError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
-  }
-}
-const loadStyles = async () => {
-  stylesError.value = ''
-  try {
-    const res = await styleApi.list(true)
-    styleOptions.value = res.data || []
-  } catch (e) {
-    stylesError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
-  }
-}
+const loadVersions = () => store.ensureVersions(route.params.id, { force: true })
+const loadStyles = () => store.ensureStyles(route.params.id, { force: true })
 
 const doGenerate = async (styleIds) => {
   submitting.value = true
@@ -183,10 +168,10 @@ const doGenerate = async (styleIds) => {
       lastStyleIds.value = [...styleIds]
       ElMessage.success(`已生成 ${res.data?.length || 0} 版，默认选中本次第一版，可重新设定`)
     } else ElMessage.error(res.msg || '生成失败')
-    await props.reloadProject()
+    await store.ensureProject(route.params.id, { force: true })
   } catch (e) {
     ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
-    await props.reloadProject()
+    await store.ensureProject(route.params.id, { force: true })
   } finally { submitting.value = false }
 }
 const onGenerate = () => {
@@ -195,7 +180,7 @@ const onGenerate = () => {
 }
 
 // 追加生成:预选上次风格,微调后生成;不清空已有版本
-const openAppend = async () => {
+const openAppend = () => {
   appending.value = true
   selectedStyleIds.value = [...lastStyleIds.value]
 }
@@ -203,7 +188,7 @@ watch(appending, (on) => { if (on) compareIds.value = [] })
 
 const onSetCurrent = async (versionId) => {
   const res = await projectApi.setCurrentVersion(route.params.id, versionId)
-  if (res.code === 0) { await props.reloadProject(); ElMessage.success('已设为当前版本') }
+  if (res.code === 0) { await store.ensureProject(route.params.id, { force: true }); ElMessage.success('已设为当前版本') }
   else ElMessage.error(res.msg || '设置失败')
 }
 const gotoNext = () => {
@@ -211,25 +196,8 @@ const gotoNext = () => {
   ElMessage.info('下一步「事实校验」待后续阶段实现')
 }
 
-// 轮询 project 详情:GENERATING_VERSIONS 翻转后拉取版本列表
-const stopPolling = () => { if (polling.value) { clearInterval(polling.value); polling.value = null } }
-const startPolling = () => {
-  stopPolling()
-  polling.value = setInterval(async () => {
-    try {
-      const before = props.project?.status
-      await props.reloadProject()
-      if (props.project?.status !== before && !isGeneratingVersions(props.project?.status)) {
-        stopPolling()
-        await loadVersions()
-      }
-    } catch (e) { /* 轮询期间网络抖动静默,下一 tick 重试;401 由拦截器处理 */ }
-  }, 5000)
-}
-watch(generatingVersions, (on) => { on ? startPolling() : stopPolling() }, { immediate: true })
-onUnmounted(stopPolling)
-
-onMounted(async () => { await loadVersions(); await loadStyles() })
+// 挂载即确保版本列表与风格库就位(有缓存瞬时直出);轮询已收敛到布局层
+onMounted(() => { if (props.project) { loadVersions(); loadStyles() } })
 </script>
 
 <style scoped>

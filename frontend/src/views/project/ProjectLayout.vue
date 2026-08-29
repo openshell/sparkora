@@ -42,19 +42,25 @@
           </button>
         </nav>
 
-        <!-- 当前步骤内容由子路由渲染 -->
-        <router-view :project="project" :reload-project="loadProject" />
+        <!-- 当前步骤内容由子路由渲染;渲染层异常时以错误卡片替代,不再整片空白 -->
+        <div v-if="captureError" class="state-error">
+          <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
+          <div class="state-title">步骤内容渲染异常</div>
+          <div class="state-msg">{{ captureError }}</div>
+          <el-button type="primary" plain @click="retryRender">重试</el-button>
+        </div>
+        <router-view v-else :project="project" />
       </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, watch, onErrorCaptured, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { projectApi } from '../../api'
 import TopBar from '../../layouts/TopBar.vue'
-import { statusLabel, statusTagType, activeStepOf, maxReachableStepOf } from '../../constants/project'
+import { useProjectDetailStore } from '../../store/project-detail'
+import { statusLabel, statusTagType, activeStepOf, maxReachableStepOf, isGenerating } from '../../constants/project'
 import { Check, Lock, WarningFilled } from '@element-plus/icons-vue'
 
 const STEPS = [
@@ -68,8 +74,11 @@ const STEPS = [
 
 const route = useRoute()
 const router = useRouter()
-const project = ref(null)
-const loadError = ref('')           // 项目详情拉取失败信息(网络层)
+// 数据域唯一数据源:project/brief/versions/styles 全部从 store 读写
+const store = useProjectDetailStore()
+const project = computed(() => store.project(route.params.id))
+const loadError = computed(() => store.projectError(route.params.id))
+const loadingProject = ref(false)   // 首次装载中(骨架/禁用入口用)
 const loadFailedLabel = '加载失败'  // 失败时标题占位
 
 // 步骤推进/可达范围统一由 constants/project.js 计算(生成中停在当前步骤)
@@ -90,23 +99,37 @@ const stepClass = (i) => ({
 })
 
 const loadProject = async () => {
-  loadError.value = ''
-  try {
-    const res = await projectApi.get(route.params.id)
-    project.value = res.data
-  } catch (e) {
-    // 网络层失败可见化:project 保持 null 会让子组件退化、步骤全锁,必须给出重试入口
-    loadError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
-  }
+  loadingProject.value = true
+  await store.ensureProject(route.params.id, { force: true })
+  loadingProject.value = false
 }
 
+// 生成中状态轮询收敛到 store(唯一事实源驱动)。store 四层共享的仅 store 四层共用,由状态翻转自动停止
+watch(() => [route.params.id, project.value?.status], ([id, status]) => {
+  if (!id || !isGenerating(status)) { store.stopPolling(); return }
+  store.startPolling(id, { intervalMs: status === 'GENERATING_BRIEF' ? 4000 : 5000 })
+}, { immediate: true })
+
+// 服务端已有生成进度的项目留在本页时也保持刷新,切换子路由不重复装载
 const onStepClick = (i) => {
   if (i > maxReachable.value) return
   const step = STEPS[i]
   if (step.route) router.push({ name: `project-${step.key}`, params: { id: route.params.id } })
 }
 
+// 渲染层兜底:子树(步骤子路由)抛错时显示错误卡片而非整片空白,提供重试(重建子组件)
+const captureError = ref('')
+onErrorCaptured((err) => {
+  captureError.value = err?.message || String(err)
+  console.error('[sparkora] 项目详情子树异常:', err)
+  return false   // 阻止继续向全局 errorHandler 传播,页面保持框架可见
+})
+const retryRender = () => { captureError.value = '' }
+
 onMounted(loadProject)
+
+// 离开项目详情(换项目或去其他页面):停掉轮询;换项目由新路由重新装载
+onUnmounted(() => store.stopPolling())
 </script>
 
 <style scoped>

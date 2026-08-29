@@ -7,19 +7,17 @@
       </span>
     </template>
 
-    <el-alert v-if="project && project.lastBriefError && !generatingBrief" type="error" :closable="false" show-icon
-              :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
-
-    <!-- 简报加载失败(网络抖动/后端重启窗口):可见化 + 重试,不再静默退化成引导语 -->
-    <div v-else-if="briefError" class="state-error">
+    <!-- 单一互斥状态机:错误 > 生成中 > 有简报 > 引导语,同一时刻只渲染一个主区 -->
+    <!-- ① 简报加载失败(网络抖动/后端重启窗口):可见化 + 重试 -->
+    <div v-if="briefError && !generatingBrief" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
       <div class="state-title">简报加载失败</div>
       <div class="state-msg">{{ briefError }}</div>
       <el-button type="primary" plain @click="loadBrief">重试</el-button>
     </div>
 
-    <!-- 生成中:以 project.status 为唯一事实源(刷新/切页返回也能恢复),轮询直至状态翻转 -->
-    <div v-if="generatingBrief" class="generating">
+    <!-- ② 生成中:以 project.status 为唯一事实源(刷新/切页返回也能恢复),轮询直至状态翻转 -->
+    <div v-else-if="generatingBrief" class="generating">
       <el-skeleton :rows="6" animated />
       <p class="gen-tip">
         <el-icon class="spin"><Loading /></el-icon>
@@ -27,14 +25,20 @@
       </p>
     </div>
 
+    <!-- ③ 无简报:引导语(含上次失败原因,若后端记录过) -->
     <div v-else-if="!brief" class="muted intro">
+      <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
+                :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
       <p>由 AI 生成标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入多版本生成。</p>
       <el-button type="primary" :loading="submitting" @click="onGenerateBrief">
         <el-icon class="btn-icon"><MagicStick /></el-icon>生成简报
       </el-button>
     </div>
 
+    <!-- ④ 简报正文(有数据必渲染;上次失败提示以轻量条幅叠加在内容上方) -->
     <div v-else class="brief">
+      <el-alert v-if="project && project.lastBriefError" type="warning" :closable="false" show-icon
+                :title="`上次重新生成失败，以下为当前简报：${project.lastBriefError}`" class="brief-alert" />
       <section class="brief-sec">
         <div class="brief-label"><el-icon><CollectionTag /></el-icon>标题候选</div>
         <div class="tag-row">
@@ -78,21 +82,23 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingBrief } from '../../constants/project'
+import { useProjectDetailStore, parseBrief } from '../../store/project-detail'
 import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled } from '@element-plus/icons-vue'
 
-const props = defineProps({ project: Object, reloadProject: Function })
+// 数据全部来自 project-detail store(布局层已负责装载与轮询,这里只读 + 触发动作)
+const props = defineProps({ project: Object })
+const store = useProjectDetailStore()
 
 const route = useRoute()
 const router = useRouter()
-const brief = ref(null)
-const briefError = ref('')      // 简报拉取失败信息(网络层);空=加载正常
+const brief = computed(() => props.project ? store.brief(route.params.id) : null)
+const briefError = computed(() => props.project ? store.briefError(route.params.id) : '')
 const submitting = ref(false)   // 本轮会话内主动点击的 loading(按钮态)
-const polling = ref(null)       // 生成中轮询定时器
 
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingBrief = computed(() => isGeneratingBrief(props.project?.status))
@@ -105,52 +111,28 @@ const gotoVersions = () => router.push({ name: 'project-versions', params: { id:
 const riskType = (l) => ({ high: 'danger', medium: 'warning', low: 'info' }[l] || 'info')
 const riskLabel = (l) => ({ high: '高风险', medium: '中风险', low: '低风险' }[l] || l)
 
-const parseBrief = (b) => {
-  if (!b) return null
-  const j = (s) => { try { return JSON.parse(s) } catch { return [] } }
-  return { ...b, titleCandidates: j(b.titleCandidates), coreViewpoints: j(b.coreViewpoints),
-    outline: j(b.outline), factRisks: j(b.factRisks) }
-}
-const loadBrief = async () => {
-  briefError.value = ''
-  try {
-    const res = await projectApi.getBrief(route.params.id)
-    // 无 brief 时后端返回 HTTP 200 + data:null(正常路径,不抛错),展示引导语属预期
-    brief.value = parseBrief(res.data)
-  } catch (e) {
-    // 只有网络层失败才会到这:可见化并提供重试,不再静默退化成引导语
-    briefError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
-  }
-}
+// 重试入口:store 层做并发去重,失败信息落在 store.briefError
+const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 
-// 轮询 project 详情:GENERATING_BRIEF 翻转后(READY/DRAFT=失败回退)拉取简报
-const stopPolling = () => { if (polling.value) { clearInterval(polling.value); polling.value = null } }
-const startPolling = () => {
-  stopPolling()
-  polling.value = setInterval(async () => {
-    try {
-      const before = props.project?.status
-      await props.reloadProject()
-      if (props.project?.status !== before && !isGeneratingBrief(props.project?.status)) {
-        stopPolling()
-        await loadBrief()
-      }
-    } catch (e) { /* 轮询期间网络抖动静默,下一 tick 重试;401 由拦截器处理 */ }
-  }, 4000)
-}
-watch(generatingBrief, (on) => { on ? startPolling() : stopPolling() }, { immediate: true })
-onUnmounted(stopPolling)
-onMounted(loadBrief)
+// 挂载即确保简报就位(有缓存瞬时直出,无缓存拉取);轮询已收敛到布局层
+onMounted(() => { if (props.project) loadBrief() })
 
 const onGenerateBrief = async () => {
   submitting.value = true
   try {
     const res = await projectApi.generateBrief(route.params.id)
-    if (res.code === 0) { brief.value = parseBrief(res.data); ElMessage.success('简报已生成') }
-    else ElMessage.error(res.msg || '生成失败')
-    await props.reloadProject()
+    if (res.code === 0) {
+      // 同步接口直接返回刚生成的简报,写入 store 而不再发一次请求
+      store._entryOf(route.params.id).brief = parseBrief(res.data)
+      ElMessage.success('简报已生成')
+    } else {
+      ElMessage.error(res.msg || '生成失败')
+    }
+    // 成功/失败都要让布局层拿到最新 status(生成中/回退),供轮询与按钮态使用
+    await store.ensureProject(route.params.id, { force: true })
   } catch (e) {
     // 失败已由后端回写 lastBriefError 并回退状态,提示交给 alert 与拦截器
+    await store.ensureProject(route.params.id, { force: true })
   } finally { submitting.value = false }
 }
 </script>
