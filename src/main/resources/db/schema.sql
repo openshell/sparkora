@@ -88,6 +88,29 @@ CREATE TABLE IF NOT EXISTS sparkora_style_profile (
     created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- S3b 增量迁移：版本表挂封面与正文插图（预览/发布按「当前版本」取图，版本间各自独立）
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS cover_image_id BIGINT;
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS body_image_ids VARCHAR(1000);
+
+-- 配图资产表（S3b：图库上传 / 文生图 / 图生图 三来源统一入库；AI 生成图一律转存本地）
+CREATE TABLE IF NOT EXISTS sparkora_image_asset (
+    id             BIGSERIAL PRIMARY KEY,
+    project_id     BIGINT,                         -- 关联项目（可空 = 全局图库；MVP 单 workspace 不单设 workspace_id）
+    file_name      VARCHAR(255) NOT NULL,         -- 原始文件名（生成图为 prompt 摘要命名）
+    storage_path   VARCHAR(500) NOT NULL,         -- 本地相对路径（/images/** 静态映射根下，如 2026/08/uuid.png）
+    source         VARCHAR(20)  NOT NULL,         -- upload / ai-text2img / ai-img2img
+    prompt_text    TEXT,                          -- 生成 prompt（AI 来源时）
+    ref_image_id   BIGINT,                        -- 图生图参考图 id（自引用，可空）
+    width          INTEGER,                       -- px，取不到时为空
+    height         INTEGER,
+    created_by     VARCHAR(64)  NOT NULL,
+    created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_image_asset_project ON sparkora_image_asset(project_id);
+
+-- S3b 增量:全库图支持(project_id 释放为可空)
+ALTER TABLE sparkora_image_asset ALTER COLUMN project_id DROP NOT NULL;
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'

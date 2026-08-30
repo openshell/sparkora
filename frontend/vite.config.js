@@ -61,6 +61,11 @@ export default defineConfig({
         // 端口须与 .env 的 SERVER_PORT 保持一致
         target: 'http://localhost:5661',
         changeOrigin: true
+      },
+      // S3b:配图静态资源(后端 /images/** 映射 IMAGE_STORAGE_DIR)
+      '/images': {
+        target: 'http://localhost:5661',
+        changeOrigin: true
       }
     }
   }

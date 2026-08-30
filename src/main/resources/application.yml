@@ -9,6 +9,11 @@ spring:
     username: ${SPARKORA_DB_USER:sparkora}
     password: ${SPARKORA_DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
+  servlet:
+    multipart:
+      # S3b:配图上传放开 Spring 默认 1MB 限制(对齐 IMAGE_MAX_UPLOAD_MB,略放宽头开销)
+      max-file-size: ${IMAGE_MAX_UPLOAD_MB:10}MB
+      max-request-size: 15MB
   sql:
     init:
       mode: always
@@ -51,6 +56,9 @@ sparkora:
     bin: ${WENYAN_MCP_BIN:wenyan-mcp}
     server-url: ${WENYAN_MCP_SERVER_URL:}
     server-api-key: ${WENYAN_MCP_SERVER_API_KEY:}
+  image:
+    storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S3b:配图本地存储(/images/** 静态映射)
+    max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}
 
 logging:
   level:

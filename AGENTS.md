@@ -9,7 +9,7 @@
 - **后端** `src/` — Spring Boot 3.3.4(Java 21)+ MyBatis-Plus 3.5.7 + Spring Security(JWT, jjwt 0.12.6)+ PostgreSQL。入口 `src/main/java/com/sparkora/SparkoraApplication.java`。包结构 `com.sparkora`,Maven 构建(`pom.xml`)。
 - **前端** `frontend/` — Vue 3 + Vite 5 + Element Plus 2.8 + Pinia + vue-router,`unplugin-auto-import`/`unplugin-vue-components` 自动引入 Element Plus 组件。移动端优先响应式,不引 Vant 等额外移动端框架。
 - **规格文档** `docs/s0-spec.md` 是唯一权威规格(路由/权限/字段级/接口契约/状态机);`prototypes/` 存 HTML 原型。
-- 当前阶段:已完成 S0~S2a(登录、项目 CRUD、简报生成、多版本正文、风格库)。
+- 当前阶段:已完成 S0~S2a(登录、项目 CRUD、简报生成、多版本正文、风格库)+ S3b 配图模块(三来源:上传/文生图/图生图,流程改五步:简报→版本→配图→预览→发布,「校验」步骤 2026-08-28 决策取消;状态机至 IMAGES_READY)。
 
 ## Commands
 
@@ -44,6 +44,7 @@ npm run build                     # 产线构建(已验证)
 - 实体审计字段(created_by / created_at / updated_at / deleted)由控制器手工赋值,沿用现有写法。
 - 前端页面用 Element Plus(`el-form` + rules 校验,移动端单列、触控目标 ≥44px);图标用 `@element-plus/icons-vue`;不新增重型 UI 框架。
 - 表结构变更:改 `schema.sql`(幂等)+ 对应 entity/mapper + `docs/s0-spec.md` 字段级表格,三处同步。
+- 配图存储 `data/`(已 gitignore),`/images/**` 由 `WebConfig` 静态映射 `IMAGE_STORAGE_DIR`;AI 生成图必须转存本地不留临时 URL。
 
 ## Notes
 

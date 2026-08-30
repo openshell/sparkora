@@ -6,7 +6,11 @@ import com.sparkora.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.web.client.ClientHttpRequestFactories;
 import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
@@ -48,7 +52,7 @@ public class AiImageClient {
                 .build();
     }
 
-    /** 文生图：按序轮询候选模型，任一成功即返回第一个 URL。 */
+    /** 文生图：按序轮询候选模型，任一成功即返回 URL（http/https）或 data URL（base64）。 */
     public String generateText2Image(String prompt, String size) {
         List<String> models = props.imageModelList();
         if (models.isEmpty()) throw new AiException("AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置", null);
@@ -60,14 +64,9 @@ public class AiImageClient {
                         "prompt", prompt,
                         "n", 1,
                         "size", size == null ? "1024x1024" : size);
-                String resp = rest.post()
-                        .uri("/v1/images/generations")
-                        .header("Content-Type", "application/json")
-                        .body(body)
-                        .retrieve()
-                        .body(String.class);
+                String resp = postForJsonText("/v1/images/generations", body);
                 String url = parseFirstUrl(resp);
-                log.info("文生图成功 model={} url={}", model, url);
+                log.info("文生图成功 model={} url={}", model, shorten(url));
                 return url;
             } catch (Exception e) {
                 log.warn("文生图模型 {} 失败，尝试下一个: {}", model, e.getMessage());
@@ -78,11 +77,66 @@ public class AiImageClient {
     }
 
     /**
-     * 图生图：按序轮询候选模型。S1 占位实现（图生图需 multipart 上传参考图，留 S3b 补全 multipart 部分）。
-     * 此方法保留轮询骨架，待 S3b 接入真实 /v1/images/edits。
+     * 图生图：multipart POST /v1/images/edits，按序轮询候选模型（S3b 实现）。
+     * @param refImageBytes 参考图字节
+     * @param refFileName   参考图文件名（供 multipart 的 filename；png/jpg/webp）
      */
     public String generateImage2Image(String prompt, byte[] refImageBytes, String refFileName, String size) {
-        throw new AiException("图生图接入待 S3b 实现（轮询骨架已就绪）", null);
+        List<String> models = props.imageModelList();
+        if (models.isEmpty()) throw new AiException("AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置", null);
+        if (refImageBytes == null || refImageBytes.length == 0)
+            throw new AiException("图生图参考图为空", null);
+        StringBuilder errs = new StringBuilder();
+        for (String model : models) {
+            try {
+                MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+                body.add("model", model);
+                body.add("prompt", prompt);
+                if (size != null && !size.isBlank()) body.add("size", size);
+                body.add("n", 1);
+                body.add("image", new ByteArrayResource(refImageBytes) {
+                    @Override public String getFilename() {
+                        return refFileName == null || refFileName.isBlank() ? "reference.png" : refFileName;
+                    }
+                });
+                String resp = postMultipartForJsonText("/v1/images/edits", body);
+                String url = parseFirstUrl(resp);
+                log.info("图生图成功 model={} refSize={}B url={}", model, refImageBytes.length, shorten(url));
+                return url;
+            } catch (Exception e) {
+                log.warn("图生图模型 {} 失败，尝试下一个: {}", model, e.getMessage());
+                errs.append("[").append(model).append("] ").append(e.getMessage()).append("; ");
+            }
+        }
+        throw new AiException("所有图片模型均失败(图生图): " + errs + "。若提示接口不存在，"
+                + "说明该模型不支持 /v1/images/edits，请改用文生图或更换 AI_IMAGE_MODELS。", null);
+    }
+
+    /**
+     * POST JSON 并以 byte[] 收响应再转字符串。
+     * 不用 body(String.class)的原因:个别网关偶发给 JSON 响应标 application/octet-stream,
+     * String 转换器拒绝该 Content-Type 会抛 "Error while extracting response" 掩盖真实结果;
+     * byte[] 收取与 Content-Type 无关,响应文本原样交由 parseFirstUrl 解析。
+     */
+    private String postForJsonText(String path, Object body) {
+        byte[] bytes = rest.post()
+                .uri(path)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .retrieve()
+                .body(byte[].class);
+        return bytes == null ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** multipart 版本,同上以 byte[] 收取(见 postForJsonText 注释)。 */
+    private String postMultipartForJsonText(String path, MultiValueMap<String, Object> multipart) {
+        byte[] bytes = rest.post()
+                .uri(path)
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(multipart)
+                .retrieve()
+                .body(byte[].class);
+        return bytes == null ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /** 从 images 响应取第一个 data[].url（或 b64_json，若模型返回 base64）。 */
@@ -103,5 +157,11 @@ public class AiImageClient {
         } catch (Exception e) {
             throw new AiException("解析图片返回失败: " + resp, e);
         }
+    }
+
+    /** 日志里长 URL/dataURL 截断，避免刷屏。 */
+    private static String shorten(String s) {
+        if (s == null) return "null";
+        return s.length() > 80 ? s.substring(0, 80) + "…(" + s.length() + "B)" : s;
     }
 }

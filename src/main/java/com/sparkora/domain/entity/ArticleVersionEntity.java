@@ -25,5 +25,7 @@ public class ArticleVersionEntity {
     private String aiModel;
     private Integer tokenUsage;
     private Integer wordCount;
+    private Long coverImageId;      // S3b：该版本封面（sparkora_image_asset.id，可空）
+    private String bodyImageIds;    // S3b：正文插图 id 列表（逗号分隔，有序）
     private LocalDateTime createdAt;
 }

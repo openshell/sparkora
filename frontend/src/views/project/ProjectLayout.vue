@@ -66,8 +66,7 @@ import { Check, Lock, WarningFilled } from '@element-plus/icons-vue'
 const STEPS = [
   { key: 'brief', title: '简报', route: 'brief' },
   { key: 'versions', title: '版本', route: 'versions' },
-  { key: 'check', title: '校验' },
-  { key: 'images', title: '配图' },
+  { key: 'images', title: '配图', route: 'images' },
   { key: 'preview', title: '预览' },
   { key: 'publish', title: '发布' }
 ]
@@ -89,6 +88,7 @@ const maxReachable = computed(() => maxReachableStepOf(project.value?.status))
 const routeStepIndex = computed(() => {
   const name = route.name
   if (name === 'project-versions') return 1
+  if (name === 'project-images') return 2
   return 0
 })
 

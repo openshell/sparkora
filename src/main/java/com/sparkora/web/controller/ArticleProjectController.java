@@ -31,11 +31,14 @@ public class ArticleProjectController {
     private final ArticleProjectMapper mapper;
     private final BriefService briefService;
     private final VersionService versionService;
+    private final com.sparkora.service.ImageService imageService;
 
-    public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService) {
+    public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
+                                    com.sparkora.service.ImageService imageService) {
         this.mapper = mapper;
         this.briefService = briefService;
         this.versionService = versionService;
+        this.imageService = imageService;
     }
 
     @GetMapping
@@ -177,6 +180,60 @@ public class ArticleProjectController {
             return R.ok();
         } catch (Exception ex) {
             return R.fail(400, ex.getMessage());
+        }
+    }
+
+    // ==================== 配图（S3b，字段级契约见 spec §10）====================
+
+    /** 配图快照：项目全部图 + 当前版本封面/插图（三角色可读）。 */
+    @GetMapping("/{id}/images")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<java.util.Map<String, Object>> projectImages(@PathVariable Long id) {
+        return R.ok(imageService.projectImages(id));
+    }
+
+    /** 选封面（幂等）。 */
+    @PostMapping("/{id}/images/{imageId}/cover")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> setCover(@PathVariable Long id, @PathVariable Long imageId) {
+        try {
+            imageService.setCover(id, imageId);
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
+        }
+    }
+
+    /** 增/删正文插图（?action=add|remove，幂等）。 */
+    @PostMapping("/{id}/images/{imageId}/body")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> modifyBodyImage(@PathVariable Long id, @PathVariable Long imageId,
+                                   @RequestParam(defaultValue = "add") String action) {
+        try {
+            imageService.modifyBodyImage(id, imageId, action);
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
+        }
+    }
+
+    /** 完成配图：VERSIONS_READY→IMAGES_READY（幂等）。 */
+    @PostMapping("/{id}/complete-images")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> completeImages(@PathVariable Long id) {
+        try {
+            imageService.completeImages(id);
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (IllegalStateException ex) {
+            return R.fail(409, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
         }
     }
 }

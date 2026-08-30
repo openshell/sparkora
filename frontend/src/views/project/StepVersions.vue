@@ -91,7 +91,7 @@
         <div class="next-row">
           <el-button :loading="submitting" @click="openAppend">再生成其他风格</el-button>
           <el-button type="success" :disabled="!project?.currentVersionId" @click="gotoNext">
-            选定当前版本 · 进入下一步（事实校验）→
+            选定当前版本 · 进入下一步（配图）→
           </el-button>
         </div>
       </div>
@@ -192,8 +192,8 @@ const onSetCurrent = async (versionId) => {
   else ElMessage.error(res.msg || '设置失败')
 }
 const gotoNext = () => {
-  // S3 事实校验待后续阶段;步骤导航也已置灰,这里给明确提示
-  ElMessage.info('下一步「事实校验」待后续阶段实现')
+  // 配图为下一步(五步流程);路由守卫层面由步骤导航控制可达性
+  router.push({ name: 'project-images', params: { id: route.params.id } })
 }
 
 // 挂载即装载版本列表与风格库;project 详情由布局层异步加载,挂载时可能尚未就位——
