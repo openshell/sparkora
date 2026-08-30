@@ -64,6 +64,7 @@ public class ImageService {
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
     private final AiImageClient aiImageClient;
+    private final QiniuService qiniuService;
 
     private final java.net.http.HttpClient transferClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -72,12 +73,13 @@ public class ImageService {
 
     public ImageService(ImageProperties imageProps, ImageAssetMapper imageMapper,
                         ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
-                        AiImageClient aiImageClient) {
+                        AiImageClient aiImageClient, QiniuService qiniuService) {
         this.imageProps = imageProps;
         this.imageMapper = imageMapper;
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.aiImageClient = aiImageClient;
+        this.qiniuService = qiniuService;
     }
 
     // ==================== 上传 ====================
@@ -135,7 +137,7 @@ public class ImageService {
         if (refImageId == null) throw new IllegalArgumentException("请选择参考图");
         ImageAssetEntity ref = imageMapper.selectById(refImageId);
         if (ref == null) throw new IllegalArgumentException("参考图不存在");
-        byte[] refBytes = readLocal(ref.getStoragePath());
+        byte[] refBytes = readLocalBytes(ref.getStoragePath());
         String url = aiImageClient.generateImage2Image(prompt, refBytes, fileBaseName(ref.getStoragePath()), normalizeSize(size));
         return saveGenerated(projectId, url, prompt, refImageId, "ai-img2img", operator);
     }
@@ -191,6 +193,8 @@ public class ImageService {
             throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应配图步骤移除后再删除");
         }
         imageMapper.deleteById(id);
+        // 同步删七牛对象(非阻塞,失败仅告警;qiniu_key 为空=未上床,直接跳过)
+        qiniuService.deleteObject(img.getQiniuKey());
         try {
             java.nio.file.Files.deleteIfExists(imageProps.storageRoot().resolve(img.getStoragePath()));
         } catch (IOException e) {
@@ -355,7 +359,7 @@ public class ImageService {
         }
     }
 
-    private byte[] readLocal(String storagePath) {
+    byte[] readLocalBytes(String storagePath) {
         // 越界断言(纵深防御):storagePath 虽全由服务端生成,仍防 resolve 逃出根目录
         Path target = imageProps.storageRoot().resolve(storagePath).normalize();
         if (!target.startsWith(imageProps.storageRoot()))

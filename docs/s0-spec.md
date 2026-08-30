@@ -303,3 +303,54 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 - **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、按项目过滤、删除（ADMIN/EDITOR）。素材管理归图库，不在文章流程内。
 - **配图步骤（项目向导 Step3）**：只做「从图库选用（设封面/加插图）+ AI 文生图/图生图补充生成」。图不够时引导去图库页。
+
+---
+
+## 11. 排版预览模块（S4，正式规格）
+
+> 2026-08-30 定稿，方案 A：预览与发布同核算子和图片通道，preview HTML = 发布排版真值。
+
+### 融合架构（wenyan 双通道）
+
+| 通道 | 实现 | 用途 |
+|---|---|---|
+| 预览 | 本机 `wenyan CLI`（`@wenyan-md/cli`，`WENYAN_CLI_PATH`）`render` 命令 | 纯排版输出 HTML，不碰微信 |
+| 发布(S5) | 远程 `wenyan-server`（`WENYAN_MCP_SERVER_URL`，微信凭据配在 server 端） | `POST /upload`(+`x-api-key`)→fileId;`POST /publish`(fileId+.json)→`{media_id}` |
+
+- 图片正文/封面**全部转七牛公网 URL**（不再走 `asset://fileId` 通道，fileId 10 分钟 TTL 复杂度归零）。
+- 配图顺序：预览/发布组装时对 `qiniu_key IS NULL` 的相关图调 `QiniuService.ensureUploaded(imageId)`（懒转存），key=`sparkora/{imageId}.{ext}`（服务端生成，覆盖上传天然幂等）；`sparkora_image_asset.qiniu_key` 只存 key，URL 由 `QINIU_PUBLIC_DOMAIN` 实时拼。
+- 删除图：`ImageService.delete` 落库删除 + 本地文件 + 七牛对象（非阻塞，失败仅 warn）。
+- 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名白名单防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
+
+### 数据模型增量（幂等 ALTER）
+
+| 表.列 | 类型 | 说明 |
+|---|---|---|
+| sparkora_image_asset.qiniu_key | VARCHAR(300) | 七牛 key（null=未转存） |
+| sparkora_article_project.publish_media_id | VARCHAR(128) | S5 公众号草稿箱 media_id |
+| sparkora_article_project.publish_theme | VARCHAR(64) | 发布所用主题 |
+| sparkora_article_project.published_at | TIMESTAMP | 发布时间 |
+| sparkora_article_project.last_publish_error | VARCHAR(1000) | 最近一次发布失败原因 |
+
+### 接口契约
+
+| 方法 | 路径 | 权限 | 请求 | 响应 |
+|---|---|---|---|---|
+| GET | `/api/images/preview-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote}`（读 `.env` WENYAN_* 配置，前端下拉同源） |
+| POST | `/api/projects/{id}/preview` | 三角色 | `?theme=&highlight=&macStyle=&footnote=`（query） | `{html, theme, highlight, macStyle, footnote, degraded, degradedReason?}`；业务失败 HTTP 200 + `R.fail`，未知主题 `R.fail(400)`（白名单防 CLI 参数注入）；前置未就绪 `R.fail(400)` |
+
+- **依赖顺序**：项目状态 IMAGES_READY 才可预览（`POST /preview` 校验，否则 `R.fail(400)`）；
+- 七牛配置开关 `QINIU_ENABLED`（AK/SK 兼容旧裸名 `${AK}` `${SK}` 回退）：关闭时 `preview` 直接 `R.fail("图床未配置…")`；已配置但上传失败 `R.fail(500,"图床上传失败: …")`。
+- 状态推进：预览不改变项目状态。
+
+### 前端
+
+- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤四）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；degraded=true 顶部黄条；移动端适配。
+- 五步流程 `maxReachableStepOf` 扩到 `index=3`（预览），发布步解锁待 S5。
+- 完成配图按钮文案改为「完成配图，去预览」并直接跳预览页（Step3 → Step4 顺滑衔接）。
+
+### 已知限制与风险（登记)
+
+- `pic.caiqz.cn` 仅有 http（https 证书未配）：预览从 localhost 拉不成问题；公众号内显示的是微信端上传后的 URL，不受影响。后续可加 https。
+- wenyan-server 2.0.11 鉴权中间件对错误 key 挂起（不返回 401）：客户端超时不宜过长，且建议 server 升级。
+- theme 清单仅能在 server 端注册(wenyan theme 命令)，server 2.0.11 未提供 HTTP 查询，清单以 `.env` WENYAN_THEME_NAMES 为准。

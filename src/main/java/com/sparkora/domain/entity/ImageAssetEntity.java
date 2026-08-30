@@ -25,6 +25,7 @@ public class ImageAssetEntity {
     private Long refImageId;        // 图生图参考图 id（自引用，可空）
     private Integer width;          // px，取不到时为空
     private Integer height;
+    private String qiniuKey;        // S4:七牛图床 key(sparkora/{imageId}.{ext};懒转存,空=未上床)
     private String createdBy;
     private LocalDateTime createdAt;
 }

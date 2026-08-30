@@ -57,5 +57,9 @@ export const imageApi = {
   // 完成配图：VERSIONS_READY→IMAGES_READY（幂等）
   completeImages: (id) => http.post(`/projects/${id}/complete-images`),
   // 删除图库图（ADMIN/EDITOR；被引用时后端 400 并提示引用方）
-  remove: (imageId) => http.delete(`/images/${imageId}`)
+  remove: (imageId) => http.delete(`/images/${imageId}`),
+  // S4 预览:wenyan 同核渲染(方案 A);params={theme?, highlight?, macStyle?, footnote?}
+  preview: (id, params) => http.post(`/projects/${id}/preview`, null, { params }),
+  // 预览参数清单(主题/高亮/开关默认值,读后端 .env 配置)
+  previewOptions: () => http.get('/images/preview-options')
 }

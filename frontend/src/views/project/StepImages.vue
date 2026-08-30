@@ -126,9 +126,9 @@
 
         <!-- 完成配图推进状态 -->
         <div class="next-row">
-          <span class="muted-small">需先选定封面或至少一张插图；完成后状态推进为「配图完成」（预览/发布 S4/S5 解锁）</span>
+          <span class="muted-small">需先选定封面或至少一张插图；完成后进入「预览」步骤(S4)</span>
           <el-button type="success" :loading="completing" :disabled="!canComplete" @click="onComplete">
-            {{ project?.status === 'IMAGES_READY' ? '已完成配图 ✓' : '完成配图' }}
+            {{ project?.status === 'IMAGES_READY' ? '已完成配图 ✓' : '完成配图，去预览' }}
           </el-button>
         </div>
       </template>
@@ -151,7 +151,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { imageApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { useProjectDetailStore } from '../../store/project-detail'
@@ -164,6 +164,7 @@ import { WarningFilled } from '@element-plus/icons-vue'
  */
 const props = defineProps({ project: Object })
 const route = useRoute()
+const router = useRouter()
 const store = useProjectDetailStore()
 const projectId = computed(() => route.params.id)
 
@@ -268,9 +269,11 @@ const onComplete = async () => {
   try {
     const res = await imageApi.completeImages(projectId.value)
     if (res.code === 0) {
-      ElMessage.success('配图完成，进入「配图完成」状态')
+      ElMessage.success('配图完成，进入「预览」步骤')
       await store.ensureProject(projectId.value, { force: true })
       await loadSnapshot()
+      // S4:配图完成直接跳预览
+      router.push({ name: 'project-preview', params: { id: projectId.value } })
     } else ElMessage.error(res.msg || '操作失败')
   } catch (e) {
     ElMessage.error('操作失败：' + (e.response?.data?.msg || e.message || '网络异常'))

@@ -27,6 +27,10 @@ public class ArticleProjectEntity {
     private Long currentVersionId;      // S1b：指向选定版本（sparkora_article_version.id）
     private String lastVersionError;    // S1b：最近一次版本生成失败原因（成功后清空）
     private String remark;
+    private String publishMediaId;      // S5:公众号草稿箱 media_id(发布成功后落库)
+    private String publishTheme;        // S5/S4:发布所用排版主题
+    private LocalDateTime publishedAt;  // S5:发布时间
+    private String lastPublishError;    // S5:最近一次发布失败原因(成功后清空)
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

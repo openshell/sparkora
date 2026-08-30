@@ -18,8 +18,8 @@ export const statusTagType = (s) => statusMeta(s).tagType
 export const activeStepOf = (s) => statusMeta(s).step
 
 // 当前可达的最远步骤(决定步骤导航可点范围):
-// 「预览」「发布」属 S4/S5 阶段,未实现前最远到「配图」(index 2)
-export const maxReachableStepOf = (s) => Math.min(activeStepOf(s), 2)
+// 「发布」属 S5 阶段,未实现前最远到「预览」(index 3)
+export const maxReachableStepOf = (s) => Math.min(activeStepOf(s), 3)
 
 // 生成中判定:前端恢复「进行中」视图、禁用重复提交的唯一依据
 export const isGeneratingBrief = (s) => s === 'GENERATING_BRIEF'

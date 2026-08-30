@@ -32,13 +32,16 @@ public class ArticleProjectController {
     private final BriefService briefService;
     private final VersionService versionService;
     private final com.sparkora.service.ImageService imageService;
+    private final com.sparkora.service.PreviewService previewService;
 
     public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
-                                    com.sparkora.service.ImageService imageService) {
+                                    com.sparkora.service.ImageService imageService,
+                                    com.sparkora.service.PreviewService previewService) {
         this.mapper = mapper;
         this.briefService = briefService;
         this.versionService = versionService;
         this.imageService = imageService;
+        this.previewService = previewService;
     }
 
     @GetMapping
@@ -234,6 +237,27 @@ public class ArticleProjectController {
             return R.fail(409, ex.getMessage());
         } catch (Exception ex) {
             return R.fail(500, ex.getMessage());
+        }
+    }
+
+    // ==================== 预览（S4，方案 A:wenyan 同核渲染）====================
+
+    /** 预览(三角色;主题等白名单校验在 service)。显式 @PreAuthorize 与既有矩阵对齐。 */
+    @PostMapping("/{id}/preview")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<java.util.Map<String, Object>> preview(@PathVariable Long id,
+                                                    @RequestParam(required = false) String theme,
+                                                    @RequestParam(required = false) String highlight,
+                                                    @RequestParam(required = false) Boolean macStyle,
+                                                    @RequestParam(required = false) Boolean footnote) {
+        try {
+            return R.ok(previewService.preview(id, theme, highlight, macStyle, footnote));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (IllegalStateException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "预览失败: " + ex.getMessage());
         }
     }
 }

@@ -56,9 +56,25 @@ sparkora:
     bin: ${WENYAN_MCP_BIN:wenyan-mcp}
     server-url: ${WENYAN_MCP_SERVER_URL:}
     server-api-key: ${WENYAN_MCP_SERVER_API_KEY:}
+    # S4 方案 A:预览用本机 CLI render(与 server 同核),发布(S5)走远程 server
+    cli-path: ${WENYAN_CLI_PATH:wenyan}
+    default-theme: ${WENYAN_DEFAULT_THEME:default}
+    theme-names: ${WENYAN_THEME_NAMES:default,lapis,orangeheart,phycat}
+    highlight: ${WENYAN_HIGHLIGHT:solarized-light}
+    mac-style: ${WENYAN_MAC_STYLE:true}
+    footnote: ${WENYAN_FOOTNOTE:true}
+    render-timeout-ms: ${WENYAN_RENDER_TIMEOUT_MS:30000}
   image:
     storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S3b:配图本地存储(/images/** 静态映射)
     max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}
+  qiniu:
+    enabled: ${QINIU_ENABLED:true}
+    access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK
+    secret-key: ${QINIU_SECRET_KEY:${SK:}}
+    bucket: ${QINIU_BUCKET:caiqz}             # 唯一绑定外链域名的空间
+    upload-host: ${QINIU_UPLOAD_HOST:http://up-z2.qiniup.com}   # z2 区域实测
+    public-domain: ${QINIU_PUBLIC_DOMAIN:http://pic.caiqz.cn}   # http-only(https 未配证书)
+    token-ttl-seconds: ${QINIU_TOKEN_TTL:3600}
 
 logging:
   level:

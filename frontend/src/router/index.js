@@ -13,7 +13,8 @@ const routes = [
       { path: '', redirect: { name: 'project-brief' } },
       { path: 'brief', name: 'project-brief', component: () => import('../views/project/StepBrief.vue') },
       { path: 'versions', name: 'project-versions', component: () => import('../views/project/StepVersions.vue') },
-      { path: 'images', name: 'project-images', component: () => import('../views/project/StepImages.vue') }
+      { path: 'images', name: 'project-images', component: () => import('../views/project/StepImages.vue') },
+      { path: 'preview', name: 'project-preview', component: () => import('../views/project/StepPreview.vue') }
     ]
   },
   { path: '/styles', name: 'styles', component: () => import('../views/StyleLibrary.vue'), meta: { auth: true } },

@@ -192,8 +192,8 @@ const onSetCurrent = async (versionId) => {
   else ElMessage.error(res.msg || '设置失败')
 }
 const gotoNext = () => {
-  // 配图为下一步(五步流程);路由守卫层面由步骤导航控制可达性
-  router.push({ name: 'project-images', params: { id: route.params.id } })
+  // 预览为下一步(S4);步骤导航层面由 maxReachable 控制可达性
+  router.push({ name: 'project-preview', params: { id: route.params.id } })
 }
 
 // 挂载即装载版本列表与风格库;project 详情由布局层异步加载,挂载时可能尚未就位——

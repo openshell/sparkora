@@ -67,7 +67,7 @@ const STEPS = [
   { key: 'brief', title: '简报', route: 'brief' },
   { key: 'versions', title: '版本', route: 'versions' },
   { key: 'images', title: '配图', route: 'images' },
-  { key: 'preview', title: '预览' },
+  { key: 'preview', title: '预览', route: 'preview' },
   { key: 'publish', title: '发布' }
 ]
 
@@ -89,6 +89,7 @@ const routeStepIndex = computed(() => {
   const name = route.name
   if (name === 'project-versions') return 1
   if (name === 'project-images') return 2
+  if (name === 'project-preview') return 3
   return 0
 })
 

@@ -45,6 +45,7 @@ npm run build                     # 产线构建(已验证)
 - 前端页面用 Element Plus(`el-form` + rules 校验,移动端单列、触控目标 ≥44px);图标用 `@element-plus/icons-vue`;不新增重型 UI 框架。
 - 表结构变更:改 `schema.sql`(幂等)+ 对应 entity/mapper + `docs/s0-spec.md` 字段级表格,三处同步。
 - 配图存储 `data/`(已 gitignore),`/images/**` 由 `WebConfig` 静态映射 `IMAGE_STORAGE_DIR`;AI 生成图必须转存本地不留临时 URL。
+- S4 预览:wenyan CLI render(同核)+ 七牛图床(`QINIU_*`,兼容裸 AK/SK),契约与限制见 spec §11;`docs/img.md` 为七牛接入文档(密钥只放 .env)。
 
 ## Notes
 

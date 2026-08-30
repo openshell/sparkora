@@ -111,6 +111,15 @@ CREATE INDEX IF NOT EXISTS idx_image_asset_project ON sparkora_image_asset(proje
 -- S3b 增量:全库图支持(project_id 释放为可空)
 ALTER TABLE sparkora_image_asset ALTER COLUMN project_id DROP NOT NULL;
 
+-- S4:七牛图床转存 key(懒转存,预览/发布时 ensure;只存 key,URL 由域名实时拼)
+ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS qiniu_key VARCHAR(300);
+
+-- S5:公众号发布留痕(草稿箱 media_id / 发布主题 / 时间 / 最近一次失败原因)
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS publish_media_id VARCHAR(128);
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS publish_theme VARCHAR(64);
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS published_at TIMESTAMP;
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_publish_error VARCHAR(1000);
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'
