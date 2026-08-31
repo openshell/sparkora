@@ -10,8 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language-data": "^6.5.2",
     "@element-plus/icons-vue": "^2.3.1",
+    "@lezer/highlight": "^1.2.3",
+    "@wenyan-md/core": "^3.0.11",
     "axios": "^1.7.5",
+    "codemirror": "^6.0.2",
     "element-plus": "^2.8.1",
     "markdown-it": "^15.0.0",
     "pinia": "^2.2.2",

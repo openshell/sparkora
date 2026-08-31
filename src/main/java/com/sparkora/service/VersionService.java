@@ -210,5 +210,18 @@ public class VersionService {
         projectMapper.updateById(p);
     }
 
+    /**
+     * 保存版本正文(S4 预览页左栏编辑)。仅更新 contentMd;字数上限随 brief 生成口径,这里只防御超长。
+     */
+    public void updateContent(Long projectId, Long versionId, String contentMd) {
+        if (contentMd == null || contentMd.isBlank()) throw new IllegalArgumentException("正文不能为空");
+        if (contentMd.length() > 200_000) throw new IllegalArgumentException("正文过长(上限 20 万字符)");
+        ArticleVersionEntity v = versionMapper.selectById(versionId);
+        if (v == null || !v.getProjectId().equals(projectId))
+            throw new IllegalArgumentException("版本不存在或不属于该项目");
+        v.setContentMd(contentMd);
+        versionMapper.updateById(v);
+    }
+
     private static String nv(String s) { return s == null || s.isBlank() ? "未指定" : s; }
 }

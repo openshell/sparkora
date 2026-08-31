@@ -186,6 +186,21 @@ public class ArticleProjectController {
         }
     }
 
+    /** 保存版本正文（S4 预览页左栏编辑;ADMIN/EDITOR）。 */
+    @PutMapping("/{id}/versions/{versionId}/content")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> updateVersionContent(@PathVariable Long id, @PathVariable Long versionId,
+                                        @RequestBody java.util.Map<String, String> body) {
+        try {
+            versionService.updateContent(id, versionId, body.get("contentMd"));
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "保存失败: " + ex.getMessage());
+        }
+    }
+
     // ==================== 配图（S3b，字段级契约见 spec §10）====================
 
     /** 配图快照：项目全部图 + 当前版本封面/插图（三角色可读）。 */

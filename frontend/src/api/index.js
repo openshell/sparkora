@@ -60,6 +60,9 @@ export const imageApi = {
   remove: (imageId) => http.delete(`/images/${imageId}`),
   // S4 预览:wenyan 同核渲染(方案 A);params={theme?, highlight?, macStyle?, footnote?}
   preview: (id, params) => http.post(`/projects/${id}/preview`, null, { params }),
+  // 保存版本正文(S4 预览页左栏编辑);body={contentMd}
+  saveContent: (id, versionId, contentMd) =>
+    http.put(`/projects/${id}/versions/${versionId}/content`, { contentMd }),
   // 预览参数清单(主题/高亮/开关默认值,读后端 .env 配置)
   previewOptions: () => http.get('/images/preview-options')
 }

@@ -1,5 +1,6 @@
 package com.sparkora.service;
 
+import com.sparkora.config.ImageProperties;
 import com.sparkora.config.WenyanProperties;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
@@ -36,14 +37,17 @@ public class PreviewService {
     private final ArticleVersionMapper versionMapper;
     private final ImageService imageService;
     private final QiniuService qiniuService;
+    private final ImageProperties imageProps;
     private final WenyanProperties wenyanProps;
 
     public PreviewService(ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
-                          ImageService imageService, QiniuService qiniuService, WenyanProperties wenyanProps) {
+                          ImageService imageService, QiniuService qiniuService,
+                          ImageProperties imageProps, WenyanProperties wenyanProps) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.imageService = imageService;
         this.qiniuService = qiniuService;
+        this.imageProps = imageProps;
         this.wenyanProps = wenyanProps;
     }
 
@@ -86,12 +90,13 @@ public class PreviewService {
         try {
             html = renderByCli(md, th, hl, mac, fn);
         } catch (Exception e) {
-            log.warn("wenyan render 失败,降级保底渲染: {}", e.getMessage());
+            log.warn("wenyan render 失败,降级保底渲染: {}", e.toString());
             degradeReason = e.getMessage();
         }
         if (html == null || html.isBlank()) {
             result.put("degraded", true);
-            result.put("degradedReason", "wenyan 渲染不可用，已降级为普通 Markdown 预览。" + (degradeReason == null ? "" : degradeReason));
+            result.put("degradedReason", "wenyan 渲染不可用，已降级为普通 Markdown 预览。"
+                    + (degradeReason == null ? "" : "详情: " + degradeReason));
             html = fallbackRender(md);
         } else {
             result.put("degraded", false);
@@ -156,12 +161,15 @@ public class PreviewService {
                 .orElseThrow(() -> new IllegalArgumentException("未知高亮主题: " + highlight + "（可选：" + allowed + "）"));
     }
 
-    /** 调本机 wenyan CLI render,返回 HTML(子进程输出异步排水防管道阻塞,超时/非零退出/空输出均抛错由上层降级)。 */
+    /**
+     * 调本机 wenyan CLI render,返回 HTML(子进程输出异步排水防管道阻塞,超时/非零退出/空输出均抛错由上层降级)。
+     * 临时 md 文件用 createTempMd() 落盘:系统 /tmp 在受限容器里可能只读。
+     */
     private String renderByCli(String markdown, String theme, String highlight,
                                boolean macStyle, boolean footnote) {
         Path tmp = null;
         try {
-            tmp = Files.createTempFile("sparkora-preview-", ".md");
+            tmp = createTempMd();
             Files.write(tmp, markdown.getBytes(StandardCharsets.UTF_8));
             List<String> cmd = new ArrayList<>(Arrays.asList(
                     wenyanProps.getCliPath(), "render",
@@ -207,6 +215,21 @@ public class PreviewService {
         t.setDaemon(true);
         t.start();
         return t;
+    }
+
+    /**
+     * 创建渲染用临时 md 文件。系统临时目录(java.io.tmpdir,默认 /tmp)在受限容器/只读挂载下不可写,
+     * 因此首选 {IMAGE_STORAGE_DIR}/../tmp/preview(项目数据盘,随应用配置落位),失败再回退系统临时目录。
+     */
+    private Path createTempMd() throws IOException {
+        try {
+            Path dir = imageProps.storageRoot().resolve("../tmp/preview").normalize();
+            Files.createDirectories(dir);
+            return Files.createTempFile(dir, "sparkora-preview-", ".md");
+        } catch (IOException primaryFail) {
+            log.info("数据盘临时目录不可用({}),回退系统临时目录: {}", primaryFail.getMessage(), System.getProperty("java.io.tmpdir"));
+        }
+        return Files.createTempFile("sparkora-preview-", ".md");
     }
 
     /** 降级保底:极简 markdown 渲染(标题/粗斜体/链接/图片),先 HTML 转义再替换(降级路径 XSS 修复)。 */
