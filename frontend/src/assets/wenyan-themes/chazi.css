@@ -1,0 +1,163 @@
+:root {
+  --sans-serif-font: Roboto, Oxygen, Ubuntu, Cantarell, PingFangSC-light, PingFangTC-light, "Open Sans", "Helvetica Neue",
+      sans-serif;
+  --monospace-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "liberation mono", "courier new", ptima-Regular,
+      ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+#wenyan {
+  font-family: var(--sans-serif-font);
+  font-size: 15px;
+  letter-spacing: 0.05em;
+  color: #595959;
+}
+#wenyan * {
+  box-sizing: border-box;
+}
+#wenyan p {
+  font-size: 17px;
+  word-spacing: 3px;
+  letter-spacing: 1px;
+  margin: 1em 4px;
+}
+#wenyan p strong {
+  color: #773098;
+}
+#wenyan h1 {
+  margin: 1.2em 0 1em;
+  padding: 0;
+  font-weight: bold;
+  color: #773098;
+}
+#wenyan h2 {
+  min-height: 32px;
+  line-height: 28px;
+  border-bottom: solid 1px #000000;
+  color: #773098;
+  display: inline-block;
+  border-bottom-width: 1px;
+  border-bottom-style: solid;
+  border-color: #773098;
+  padding-top: 5px;
+  padding-right: 0.5em;
+  padding-left: 0.5em;
+  margin-bottom: -3px;
+  font-size: 22px;
+  margin: 1em auto;
+  padding: 0.5em 0;
+  text-align: center;
+  width: 85%;
+  font-weight: bold;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+#wenyan h3 {
+  margin: 1.2em 0 1em;
+  padding: 0;
+  font-weight: bold;
+  color: #773098;
+}
+#wenyan li {
+  margin: 10px 0;
+}
+#wenyan img {
+  max-width: 100%;
+  width: 80%;
+  margin: 0 auto;
+  border-radius: 5px;
+}
+#wenyan table {
+  display: table;
+  text-align: left;
+  border-collapse: collapse;
+}
+#wenyan table td,
+#wenyan table th {
+  padding: 9px 12px;
+  line-height: 22px;
+  color: #222;
+  min-width: 60px;
+  border: 1px solid #d8d8d8;
+  vertical-align: middle;
+}
+#wenyan table th {
+  border: 1px solid #d8d8d8;
+  font-weight: bold;
+  background-color: #f0f0f0;
+}
+#wenyan table tr:nth-child(2n) {
+  background-color: #f8f8f8;
+}
+#wenyan blockquote {
+  margin: 10px 5px;
+  border-left: 3px solid #9654b5;
+  color: #616161;
+  quotes: none;
+  background: #fbf9fd;
+  margin: 0 0 1em;
+  display: block;
+  font-size: 0.9em;
+  overflow: auto;
+  color: #6a737d;
+  padding-left: 20px;
+  padding-right: 10px;
+}
+#wenyan blockquote p {
+  margin: 10px 0px;
+  color: black;
+  line-height: 26px;
+}
+#wenyan p code {
+  word-wrap: break-word;
+  padding: 2px 4px;
+  border-radius: 4px;
+  margin: 0 2px;
+  color: #1e6bb8;
+  background-color: rgba(27, 31, 35, 0.05);
+  font-family:
+      Operator Mono,
+      Consolas,
+      Monaco,
+      Menlo,
+      monospace;
+  word-break: break-all;
+}
+#wenyan pre {
+  word-wrap: break-word !important;
+  margin: 10px 0;
+  display: block;
+  border: 1px solid #f0f0f0;
+  border-radius: 2px;
+  line-height: 20px;
+}
+#wenyan pre code {
+  display: block;
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px;
+  font-family: var(--monospace-font);
+}
+#wenyan hr {
+  border-top: 1px dashed #dddddd;
+}
+#wenyan a {
+  color: #773098;
+}
+#wenyan .footnote {
+  color: #0069c2;
+}
+#wenyan #footnotes p {
+  display: flex;
+  margin: 0;
+  font-size: 0.9em;
+}
+#wenyan .footnote-num {
+  display: inline;
+  width: 10%;
+}
+#wenyan .footnote-txt {
+  display: inline;
+  width: 90%;
+  word-wrap: break-word;
+  word-break: break-all;
+}

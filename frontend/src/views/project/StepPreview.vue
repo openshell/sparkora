@@ -22,12 +22,12 @@
           <el-select v-model="theme" class="theme-select" @change="onPreviewStyleChange">
             <template #label>
               <span class="theme-dot" :style="{ background: themeColor(theme) }" :class="{ 'is-bright': themeIsBright(theme) }"></span>
-              <span class="select-label-text">{{ theme }}</span>
+              <span class="select-label-text">{{ themeLabel(theme) }}</span>
             </template>
-            <el-option v-for="t in themeOptions" :key="t" :label="t" :value="t">
+            <el-option v-for="t in allThemeOptions" :key="t" :label="themeLabel(t)" :value="t">
               <span class="option-row">
                 <span class="theme-dot" :style="{ background: themeColor(t) }" :class="{ 'is-bright': themeIsBright(t) }"></span>
-                <span class="option-name">{{ t }}</span>
+                <span class="option-name">{{ themeLabel(t) }}</span>
                 <el-icon v-if="t === theme" class="option-check"><Check /></el-icon>
               </span>
             </el-option>
@@ -126,6 +126,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
 import { renderMarkdownHtml, applyPreviewTheme, buildWechatHtml, sanitizeWenyanHtml } from '../../utils/wenyanRender'
+import { CUSTOM_THEMES } from '../../utils/wenyanThemes'
 import MarkdownEditor from '../../components/MarkdownEditor.vue'
 import { ElMessage } from 'element-plus'
 import { DocumentCopy, Loading, WarningFilled, Check } from '@element-plus/icons-vue'
@@ -187,9 +188,18 @@ const THEME_COLORS = {
   purple: '#8e44ad',
   phycat: '#3eaf7c'
 }
-const themeColor = (t) => THEME_COLORS[t] || '#8a8f98'
+// 自定义主题色点(id 是 custom:<key> 取 key 段)由 wenyanThemes.CUSTOM_THEMES 提供
+const CUSTOM_COLOR_MAP = Object.fromEntries(CUSTOM_THEMES.map(t => [t.id, t.color]))
+const themeColor = (t) => THEME_COLORS[t] || CUSTOM_COLOR_MAP[t] || '#8a8f98'
 const BRIGHT_DOTS = new Set(['maize', 'rainbow'])
 const themeIsBright = (t) => BRIGHT_DOTS.has(t)
+/** 主题显示名:custom:chazi → 姹紫;内置原样。 */
+const themeLabel = (t) => {
+  const c = CUSTOM_THEMES.find(x => x.id === t)
+  return c ? c.name : t
+}
+// 全量主题清单 = 后端配置下发(内置)+ 社区主题库
+const allThemeOptions = computed(() => [...(themeOptions.value || []), ...CUSTOM_THEMES.map(t => t.id)])
 
 // ==== 渲染:正文 400ms 防抖走纯渲染;首次/出错时同样入口 ====
 let renderTimer = null

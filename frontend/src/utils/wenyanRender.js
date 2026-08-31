@@ -4,11 +4,17 @@
  * 原版机制(照搬):
  *  1. markdown 变更 → 只重跑纯 markdown→HTML(不碰主题);
  *  2. 主题/高亮/macStyle/footnote 变更 → 只替换三个共享 <style> 标签(即时生效,不重渲染);
- *  3. 复制/对外输出时才把渲染 DOM 走 applyStylesWithTheme 生成内联样式(与发布 server 同核同参)。
+ *  3. 复制/对外输出时才把渲染 DOM 走 applyStylesWithResolvedCss 生成内联样式(与发布 server 同核同参)。
+ *
+ * 主题解析:内置主题走 @wenyan-md/core 注册表;自定义主题(custom:* 前缀,
+ * CSS 见 wenyanThemes.js)直传 themeCss——core 的 applyStylesWithTheme/resolveCssContent
+ * 均以 themeCss 优先,与官方"直接注入自定义样式"同一入口。
  *
  * 注意:preview 用的共享 style 标签作用于 .wenyan-preview 容器;发布/复制输出是内联样式,
  * 两者分离,保证"预览即发布观感"的同时,预览性能与原版一致。
  */
+import { getCustomThemeCss, isCustomTheme } from './wenyanThemes'
+
 const THEME_STYLE_ID = 'wenyan-theme-style'
 const HL_STYLE_ID = 'wenyan-hltheme-style'
 const MAC_STYLE_ID = 'wenyan-macstyle-style'
@@ -23,9 +29,14 @@ async function getCore() {
   return coreInstance
 }
 
-/** 主题/高亮 CSS 解析(id→CSS);失败回退,default 再失败则抛出。 */
+/** 主题/高亮 CSS 解析(id→CSS):内置查 core 注册表;custom:* 查社区主题库;失败回退 default。 */
 async function resolveThemeCss(id, isHl = false) {
   const core = await import('@wenyan-md/core')
+  // 自定义主题只用于文章主题(高亮主题仍用 core 内置)
+  if (!isHl) {
+    const custom = getCustomThemeCss(id)
+    if (custom) return custom
+  }
   const lookup = async () => {
     const t = isHl ? core.getHlTheme(id) : core.getTheme(id)
     if (!t) throw new Error(`${isHl ? '高亮主题' : '主题'}不存在: ${id}`)
@@ -34,11 +45,9 @@ async function resolveThemeCss(id, isHl = false) {
   try {
     return await lookup()
   } catch (e) {
-    if (id !== 'default' && id !== 'solarized-light') {
-      console.warn('[wenyanRender] 回退默认主题:', id, e)
-      return await resolveThemeCss(isHl ? 'solarized-light' : 'default', isHl)
-    }
-    throw e
+    if (id === 'default' || id === 'solarized-light' || isCustomTheme(id)) throw e
+    console.warn('[wenyanRender] 回退默认主题:', id, e)
+    return await resolveThemeCss(isHl ? 'solarized-light' : 'default', isHl)
   }
 }
 
@@ -91,12 +100,23 @@ export async function buildWechatHtml(markdown, { theme = 'default', highlight =
   const html = await inst.renderMarkdown(markdown)
   const dom = new DOMParser().parseFromString(`<body><section id="wenyan">${html}</section></body>`, 'text/html')
   const wenyan = dom.getElementById('wenyan')
-  await inst.applyStylesWithTheme(wenyan, {
-    themeId: theme,
-    hlThemeId: highlight,
-    isMacStyle: macStyle,
-    isAddFootnote: footnote
-  })
+  if (isCustomTheme(theme)) {
+    // 自定义主题:CSS 直传(与 resolveCssContent 的 themeCss 优先级一致,最终走同一内联器)
+    const [themeCss, hlThemeCss] = await Promise.all([
+      resolveThemeCss(theme, false),
+      resolveThemeCss(highlight, true)
+    ])
+    await inst.applyStylesWithResolvedCss(wenyan, {
+      themeCss, hlThemeCss, isMacStyle: macStyle, isAddFootnote: footnote
+    })
+  } else {
+    await inst.applyStylesWithTheme(wenyan, {
+      themeId: theme,
+      hlThemeId: highlight,
+      isMacStyle: macStyle,
+      isAddFootnote: footnote
+    })
+  }
   return wenyan.outerHTML
 }
 
