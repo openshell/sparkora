@@ -50,7 +50,7 @@
 
         <!-- 工具栏：搜索 + 入库筛选 + 全选 + 同步 -->
         <div class="sync-bar">
-          <el-input v-model="keyword" placeholder="搜索车型 / 网络" clearable class="search" :prefix-icon="Search">
+          <el-input v-model="keyword" placeholder="搜索车型 / 网络" clearable class="search">
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
           <el-select v-model="statusFilter" class="status-filter" placeholder="全部">
