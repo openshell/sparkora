@@ -41,11 +41,15 @@ export const carApi = {
   detail: (id, versionId) => http.get(`/car/models/${id}`, { params: versionId ? { versionId } : {} }),
   // 官网车型目录（供同步页手动选择）
   catalog: () => http.get('/car/catalog'),
-  // 全量同步（拉目录+全部车型入库），耗时较长放宽超时
-  syncAll: () => http.post('/car/sync', null, { timeout: 300000 }),
-  // 同步选中的车型：body={goodsIds:[...]}
-  syncSelected: (goodsIds) => http.post('/car/sync/selected', { goodsIds }, { timeout: 300000 }),
-  // 同步单个车型
+  // 创建同步任务：body={goodsIds:[...]}，异步执行，返回 {jobId}
+  createJob: (goodsIds) => http.post('/car/sync/jobs', { goodsIds }),
+  // 查询同步任务进度
+  getJob: (id) => http.get(`/car/sync/jobs/${id}`),
+  // 同步任务历史
+  listJobs: () => http.get('/car/sync/jobs'),
+  // 重试任务失败项，返回新任务 {jobId}
+  retryJob: (id) => http.post(`/car/sync/jobs/${id}/retry`),
+  // 同步单个车型（详情页用，同步阻塞）
   syncOne: (id) => http.post(`/car/models/${id}/sync`, null, { timeout: 300000 }),
   remove: (id) => http.delete(`/car/models/${id}`),
   // 内部问答检索：body={modelId, query, topK?}

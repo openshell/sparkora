@@ -262,3 +262,21 @@ CREATE TABLE IF NOT EXISTS sparkora_car_doc_embedding (
 CREATE INDEX IF NOT EXISTS idx_car_doc_emb_model ON sparkora_car_doc_embedding(model_id);
 CREATE INDEX IF NOT EXISTS idx_car_doc_emb_vec ON sparkora_car_doc_embedding
     USING hnsw (embedding vector_cosine_ops);
+
+-- 车型同步任务表(S6 重构:异步任务化,取消全量同步,仅手动指定车型同步)
+CREATE TABLE IF NOT EXISTS sparkora_car_sync_job (
+    id           BIGSERIAL PRIMARY KEY,
+    job_type     VARCHAR(20)  NOT NULL,              -- SELECTED / RETRY
+    status       VARCHAR(20)  NOT NULL DEFAULT 'RUNNING', -- RUNNING/SUCCESS/PARTIAL/FAILED
+    total        INTEGER      DEFAULT 0,
+    success      INTEGER      DEFAULT 0,
+    failed       INTEGER      DEFAULT 0,
+    failed_items TEXT,                               -- JSON:[{goodsId,name,error}]
+    started_at   TIMESTAMP,
+    finished_at  TIMESTAMP,
+    error_msg    VARCHAR(1000),
+    created_by   VARCHAR(64)  NOT NULL,
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted      SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_car_sync_job_created ON sparkora_car_sync_job(created_at);

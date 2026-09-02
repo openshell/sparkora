@@ -138,50 +138,8 @@ public class CarModelService {
     }
 
     /**
-     * 全量同步:拉目录,对每个车型入库。返回成功入库的车型数。
-     * 目录接口返回 data 数组,每项含 id/name/salesNetworkName/price 等。
-     */
-    public int syncAll() {
-        JsonNode list = client.goodsList();
-        JsonNode data = list.path("data");
-        if (!data.isArray()) {
-            log.warn("goodsListForSearch 返回无 data 数组");
-            return 0;
-        }
-        int count = 0;
-        for (JsonNode item : data) {
-            String goodsId = item.path("id").asText("");
-            if (goodsId.isBlank()) continue;
-            try {
-                syncOne(goodsId);
-                count++;
-            } catch (Exception e) {
-                log.warn("车型同步失败 goodsId={}: {}", goodsId, e.getMessage());
-            }
-        }
-        return count;
-    }
-
-    /**
-     * 同步选中的车型(按 goodsId 列表)。返回成功入库的车型数。
-     */
-    public int syncSelected(List<String> goodsIds) {
-        if (goodsIds == null || goodsIds.isEmpty()) return 0;
-        int count = 0;
-        for (String goodsId : goodsIds) {
-            try {
-                syncOne(goodsId);
-                count++;
-            } catch (Exception e) {
-                log.warn("车型同步失败 goodsId={}: {}", goodsId, e.getMessage());
-            }
-        }
-        return count;
-    }
-
-    /**
      * 同步单个车型(按 goodsId)。幂等:已存在则更新,不存在则新建。
-     * 网络采集无事务;入库短事务。
+     * 网络采集无事务;入库短事务。由 CarSyncJobService 异步任务驱动。
      */
     public CarModelEntity syncOne(String goodsId) {
         // 1) 采集(无事务,慢)

@@ -11,9 +11,6 @@
           <el-button v-if="user.isEditorOrAbove" @click="$router.push('/car/sync')">
             <el-icon class="btn-icon"><Refresh /></el-icon>同步车型
           </el-button>
-          <el-button v-if="user.isEditorOrAbove" type="primary" :loading="syncing" @click="onSyncAll">
-            <el-icon class="btn-icon"><Refresh /></el-icon>全量同步
-          </el-button>
         </div>
       </div>
 
@@ -27,7 +24,7 @@
       </div>
 
       <div v-else-if="!rows.length" class="empty">
-        <el-empty description="车型知识库为空。点击右上「全量同步」，从比亚迪官网拉取车型数据入库。" />
+        <el-empty description="车型知识库为空。点击右上「同步车型」，从比亚迪官网拉取车型数据入库。" />
       </div>
 
       <div v-else class="responsive-table">
@@ -88,7 +85,6 @@ const user = useUserStore()
 const loading = ref(false)
 const error = ref('')
 const rows = ref([])
-const syncing = ref(false)
 const syncingId = ref(null)
 
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
@@ -101,16 +97,6 @@ const load = async () => {
   try { const res = await carApi.list(); rows.value = res.data || [] }
   catch (e) { error.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试' }
   finally { loading.value = false }
-}
-
-const onSyncAll = async () => {
-  syncing.value = true
-  try {
-    const res = await carApi.syncAll()
-    if (res.code === 0) { ElMessage.success(`全量同步完成，入库 ${res.data} 个车型`); await load() }
-    else ElMessage.error(res.msg || '同步失败')
-  } catch (e) { ElMessage.error('同步失败：' + (e.message || e)) }
-  finally { syncing.value = false }
 }
 
 const onSyncOne = async (row) => {

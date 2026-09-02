@@ -3,8 +3,10 @@ package com.sparkora.web.controller;
 import com.sparkora.car.dto.CarModelDetailDto;
 import com.sparkora.car.service.CarModelService;
 import com.sparkora.car.service.CarRagService;
+import com.sparkora.car.service.CarSyncJobService;
 import com.sparkora.common.R;
 import com.sparkora.domain.entity.CarModelEntity;
+import com.sparkora.domain.entity.CarSyncJobEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,7 +16,7 @@ import java.util.Map;
 /**
  * 车型知识库接口。
  * - VIEWER 可读;ADMIN/EDITOR 可同步/删除。
- * - sync:手动触发采集入库(网络+embedding,耗时较长,放宽超时)。
+ * - sync:手动触发采集入库(异步任务化,创建任务即返回 jobId,前端轮询进度)。
  * - rag:内部问答检索(返回命中的知识块)。
  */
 @RestController
@@ -23,10 +25,12 @@ public class CarModelController {
 
     private final CarModelService service;
     private final CarRagService ragService;
+    private final CarSyncJobService jobService;
 
-    public CarModelController(CarModelService service, CarRagService ragService) {
+    public CarModelController(CarModelService service, CarRagService ragService, CarSyncJobService jobService) {
         this.service = service;
         this.ragService = ragService;
+        this.jobService = jobService;
     }
 
     @GetMapping("/models")
@@ -46,12 +50,41 @@ public class CarModelController {
         }
     }
 
-    /** 同步选中的车型。body: {goodsIds:["156","10051"]}。 */
-    @PostMapping("/sync/selected")
+    /** 创建同步任务。body: {goodsIds:["156","10051"]}。返回 {jobId}。 */
+    @PostMapping("/sync/jobs")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Integer> syncSelected(@RequestBody Map<String, List<String>> body) {
+    public R<Map<String, Object>> createJob(@RequestBody Map<String, List<String>> body) {
         try {
-            return R.ok(service.syncSelected(body.get("goodsIds")));
+            Long jobId = jobService.createJob(body.get("goodsIds"), "SELECTED");
+            return R.ok(Map.of("jobId", jobId));
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+    }
+
+    /** 查询同步任务进度。 */
+    @GetMapping("/sync/jobs/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<CarSyncJobEntity> getJob(@PathVariable Long id) {
+        CarSyncJobEntity job = jobService.get(id);
+        if (job == null) return R.fail(404, "任务不存在");
+        return R.ok(job);
+    }
+
+    /** 同步任务历史列表。 */
+    @GetMapping("/sync/jobs")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<List<CarSyncJobEntity>> listJobs() {
+        return R.ok(jobService.list());
+    }
+
+    /** 重试任务的失败项。返回新任务 {jobId}。 */
+    @PostMapping("/sync/jobs/{id}/retry")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> retryJob(@PathVariable Long id) {
+        try {
+            Long jobId = jobService.retry(id);
+            return R.ok(Map.of("jobId", jobId));
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
         }
@@ -64,15 +97,11 @@ public class CarModelController {
         return R.ok(service.detail(id, versionId));
     }
 
-    /** 全量同步(拉目录+全部车型入库)。耗时较长。 */
+    /** 全量同步已取消(S6 重构:仅手动指定车型同步)。 */
     @PostMapping("/sync")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Integer> syncAll() {
-        try {
-            return R.ok(service.syncAll());
-        } catch (Exception e) {
-            return R.fail(500, e.getMessage());
-        }
+    public R<Void> syncAll() {
+        return R.fail(400, "全量同步已取消,请在同步页选择车型后同步");
     }
 
     /** 同步单个车型(按 goodsId)。 */
