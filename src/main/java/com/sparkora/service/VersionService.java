@@ -195,6 +195,10 @@ public class VersionService {
                 p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
                 nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
                 nv(b.getOutline()), nv(b.getFactRisks()));
+        // S6:补充信息(用户个人见解/独家资讯等)作为创作素材注入,要求融入正文
+        if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
+            base += "\n\n【用户补充信息(个人见解/独家资讯等),请在正文中自然融入,不得遗漏关键信息】\n" + p.getExtraInfo();
+        }
         // S6 RAG:项目关联车型时,检索车型知识库注入权威参数作为事实约束
         if (p.getCarModelId() != null) {
             try {

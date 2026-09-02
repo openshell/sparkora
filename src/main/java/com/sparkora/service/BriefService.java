@@ -161,6 +161,10 @@ public class BriefService {
                 nv(p.getAudience()),
                 p.getWordCountTarget() == null ? "未指定" : p.getWordCountTarget(),
                 nv(p.getRemark()));
+        // S6:补充信息(用户个人见解/独家资讯等)作为创作素材注入,要求融入 brief 观点/大纲
+        if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
+            base += "\n\n【用户补充信息(个人见解/独家资讯等),请作为创作素材融入核心观点与大纲,不得遗漏关键信息】\n" + p.getExtraInfo();
+        }
         // S6 RAG:项目关联车型时,检索车型知识库注入权威参数作为事实约束
         if (p.getCarModelId() != null) {
             try {

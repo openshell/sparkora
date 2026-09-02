@@ -41,6 +41,11 @@
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="500" placeholder="可选" />
         </el-form-item>
+        <el-form-item label="补充信息（可选）">
+          <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
+                    placeholder="个人见解、独家资讯等，生成简报/正文时会作为创作素材融入，如：我了解到该车型 2026 款将新增 XX 配置…" />
+          <div class="form-tip" style="text-align:left;margin-top:4px">填写后，生成简报/正文时会注入这些信息作为创作素材，不会遗漏关键内容。</div>
+        </el-form-item>
 
         <div class="form-actions">
           <!-- 主操作唯一:「创建并生成简报」;仅存草稿降为次级按钮,取消为文字按钮 -->
@@ -66,7 +71,7 @@ const formRef = ref()
 const loading = ref(false)   // 创建并生成
 const saving = ref(false)    // 仅存草稿
 const carModels = ref([])    // S6:车型知识库列表(可选关联)
-const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelId: null })
+const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelId: null, extraInfo: '' })
 const rules = { topic: [{ required: true, message: '请输入主题', trigger: 'blur' }] }
 
 onMounted(async () => {

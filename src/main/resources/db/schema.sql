@@ -123,6 +123,9 @@ ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_publish_error
 -- S6:创作项目关联车型(可选;生成 brief/版本时注入车型知识库 RAG 上下文)
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS car_model_id BIGINT;
 
+-- S6:补充信息(可选;用户个人见解/独家资讯等,生成 brief/版本时注入 prompt 作为创作素材)
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS extra_info TEXT;
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'
