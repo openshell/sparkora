@@ -15,6 +15,8 @@ public class AiProperties {
     private String baseUrl = "https://axo.caiqz.cn";
     private String apiKey;
     private String model;
+    /** 向量化模型(S6 车型知识库 RAG 用;实测 Qwen3-Embedding-8B,1024 维)。 */
+    private String embeddingModel;
     private String imageModel;
     /** 逗号分隔的图片模型列表，按序轮询（图片模型不稳定）；为空时回退到 imageModel 单个。 */
     private String imageModels;

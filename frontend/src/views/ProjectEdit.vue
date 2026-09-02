@@ -20,6 +20,12 @@
         <el-form-item label="关键词">
           <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" />
         </el-form-item>
+        <el-form-item label="关联车型（可选）">
+          <el-select v-model="form.carModelId" clearable filterable placeholder="选择车型，生成时注入其知识库参数" style="width:100%">
+            <el-option v-for="m in carModels" :key="m.id" :label="m.name" :value="m.id" />
+          </el-select>
+          <div class="form-tip" style="text-align:left;margin-top:4px">关联后，生成简报/正文时会检索该车型知识库，注入权威参数作为事实约束。</div>
+        </el-form-item>
         <el-row :gutter="12">
           <el-col :xs="24" :sm="12">
             <el-form-item label="目标读者">
@@ -49,9 +55,9 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { projectApi } from '../api'
+import { projectApi, carApi } from '../api'
 import { ElMessage } from 'element-plus'
 import TopBar from '../layouts/TopBar.vue'
 
@@ -59,8 +65,13 @@ const router = useRouter()
 const formRef = ref()
 const loading = ref(false)   // 创建并生成
 const saving = ref(false)    // 仅存草稿
-const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '' })
+const carModels = ref([])    // S6:车型知识库列表(可选关联)
+const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelId: null })
 const rules = { topic: [{ required: true, message: '请输入主题', trigger: 'blur' }] }
+
+onMounted(async () => {
+  try { const res = await carApi.list(); carModels.value = res.data || [] } catch { carModels.value = [] }
+})
 
 const doSave = async () => {
   await formRef.value.validate()

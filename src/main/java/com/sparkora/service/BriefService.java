@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
 import com.sparkora.ai.BriefDto;
+import com.sparkora.car.service.CarRagService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
@@ -30,13 +31,15 @@ public class BriefService {
     private final ArticleProjectMapper projectMapper;
     private final ArticleBriefMapper briefMapper;
     private final AiClient aiClient;
+    private final CarRagService ragService;
     private final ObjectMapper json;
 
     public BriefService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
-                        AiClient aiClient, ObjectMapper json) {
+                        AiClient aiClient, CarRagService ragService, ObjectMapper json) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.aiClient = aiClient;
+        this.ragService = ragService;
         this.json = json;
     }
 
@@ -146,7 +149,7 @@ public class BriefService {
     }
 
     private String buildUserPrompt(ArticleProjectEntity p) {
-        return """
+        String base = """
                 主题：%s
                 关键词：%s
                 目标读者：%s
@@ -158,6 +161,18 @@ public class BriefService {
                 nv(p.getAudience()),
                 p.getWordCountTarget() == null ? "未指定" : p.getWordCountTarget(),
                 nv(p.getRemark()));
+        // S6 RAG:项目关联车型时,检索车型知识库注入权威参数作为事实约束
+        if (p.getCarModelId() != null) {
+            try {
+                String ctx = ragService.buildContext(p.getCarModelId(), p.getTopic(), 8, 0.3);
+                if (!ctx.isBlank()) {
+                    base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时在 factRisks 标注】\n" + ctx;
+                }
+            } catch (Exception e) {
+                log.warn("brief RAG 检索失败 project={}: {}", p.getId(), e.getMessage());
+            }
+        }
+        return base;
     }
 
     private static String nv(String s) { return s == null || s.isBlank() ? "未指定" : s; }

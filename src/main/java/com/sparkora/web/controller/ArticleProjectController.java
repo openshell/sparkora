@@ -81,6 +81,7 @@ public class ArticleProjectController {
         e.setAudience(req.getAudience());
         e.setWordCountTarget(req.getWordCountTarget());
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
+        e.setCarModelId(req.getCarModelId());
         e.setRemark(req.getRemark());
         e.setStatus("DRAFT");
         e.setCreatedBy(cu.getUsername());
@@ -101,6 +102,7 @@ public class ArticleProjectController {
         e.setAudience(req.getAudience());
         e.setWordCountTarget(req.getWordCountTarget());
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
+        e.setCarModelId(req.getCarModelId());
         e.setRemark(req.getRemark());
         e.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(e);

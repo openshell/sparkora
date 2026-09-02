@@ -35,6 +35,23 @@ export const styleApi = {
   extract: (name, sourceText) => http.post('/styles/extract', { name, sourceText }, { timeout: 120000 })
 }
 
+export const carApi = {
+  // 车型知识库（S6 RAG）
+  list: () => http.get('/car/models'),
+  detail: (id, versionId) => http.get(`/car/models/${id}`, { params: versionId ? { versionId } : {} }),
+  // 官网车型目录（供同步页手动选择）
+  catalog: () => http.get('/car/catalog'),
+  // 全量同步（拉目录+全部车型入库），耗时较长放宽超时
+  syncAll: () => http.post('/car/sync', null, { timeout: 300000 }),
+  // 同步选中的车型：body={goodsIds:[...]}
+  syncSelected: (goodsIds) => http.post('/car/sync/selected', { goodsIds }, { timeout: 300000 }),
+  // 同步单个车型
+  syncOne: (id) => http.post(`/car/models/${id}/sync`, null, { timeout: 300000 }),
+  remove: (id) => http.delete(`/car/models/${id}`),
+  // 内部问答检索：body={modelId, query, topK?}
+  rag: (modelId, query, topK) => http.post('/car/rag', { modelId, query, topK }, { timeout: 120000 })
+}
+
 export const imageApi = {
   // 图库列表（projectId 可选过滤）
   list: (projectId) => http.get('/images', { params: projectId ? { projectId } : {} }),

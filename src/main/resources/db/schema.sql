@@ -120,6 +120,9 @@ ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS publish_theme VARC
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS published_at TIMESTAMP;
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_publish_error VARCHAR(1000);
 
+-- S6:创作项目关联车型(可选;生成 brief/版本时注入车型知识库 RAG 上下文)
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS car_model_id BIGINT;
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'
@@ -132,3 +135,130 @@ SELECT 'VIEWER', '只读'
 WHERE NOT EXISTS (SELECT 1 FROM sparkora_role WHERE code = 'VIEWER');
 
 -- 预置管理员由 DataInitializer 启动时用 BCryptPasswordEncoder 生成哈希后插入（不在此硬编码哈希）
+
+-- ============================================================================
+--  S6:车型知识库（RAG）
+--  数据源:比亚迪官网 4 个公开 JSON API（goodsListForSearch / getGoodsInfoById /
+--         goodsParams / getGoodsAttrListForCompareByGoodsId）
+--  关系层:car_model / car_version / car_param_group / car_param / car_doc
+--  向量层:car_doc_embedding（pgvector, 1024 维, Qwen3-Embedding-8B）
+--  切分粒度:仅 PARAM_GROUP（每参数分组一个文档块,供 RAG 检索）
+-- ============================================================================
+
+-- pgvector 扩展（需 superuser 预建;sparkora 用户需被授权 CREATE EXTENSION,否则启动失败）
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- 车型主表
+CREATE TABLE IF NOT EXISTS sparkora_car_model (
+    id              BIGSERIAL PRIMARY KEY,
+    goods_id        VARCHAR(32)  NOT NULL UNIQUE,   -- 官网 goodsId,如 156
+    name            VARCHAR(100) NOT NULL,          -- 大唐EV
+    sales_network   VARCHAR(20),                    -- 王朝 / 海洋
+    vehicle_id      VARCHAR(32),                    -- 官网 vehicleId
+    price_range     VARCHAR(100),                   -- "239,900 - 309,900"
+    features        TEXT,                           -- JSON 数组,卖点
+    intro_images    TEXT,                           -- JSON 数组,图片 URL
+    detail_page     VARCHAR(200),                   -- 官网详情页路径
+    car_rights      TEXT,                           -- JSON,购车权益
+    source_url      VARCHAR(300),                   -- 来源官网 URL
+    sync_status     VARCHAR(20)  NOT NULL DEFAULT 'PENDING',  -- PENDING/SYNCING/SUCCESS/FAILED
+    last_sync_at    TIMESTAMP,
+    last_sync_error VARCHAR(1000),
+    created_by      VARCHAR(64)  NOT NULL,
+    created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted         SMALLINT     NOT NULL DEFAULT 0
+);
+
+-- 车型版本表（对应 goodsParams 的「车型」行 + getGoodsAttrList 的价格）
+CREATE TABLE IF NOT EXISTS sparkora_car_version (
+    id            BIGSERIAL PRIMARY KEY,
+    model_id      BIGINT       NOT NULL REFERENCES sparkora_car_model(id),
+    version_name  VARCHAR(100) NOT NULL,             -- 800KM后驱激光雷达尊荣型
+    price         NUMERIC(12,2),                    -- 239900
+    price_remark  VARCHAR(100),                     -- "239,900起"
+    sort_order    INTEGER      DEFAULT 0,           -- 对应 value[] 下标
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted       SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_car_version_model ON sparkora_car_version(model_id);
+
+-- 参数分组表（对应 goodsParams.configs）
+CREATE TABLE IF NOT EXISTS sparkora_car_param_group (
+    id          BIGSERIAL PRIMARY KEY,
+    model_id    BIGINT       NOT NULL REFERENCES sparkora_car_model(id),
+    group_name  VARCHAR(100) NOT NULL,             -- 尺寸参数 / 动力性能 / DiPilot智能辅助驾驶
+    sort_order  INTEGER      DEFAULT 0,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_car_param_group_model ON sparkora_car_param_group(model_id);
+
+-- 参数明细表（对应 goodsParams.configs[].value[]）
+CREATE TABLE IF NOT EXISTS sparkora_car_param (
+    id          BIGSERIAL PRIMARY KEY,
+    group_id    BIGINT       NOT NULL REFERENCES sparkora_car_param_group(id),
+    model_id    BIGINT       NOT NULL REFERENCES sparkora_car_model(id),
+    param_name  VARCHAR(200) NOT NULL,              -- 长×宽×高(mm) / 轴距(mm)
+    param_value TEXT,                              -- 该参数在「当前选中版本」下的值
+    values_json TEXT,                              -- JSON 数组,全版本值(保留下标对齐)
+    sort_order  INTEGER      DEFAULT 0,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_car_param_group ON sparkora_car_param(group_id);
+CREATE INDEX IF NOT EXISTS idx_car_param_model ON sparkora_car_param(model_id);
+
+-- 清洗后结构化参数表（S6 重构:规则引擎 + AI 兜底清洗,支撑文章生成干净取值/跨版本对比/数值计算）
+CREATE TABLE IF NOT EXISTS sparkora_car_param_clean (
+    id            BIGSERIAL PRIMARY KEY,
+    param_id      BIGINT       NOT NULL REFERENCES sparkora_car_param(id),  -- 关联原始参数
+    model_id      BIGINT       NOT NULL REFERENCES sparkora_car_model(id),
+    version_id    BIGINT,                          -- 可空:全局参数为空,版本专属指向版本
+    param_key     VARCHAR(200) NOT NULL,           -- 规范化参数名,如 轴距 / 纯电续航
+    param_value   TEXT,                            -- 清洗后的值(字符串/枚举/布尔)
+    value_type    VARCHAR(20)  NOT NULL,           -- STRING / NUMBER / BOOLEAN / ENUM / LIST
+    numeric_value NUMERIC,                         -- value_type=NUMBER 时的数值
+    unit          VARCHAR(20),                     -- 单位,如 mm / km / kWh
+    enum_value    VARCHAR(50),                    -- value_type=ENUM 时的枚举(有/无/可选装)
+    list_values   TEXT,                            -- value_type=LIST 时的 JSON 数组
+    raw_value     TEXT,                            -- 清洗前原始串(回溯)
+    clean_method  VARCHAR(20)  NOT NULL,           -- RULE / AI / RULE_AI
+    confidence    NUMERIC(4,3),                    -- AI 清洗置信度
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted       SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_car_param_clean_model ON sparkora_car_param_clean(model_id);
+CREATE INDEX IF NOT EXISTS idx_car_param_clean_param ON sparkora_car_param_clean(param_id);
+
+-- 文档块表（RAG 检索单元;chunk_type: MODEL_INFO / PARAM_GROUP / RIGHTS / FEATURE）
+CREATE TABLE IF NOT EXISTS sparkora_car_doc (
+    id          BIGSERIAL PRIMARY KEY,
+    model_id    BIGINT       NOT NULL REFERENCES sparkora_car_model(id),
+    version_id  BIGINT,                            -- 可空:全局块为空,版本专属块指向版本
+    group_id    BIGINT,                            -- 可空:来源参数分组
+    chunk_type  VARCHAR(20)  NOT NULL,             -- MODEL_INFO / PARAM_GROUP / RIGHTS / FEATURE
+    chunk_text  TEXT         NOT NULL,             -- 切分后的文本块(喂给 embedding 的原文)
+    token_count INTEGER,                           -- 文本块 token 数
+    sort_order  INTEGER      DEFAULT 0,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_car_doc_model ON sparkora_car_doc(model_id);
+
+-- 向量表（pgvector;Qwen3-Embedding-8B 实测 1024 维）
+CREATE TABLE IF NOT EXISTS sparkora_car_doc_embedding (
+    id          BIGSERIAL PRIMARY KEY,
+    doc_id      BIGINT NOT NULL REFERENCES sparkora_car_doc(id),
+    model_id    BIGINT NOT NULL REFERENCES sparkora_car_model(id),
+    embedding   VECTOR(1024),
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_car_doc_emb_model ON sparkora_car_doc_embedding(model_id);
+CREATE INDEX IF NOT EXISTS idx_car_doc_emb_vec ON sparkora_car_doc_embedding
+    USING hnsw (embedding vector_cosine_ops);

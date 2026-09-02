@@ -43,6 +43,7 @@ sparkora:
     base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
     api-key: ${AI_API_KEY:}
     model: ${AI_MODEL:}
+    embedding-model: ${AI_EMBEDDING_MODEL:}   # S6:向量化模型(车型知识库 RAG,实测 Qwen3-Embedding-8B)
     image-model: ${AI_IMAGE_MODEL:}
     image-models: ${AI_IMAGE_MODELS:}   # 逗号分隔，按序轮询（图片模型不稳定）
     timeout-ms: ${AI_TIMEOUT_MS:120000}
@@ -69,6 +70,18 @@ sparkora:
   image:
     storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S3b:配图本地存储(/images/** 静态映射)
     max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}
+  car:
+    # S6:车型知识库(比亚迪官网公开 JSON API,无鉴权)
+    goods-list-url: ${CAR_GOODS_LIST_URL:https://cms-api.byd.com/car/byd/cn/goodsListForSearch}
+    goods-info-url: ${CAR_GOODS_INFO_URL:https://cms-api.byd.com/car/byd/cn/getGoodsInfoById}
+    goods-params-url: ${CAR_GOODS_PARAMS_URL:https://site-api.byd.com/domestic-official-api/goods/goodsParams}
+    goods-attr-list-url: ${CAR_GOODS_ATTR_LIST_URL:https://cms-api.byd.com/car/byd/cn/getGoodsAttrListForCompareByGoodsId}
+    timeout-ms: ${CAR_TIMEOUT_MS:30000}
+    # goodsParams 接口 HMAC 签名(官网 JS 硬编码,可覆盖)
+    hmac-sign-key: ${CAR_HMAC_SIGN_KEY:4a3688a5gcd88g443fga6b7fcb}
+    hmac-secret-key: ${CAR_HMAC_SECRET_KEY:fcb8f0ddg5c92g45b7g9d33g04cc55d3be3b}
+    sync-enabled: ${CAR_SYNC_ENABLED:false}
+    sync-cron: ${CAR_SYNC_CRON:0 0 3 * * ?}
   qiniu:
     enabled: ${QINIU_ENABLED:true}
     access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK

@@ -24,6 +24,9 @@ public class ProjectRequest {
 
     private Long brandVoiceProfileId;
 
+    /** S6:关联车型(可选;生成 brief/版本时注入车型知识库 RAG 上下文)。 */
+    private Long carModelId;
+
     @Size(max = 500)
     private String remark;
 }

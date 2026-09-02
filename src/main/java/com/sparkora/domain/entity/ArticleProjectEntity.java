@@ -31,6 +31,7 @@ public class ArticleProjectEntity {
     private String publishTheme;        // S5/S4:发布所用排版主题
     private LocalDateTime publishedAt;  // S5:发布时间
     private String lastPublishError;    // S5:最近一次发布失败原因(成功后清空)
+    private Long carModelId;            // S6:关联车型(可选;生成时注入车型知识库 RAG 上下文)
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

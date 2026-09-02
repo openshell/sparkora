@@ -3,6 +3,7 @@ package com.sparkora.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
+import com.sparkora.car.service.CarRagService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
@@ -39,18 +40,20 @@ public class VersionService {
     private final ArticleVersionMapper versionMapper;
     private final StyleProfileMapper styleMapper;
     private final AiClient aiClient;
+    private final CarRagService ragService;
     private final ObjectMapper json;
 
     private static final String LABELS = "ABCDEFGHIJ";
 
     public VersionService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
                           ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
-                          AiClient aiClient, ObjectMapper json) {
+                          AiClient aiClient, CarRagService ragService, ObjectMapper json) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
         this.styleMapper = styleMapper;
         this.aiClient = aiClient;
+        this.ragService = ragService;
         this.json = json;
     }
 
@@ -174,7 +177,7 @@ public class VersionService {
     }
 
     private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
-        return """
+        String base = """
                 主题：%s
                 关键词：%s
                 目标读者：%s
@@ -192,6 +195,18 @@ public class VersionService {
                 p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
                 nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
                 nv(b.getOutline()), nv(b.getFactRisks()));
+        // S6 RAG:项目关联车型时,检索车型知识库注入权威参数作为事实约束
+        if (p.getCarModelId() != null) {
+            try {
+                String ctx = ragService.buildContext(p.getCarModelId(), p.getTopic(), 8, 0.3);
+                if (!ctx.isBlank()) {
+                    base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + ctx;
+                }
+            } catch (Exception e) {
+                log.warn("版本 RAG 检索失败 project={}: {}", p.getId(), e.getMessage());
+            }
+        }
+        return base;
     }
 
     /** 列出项目全部版本（按创建序）。 */
