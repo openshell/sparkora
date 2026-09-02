@@ -48,11 +48,16 @@
           </div>
         </div>
 
-        <!-- 工具栏：搜索 + 全选 + 同步 -->
+        <!-- 工具栏：搜索 + 入库筛选 + 全选 + 同步 -->
         <div class="sync-bar">
           <el-input v-model="keyword" placeholder="搜索车型 / 网络" clearable class="search" :prefix-icon="Search">
             <template #prefix><el-icon><Search /></el-icon></template>
           </el-input>
+          <el-select v-model="statusFilter" class="status-filter" placeholder="全部">
+            <el-option label="全部" value="all" />
+            <el-option label="未入库" value="not" />
+            <el-option label="已入库" value="synced" />
+          </el-select>
           <el-checkbox :model-value="allSelected" @change="toggleAll">全选</el-checkbox>
           <span class="sel-count">已选 {{ selected.length }} 个</span>
           <el-button type="primary" :loading="creating" :disabled="!selected.length" @click="onSync">
@@ -60,46 +65,24 @@
           </el-button>
         </div>
 
-        <!-- 选项卡：未入库 / 已入库 -->
-        <el-tabs v-model="tab" class="car-tabs">
-          <el-tab-pane :label="`未入库 (${notSynced.length})`" name="not">
-            <div v-if="!notSynced.length" class="tab-empty">没有未入库的车型</div>
-            <div v-else class="car-grid">
-              <div v-for="c in notSynced" :key="c.id" class="car-card" :class="{ selected: isSelected(c.id) }"
-                   @click="toggle(c.id)">
-                <div class="thumb">
-                  <el-image v-if="c.img" :src="c.img" fit="cover" lazy />
-                  <div v-else class="thumb-ph"><el-icon :size="22"><Van /></el-icon></div>
-                  <span class="check" v-if="isSelected(c.id)"><el-icon><Check /></el-icon></span>
-                </div>
-                <div class="card-body">
-                  <div class="c-name serif">{{ c.name }}</div>
-                  <div class="c-meta">{{ c.salesNetworkName || '—' }} · {{ c.price || '价格待同步' }}</div>
-                  <el-tag size="small" type="warning" effect="plain" round>未入库</el-tag>
-                </div>
-              </div>
+        <!-- 单列表：按入库状态筛选 -->
+        <div v-if="!filtered.length" class="tab-empty">没有符合条件的车型</div>
+        <div v-else class="car-grid">
+          <div v-for="c in filtered" :key="c.id" class="car-card" :class="{ selected: isSelected(c.id) }"
+               @click="toggle(c.id)">
+            <div class="thumb">
+              <el-image v-if="c.img" :src="c.img" fit="cover" lazy />
+              <div v-else class="thumb-ph"><el-icon :size="22"><Van /></el-icon></div>
+              <span class="check" v-if="isSelected(c.id)"><el-icon><Check /></el-icon></span>
             </div>
-          </el-tab-pane>
-
-          <el-tab-pane :label="`已入库 (${synced.length})`" name="synced">
-            <div v-if="!synced.length" class="tab-empty">还没有已入库的车型</div>
-            <div v-else class="car-grid">
-              <div v-for="c in synced" :key="c.id" class="car-card" :class="{ selected: isSelected(c.id) }"
-                   @click="toggle(c.id)">
-                <div class="thumb">
-                  <el-image v-if="c.img" :src="c.img" fit="cover" lazy />
-                  <div v-else class="thumb-ph"><el-icon :size="22"><Van /></el-icon></div>
-                  <span class="check" v-if="isSelected(c.id)"><el-icon><Check /></el-icon></span>
-                </div>
-                <div class="card-body">
-                  <div class="c-name serif">{{ c.name }}</div>
-                  <div class="c-meta">{{ c.salesNetworkName || '—' }} · {{ c.price || '价格待同步' }}</div>
-                  <el-tag size="small" type="success" effect="plain" round>已入库</el-tag>
-                </div>
-              </div>
+            <div class="card-body">
+              <div class="c-name serif">{{ c.name }}</div>
+              <div class="c-meta">{{ c.salesNetworkName || '—' }} · {{ c.price || '价格待同步' }}</div>
+              <el-tag v-if="isSynced(c.id)" size="small" type="success" effect="plain" round>已入库</el-tag>
+              <el-tag v-else size="small" type="warning" effect="plain" round>未入库</el-tag>
             </div>
-          </el-tab-pane>
-        </el-tabs>
+          </div>
+        </div>
       </template>
     </div>
   </div>
@@ -118,7 +101,7 @@ const catalog = ref([])
 const syncedIds = ref(new Set())
 const selected = ref([])
 const keyword = ref('')
-const tab = ref('not')
+const statusFilter = ref('all')
 const creating = ref(false)
 const retrying = ref(false)
 
@@ -132,16 +115,19 @@ const allSelected = computed(() => {
   return list.length > 0 && selected.value.length === list.length
 })
 
-// 目录项带 img 字段（官网缩略图）
+// 目录项带 img 字段（官网缩略图）；按关键词 + 入库状态筛选
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return catalog.value
-  return catalog.value.filter(c =>
-    (c.name || '').toLowerCase().includes(kw) || (c.salesNetworkName || '').toLowerCase().includes(kw))
+  return catalog.value.filter(c => {
+    if (kw && !(c.name || '').toLowerCase().includes(kw) && !(c.salesNetworkName || '').toLowerCase().includes(kw)) return false
+    const synced = syncedIds.value.has(String(c.id))
+    if (statusFilter.value === 'not' && synced) return false
+    if (statusFilter.value === 'synced' && !synced) return false
+    return true
+  })
 })
 
-const notSynced = computed(() => filtered.value.filter(c => !syncedIds.value.has(String(c.id))))
-const synced = computed(() => filtered.value.filter(c => syncedIds.value.has(String(c.id))))
+const isSynced = (id) => syncedIds.value.has(String(id))
 
 const failedItems = computed(() => {
   if (!job.value?.failedItems) return []
@@ -240,9 +226,9 @@ onBeforeUnmount(stopPoll)
 .btn-icon { margin-right: 2px; }
 .sync-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
 .search { width: 240px; }
+.status-filter { width: 130px; }
 .sel-count { color: var(--muted); font-size: 13px; }
 
-.car-tabs { margin-top: 4px; }
 .tab-empty { padding: 40px 0; text-align: center; color: var(--faint); }
 
 .car-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
@@ -295,6 +281,7 @@ onBeforeUnmount(stopPoll)
 
 @media (max-width: 768px) {
   .search { width: 100%; }
+  .status-filter { width: 100%; }
   .car-grid { grid-template-columns: repeat(2, 1fr); }
   .sync-bar .el-button { min-height: 44px; }
 }
