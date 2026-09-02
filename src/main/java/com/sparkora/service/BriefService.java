@@ -67,17 +67,19 @@ public class BriefService {
         }
 
         // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
-        //    仅当「处于非生成中状态」或「生成中但已陈旧(超阈值,进程已死)」才生效;
-        //    陈旧判定与抢占在同一 WHERE,无竞态窗口,卡死项目可自愈
+        //    仅当「DRAFT/READY(正常生成/重生成)」或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效;
+        //    陈旧分支必须限定生成中状态,否则任何 updated_at 较旧的下游状态都会被误放行、状态机回退。
+        //    状态守护:VERSIONS_READY 及之后已触发下一步,再生成简报会把状态机拉回 READY,拒绝。
         java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
         int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
                 .eq("id", projectId)
-                .and(w -> w.notIn("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                        .or().lt("updated_at", staleCutoff))
+                .and(w -> w.in("status", "DRAFT", "READY")
+                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                                .lt("updated_at", staleCutoff)))
                 .set("status", "GENERATING_BRIEF")
                 .set("last_brief_error", null)
                 .set("updated_at", LocalDateTime.now()));
-        if (claimed == 0) throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        if (claimed == 0) throw new IllegalStateException(projectStatusGuardMsg(p, "重新生成简报"));
         p.setStatus("GENERATING_BRIEF");
 
         try {
@@ -159,4 +161,15 @@ public class BriefService {
     }
 
     private static String nv(String s) { return s == null || s.isBlank() ? "未指定" : s; }
+
+    /**
+     * 状态守护拒绝文案:生成中提示稍候;已推进到下游状态(VERSIONS_READY 及之后)说明该步已完成,
+     * 重触发会把状态机拉回本步,明确告知不支持(需要重来请新建项目或回退到对应状态再操作)。
+     */
+    static String projectStatusGuardMsg(ArticleProjectEntity p, String action) {
+        String s = p.getStatus();
+        if ("GENERATING_BRIEF".equals(s) || "GENERATING_VERSIONS".equals(s))
+            return "该项目正在生成中，请稍候（刷新页面可查看进度）";
+        return "项目状态为「" + s + "」，" + action + "仅在对应前置状态可用；下游步骤已触发，不支持回退重做";
+    }
 }

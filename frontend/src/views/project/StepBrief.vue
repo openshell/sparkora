@@ -72,7 +72,8 @@
       </section>
 
       <div class="brief-actions">
-        <el-button :loading="submitting" @click="onGenerateBrief">重新生成</el-button>
+        <!-- 重新生成只在 READY(简报就绪且版本未生成)时可见:版本已生成后再触发会把状态机拉回 READY -->
+        <el-button v-if="canRegenerateBrief" :loading="submitting" @click="onGenerateBrief">重新生成</el-button>
         <el-button type="success" @click="gotoVersions">
           {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
         </el-button>
@@ -105,6 +106,9 @@ const generatingBrief = computed(() => isGeneratingBrief(props.project?.status))
 
 // 已生成过版本时,按钮文案改为「查看版本」
 const hasVersions = computed(() => props.project?.status === 'VERSIONS_READY' || props.project?.status === 'GENERATING_VERSIONS')
+
+// 重新生成简报只在 READY 可见:VERSIONS_READY 及之后状态已触发下一步,再生成会把状态机拉回 READY
+const canRegenerateBrief = computed(() => props.project?.status === 'READY')
 
 const gotoVersions = () => router.push({ name: 'project-versions', params: { id: route.params.id } })
 

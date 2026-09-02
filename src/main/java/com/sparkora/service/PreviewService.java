@@ -39,16 +39,19 @@ public class PreviewService {
     private final QiniuService qiniuService;
     private final ImageProperties imageProps;
     private final WenyanProperties wenyanProps;
+    private final WenyanServerService serverService;
 
     public PreviewService(ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
                           ImageService imageService, QiniuService qiniuService,
-                          ImageProperties imageProps, WenyanProperties wenyanProps) {
+                          ImageProperties imageProps, WenyanProperties wenyanProps,
+                          WenyanServerService serverService) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.imageService = imageService;
         this.qiniuService = qiniuService;
         this.imageProps = imageProps;
         this.wenyanProps = wenyanProps;
+        this.serverService = serverService;
     }
 
     /**
@@ -75,7 +78,8 @@ public class PreviewService {
         for (Long imageId : bodyIdListOf(v)) bodyUrls.add(qiniuService.ensureUploaded(imageId));
 
         // 2) 组装 markdown:frontmatter(title/author/cover)+ 正文;
-        //    正文里本地 /images/ 引用替换为七牛 URL,未选用的插图按顺序追加到文末
+        //    正文里本地 /images/ 引用替换为七牛 URL;插图落点完全由正文 markdown 引用决定,
+        //    未引用的选定插图不自动追加(与预览页 buildFullMd 同规则,所见即所得)
         String md = buildMarkdown(v.getTitle(), coverUrl, v.getContentMd(), bodyUrls);
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -105,7 +109,10 @@ public class PreviewService {
         return result;
     }
 
-    /** frontmatter(title/author/cover=七牛 URL)+ 正文;正文本地 /images/ 引用替换为七牛 URL。 */
+    /**
+     * frontmatter(title/cover=七牛 URL)+ 正文;正文本地 /images/ 引用替换为七牛 URL。
+     * 插图落点完全由正文 markdown 引用决定:未引用的选定插图不自动追加文末(与预览页 buildFullMd 同规则,所见即所得)。
+     */
     private String buildMarkdown(String title, String coverUrl, String contentMd, List<String> bodyImageUrls) {
         StringBuilder sb = new StringBuilder();
         sb.append("---\n");
@@ -116,16 +123,13 @@ public class PreviewService {
         // 本地相对引用 URL 化:/images/2026/xx.png → 七牛;对应资产才能找到(按文件名在图库反查已转存的图)
         body = replaceLocalImages(body);
         sb.append(body).append('\n');
-        for (String url : bodyImageUrls) {
-            if (!body.contains(url)) sb.append("\n![](").append(url).append(")\n");
-        }
         return sb.toString();
     }
 
     /** 把正文里的本地 /images/ 引用替换为七牛公网 URL( wenyan-server 只能拉公网 URL)。 */
     private String replaceLocalImages(String body) {
         java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("!\\\\[[^]]*]\\\\((/images/[^)]+)\\\\)").matcher(body);
+                .compile("!\\[[^]]*]\\((/images/[^)]+)\\)").matcher(body);
         StringBuffer out = new StringBuffer();
         while (m.find()) {
             String localPath = m.group(1);   // /images/2026/08/uuid.png
@@ -150,6 +154,53 @@ public class PreviewService {
                 .filter(t -> t.equalsIgnoreCase(theme.trim()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("未知主题: " + theme + "（可选：" + wenyanProps.themeNameList() + "）"));
+    }
+
+    // ==================== 选项/配置透出(publish-options 与发布通道检查,S5) ====================
+
+    /** 可选主题清单(白名单同源)。 */
+    public java.util.List<String> themeOptions() {
+        return wenyanProps.themeNameList();
+    }
+
+    /** 默认主题。 */
+    public String defaultTheme() {
+        return wenyanProps.getDefaultTheme();
+    }
+
+    /** 默认高亮主题。 */
+    public String defaultHighlight() {
+        return wenyanProps.getHighlight();
+    }
+
+    /** 默认 Mac 风格开关。 */
+    public boolean defaultMacStyle() {
+        return wenyanProps.isMacStyle();
+    }
+
+    /** 默认脚注开关。 */
+    public boolean defaultFootnote() {
+        return wenyanProps.isFootnote();
+    }
+
+    /** 发布通道配置是否齐备(serverUrl + serverApiKey)。 */
+    public boolean serverConfigured() {
+        return wenyanProps.serverConfigured();
+    }
+
+    /** 发布通道鉴权探针(GET /verify);不可达/无配置返回 false。 */
+    public boolean serverVerify() {
+        if (!wenyanProps.serverConfigured()) return false;
+        return serverService.verify();
+    }
+
+    /** wenyan-server 版本描述(探活失败返回不可达提示,不抛异常)。 */
+    public String serverHealth() {
+        try {
+            return serverService.health();
+        } catch (Exception e) {
+            return "不可达";
+        }
     }
 
     /** 高亮主题白名单(与 preview-options 的 highlights 口径一致)。 */

@@ -33,15 +33,18 @@ public class ArticleProjectController {
     private final VersionService versionService;
     private final com.sparkora.service.ImageService imageService;
     private final com.sparkora.service.PreviewService previewService;
+    private final com.sparkora.service.PublishService publishService;
 
     public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
                                     com.sparkora.service.ImageService imageService,
-                                    com.sparkora.service.PreviewService previewService) {
+                                    com.sparkora.service.PreviewService previewService,
+                                    com.sparkora.service.PublishService publishService) {
         this.mapper = mapper;
         this.briefService = briefService;
         this.versionService = versionService;
         this.imageService = imageService;
         this.previewService = previewService;
+        this.publishService = publishService;
     }
 
     @GetMapping
@@ -273,6 +276,57 @@ public class ArticleProjectController {
             return R.fail(400, ex.getMessage());
         } catch (Exception ex) {
             return R.fail(500, "预览失败: " + ex.getMessage());
+        }
+    }
+
+    // ==================== 发布（S5,公众号草稿箱;发布通道=wenyan-server）====================
+
+    /** 发布参数与配置状态(三角色可读;viewer 只读)。 */
+    @GetMapping("/{id}/publish-options")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<java.util.Map<String, Object>> publishOptions(@PathVariable Long id) {
+        ArticleProjectEntity p = mapper.selectById(id);
+        if (p == null) return R.fail(404, "项目不存在");
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("themes", previewService.themeOptions());
+        m.put("highlights", java.util.List.of("solarized-light", "monokai", "github", "dracula"));
+        m.put("defaultTheme", previewService.defaultTheme());
+        m.put("highlight", previewService.defaultHighlight());
+        m.put("macStyle", previewService.defaultMacStyle());
+        m.put("footnote", previewService.defaultFootnote());
+        // 发布通道就绪度:server 配置齐备与否 + 可达/鉴权探针(懒探测,失败不阻塞页面)
+        boolean configOk = previewService.serverConfigured();
+        boolean channelOk = configOk && previewService.serverVerify();
+        m.put("publishEnabled", channelOk);
+        m.put("publishConfigOk", configOk);
+        if (!configOk) m.put("publishDisabledReason", "发布通道未配置(WENYAN_MCP_SERVER_URL / WENYAN_MCP_SERVER_API_KEY)");
+        else if (!channelOk) m.put("publishDisabledReason", "发布通道不可用(API Key 无效或 server 不可达)");
+        m.put("wenyanServer", previewService.serverHealth());
+        // 已发布信息(重发场景展示)
+        m.put("publishMediaId", p.getPublishMediaId());
+        m.put("publishTheme", p.getPublishTheme());
+        m.put("publishedAt", p.getPublishedAt());
+        m.put("lastPublishError", p.getLastPublishError());
+        return R.ok(m);
+    }
+
+    /** 发布到公众号草稿箱(ADMIN/EDITOR)。参数与预览一致;成功推进 PUBLISHED_DRAFT,可重发覆盖。 */
+    @PostMapping("/{id}/publish")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<java.util.Map<String, Object>> publish(@PathVariable Long id,
+                                                    @RequestParam(required = false) String theme,
+                                                    @RequestParam(required = false) String highlight,
+                                                    @RequestParam(required = false) Boolean macStyle,
+                                                    @RequestParam(required = false) Boolean footnote) {
+        try {
+            return R.ok(publishService.publish(id, theme, highlight, macStyle, footnote));
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            // 前置不满足(状态/通道未配置/渲参非法)或通道错误 → 客户端错误语义
+            publishService.markFailure(id, ex.getMessage());
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            publishService.markFailure(id, ex.getMessage());
+            return R.fail(500, "发布失败: " + ex.getMessage());
         }
     }
 }

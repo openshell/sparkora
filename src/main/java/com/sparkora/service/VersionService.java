@@ -91,17 +91,19 @@ public class VersionService {
         if (styles.isEmpty()) throw new IllegalArgumentException("所选风格不存在");
 
         // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
-        //    仅当「处于非生成中状态」或「生成中但已陈旧(超阈值,进程已死)」才生效;
-        //    陈旧判定与抢占在同一 WHERE,无竞态窗口,卡死项目可自愈
+        //    仅当「READY/VERSIONS_READY(首生成或追加)」或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效;
+        //    陈旧分支必须限定生成中状态,否则任何 updated_at 较旧的下游状态都会被误放行、状态机回退。
+        //    状态守护:IMAGES_READY 及之后已触发下一步,再生成版本会把状态机拉回 VERSIONS_READY,拒绝。
         java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
         int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
                 .eq("id", projectId)
-                .and(w -> w.notIn("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                        .or().lt("updated_at", staleCutoff))
+                .and(w -> w.in("status", "READY", "VERSIONS_READY")
+                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                                .lt("updated_at", staleCutoff)))
                 .set("status", "GENERATING_VERSIONS")
                 .set("last_version_error", null)
                 .set("updated_at", LocalDateTime.now()));
-        if (claimed == 0) throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        if (claimed == 0) throw new IllegalStateException(BriefService.projectStatusGuardMsg(p, "生成版本"));
         p.setStatus("GENERATING_VERSIONS");
 
         List<ArticleVersionEntity> created = new ArrayList<>();

@@ -52,8 +52,8 @@ sparkora:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
   wenyan:
-    enabled: ${WENYAN_MCP_ENABLED:false}
-    bin: ${WENYAN_MCP_BIN:wenyan-mcp}
+    # S4 方案 A:预览用本机 CLI render(与 server 同核),发布(S5)走远程 server;
+    # 发布通道是否可用只看 server-url+server-api-key(旧 WENYAN_MCP_ENABLED 开关已废弃移除)
     server-url: ${WENYAN_MCP_SERVER_URL:}
     server-api-key: ${WENYAN_MCP_SERVER_API_KEY:}
     # S4 方案 A:预览用本机 CLI render(与 server 同核),发布(S5)走远程 server
@@ -64,6 +64,8 @@ sparkora:
     mac-style: ${WENYAN_MAC_STYLE:true}
     footnote: ${WENYAN_FOOTNOTE:true}
     render-timeout-ms: ${WENYAN_RENDER_TIMEOUT_MS:30000}
+    # S5 发布:远程 server HTTP 调用读超时(错误 key 曾有挂起行为,不宜过长)
+    publish-timeout-ms: ${WENYAN_MCP_PUBLISH_TIMEOUT_MS:30000}
   image:
     storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S3b:配图本地存储(/images/** 静态映射)
     max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}

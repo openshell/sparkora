@@ -89,9 +89,10 @@
         </div>
 
         <div class="next-row">
-          <el-button :loading="submitting" @click="openAppend">再生成其他风格</el-button>
+          <!-- 再生成其他风格只在 VERSIONS_READY 可见:配图完成后属增量编辑,再触发会把状态机拉回 VERSIONS_READY -->
+          <el-button v-if="project?.status === 'VERSIONS_READY'" :loading="submitting" @click="openAppend">再生成其他风格</el-button>
           <el-button type="success" :disabled="!project?.currentVersionId" @click="gotoNext">
-            选定当前版本 · 进入下一步（配图）→
+            {{ project?.status === 'VERSIONS_READY' ? '选定当前版本 · 进入下一步（配图）→' : '已完成配图 · 去预览 →' }}
           </el-button>
         </div>
       </div>

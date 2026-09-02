@@ -18,7 +18,11 @@ export const projectApi = {
   // 版本生成：body={styleIds:[...]}，每选一个风格生成一版；耗时较长放宽超时
   generateVersions: (id, styleIds) => http.post(`/projects/${id}/generate/versions`, { styleIds }, { timeout: 300000 }),
   listVersions: (id) => http.get(`/projects/${id}/versions`),
-  setCurrentVersion: (id, versionId) => http.put(`/projects/${id}/current-version`, null, { params: { versionId } })
+  setCurrentVersion: (id, versionId) => http.put(`/projects/${id}/current-version`, null, { params: { versionId } }),
+  // S5 发布:参数清单(主题/高亮/默认值 + 通道就绪度 + 历史发布信息)
+  publishOptions: (id) => http.get(`/projects/${id}/publish-options`),
+  // S5 发布到公众号草稿箱:渲染+上传+发布链路约十几秒,放宽超时(同 generateBrief);params={theme?, highlight?, macStyle?, footnote?}
+  publish: (id, params) => http.post(`/projects/${id}/publish`, null, { params, timeout: 120000 })
 }
 
 export const styleApi = {

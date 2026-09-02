@@ -5,7 +5,7 @@
 <script setup>
 /**
  * MarkdownEditor(CodeMirror 6,原版 @wenyan-md/ui 的 MarkdownEditor 同款引擎)。
- * 仅在本组件挂载时动态 import CodeMirror chunk;粘贴图片 → imageApi.upload → 七牛 URL markdown。
+ * 仅在本组件挂载时动态 import CodeMirror chunk;粘贴图片 → imageApi.upload → 本地 /images/** URL markdown。
  * 衍生自 wenyan 项目(caol64/wenyan-ui,Apache-2.0);本组件为 Vue 3 重写,视觉适配 sparkora 变量。
  */
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
@@ -63,7 +63,7 @@ const makeScrollHandler = (EditorView, emit) => {
   })
 }
 
-/** 粘贴图片上传 → 七牛公网 URL markdown(原版“粘贴即上传”行为)。 */
+/** 粘贴图片上传 → 本地 /images/** URL markdown(原版“粘贴即上传”行为)。 */
 const makePasteHandler = (EditorView) => {
   return EditorView.domEventHandlers({
     paste: (event) => {
@@ -81,8 +81,11 @@ const makePasteHandler = (EditorView) => {
         insertAtCursor(placeholder)
         imageApi.upload(props.projectId, img).then(res => {
           if (res.code !== 0) throw new Error(res.msg || '上传失败')
-          const url = res.data?.publicUrl || res.data?.url
-          if (!url) throw new Error('上传返回缺少 URL')
+          // 后端返回图片实体（storagePath 相对路径），本地 /images/** 静态映射访问;
+          // 发布/预览组装时由 PreviewService.replaceLocalImages 统一转七牛公网 URL
+          const p = res.data?.storagePath
+          if (!p) throw new Error('上传返回缺少 storagePath')
+          const url = `/images/${p}`
           const body = view.state.doc.toString()
           const idx = body.indexOf(placeholder.trim())
           if (idx >= 0) {
@@ -152,6 +155,8 @@ watch(() => props.modelValue, (v) => {
 onBeforeUnmount(() => { view?.destroy(); view = null })
 defineExpose({
   insertText: insertAtCursor,
+  /** 上层业务插入 markdown(插图面板等):插到当前光标处并聚焦。 */
+  insertMd: insertAtCursor,
   focus: () => view?.focus(),
   /** 父组件发起的滚动同步(百分比)。 */
   scrollToPercent: (p) => {

@@ -17,8 +17,8 @@ import java.util.List;
 @Data
 @ConfigurationProperties(prefix = "sparkora.wenyan")
 public class WenyanProperties {
-    private boolean enabled = false;
-    private String bin = "wenyan-mcp";
+    // 注:旧 stdio 模式的 enabled/bin 配置(WECHAT/WENYAN_MCP_ENABLED、WENYAN_MCP_BIN)已废弃移除——
+    // 方案 A(S4/S5)下发布通道只取决于 serverUrl+serverApiKey,enabled 开关不再参与判定。
     private String serverUrl;
     private String serverApiKey;
 
@@ -36,6 +36,17 @@ public class WenyanProperties {
     private boolean footnote = true;
     /** render 进程读超时(毫秒)。 */
     private long renderTimeoutMs = 30000;
+    /**
+     * 发布(S5)HTTP 调用读超时(毫秒):server 2.0.11 鉴权中间件对错误 key 曾有挂起行为,
+     * 超时不宜过长;发布本身是 upload(秒级)+ publish(拉图+写微信草稿,可能十几秒)两步。
+     */
+    private long publishTimeoutMs = 30000;
+
+    /** 发布通道(S5)配置是否完整:serverUrl + serverApiKey 均非空。 */
+    public boolean serverConfigured() {
+        return serverUrl != null && !serverUrl.isBlank()
+                && serverApiKey != null && !serverApiKey.isBlank();
+    }
 
     public List<String> themeNameList() {
         return Arrays.stream((themeNames == null || themeNames.isBlank() ? defaultTheme : themeNames).split(","))

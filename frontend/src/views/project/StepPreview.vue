@@ -52,12 +52,37 @@
             </span>
           </el-tooltip>
         </div>
+        <span class="ctrl-divider" aria-hidden="true"></span>
+        <el-popover placement="bottom-start" :width="308" trigger="click" class="img-pop">
+          <template #reference>
+            <el-button size="small" :disabled="!bodyImages.length">
+              <el-icon style="margin-right: 4px"><Picture /></el-icon>
+              插图 {{ bodyImages.length }}
+            </el-button>
+          </template>
+          <div class="img-pop-body">
+            <div v-if="!bodyImages.length" class="img-pop-empty">尚未选插图：到「配图」步从图库加插图</div>
+            <template v-else>
+              <div class="img-pop-tip">点击插入到编辑器光标处；正文里没引用的插图不会出现在文章中</div>
+              <div class="img-pop-grid">
+                <div v-for="(img, i) in bodyImages" :key="img.id" class="img-pop-cell"
+                     :class="{ inserted: insertedUrls.has(img.url) }"
+                     :title="`#${i + 1} ${img.fileName}${insertedUrls.has(img.url) ? '（已插入）' : ''}`" @click="insertBodyImage(img)">
+                  <el-image :src="img.url" fit="cover" class="img-pop-thumb" />
+                  <span class="img-pop-idx">{{ i + 1 }}</span>
+                  <span v-if="insertedUrls.has(img.url)" class="img-pop-check">✓</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </el-popover>
         <span class="flex-sp"></span>
         <el-tag v-if="saveState === 'dirty'" type="warning" effect="plain" size="small">未保存</el-tag>
         <el-tag v-else-if="saveState === 'error'" type="danger" effect="plain" size="small">保存失败</el-tag>
         <el-tag v-else-if="savedAt" type="success" effect="plain" size="small">已保存 {{ savedAt }}</el-tag>
         <el-button size="small" type="primary" plain :loading="saving" :disabled="!dirty" @click="saveContent">保存正文</el-button>
         <el-button size="small" type="primary" :icon="DocumentCopy" :loading="copying" :disabled="renderError" @click="copyRich">复制排版</el-button>
+        <el-button size="small" type="success" :disabled="!!renderError" @click="goPublish">去发布</el-button>
       </div>
 
       <!-- 正文加载失败 -->
@@ -123,13 +148,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
 import { renderMarkdownHtml, applyPreviewTheme, buildWechatHtml, sanitizeWenyanHtml } from '../../utils/wenyanRender'
 import { CUSTOM_THEMES } from '../../utils/wenyanThemes'
 import MarkdownEditor from '../../components/MarkdownEditor.vue'
 import { ElMessage } from 'element-plus'
-import { DocumentCopy, Loading, WarningFilled, Check } from '@element-plus/icons-vue'
+import { DocumentCopy, Loading, WarningFilled, Check, Picture } from '@element-plus/icons-vue'
 
 /**
  * Step 4 · 排版预览(wenyan web 原版蓝本,Vue 重写)。
@@ -140,6 +165,7 @@ import { DocumentCopy, Loading, WarningFilled, Check } from '@element-plus/icons
  */
 const props = defineProps({ project: Object })
 const route = useRoute()
+const router = useRouter()
 const projectId = computed(() => route.params.id)
 
 const loaded = ref(false)
@@ -150,6 +176,7 @@ const versionId = ref(null)
 const versionTitle = ref('')
 const originalMd = ref('')
 const contentMd = ref('')
+const imgSnapshot = ref(null)   // 配图快照:{images[],coverImageId,bodyImageIds[]}——与 Step3 同一接口
 const html = ref('')
 const rendering = ref(false)
 const renderError = ref('')
@@ -165,16 +192,36 @@ const footnote = ref(true)
 const previewBody = ref(null)
 const copying = ref(false)
 
-const previewable = computed(() => !!props.project && ['IMAGES_READY', 'PUBLISHED'].includes(props.project.status))
+const previewable = computed(() => !!props.project && ['IMAGES_READY', 'PUBLISHED_DRAFT'].includes(props.project.status))
 const dirty = computed(() => contentMd.value !== originalMd.value)
 const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
 
 const draftKey = computed(() => `sparkora-preview-draft-${projectId.value}`)
 
-/** frontmatter(title)+ 正文;与后端发布组装一致(title 取版本)。 */
+// ==== 配图快照口径(与 Step3/StepPublish 同一接口数据) ====
+const snapshotImages = computed(() => imgSnapshot.value?.images || [])
+const coverImageId = computed(() => imgSnapshot.value?.coverImageId ?? null)
+const bodyIds = computed(() => imgSnapshot.value?.bodyImageIds || [])
+/** 已选插图的资产对象(按 bodyImageIds 顺序),附本地访问 url。 */
+const bodyImages = computed(() =>
+  bodyIds.value.map(id => snapshotImages.value.find(img => img.id === id)).filter(Boolean)
+    .map(img => ({ ...img, url: `/images/${img.storagePath}` })))
+const coverImage = computed(() =>
+  coverImageId.value == null ? null : snapshotImages.value.find(img => img.id === coverImageId.value))
+
+/** 正文已引用的本地 URL 集合:面板「已插入」状态与后端组装去重口径一致(含 URL 即视为已插入)。 */
+const insertedUrls = computed(() => {
+  const body = contentMd.value || ''
+  return new Set(bodyImages.value.map(img => img.url).filter(u => body.includes(u)))
+})
+
+/** frontmatter(title + cover,闭合 ---)+ 正文;插图落点完全由正文 markdown 引用决定(不自动追加文末)。 */
 const buildFullMd = () => {
   const title = versionTitle.value || '无标题'
-  return `---\ntitle: ${title}\n---\n\n${contentMd.value || ''}`
+  let out = `---\ntitle: ${title}\n`
+  if (coverImage.value) out += `cover: /images/${coverImage.value.storagePath}\n`
+  out += `---\n\n`
+  return out + (contentMd.value || '')
 }
 
 // ==== 主题色点(原版 ThemePreview 下拉的语义:一眼看出主题气质) ====
@@ -266,6 +313,12 @@ const loadContent = async () => {
     if (res.code !== 0) throw new Error(res.msg || '加载失败')
     const vid = res.data?.currentVersionId
     if (!vid) throw new Error('未找到当前版本')
+    // 配图快照留存:封面/插图渲染组装 + 插图面板共用
+    imgSnapshot.value = {
+      images: res.data?.images || [],
+      coverImageId: res.data?.coverImageId ?? null,
+      bodyImageIds: res.data?.bodyImageIds || []
+    }
     const vr = await projectApi.listVersions(projectId.value)
     if (vr.code !== 0) throw new Error(vr.msg || '版本加载失败')
     const v = (vr.data || []).find(x => x.id === vid)
@@ -337,6 +390,16 @@ const copyRich = async () => {
   } finally { copying.value = false }
 }
 
+/** 跳发布步(S5 衔接:预览确认排版后直接去发布)。 */
+const goPublish = () => {
+  router.push({ name: 'project-publish', params: { id: projectId.value } })
+}
+
+// ==== 插图落点:面板点击 → 插入编辑器光标处(落点完全由正文 markdown 引用决定) ====
+const insertBodyImage = (img) => {
+  editorRef.value?.insertMd?.(`\n![](${img.url})\n`)
+}
+
 watch(saveState, (s) => { if (s !== 'dirty') return })
 watch(dirty, (d) => {
   if (d) { saveState.value = 'dirty'; localStorage.setItem(draftKey.value, contentMd.value) }
@@ -372,6 +435,20 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 .state-error { padding: 36px 16px; }
 .state-title { font-weight: 700; margin: 8px 0 4px; }
 .state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+
+/* 插图落点面板(点击插图 → 插入编辑器光标处) */
+.img-pop-body { padding: 2px; }
+.img-pop-tip { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; }
+.img-pop-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
+.img-pop-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 264px; overflow-y: auto; }
+.img-pop-cell { position: relative; cursor: pointer; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+.img-pop-cell:hover { border-color: var(--brand, var(--el-color-primary)); }
+.img-pop-cell.inserted { border-color: var(--ok, #67c23a); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #67c23a) 18%, transparent); }
+.img-pop-thumb { width: 100%; aspect-ratio: 1; display: block; }
+.img-pop-idx { position: absolute; left: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
+  text-align: center; font-size: 11px; border-radius: 8px; background: rgba(0,0,0,.55); color: #fff; padding: 0 4px; }
+.img-pop-check { position: absolute; right: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
+  text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; }
 
 /* ===== 工具栏(三段分组:选择器 | 开关 | 动作;统一 36px 高度) ===== */
 .ctrl-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }

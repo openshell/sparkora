@@ -27,7 +27,7 @@
         <el-alert v-if="project && project.lastVersionError" type="warning" :closable="false" show-icon
                   :title="`版本生成提示：${project.lastVersionError}`" class="top-alert" />
 
-        <!-- 六步创作向导:编号式步骤导航(自绘,可点/锁定/当前态),移动端横向滑动 -->
+        <!-- 五步创作向导:编号式步骤导航(自绘,可点/锁定/当前态),移动端横向滑动 -->
         <nav class="steps-nav" aria-label="创作步骤">
           <button v-for="(s, i) in STEPS" :key="s.key" type="button"
                   class="step-pill" :class="stepClass(i)" :disabled="i > maxReachable"
@@ -68,7 +68,7 @@ const STEPS = [
   { key: 'versions', title: '版本', route: 'versions' },
   { key: 'images', title: '配图', route: 'images' },
   { key: 'preview', title: '预览', route: 'preview' },
-  { key: 'publish', title: '发布' }
+  { key: 'publish', title: '发布', route: 'publish' }
 ]
 
 const route = useRoute()
@@ -90,6 +90,7 @@ const routeStepIndex = computed(() => {
   if (name === 'project-versions') return 1
   if (name === 'project-images') return 2
   if (name === 'project-preview') return 3
+  if (name === 'project-publish') return 4
   return 0
 })
 

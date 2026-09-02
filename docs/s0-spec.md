@@ -1,8 +1,9 @@
 # Sparkora · S0 可审规格（屏幕清单 + 字段级 + 接口契约 + 状态机）
 
 **范围**：S0 项目骨架 + Spring Security 登录 + 流程化工作台（项目列表）+ 新建创作任务 + 项目详情（生成入口占位）。
-**当前进度**：S0~S2a 已实现（登录、项目 CRUD、简报生成、多版本正文、风格库）；S3b 配图模块为当前开发阶段（本文档 §1/§4/§6/§10 已同步至 S3b 设计：五步流程 + 配图三来源 + IMAGES_READY 态）。
+**当前进度**：S0~S4 已实现（登录、项目 CRUD、简报生成、多版本正文、风格库、配图三来源、wenyan 同核预览 + 七牛图床）；**S5 发布模块为当前开发阶段**（本文档 §4/§11 已同步：PUBLISHED_DRAFT 终态 + 可重发，发布通道 = wenyan-server 上传 JSON + 发布）。
 **2026-08-28 决策**：原六步流程中的「校验」步骤**彻底取消**（不做事实核查步骤，SEARXNG/CRAWL4AI 联网核查不启用），流程改为五步：简报→版本→配图→预览→发布。
+**2026-08-31 S5 决策**：发布成功进入 **PUBLISHED_DRAFT**（公众号草稿箱已收），**可重发覆盖**（再次发布刷新 media_id/published_at），状态为终态、不再回退。
 **技术栈**：Spring Boot 3 + MyBatis-Plus + Spring Security + Vue3/Element Plus（流程化创作工作台，不套重型 admin 外壳）。包结构 `com.sparkora`。
 **前端适配**：**移动端适配**（响应式，移动优先）。Element Plus 响应式栅格 + 断点（xs/sm/md/lg）；移动端单列、汉堡顶栏、表格转卡片、表单单列堆叠、触控目标≥44px。不引 Vant 等额外移动端框架。
 **用途**：在真机上逐条打勾验收。S0 目标——能登录、能建项目、能看到生成入口。
@@ -67,6 +68,8 @@ POST  /api/styles              新建风格              权限 ADMIN/EDITOR
 PUT   /api/styles/{id}         编辑风格              权限 ADMIN/EDITOR
 DELETE /api/styles/{id}        删除风格              权限 ADMIN
 POST  /api/styles/extract      样文提炼风格入库      权限 ADMIN/EDITOR
+GET   /api/projects/{id}/publish-options   发布参数与通道状态  权限 ADMIN/EDITOR/VIEWER
+POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 ADMIN/EDITOR
 ```
 
 - 角色：`ADMIN` / `EDITOR` / `VIEWER`。权限矩阵（S1/S2 实现并真机验证）：**读接口（GET）三角色放行（viewer 只读），写接口（POST/PUT）限 ADMIN/EDITOR，DELETE 仅 ADMIN**。
@@ -145,9 +148,10 @@ DRAFT ──(生成简报)──▶ GENERATING_BRIEF ──(落库 brief)──�
 READY ──(多版本生成)──▶ GENERATING_VERSIONS ──(落库版本+默认选第一版)──▶ VERSIONS_READY
               ▲                       │
               └────(失败回退+写 last_version_error；部分成功也进 VERSIONS_READY 并记录明细)
-VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(预览/发布，S4/S5 实现)
-              ▲                        │
+VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发)
+              ▲                        │              ▲
               └───(重新选版本回到 VERSIONS_READY？否——配图为增量编辑，不回退)
+                                       └──(预览不改状态;发布失败状态原样保留+写 last_publish_error)
 ```
 
 - **DRAFT**：刚创建（`add` 即 DRAFT）；简报生成失败也回退到此态。
@@ -156,7 +160,11 @@ VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(预览/�
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发返回 409）。
 - **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。
 - **IMAGES_READY**（S3b 新增）：至少一张图已用（选定封面或至少一张插图）且用户点击「完成配图」；配图页可继续增删图但不回退状态。`complete-images` 仅在 VERSIONS_READY/IMAGES_READY 可调用，否则 `R.fail(400)`。
-- 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定）。
+- **PUBLISHED_DRAFT**（S5 新增,终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱,拿到 media_id）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿,刷新 publish_media_id/published_at/publish_theme;发布失败状态原样保留并写 `last_publish_error`(成功后清空);`publish` 仅在 IMAGES_READY/PUBLISHED_DRAFT 可调用,否则 `R.fail(400)`(错误经状态校验文案提示,如「尚未生成正文版本,无法预览」)。
+- 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 isPublishable/isPublished）。
+- **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
+  - 后端：`generate/brief` 仅在 DRAFT/READY、`generate/versions` 仅在 READY/VERSIONS_READY 放行（条件更新 WHERE 白名单；「生成中且陈旧超 10 分钟」分支自愈但同样限定生成中状态，防 updated_at 较旧的下游状态被误放行）；违反返回 `R.fail(409, 中文原因「…下游步骤已触发，不支持回退重做」)`。
+  - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见——下一步已触发后不再显示上一步的生成按钮。
 
 ---
 
@@ -170,10 +178,11 @@ VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(预览/�
 
 ## 6. 项目详情 / 生成入口占位 `/projects/:id`
 
-- 顶部**五步**步骤条（简报→版本→配图→预览→发布，2026-08-28 决策：删「校验」步）；简报/版本/配图三步为子路由（`ProjectLayout.vue` 外层步骤导航 + `Step*.vue` 子路由），「预览」「发布」为 S4/S5 占位置灰（未解锁上锁不可点）。
+- 顶部**五步**步骤条（简报→版本→配图→预览→发布，2026-08-28 决策：删「校验」步）；简报/版本/配图/预览四步为子路由（`ProjectLayout.vue` 外层步骤导航 + `Step*.vue` 子路由），「发布」为 S5 子路由 `StepPublish.vue`（2026-08-31 起已实现）。
 - 步骤推进与可达范围由 `frontend/src/constants/project.js` 依据 `project.status` 计算；生成中停留当前步骤。
 - 「生成简报」→ `POST /api/projects/{id}/generate/brief`（S1 起真实 AI，同步调用，前端 loading + 以 project.status 为事实源轮询恢复）。
 - 「配图」步（S3b）：三来源进图（上传/文生图/图生图）→ 选封面与插图 → 「完成配图」推进状态到 IMAGES_READY。
+- 「发布」步（S5）：发布摘要 + 参数 + 确认弹层 → `POST /api/projects/{id}/publish` → 成功进 PUBLISHED_DRAFT(可重发),契约见 §12。
 
 ---
 
@@ -183,7 +192,7 @@ VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(预览/�
 - **数据库**：**PostgreSQL**，连接参数从 `.env` 的 `SPARKORA_DB_*` 读取（host/port/name/user/password）；schema 初始化脚本幂等可重复。
 - **前端工程位置**：`/dockerData/code/sparkora/frontend/`，单独 Vue3 + Element Plus 工程。
 - **模型入口**：**axonhub 统一入口 `https://axo.caiqz.cn`**（OpenAI 兼容），`AI_BASE_URL`/`AI_API_KEY`/`AI_MODEL` 从 `.env` 读；S0 不调 AI，但骨架预留 `AiClient` 配置读取位。
-- **wenyan-mcp**：默认 `WENYAN_MCP_ENABLED=false`（S4 再启用）。
+- **wenyan-server**：S4/S5 双通道;发布通道可用性只看 `WENYAN_MCP_SERVER_URL`+`WENYAN_MCP_SERVER_API_KEY`(旧 `WENYAN_MCP_ENABLED`/`WENYAN_MCP_BIN` stdio 模式已于 S5 废弃移除)。
 - **审计**：S0 先用日志文件（`logs/`），`sparkora_audit_log` 表后置。
 
 ---
@@ -200,8 +209,8 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | axonhub 统一入口 | ⏸ S0 仅预留配置类，不调 AI |
 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS` | 文生图 / **图生图**（axonhub，多模型逗号分隔轮询） | ✅ S3b 启用 |
 | `IMAGE_STORAGE_DIR` | 图片本地存储目录（上传/生成图转存） | ✅ S3b 启用 |
-| `WECHAT_*` | 公众号草稿发布 | ⏸ S5 启用 |
-| `WENYAN_MCP_*` | wenyan 预览/发布 | ⏸ S4 启用，默认 disabled |
+| `WECHAT_*` | 公众号草稿发布 | ⏸ **S5 经 wenyan-server 发布(微信凭据配在 server 端,Sparkora 不直连微信)** |
+| `WENYAN_MCP_*` | wenyan 预览/发布 | ✅ S5 启用(SERVER_URL/SERVER_API_KEY/PUBLISH_TIMEOUT_MS;发布通道 = 远程 wenyan-server) |
 | `SEARXNG_*` / `CRAWL4AI_*` | 搜索/抓取素材 | ✖ 随「校验」步骤取消（2026-08-28 决策），不启用 |
 
 ---
@@ -319,6 +328,8 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 - 图片正文/封面**全部转七牛公网 URL**（不再走 `asset://fileId` 通道，fileId 10 分钟 TTL 复杂度归零）。
 - 配图顺序：预览/发布组装时对 `qiniu_key IS NULL` 的相关图调 `QiniuService.ensureUploaded(imageId)`（懒转存），key=`sparkora/{imageId}.{ext}`（服务端生成，覆盖上传天然幂等）；`sparkora_image_asset.qiniu_key` 只存 key，URL 由 `QINIU_PUBLIC_DOMAIN` 实时拼。
+- **配图组装规则（2026-09-01 定稿，预览与发布同参）**：`buildMarkdown`/前端 `buildFullMd` 统一组装为 frontmatter(`title`+有封面时 `cover: <图URL>`，**含闭合 `---`**) + 正文；**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（本地 `/images/**` 引用在组装时懒转存七牛）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（预览与发布同规则，所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
+- **插图落点（2026-09-01 交互定稿）**：预览页工具栏「插图」面板按选定顺序列出已选插图，点击即以 markdown 图片语法插入编辑器光标处（左栏 md 可见可编辑，正文已引用的在面板内标绿 ✓）；正文里没引用的插图不会出现在文章中（不自动追加文末），口径在面板内明示。
 - 删除图：`ImageService.delete` 落库删除 + 本地文件 + 七牛对象（非阻塞，失败仅 warn）。
 - 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名白名单防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
 
@@ -342,6 +353,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - **依赖顺序**：项目状态 IMAGES_READY 才可预览（`POST /preview` 校验，否则 `R.fail(400)`）；
 - 七牛配置开关 `QINIU_ENABLED`（AK/SK 兼容旧裸名 `${AK}` `${SK}` 回退）：关闭时 `preview` 直接 `R.fail("图床未配置…")`；已配置但上传失败 `R.fail(500,"图床上传失败: …")`。
 - 状态推进：预览不改变项目状态。
+- 发布(S5)：与预览同参同源渲染,preview HTML = 发布真值;字段级契约与验收状态见 §12。
 
 ### 前端
 
@@ -354,3 +366,40 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - `pic.caiqz.cn` 仅有 http（https 证书未配）：预览从 localhost 拉不成问题；公众号内显示的是微信端上传后的 URL，不受影响。后续可加 https。
 - wenyan-server 2.0.11 鉴权中间件对错误 key 挂起（不返回 401）：客户端超时不宜过长，且建议 server 升级。
 - theme 清单仅能在 server 端注册(wenyan theme 命令)，server 2.0.11 未提供 HTTP 查询，清单以 `.env` WENYAN_THEME_NAMES 为准。
+
+### 12. 公众号草稿发布模块（S5，正式规格）
+
+> 2026-09-01 定稿,方案 A 发布侧:与预览同渲染核,**preview HTML = 发布真值**。
+> 2026-09-01 实测勘误(@wenyan-md/cli 2.0.11):`/verify` 为 **GET** 探针;`/upload` multipart 字段名 `file`(限 md/css/json/图片,≤10MB);`/publish` 收 **JSON `{fileId, appId?}`**(fileId 须为上传的 .json);当前部署无效 key 即刻 401。上传文件 TTL 10 分钟。
+
+#### 发布链路（同步,一次调用完成）
+
+```
+PublishService.publish
+ → PreviewService.preview(同参同源:状态校验 + 七牛懒转存 + frontmatter + wenyan render)
+ → 非 degraded 校验(降级 HTML 不进公众号)
+ → gzhContent JSON { title(≤64,必填), content=渲染HTML }   ← asset:// 不用,图片全为七牛 http URL
+ → wenyan-server POST /upload (multipart file=.json) → fileId
+ → wenyan-server POST /publish (JSON {fileId}) → {media_id}
+ → 原子落库 status=PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error
+```
+
+- 封面与正文 `<img src="http(s)…">` 由 server 端 fetch 后转传微信(七牛 http URL 可用);**无封面时草稿无封面图,不阻塞发布**。
+- 失败语义:任何一步失败 → `last_publish_error` 落库、状态原样保留、`R.fail(400|500, 中文原因)`;可重试整链。
+
+#### 接口契约(全部 `R<T>` 包装;HTTP 200)
+
+| 方法 | 路径 | 权限 | 请求 | 响应 |
+|---|---|---|---|---|
+| GET | `/api/projects/{id}/publish-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote, publishEnabled, publishConfigOk, publishDisabledReason?, wenyanServer, publishMediaId?, publishTheme?, publishedAt?, lastPublishError?}`(探针失败不阻塞页面) |
+| POST | `/api/projects/{id}/publish` | ADMIN/EDITOR | `?theme=&highlight=&macStyle=&footnote=`(query,与 preview 同形) | 成功 `{mediaId, theme, publishedAt}`;前置不满足/渲染参数非法/通道未配置 `R.fail(400)`;链路失败 `R.fail(500)`;失败均回写 last_publish_error |
+
+- 配置:`WENYAN_MCP_SERVER_URL`(带 scheme)/`WENYAN_MCP_SERVER_API_KEY`/`WENYAN_MCP_PUBLISH_TIMEOUT_MS`(默认 30s);未配置时 publish-options 返回 publishEnabled=false + 中文原因,publish 返回 `R.fail(400)`。
+- 前端:`StepPublish.vue`(第 5 步子路由 `/projects/:id/publish`):摘要(标题/封面缩略/插图数)+ 参数表单(与预览同源)+ 发布确认弹层 + 成功态(mediaId/时间/重发)+ 失败黄条;viewer 只读;`maxReachableStepOf` 放开到 index=4,`StepPreview` 状态判断修正为 PUBLISHED_DRAFT 并加「去发布」衔接。
+
+#### 验收状态
+
+- [x] `GET /verify`(GET)真 key 200 / 假 key 401;`POST /upload` 真实 JSON 探针 → fileId(2026-09-01 实测)
+- [x] 三角色冒烟:viewer publish 403;DRAFT 项目 publish `R.fail(400)`;publish-options 探活 publishEnabled=true
+- [x] `mvn test`(空测试集)/ `npm run build` 通过
+- [ ] 真实发布进公众号草稿箱(publish 全链)→ **留用户真机验收**
