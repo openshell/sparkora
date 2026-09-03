@@ -111,34 +111,17 @@ CREATE INDEX IF NOT EXISTS idx_image_asset_project ON sparkora_image_asset(proje
 ALTER TABLE sparkora_image_asset ALTER COLUMN project_id DROP NOT NULL;
 
 -- S4:七牛图床转存 key(懒转存,预览/发布时 ensure;只存 key,URL 由域名实时拼)
--- S6 起该列被 rename 为 storage_key(见下方);首次迁移后本行不再生效,历史列不残留
+-- S6 起该列迁移为 storage_key(见下方);本行仅为老库补列,S6 段会删除它,重复执行不残留
 ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS qiniu_key VARCHAR(300);
 
 -- S6:图库完全依赖图床,本地不留。storage_path 移除;qiniu_key 语义通用化为 storage_key。
--- 历史已存本地的图不迁移(用户明确接受);有 qiniu_key 的记录保留 key 值(若图床对象仍在仍可访问)。
-ALTER TABLE sparkora_image_asset DROP COLUMN IF EXISTS storage_path;
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns
-               WHERE table_name='sparkora_image_asset' AND column_name='qiniu_key')
-       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_name='sparkora_image_asset' AND column_name='storage_key') THEN
-        ALTER TABLE sparkora_image_asset RENAME COLUMN qiniu_key TO storage_key;
-    END IF;
-END $$;
+-- 历史已存本地的图不迁移(用户明确接受);已有 qiniu_key(已转存七牛)的记录把 key 搬进 storage_key 保留。
+-- 注意:不能用 DO $$ 块——Spring ScriptUtils 不支持 dollar-quote(会把块按 ; 截断)。
+-- 全部用单条幂等语句:补列 → 搬数据(只搬 storage_key 为空的)→ 删旧列。
 ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS storage_key VARCHAR(300);
--- 首次迁移后若 S4 行又补回了 qiniu_key(历史库重复执行场景),清理残留列,保证幂等
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns
-               WHERE table_name='sparkora_image_asset' AND column_name='qiniu_key')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name='sparkora_image_asset' AND column_name='storage_key') THEN
-        -- 把仍留在 qiniu_key 里的值搬进 storage_key(防重复执行窗口丢数据),再删旧列
-        UPDATE sparkora_image_asset SET storage_key = qiniu_key WHERE qiniu_key IS NOT NULL AND storage_key IS NULL;
-        ALTER TABLE sparkora_image_asset DROP COLUMN qiniu_key;
-    END IF;
-END $$;
+UPDATE sparkora_image_asset SET storage_key = qiniu_key WHERE storage_key IS NULL AND qiniu_key IS NOT NULL;
+ALTER TABLE sparkora_image_asset DROP COLUMN IF EXISTS qiniu_key;
+ALTER TABLE sparkora_image_asset DROP COLUMN IF EXISTS storage_path;
 
 -- S5:公众号发布留痕(草稿箱 media_id / 发布主题 / 时间 / 最近一次失败原因)
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS publish_media_id VARCHAR(128);
