@@ -85,8 +85,6 @@ export const imageApi = {
   setCover: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/cover`),
   addBodyImage: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/body`, null, { params: { action: 'add' } }),
   removeBodyImage: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/body`, null, { params: { action: 'remove' } }),
-  // 完成配图：VERSIONS_READY→IMAGES_READY（幂等）
-  completeImages: (id) => http.post(`/projects/${id}/complete-images`),
   // 删除图库图（ADMIN/EDITOR；被引用时后端 400 并提示引用方）
   remove: (imageId) => http.delete(`/images/${imageId}`),
   // S4 预览:wenyan 同核渲染(方案 A);params={theme?, highlight?, macStyle?, footnote?}

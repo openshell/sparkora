@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 创作 Brief 生成服务。
@@ -32,14 +33,17 @@ public class BriefService {
     private final ArticleBriefMapper briefMapper;
     private final AiClient aiClient;
     private final CarRagService ragService;
+    private final ArticleProjectCarService carService;
     private final ObjectMapper json;
 
     public BriefService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
-                        AiClient aiClient, CarRagService ragService, ObjectMapper json) {
+                        AiClient aiClient, CarRagService ragService,
+                        ArticleProjectCarService carService, ObjectMapper json) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.aiClient = aiClient;
         this.ragService = ragService;
+        this.carService = carService;
         this.json = json;
     }
 
@@ -165,10 +169,11 @@ public class BriefService {
         if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
             base += "\n\n【用户补充信息(个人见解/独家资讯等),请作为创作素材融入核心观点与大纲,不得遗漏关键信息】\n" + p.getExtraInfo();
         }
-        // S6 RAG:项目关联车型时,检索车型知识库注入权威参数作为事实约束
-        if (p.getCarModelId() != null) {
+        // S6 RAG:项目关联车型时,跨车型检索知识库注入权威参数作为事实约束
+        List<Long> modelIds = carService.listModelIds(p.getId());
+        if (!modelIds.isEmpty()) {
             try {
-                String ctx = ragService.buildContext(p.getCarModelId(), p.getTopic(), 8, 0.3);
+                String ctx = ragService.buildContextForModels(modelIds, p.getTopic(), 8, 0.3);
                 if (!ctx.isBlank()) {
                     base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时在 factRisks 标注】\n" + ctx;
                 }

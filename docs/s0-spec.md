@@ -4,6 +4,7 @@
 **当前进度**：S0~S4 已实现（登录、项目 CRUD、简报生成、多版本正文、风格库、配图三来源、wenyan 同核预览 + 七牛图床）；**S5 发布模块为当前开发阶段**（本文档 §4/§11 已同步：PUBLISHED_DRAFT 终态 + 可重发，发布通道 = wenyan-server 上传 JSON + 发布）。
 **2026-08-28 决策**：原六步流程中的「校验」步骤**彻底取消**（不做事实核查步骤，SEARXNG/CRAWL4AI 联网核查不启用），流程改为五步：简报→版本→配图→预览→发布。
 **2026-08-31 S5 决策**：发布成功进入 **PUBLISHED_DRAFT**（公众号草稿箱已收），**可重发覆盖**（再次发布刷新 media_id/published_at），状态为终态、不再回退。
+**2026-09-03 S6 决策**：**配图并入预览步骤**，流程改为四步：简报→版本→预览→发布；**彻底移除 IMAGES_READY 状态**，`VERSIONS_READY` 后直接可预览/发布；预览内提供图库插入 + AI 生图配图能力。车型库图片接入**预留**（暂不开发）。
 **技术栈**：Spring Boot 3 + MyBatis-Plus + Spring Security + Vue3/Element Plus（流程化创作工作台，不套重型 admin 外壳）。包结构 `com.sparkora`。
 **前端适配**：**移动端适配**（响应式，移动优先）。Element Plus 响应式栅格 + 断点（xs/sm/md/lg）；移动端单列、汉堡顶栏、表格转卡片、表单单列堆叠、触控目标≥44px。不引 Vant 等额外移动端框架。
 **用途**：在真机上逐条打勾验收。S0 目标——能登录、能建项目、能看到生成入口。
@@ -55,7 +56,6 @@ GET   /api/projects/{id}/brief             取当前简报           权限 ADMI
 POST  /api/projects/{id}/generate/versions 多版本生成           权限 ADMIN/EDITOR
 GET   /api/projects/{id}/versions          版本列表             权限 ADMIN/EDITOR/VIEWER
 PUT   /api/projects/{id}/current-version   设定当前版本         权限 ADMIN/EDITOR
-POST  /api/projects/{id}/complete-images   完成配图（状态推进 VERSIONS_READY→IMAGES_READY）  权限 ADMIN/EDITOR
 GET   /api/images              图库列表               权限 ADMIN/EDITOR/VIEWER
 POST  /api/images/upload       上传图库图             权限 ADMIN/EDITOR
 POST  /api/images/generate-text    文生图             权限 ADMIN/EDITOR
@@ -131,7 +131,7 @@ POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 AD
 | GET | `/api/styles` | 三角色 | `?enabledOnly=` | `{styles[]}` |
 | POST | `/api/styles/extract` | ADMIN/EDITOR | `{name, sourceText}` | `{style}` |
 
-> S3b 配图接口（`/api/images/**`、`/api/projects/{id}/images/**`、`/api/projects/{id}/complete-images`）字段级契约见 §10。
+> S3b 配图接口（`/api/images/**`、`/api/projects/{id}/images/**`）字段级契约见 §10。S6 起 `complete-images` 已删除。
 
 > 所有响应统一 `R<T>` = `{code, msg, data}`，`code=0` 成功。**注意：业务失败（含登录失败、生成失败）均为 HTTP 200 + `R.fail`，前端不能只依赖 axios 错误拦截器，必须检查 `code`**（S2a 已在 store.login / ProjectEdit / StepBrief / StepVersions 逐处落实）。
 
@@ -148,8 +148,8 @@ DRAFT ──(生成简报)──▶ GENERATING_BRIEF ──(落库 brief)──�
 READY ──(多版本生成)──▶ GENERATING_VERSIONS ──(落库版本+默认选第一版)──▶ VERSIONS_READY
               ▲                       │
               └────(失败回退+写 last_version_error；部分成功也进 VERSIONS_READY 并记录明细)
-VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发)
-              ▲                        │              ▲
+VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发)
+              ▲                        │
               └───(重新选版本回到 VERSIONS_READY？否——配图为增量编辑，不回退)
                                        └──(预览不改状态;发布失败状态原样保留+写 last_publish_error)
 ```
@@ -158,10 +158,9 @@ VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(发布成
 - **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发返回 409）。
 - **READY**：简报就绪（`current_brief_id` 指向最新简报；S0 语义「记录创建成功」已由 S1 取代）。
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发返回 409）。
-- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。
-- **IMAGES_READY**（S3b 新增）：至少一张图已用（选定封面或至少一张插图）且用户点击「完成配图」；配图页可继续增删图但不回退状态。`complete-images` 仅在 VERSIONS_READY/IMAGES_READY 可调用，否则 `R.fail(400)`。
-- **PUBLISHED_DRAFT**（S5 新增,终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱,拿到 media_id）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿,刷新 publish_media_id/published_at/publish_theme;发布失败状态原样保留并写 `last_publish_error`(成功后清空);`publish` 仅在 IMAGES_READY/PUBLISHED_DRAFT 可调用,否则 `R.fail(400)`(错误经状态校验文案提示,如「尚未生成正文版本,无法预览」)。
-- 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 isPublishable/isPublished）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。
+- **PUBLISHED_DRAFT**（S5 新增,终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱,拿到 media_id）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿,刷新 publish_media_id/published_at/publish_theme;发布失败状态原样保留并写 `last_publish_error`(成功后清空);`publish` 仅在 VERSIONS_READY/PUBLISHED_DRAFT 可调用,否则 `R.fail(400)`(错误经状态校验文案提示,如「尚未生成正文版本,无法预览」)。
+- 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 isPublishable/isPublished）。**S6 起 `statusMeta` 对历史残留 `IMAGES_READY` 归一为 `VERSIONS_READY`**（兼容旧数据，避免历史项目无法预览/发布）。
 - **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
   - 后端：`generate/brief` 仅在 DRAFT/READY、`generate/versions` 仅在 READY/VERSIONS_READY 放行（条件更新 WHERE 白名单；「生成中且陈旧超 10 分钟」分支自愈但同样限定生成中状态，防 updated_at 较旧的下游状态被误放行）；违反返回 `R.fail(409, 中文原因「…下游步骤已触发，不支持回退重做」)`。
   - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见——下一步已触发后不再显示上一步的生成按钮。
@@ -178,10 +177,10 @@ VERSIONS_READY ──(完成配图按钮)──▶ IMAGES_READY ──(发布成
 
 ## 6. 项目详情 / 生成入口占位 `/projects/:id`
 
-- 顶部**五步**步骤条（简报→版本→配图→预览→发布，2026-08-28 决策：删「校验」步）；简报/版本/配图/预览四步为子路由（`ProjectLayout.vue` 外层步骤导航 + `Step*.vue` 子路由），「发布」为 S5 子路由 `StepPublish.vue`（2026-08-31 起已实现）。
+- 顶部**四步**步骤条（简报→版本→预览→发布，2026-08-28 决策：删「校验」步；2026-09-03 S6 决策：配图并入预览，删「配图」步）；简报/版本/预览三步为子路由（`ProjectLayout.vue` 外层步骤导航 + `Step*.vue` 子路由），「发布」为 S5 子路由 `StepPublish.vue`（2026-08-31 起已实现）。
 - 步骤推进与可达范围由 `frontend/src/constants/project.js` 依据 `project.status` 计算；生成中停留当前步骤。
 - 「生成简报」→ `POST /api/projects/{id}/generate/brief`（S1 起真实 AI，同步调用，前端 loading + 以 project.status 为事实源轮询恢复）。
-- 「配图」步（S3b）：三来源进图（上传/文生图/图生图）→ 选封面与插图 → 「完成配图」推进状态到 IMAGES_READY。
+- 「预览」步（S4 + S6 配图并入）：左编辑右预览；工具栏「配图」面板提供**图库插入**（全量图库选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，产物进图库后插入正文）两种配图来源；封面走 frontmatter `cover` 元信息。车型库图片接入**预留**（暂不开发）。
 - 「发布」步（S5）：发布摘要 + 参数 + 确认弹层 → `POST /api/projects/{id}/publish` → 成功进 PUBLISHED_DRAFT(可重发),契约见 §12。
 
 ---
@@ -260,7 +259,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | 文生图 | prompt → 生成封面/插图 | `images/generations` |
 | **图生图** | 上传参考图 + prompt → 基于参考图生成 | `images/edits`（multipart 传参考图；若 axonhub/当前候选模型不支持则明确报错并提示改用文生图） |
 
-> 状态推进：配图使用与「多版本生成」相同的同步调用模式（前端 loading + 超时放宽），不引入新生成中状态；「完成配图」按钮显式推进 VERSIONS_READY→IMAGES_READY（幂等：IMAGES_READY 再点返回 `{ok:true}`）。
+> **2026-09-03 S6 决策**：配图并入预览步骤，不再有独立「配图」步与「完成配图」状态推进。配图入口在预览工具栏「配图」面板，提供**图库插入**（全量图库选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，产物进图库后插入正文）两种来源。车型库图片接入**预留**（暂不开发）。
 
 ### 数据模型（`sparkora_image_asset`，S3b 新表）
 
@@ -302,16 +301,16 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[]}`（当前版本配图快照；images 为**全量图库**——含全局图，与配图选用口径一致） |
 | POST | `/api/projects/{id}/images/{imageId}/cover` | ADMIN/EDITOR | — | `{ok:true}`（version.cover_image_id）；重复选同一张幂等 |
 | POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 version.body_image_ids）；重复添加幂等 |
-| POST | `/api/projects/{id}/complete-images` | ADMIN/EDITOR | — | `{ok:true}`；无封面且无插图 `R.fail(400, "请先选定封面或至少一张插图")`；非 VERSIONS_READY/IMAGES_READY `R.fail(400)` |
 
 - 图片访问：`GET /images/**` 静态映射 `IMAGE_STORAGE_DIR`（permitAll，静态资源）；`storagePath` 形如 `2026/08/uuid.png`。
 - 文生图/图生图返回的 axonhub URL **必须转存本地**（临时 URL 会过期），转存失败则该次生成报错（不留死链）。
 - 请求体数字字段（projectId/refImageId）统一健壮解析：兼容数字与字符串形式（前端路由参数为字符串）。
+- **S6 起 `complete-images` 接口已删除**（配图并入预览，不再有「完成配图」状态推进）。
 
-### 页面职责（2026-08-30 调整）
+### 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览）
 
 - **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、按项目过滤、删除（ADMIN/EDITOR）。素材管理归图库，不在文章流程内。
-- **配图步骤（项目向导 Step3）**：只做「从图库选用（设封面/加插图）+ AI 文生图/图生图补充生成」。图不够时引导去图库页。
+- **预览步配图面板（项目向导 Step3 并入 Step4）**：工具栏「配图」面板提供**图库插入**（全量图库选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，产物进图库后插入正文）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。
 
 ---
 
@@ -350,16 +349,16 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | GET | `/api/images/preview-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote}`（读 `.env` WENYAN_* 配置，前端下拉同源） |
 | POST | `/api/projects/{id}/preview` | 三角色 | `?theme=&highlight=&macStyle=&footnote=`（query） | `{html, theme, highlight, macStyle, footnote, degraded, degradedReason?}`；业务失败 HTTP 200 + `R.fail`，未知主题 `R.fail(400)`（白名单防 CLI 参数注入）；前置未就绪 `R.fail(400)` |
 
-- **依赖顺序**：项目状态 IMAGES_READY 才可预览（`POST /preview` 校验，否则 `R.fail(400)`）；
+- **依赖顺序**：项目状态 VERSIONS_READY 才可预览（`POST /preview` 校验，否则 `R.fail(400)`）；
 - 七牛配置开关 `QINIU_ENABLED`（AK/SK 兼容旧裸名 `${AK}` `${SK}` 回退）：关闭时 `preview` 直接 `R.fail("图床未配置…")`；已配置但上传失败 `R.fail(500,"图床上传失败: …")`。
 - 状态推进：预览不改变项目状态。
 - 发布(S5)：与预览同参同源渲染,preview HTML = 发布真值;字段级契约与验收状态见 §12。
 
 ### 前端
 
-- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤四）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；degraded=true 顶部黄条；移动端适配。
-- 五步流程 `maxReachableStepOf` 扩到 `index=3`（预览），发布步解锁待 S5。
-- 完成配图按钮文案改为「完成配图，去预览」并直接跳预览页（Step3 → Step4 顺滑衔接）。
+- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤三）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；degraded=true 顶部黄条；移动端适配。
+- 四步流程 `maxReachableStepOf` 扩到 `index=3`（发布），发布步对 VERSIONS_READY/PUBLISHED_DRAFT 解锁。
+- 配图并入预览：工具栏「配图」面板提供图库插入 + AI 生图（文生图/图生图，产物进图库后插入正文）两种来源；封面走 frontmatter `cover` 元信息。
 
 ### 已知限制与风险（登记)
 

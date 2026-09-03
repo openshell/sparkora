@@ -110,10 +110,10 @@
         </div>
 
         <div class="next-row">
-          <!-- 再生成其他风格只在 VERSIONS_READY 可见:配图完成后属增量编辑,再触发会把状态机拉回 VERSIONS_READY -->
+          <!-- 再生成其他风格只在 VERSIONS_READY 可见:发布后属增量编辑,再触发会把状态机拉回 VERSIONS_READY -->
           <el-button v-if="project?.status === 'VERSIONS_READY'" :loading="submitting" @click="openAppend">再生成其他风格</el-button>
           <el-button type="success" :disabled="!project?.currentVersionId" @click="gotoNext">
-            {{ project?.status === 'VERSIONS_READY' ? '选定当前版本 · 进入下一步（配图）→' : '已完成配图 · 去预览 →' }}
+            {{ project?.status === 'VERSIONS_READY' ? '选定当前版本 · 进入下一步（预览）→' : '去预览 →' }}
           </el-button>
         </div>
       </div>
@@ -235,9 +235,8 @@ const saveTitle = async (v) => {
   } finally { savingTitle.value = false }
 }
 const gotoNext = () => {
-  // 下一步按状态推进:VERSIONS_READY(版本就绪、未配图)→ 配图;IMAGES_READY 及之后(已配图)→ 预览
-  const target = props.project?.status === 'VERSIONS_READY' ? 'project-images' : 'project-preview'
-  router.push({ name: target, params: { id: route.params.id } })
+  // 下一步:VERSIONS_READY 及之后一律进预览(配图已并入预览步骤)
+  router.push({ name: 'project-preview', params: { id: route.params.id } })
 }
 
 // 挂载即装载版本列表与风格库;project 详情由布局层异步加载,挂载时可能尚未就位——

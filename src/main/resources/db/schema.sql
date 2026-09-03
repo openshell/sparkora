@@ -121,7 +121,9 @@ ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS published_at TIMES
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_publish_error VARCHAR(1000);
 
 -- S6:创作项目关联车型(可选;生成 brief/版本时注入车型知识库 RAG 上下文)
-ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS car_model_id BIGINT;
+-- 多车型关联:改用关联表 sparkora_article_project_car,删除单值 car_model_id 字段
+-- (关联表定义见下方 S6 车型知识库区块,因外键引用 sparkora_car_model 需在其后)
+ALTER TABLE sparkora_article_project DROP COLUMN IF EXISTS car_model_id;
 
 -- S6:补充信息(可选;用户个人见解/独家资讯等,生成 brief/版本时注入 prompt 作为创作素材)
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS extra_info TEXT;
@@ -286,3 +288,16 @@ CREATE TABLE IF NOT EXISTS sparkora_car_sync_job (
     deleted      SMALLINT     NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_car_sync_job_created ON sparkora_car_sync_job(created_at);
+
+-- S6:创作项目-车型关联表(一篇文章可关联多个车型;生成时跨车型检索知识库)
+-- 外键引用 sparkora_car_model,故定义在车型知识库区块末尾
+CREATE TABLE IF NOT EXISTS sparkora_article_project_car (
+    id           BIGSERIAL PRIMARY KEY,
+    project_id   BIGINT       NOT NULL REFERENCES sparkora_article_project(id),
+    car_model_id BIGINT       NOT NULL REFERENCES sparkora_car_model(id),
+    sort_order   INTEGER      DEFAULT 0,           -- 关联顺序(首个为主车型)
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted      SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_project_car_project ON sparkora_article_project_car(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_car_model ON sparkora_article_project_car(car_model_id);

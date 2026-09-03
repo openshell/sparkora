@@ -24,8 +24,8 @@ public class ProjectRequest {
 
     private Long brandVoiceProfileId;
 
-    /** S6:关联车型(可选;生成 brief/版本时注入车型知识库 RAG 上下文)。 */
-    private Long carModelId;
+    /** S6:关联车型列表(可选;一篇文章可关联多个车型,生成时跨车型检索知识库)。 */
+    private java.util.List<Long> carModelIds;
 
     /** S6:补充信息(可选;用户个人见解/独家资讯等,生成 brief/版本时注入 prompt 作为创作素材)。 */
     @Size(max = 5000)

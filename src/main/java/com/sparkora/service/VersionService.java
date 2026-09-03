@@ -41,19 +41,22 @@ public class VersionService {
     private final StyleProfileMapper styleMapper;
     private final AiClient aiClient;
     private final CarRagService ragService;
+    private final ArticleProjectCarService carService;
     private final ObjectMapper json;
 
     private static final String LABELS = "ABCDEFGHIJ";
 
     public VersionService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
                           ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
-                          AiClient aiClient, CarRagService ragService, ObjectMapper json) {
+                          AiClient aiClient, CarRagService ragService,
+                          ArticleProjectCarService carService, ObjectMapper json) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
         this.styleMapper = styleMapper;
         this.aiClient = aiClient;
         this.ragService = ragService;
+        this.carService = carService;
         this.json = json;
     }
 
@@ -96,7 +99,7 @@ public class VersionService {
         // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
         //    仅当「READY/VERSIONS_READY(首生成或追加)」或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效;
         //    陈旧分支必须限定生成中状态,否则任何 updated_at 较旧的下游状态都会被误放行、状态机回退。
-        //    状态守护:IMAGES_READY 及之后已触发下一步,再生成版本会把状态机拉回 VERSIONS_READY,拒绝。
+        //    状态守护:VERSIONS_READY 之后(PUBLISHED_DRAFT)已触发下一步,再生成版本会把状态机拉回 VERSIONS_READY,拒绝。
         java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
         int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
                 .eq("id", projectId)
@@ -203,10 +206,11 @@ public class VersionService {
         if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
             base += "\n\n【用户补充信息(个人见解/独家资讯等),请在正文中自然融入,不得遗漏关键信息】\n" + p.getExtraInfo();
         }
-        // S6 RAG:项目关联车型时,检索车型知识库注入权威参数作为事实约束
-        if (p.getCarModelId() != null) {
+        // S6 RAG:项目关联车型时,跨车型检索知识库注入权威参数作为事实约束
+        List<Long> modelIds = carService.listModelIds(p.getId());
+        if (!modelIds.isEmpty()) {
             try {
-                String ctx = ragService.buildContext(p.getCarModelId(), p.getTopic(), 8, 0.3);
+                String ctx = ragService.buildContextForModels(modelIds, p.getTopic(), 8, 0.3);
                 if (!ctx.isBlank()) {
                     base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + ctx;
                 }

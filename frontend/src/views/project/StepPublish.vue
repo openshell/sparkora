@@ -3,7 +3,7 @@
     <template #header>
       <span class="card-head">
         <span class="head-main">
-          <span class="step-title serif">Step 5 · 发布</span>
+          <span class="step-title serif">Step 4 · 发布</span>
           <span class="step-sub">发布到微信公众号草稿箱 · 与预览同源(文颜)</span>
         </span>
         <span class="meta">确认排版后发布</span>
@@ -13,8 +13,8 @@
     <!-- 前置未就绪(状态不该到这步:步骤导航已锁,兜底防护) -->
     <div v-if="!publishable" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
-      <div class="state-title">尚未完成配图</div>
-      <div class="state-msg">请先完成「版本」与「配图」步骤,状态推进到「配图完成」后即可发布。</div>
+      <div class="state-title">尚未生成正文版本</div>
+      <div class="state-msg">请先完成「版本」步骤,状态推进到「版本就绪」后即可发布。</div>
     </div>
 
     <template v-else>
@@ -62,9 +62,12 @@
                 <el-tag size="small" effect="plain" :type="bodyImageIds.length ? 'success' : 'info'">
                   插图 {{ bodyImageIds.length }} 张
                 </el-tag>
-                <el-tag size="small" effect="plain" :type="coverUrl ? 'success' : 'warning'">
-                  {{ coverUrl ? '已选封面' : '未选封面(发布将无封面图)' }}
+                <el-tag size="small" effect="plain" :type="coverUrl ? 'success' : 'danger'">
+                  {{ coverUrl ? '已选封面' : '未选封面(公众号要求必选)' }}
                 </el-tag>
+              </div>
+              <div v-if="!coverUrl" class="cover-required-tip">
+                <el-icon><WarningFilled /></el-icon>公众号要求文章至少要有封面图，请到「预览」步骤为当前版本设置封面。
               </div>
               <div v-if="!editorOrAbove" class="readonly-tip">viewer 只读,发布需 ADMIN/EDITOR 角色</div>
             </div>
@@ -112,7 +115,7 @@
           <el-button size="small" plain @click="goPreview">← 返回预览</el-button>
           <template v-if="editorOrAbove">
             <el-button size="small" plain :disabled="!published || publishing" @click="recheckPreview">再检查一遍渲染</el-button>
-            <el-button type="primary" :loading="publishing" :disabled="!publishEnabled"
+            <el-button type="primary" :loading="publishing" :disabled="!publishEnabled || !coverUrl"
                        @click="confirmPublish">
               {{ published ? '重发(覆盖草稿)' : '确认发布到草稿箱' }}
             </el-button>
@@ -136,7 +139,7 @@ import { isPublishable } from '../../constants/project'
 import { CUSTOM_THEMES } from '../../utils/wenyanThemes'
 
 /**
- * Step 5 · 发布(S5):同源渲染(与 Step4 preview 完全同参)→ wenyan-server(公众号草稿箱)。
+ * Step 4 · 发布(S5):同源渲染(与 Step3 preview 完全同参)→ wenyan-server(公众号草稿箱)。
  * 后端 PublishService 保证 preview HTML = 发布真值;本页只做参数选择 + 摘要确认 + 状态展示。
  */
 const props = defineProps({ project: Object })
@@ -192,7 +195,7 @@ const themeLabel = (t) => {
   return c ? c.name : (t || '')
 }
 
-// ==== 摘要:标题/字数/封面/插图(与 Step3/Step4 同一接口,口径一致) ====
+// ==== 摘要:标题/字数/封面/插图(与 Step3 同一接口,口径一致) ====
 const versionTitle = ref('')
 const contentMd = ref('')
 const coverUrl = ref('')
@@ -273,7 +276,7 @@ const doPublish = async () => {
     })
     if (res.code !== 0) throw new Error(res.msg || '发布失败')
     ElMessage.success('已发布到公众号草稿箱')
-    // 刷新项目状态(IMAGES_READY → PUBLISHED_DRAFT)与发布信息,成功态自然浮现
+    // 刷新项目状态(VERSIONS_READY → PUBLISHED_DRAFT)与发布信息,成功态自然浮现
     await store.ensureProject(projectId.value, { force: true })
     await loadOptions()
   } catch (e) {
@@ -342,6 +345,10 @@ watch(publishable, (ok) => {
 .summary-topic { font-weight: 700; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .summary-title { font-size: 13px; color: var(--ink); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .summary-sub { display: flex; gap: 8px; flex-wrap: wrap; }
+.cover-required-tip {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px; font-size: 12px; color: var(--err);
+}
 .readonly-tip { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
 /* 参数表单(与预览页同形) */

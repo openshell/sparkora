@@ -64,4 +64,26 @@ public class CarRagService {
         }
         return sb.toString();
     }
+
+    /**
+     * 跨车型检索(S6 多车型):对多个车型分别检索并合并,标注来源车型。
+     * @param modelIds 车型 id 列表(可多个)
+     * @param query    查询文本
+     * @param topK     每车型返回条数
+     * @param minScore 相似度阈值
+     * @return 合并后的知识上下文;无命中返回空串
+     */
+    public String buildContextForModels(List<Long> modelIds, String query, int topK, double minScore) {
+        if (modelIds == null || modelIds.isEmpty() || query == null || query.isBlank()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Long modelId : modelIds) {
+            if (modelId == null) continue;
+            List<Hit> hits = retrieve(modelId, query, topK);
+            for (Hit h : hits) {
+                if (h.score() < minScore) continue;
+                sb.append(h.chunkText()).append("\n---\n");
+            }
+        }
+        return sb.toString();
+    }
 }

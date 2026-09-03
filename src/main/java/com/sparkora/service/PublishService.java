@@ -52,7 +52,7 @@ public class PublishService {
         // 0) 发布通道配置检查(未配置直接中文报错,不触碰状态)
         serverService.requireConfigured();
 
-        // 1) 同源渲染:内部做项目存在性/状态(IMAGES_READY|PUBLISHED_DRAFT)/当前版本/参数白名单校验
+        // 1) 同源渲染:内部做项目存在性/状态(VERSIONS_READY|PUBLISHED_DRAFT)/当前版本/参数白名单校验
         //    并完成封面+插图的七牛懒转存(preview 与发布同一份组装,保证所见即所得)
         java.util.Map<String, Object> rendered = previewService.preview(projectId, theme, highlight, macStyle, footnote);
         if (Boolean.TRUE.equals(rendered.get("degraded"))) {
@@ -64,9 +64,15 @@ public class PublishService {
         String usedTheme = (String) rendered.get("theme");
         if (html == null || html.isBlank()) throw new IllegalStateException("渲染结果为空,已中止发布");
 
+        // 1.5) 微信要求文章至少要有封面图:当前版本未设封面则拒绝发布(避免发布无封面文章)
+        ArticleProjectEntity p = projectMapper.selectById(projectId);
+        ArticleVersionEntity v = versionMapper.selectById(p.getCurrentVersionId());
+        if (v == null) throw new IllegalStateException("当前版本不存在，请重新选定");
+        if (v.getCoverImageId() == null)
+            throw new IllegalStateException("公众号要求文章至少要有封面图，请先在「预览」步骤为当前版本设置封面后再发布");
+
         // 2) 组 gzhContent(publish JSON 文件内容):title 必填、content=渲染 HTML
         //    微信草稿接口 title 上限 64 字符,超长截断防 400
-        ArticleVersionEntity v = versionMapper.selectById(projectMapper.selectById(projectId).getCurrentVersionId());
         String title = v.getTitle() == null || v.getTitle().isBlank() ? "无标题" : v.getTitle();
         if (title.length() > 64) title = title.substring(0, 64);
         java.util.Map<String, Object> gzh = new LinkedHashMap<>();

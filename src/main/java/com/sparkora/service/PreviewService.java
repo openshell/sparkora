@@ -62,8 +62,8 @@ public class PreviewService {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
         if (p.getCurrentVersionId() == null) throw new IllegalStateException("尚未生成正文版本，无法预览");
-        if (!"IMAGES_READY".equals(p.getStatus()) && !"PUBLISHED_DRAFT".equals(p.getStatus()))
-            throw new IllegalStateException("项目状态为 " + p.getStatus() + "，完成配图后才可预览");
+        if (!"VERSIONS_READY".equals(p.getStatus()) && !"PUBLISHED_DRAFT".equals(p.getStatus()))
+            throw new IllegalStateException("项目状态为 " + p.getStatus() + "，版本就绪后才可预览");
         ArticleVersionEntity v = versionMapper.selectById(p.getCurrentVersionId());
         if (v == null) throw new IllegalStateException("当前版本不存在，请重新选定");
 

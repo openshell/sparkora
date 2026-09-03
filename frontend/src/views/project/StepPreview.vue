@@ -3,7 +3,7 @@
     <template #header>
       <span class="card-head">
         <span class="head-main">
-          <span class="step-title serif">Step 4 · 排版预览</span>
+          <span class="step-title serif">Step 3 · 排版预览</span>
           <span class="step-sub">微信样式实时预览 · 与发布同源(文颜)</span>
         </span>
         <span class="meta">左编辑 · 右预览</span>
@@ -13,8 +13,8 @@
     <!-- 前置未就绪 -->
     <div v-if="!previewable" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
-      <div class="state-title">尚未完成配图</div>
-      <div class="state-msg">请先完成「版本」与「配图」步骤，再进行排版预览。</div>
+      <div class="state-title">尚未生成正文版本</div>
+      <div class="state-msg">请先完成「版本」步骤，再进行排版预览。</div>
     </div>
 
     <template v-else>
@@ -56,27 +56,76 @@
           </el-tooltip>
         </div>
         <span class="ctrl-divider" aria-hidden="true"></span>
-        <el-popover placement="bottom-start" :width="308" trigger="click" class="img-pop">
+        <el-popover placement="bottom-start" :width="460" trigger="click" class="img-pop">
           <template #reference>
-            <el-button size="small" :disabled="!bodyImages.length">
+            <el-button size="small">
               <el-icon style="margin-right: 4px"><Picture /></el-icon>
-              插图 {{ bodyImages.length }}
+              配图 {{ insertedCount }}/{{ snapshotImages.length }}
             </el-button>
           </template>
           <div class="img-pop-body">
-            <div v-if="!bodyImages.length" class="img-pop-empty">尚未选插图：到「配图」步从图库加插图</div>
-            <template v-else>
-              <div class="img-pop-tip">点击插入到编辑器光标处；正文里没引用的插图不会出现在文章中</div>
-              <div class="img-pop-grid">
-                <div v-for="(img, i) in bodyImages" :key="img.id" class="img-pop-cell"
-                     :class="{ inserted: insertedUrls.has(img.url) }"
-                     :title="`#${i + 1} ${img.fileName}${insertedUrls.has(img.url) ? '（已插入）' : ''}`" @click="insertBodyImage(img)">
-                  <el-image :src="img.url" fit="cover" class="img-pop-thumb" />
-                  <span class="img-pop-idx">{{ i + 1 }}</span>
-                  <span v-if="insertedUrls.has(img.url)" class="img-pop-check">✓</span>
-                </div>
-              </div>
-            </template>
+            <el-tabs v-model="imgTab" class="img-tabs">
+              <!-- 图库:全量图库选用(插入正文 / 设封面) -->
+              <el-tab-pane label="图库" name="library">
+                <div v-if="!snapshotImages.length" class="img-pop-empty">图库为空：先到「图库」上传，或用下方 AI 生成</div>
+                <template v-else>
+                  <div class="img-pop-tip">点击「插入」到编辑器光标处；正文里没引用的插图不会出现在文章中</div>
+                  <div class="img-pop-grid">
+                    <div v-for="img in snapshotImages" :key="img.id" class="img-pop-cell"
+                         :class="{ inserted: insertedUrls.has(imgUrl(img)) }">
+                      <el-image :src="imgUrl(img)" fit="cover" class="img-pop-thumb" />
+                      <span v-if="img.id === coverImageId" class="img-pop-cover">封面</span>
+                      <span v-if="insertedUrls.has(imgUrl(img))" class="img-pop-check">✓</span>
+                      <div class="img-pop-actions">
+                        <el-button size="small" :disabled="busy" @click="insertBodyImage(img)">插入</el-button>
+                        <el-button size="small" :type="img.id === coverImageId ? 'success' : 'default'"
+                                   :disabled="img.id === coverImageId || busy" @click="onSetCover(img.id)">
+                          {{ img.id === coverImageId ? '✓ 封面' : '设封面' }}
+                        </el-button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </el-tab-pane>
+              <!-- AI 生图:文生图 / 图生图,产物进图库后插入 -->
+              <el-tab-pane label="AI 生图" name="ai">
+                <el-tabs v-model="aiTab" class="ai-tabs">
+                  <el-tab-pane label="文生图" name="text2img">
+                    <el-input v-model="t2iPrompt" type="textarea" :rows="2"
+                              placeholder="例：俯瞰一杯咖啡与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
+                    <div class="ai-row">
+                      <el-select v-model="genSize" class="size-select">
+                        <el-option label="方图 1024×1024" value="1024x1024" />
+                        <el-option label="横图 1536×1024" value="1536x1024" />
+                        <el-option label="竖图 1024×1536" value="1024x1536" />
+                      </el-select>
+                      <el-button type="primary" :loading="generating" @click="onGenerateText">
+                        {{ generating ? '生成中…' : '生成并插入' }}
+                      </el-button>
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="图生图" name="img2img">
+                    <div v-if="refImage" class="ref-pick">
+                      <img :src="imgUrl(refImage)" class="ref-thumb" alt="参考图" />
+                      <el-button size="small" text type="primary" @click="refDialog = true">重新选择</el-button>
+                    </div>
+                    <el-button v-else plain size="small" @click="refDialog = true">从图库选择参考图</el-button>
+                    <el-input v-model="i2iPrompt" type="textarea" :rows="2"
+                              placeholder="例：保持构图，改为蓝灰色科技感色调" />
+                    <div class="ai-row">
+                      <el-select v-model="genSize" class="size-select">
+                        <el-option label="方图 1024×1024" value="1024x1024" />
+                        <el-option label="横图 1536×1024" value="1536x1024" />
+                        <el-option label="竖图 1024×1536" value="1024x1536" />
+                      </el-select>
+                      <el-button type="primary" :disabled="!refImage" :loading="generating" @click="onGenerateFromImage">
+                        {{ generating ? '生成中…' : '生成并插入' }}
+                      </el-button>
+                    </div>
+                  </el-tab-pane>
+                </el-tabs>
+              </el-tab-pane>
+            </el-tabs>
           </div>
         </el-popover>
         <span class="flex-sp"></span>
@@ -146,6 +195,17 @@
         </div>
       </div>
     </template>
+
+    <!-- 参考图选择弹窗(图生图) -->
+    <el-dialog v-model="refDialog" title="选择参考图" width="720px" class="ref-dialog">
+      <div v-if="!snapshotImages.length" class="img-pop-empty">图库为空，请先到「图库」上传或用 AI 生成</div>
+      <div v-else class="ref-grid">
+        <div v-for="img in snapshotImages" :key="img.id" class="ref-cell" @click="chooseRef(img)">
+          <el-image :src="imgUrl(img)" fit="cover" class="ref-cell-thumb" />
+          <span class="ref-cell-name">#{{ img.id }} {{ img.fileName }}</span>
+        </div>
+      </div>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -160,7 +220,7 @@ import { ElMessage } from 'element-plus'
 import { DocumentCopy, Loading, WarningFilled, Check, Picture } from '@element-plus/icons-vue'
 
 /**
- * Step 4 · 排版预览(wenyan web 原版蓝本,Vue 重写)。
+ * Step 3 · 排版预览(wenyan web 原版蓝本,Vue 重写)。
  * 渲染编排(对齐 @wenyan-md/ui):
  *  - 正文编辑(400ms 防抖)→ renderMarkdownHtml;主题/高亮/mac → applyPreviewTheme(共享 style 标签,不重渲染)。
  *  - 复制/保存快照 → buildWechatHtml(内联样式,与发布 server 同参)。
@@ -179,7 +239,7 @@ const versionId = ref(null)
 const versionTitle = ref('')
 const originalMd = ref('')
 const contentMd = ref('')
-const imgSnapshot = ref(null)   // 配图快照:{images[],coverImageId,bodyImageIds[]}——与 Step3 同一接口
+const imgSnapshot = ref(null)   // 配图快照:{images[],coverImageId,bodyImageIds[]}——与 StepPublish 同一接口
 const html = ref('')
 const rendering = ref(false)
 const renderError = ref('')
@@ -195,28 +255,38 @@ const footnote = ref(true)
 const previewBody = ref(null)
 const copying = ref(false)
 
-const previewable = computed(() => !!props.project && ['IMAGES_READY', 'PUBLISHED_DRAFT'].includes(props.project.status))
+// ==== 配图面板状态(图库插入 + AI 生图) ====
+const imgTab = ref('library')       // 配图面板 tab:library | ai
+const aiTab = ref('text2img')       // AI 生图子 tab:text2img | img2img
+const t2iPrompt = ref('')
+const i2iPrompt = ref('')
+const genSize = ref('1024x1024')
+const refImage = ref(null)          // 图生图参考图
+const refDialog = ref(false)
+const generating = ref(false)       // AI 生成中
+const busy = ref(false)             // 封面操作中
+
+const previewable = computed(() => !!props.project && ['VERSIONS_READY', 'PUBLISHED_DRAFT'].includes(props.project.status))
 const dirty = computed(() => contentMd.value !== originalMd.value)
 const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
 
 const draftKey = computed(() => `sparkora-preview-draft-${projectId.value}`)
 
-// ==== 配图快照口径(与 Step3/StepPublish 同一接口数据) ====
+// ==== 配图快照口径(与 StepPublish 同一接口数据) ====
 const snapshotImages = computed(() => imgSnapshot.value?.images || [])
 const coverImageId = computed(() => imgSnapshot.value?.coverImageId ?? null)
-const bodyIds = computed(() => imgSnapshot.value?.bodyImageIds || [])
-/** 已选插图的资产对象(按 bodyImageIds 顺序),附本地访问 url。 */
-const bodyImages = computed(() =>
-  bodyIds.value.map(id => snapshotImages.value.find(img => img.id === id)).filter(Boolean)
-    .map(img => ({ ...img, url: `/images/${img.storagePath}` })))
 const coverImage = computed(() =>
   coverImageId.value == null ? null : snapshotImages.value.find(img => img.id === coverImageId.value))
 
-/** 正文已引用的本地 URL 集合:面板「已插入」状态与后端组装去重口径一致(含 URL 即视为已插入)。 */
+/** 正文已引用的本地 URL 集合:面板「已插入」状态与后端组装去重口径一致(含 URL 即视为已插入)。基于全量图库计算(配图面板遍历全量图库)。 */
 const insertedUrls = computed(() => {
   const body = contentMd.value || ''
-  return new Set(bodyImages.value.map(img => img.url).filter(u => body.includes(u)))
+  return new Set(snapshotImages.value.map(img => imgUrl(img)).filter(u => body.includes(u)))
 })
+/** 已插入正文的插图数量(配图按钮角标)。 */
+const insertedCount = computed(() => insertedUrls.value.size)
+/** 图库图片本地访问 url。 */
+const imgUrl = (img) => `/images/${img.storagePath}`
 
 /** frontmatter(title + cover,闭合 ---)+ 正文;插图落点完全由正文 markdown 引用决定(不自动追加文末)。 */
 const buildFullMd = () => {
@@ -309,6 +379,16 @@ const onPreviewScroll = () => {
 }
 
 // ==== 数据加载/保存 ====
+/** 只刷新配图快照(封面/插图/图库),不重载正文——供 AI 生成/设封面后轻量更新,避免打断未保存编辑。 */
+const refreshImgSnapshot = async () => {
+  const res = await imageApi.projectImages(projectId.value)
+  if (res.code !== 0) throw new Error(res.msg || '加载失败')
+  imgSnapshot.value = {
+    images: res.data?.images || [],
+    coverImageId: res.data?.coverImageId ?? null,
+    bodyImageIds: res.data?.bodyImageIds || []
+  }
+}
 const loadContent = async () => {
   loadError.value = ''
   try {
@@ -398,10 +478,51 @@ const goPublish = () => {
   router.push({ name: 'project-publish', params: { id: projectId.value } })
 }
 
-// ==== 插图落点:面板点击 → 插入编辑器光标处(落点完全由正文 markdown 引用决定) ====
+// ==== 配图面板:插入 / 设封面 / AI 生图 / 参考图 ====
 const insertBodyImage = (img) => {
-  editorRef.value?.insertMd?.(`\n![](${img.url})\n`)
+  editorRef.value?.insertMd?.(`\n![](${imgUrl(img)})\n`)
 }
+
+const onSetCover = async (imageId) => {
+  busy.value = true
+  try {
+    const res = await imageApi.setCover(projectId.value, imageId)
+    if (res.code === 0) {
+      ElMessage.success('已设为封面')
+      // 只更新本地快照封面,不重载正文(避免打断未保存编辑)
+      if (imgSnapshot.value) imgSnapshot.value.coverImageId = imageId
+    } else ElMessage.error(res.msg || '设置失败')
+  } catch (e) {
+    ElMessage.error('设置失败：' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { busy.value = false }
+}
+
+const onGenerateText = () => {
+  if (!t2iPrompt.value.trim()) { ElMessage.warning('请输入画面描述'); return }
+  doGenerate(imageApi.generateText(projectId.value, t2iPrompt.value.trim(), genSize.value))
+}
+const onGenerateFromImage = () => {
+  if (!refImage.value) { ElMessage.warning('请先选择参考图'); return }
+  if (!i2iPrompt.value.trim()) { ElMessage.warning('请输入画面描述'); return }
+  doGenerate(imageApi.generateFromImage(projectId.value, refImage.value.id, i2iPrompt.value.trim(), genSize.value))
+}
+const doGenerate = async (req) => {
+  generating.value = true
+  try {
+    const res = await req
+    if (res.code === 0) {
+      ElMessage.success('生成成功，已进图库')
+      await refreshImgSnapshot()
+      // 生成产物插入正文光标处
+      const img = res.data
+      if (img?.id) insertBodyImage(img)
+    } else ElMessage.error(res.msg || '生成失败')
+  } catch (e) {
+    ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
+  } finally { generating.value = false }
+}
+
+const chooseRef = (img) => { refImage.value = img; refDialog.value = false }
 
 watch(saveState, (s) => { if (s !== 'dirty') return })
 watch(dirty, (d) => {
@@ -441,19 +562,34 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 .state-title { font-weight: 700; margin: 8px 0 4px; }
 .state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
 
-/* 插图落点面板(点击插图 → 插入编辑器光标处) */
+/* 配图面板(图库插入 + AI 生图) */
 .img-pop-body { padding: 2px; }
 .img-pop-tip { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; }
 .img-pop-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
-.img-pop-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 264px; overflow-y: auto; }
-.img-pop-cell { position: relative; cursor: pointer; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+.img-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
+.img-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
+.ai-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
+.ai-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
+.img-pop-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 300px; overflow-y: auto; }
+.img-pop-cell { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
 .img-pop-cell:hover { border-color: var(--brand, var(--el-color-primary)); }
 .img-pop-cell.inserted { border-color: var(--ok, #67c23a); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #67c23a) 18%, transparent); }
 .img-pop-thumb { width: 100%; aspect-ratio: 1; display: block; }
-.img-pop-idx { position: absolute; left: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
-  text-align: center; font-size: 11px; border-radius: 8px; background: rgba(0,0,0,.55); color: #fff; padding: 0 4px; }
+.img-pop-cover { position: absolute; left: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
+  text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; padding: 0 4px; }
 .img-pop-check { position: absolute; right: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
   text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; }
+.img-pop-actions { display: flex; gap: 4px; padding: 4px; }
+.img-pop-actions .el-button { flex: 1; min-height: 28px; margin: 0; }
+.ai-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.ai-row .size-select { width: 180px; }
+.ref-pick { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ref-thumb { width: 56px; height: 56px; border-radius: var(--radius-sm, 6px); object-fit: cover; border: 1px solid var(--line); }
+.ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 60vh; overflow-y: auto; }
+.ref-cell { cursor: pointer; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; text-align: center; }
+.ref-cell:hover { border-color: var(--brand); }
+.ref-cell-thumb { width: 100%; aspect-ratio: 1; border-radius: var(--radius-sm); }
+.ref-cell-name { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ===== 工具栏(三段分组:选择器 | 开关 | 动作;统一 36px 高度) ===== */
 .ctrl-bar {

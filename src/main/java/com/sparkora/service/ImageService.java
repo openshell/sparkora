@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  *  - AI 生成（文生图/图生图）返回的 URL（或 data URL）一律转存本地，失败则整次报错，不留死链；
  *  - 文件落 {IMAGE_STORAGE_DIR}/yyyy/MM/uuid.ext，/images/** 由 WebConfig 静态映射；
  *  - 封面/插图挂当前版本（ArticleVersionEntity.coverImageId/bodyImageIds），增删幂等；
- *  - 「完成配图」：VERSIONS_READY→IMAGES_READY，重复点击幂等；同步调用不引入新生成中状态。
+ *  - 配图并入预览步骤：不再有独立「完成配图」状态推进（VERSIONS_READY 后直接可预览/发布）。
  */
 @Slf4j
 @Service
@@ -190,7 +190,7 @@ public class ImageService {
         if (!refs.isEmpty()) {
             List<String> marks = refs.stream().map(v -> "项目#" + v.getProjectId() + "版本#" + v.getId())
                     .toList();
-            throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应配图步骤移除后再删除");
+            throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应预览步骤移除后再删除");
         }
         imageMapper.deleteById(id);
         // 同步删七牛对象(非阻塞,失败仅告警;qiniu_key 为空=未上床,直接跳过)
@@ -246,33 +246,6 @@ public class ImageService {
         v.setBodyImageIds(bodyIdList.isEmpty() ? null
                 : bodyIdList.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")));
         versionMapper.updateById(v);
-    }
-
-    /** 完成配图：VERSIONS_READY→IMAGES_READY；IMAGES_READY 重复点击幂等返回。原子条件更新防竞态。 */
-    public void completeImages(Long projectId) {
-        ArticleProjectEntity p = projectMapper.selectById(projectId);
-        if (p == null) throw new IllegalArgumentException("项目不存在");
-        String status = p.getStatus();
-        if ("IMAGES_READY".equals(status)) return;   // 幂等
-        if (!"VERSIONS_READY".equals(status))
-            throw new IllegalStateException("当前状态为 " + status + "，仅版本就绪后可完成配图");
-        ArticleVersionEntity v = currentVersion(p);
-        boolean hasCover = v != null && v.getCoverImageId() != null;
-        boolean hasBody = v != null && !bodyIdListOf(v).isEmpty();
-        if (!hasCover && !hasBody)
-            throw new IllegalArgumentException("请先选定封面或至少一张插图");
-        // 原子条件更新:仅当仍处于 VERSIONS_READY 才写入 IMAGES_READY(受影响行数=0 视为并发竞态,幂等成功)
-        int updated = projectMapper.update(null,
-                new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                        .eq("id", projectId).eq("status", "VERSIONS_READY")
-                        .set("status", "IMAGES_READY")
-                        .set("updated_at", LocalDateTime.now()));
-        if (updated == 0) {
-            ArticleProjectEntity now = projectMapper.selectById(projectId);
-            if (now != null && "IMAGES_READY".equals(now.getStatus())) return;   // 并发下已被推进:幂等成功
-            throw new IllegalStateException(now == null ? "项目不存在" : ("项目状态已变为 " + now.getStatus() + "，请刷新后重试"));
-        }
-        log.info("完成配图 project={} → IMAGES_READY", projectId);
     }
 
     // ==================== 内部工具 ====================

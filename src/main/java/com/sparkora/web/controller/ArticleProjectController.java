@@ -2,6 +2,7 @@ package com.sparkora.web.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sparkora.car.service.CarModelMatcherService;
 import com.sparkora.common.R;
 import com.sparkora.domain.dto.PageResult;
 import com.sparkora.domain.dto.ProjectRequest;
@@ -11,6 +12,7 @@ import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.security.CurrentUser;
 import com.sparkora.security.SecurityUtil;
+import com.sparkora.service.ArticleProjectCarService;
 import com.sparkora.service.BriefService;
 import com.sparkora.service.NotReadyException;
 import com.sparkora.service.VersionService;
@@ -31,17 +33,22 @@ public class ArticleProjectController {
     private final ArticleProjectMapper mapper;
     private final BriefService briefService;
     private final VersionService versionService;
+    private final ArticleProjectCarService carService;
+    private final CarModelMatcherService matcherService;
     private final com.sparkora.service.ImageService imageService;
     private final com.sparkora.service.PreviewService previewService;
     private final com.sparkora.service.PublishService publishService;
 
     public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
+                                    ArticleProjectCarService carService, CarModelMatcherService matcherService,
                                     com.sparkora.service.ImageService imageService,
                                     com.sparkora.service.PreviewService previewService,
                                     com.sparkora.service.PublishService publishService) {
         this.mapper = mapper;
         this.briefService = briefService;
         this.versionService = versionService;
+        this.carService = carService;
+        this.matcherService = matcherService;
         this.imageService = imageService;
         this.previewService = previewService;
         this.publishService = publishService;
@@ -68,7 +75,10 @@ public class ArticleProjectController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
     public R<ArticleProjectEntity> get(@PathVariable Long id) {
-        return R.ok(mapper.selectById(id));
+        ArticleProjectEntity e = mapper.selectById(id);
+        if (e == null) return R.fail(404, "项目不存在");
+        e.setCarModelIds(carService.listModelIds(id));
+        return R.ok(e);
     }
 
     @PostMapping
@@ -81,7 +91,6 @@ public class ArticleProjectController {
         e.setAudience(req.getAudience());
         e.setWordCountTarget(req.getWordCountTarget());
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
-        e.setCarModelId(req.getCarModelId());
         e.setExtraInfo(req.getExtraInfo());
         e.setSelectedTitle(req.getSelectedTitle());
         e.setRemark(req.getRemark());
@@ -91,6 +100,14 @@ public class ArticleProjectController {
         e.setCreatedAt(LocalDateTime.now());
         e.setUpdatedAt(LocalDateTime.now());
         mapper.insert(e);
+
+        // S6 多车型:用户已选则直接写入;未选则 AI 自动识别是否应关联车型并回填
+        List<Long> modelIds = req.getCarModelIds();
+        if (modelIds == null || modelIds.isEmpty()) {
+            CarModelMatcherService.MatchResult m = matcherService.match(req.getTopic(), req.getKeywords());
+            if (m.related()) modelIds = m.modelIds();
+        }
+        carService.replace(e.getId(), modelIds);
         return R.ok(e.getId());
     }
 
@@ -104,12 +121,13 @@ public class ArticleProjectController {
         e.setAudience(req.getAudience());
         e.setWordCountTarget(req.getWordCountTarget());
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
-        e.setCarModelId(req.getCarModelId());
         e.setExtraInfo(req.getExtraInfo());
         e.setSelectedTitle(req.getSelectedTitle());
         e.setRemark(req.getRemark());
         e.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(e);
+        // S6 多车型:覆盖式写入关联车型
+        carService.replace(id, req.getCarModelIds());
         return R.ok();
     }
 
@@ -272,22 +290,6 @@ public class ArticleProjectController {
             return R.ok();
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, ex.getMessage());
-        }
-    }
-
-    /** 完成配图：VERSIONS_READY→IMAGES_READY（幂等）。 */
-    @PostMapping("/{id}/complete-images")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> completeImages(@PathVariable Long id) {
-        try {
-            imageService.completeImages(id);
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (IllegalStateException ex) {
-            return R.fail(409, ex.getMessage());
         } catch (Exception ex) {
             return R.fail(500, ex.getMessage());
         }

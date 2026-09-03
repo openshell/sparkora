@@ -64,11 +64,14 @@
               <div class="sec-desc">关联车型知识库、补充个人见解，让内容有据可依</div>
             </div>
           </div>
-          <el-form-item label="关联车型（可选）">
-            <el-select v-model="form.carModelId" clearable filterable placeholder="选择车型，生成时注入其知识库参数" style="width:100%">
+          <el-form-item label="关联车型（可选，可多选）">
+            <el-select v-model="form.carModelIds" multiple filterable clearable collapse-tags
+                       placeholder="选择车型，生成时注入其知识库参数" style="width:100%">
               <el-option v-for="m in carModels" :key="m.id" :label="m.name" :value="m.id" />
             </el-select>
-            <div class="form-tip" style="text-align:left;margin-top:4px">关联后，生成简报/正文时会检索该车型知识库，注入权威参数作为事实约束。</div>
+            <div class="form-tip" style="text-align:left;margin-top:4px">
+              关联后，生成简报/正文时会检索这些车型的知识库，注入权威参数作为事实约束。未选择时，AI 会自动判断文章是否与车型相关并回填。
+            </div>
           </el-form-item>
           <el-form-item label="补充信息（可选）">
             <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
@@ -104,7 +107,7 @@ const formRef = ref()
 const loading = ref(false)   // 创建并生成
 const saving = ref(false)    // 仅存草稿
 const carModels = ref([])    // S6:车型知识库列表(可选关联)
-const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelId: null, extraInfo: '' })
+const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelIds: [], extraInfo: '' })
 const rules = { topic: [{ required: true, message: '请输入主题', trigger: 'blur' }] }
 
 onMounted(async () => {
