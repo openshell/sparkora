@@ -2,8 +2,11 @@
   <el-card class="step-card" shadow="never">
     <template #header>
       <span class="card-head">
-        <span class="step-title serif">Step 5 · 发布</span>
-        <span class="meta">发布到微信公众号草稿箱 · 与预览同源(文颜)</span>
+        <span class="head-main">
+          <span class="step-title serif">Step 5 · 发布</span>
+          <span class="step-sub">发布到微信公众号草稿箱 · 与预览同源(文颜)</span>
+        </span>
+        <span class="meta">确认排版后发布</span>
       </span>
     </template>
 
@@ -304,7 +307,9 @@ watch(publishable, (ok) => {
 
 <style scoped>
 .card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
+.head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .step-title { font-size: 16px; font-weight: 700; }
+.step-sub { font-size: 12px; color: var(--faint); }
 .card-head .meta { font-size: 12px; color: var(--muted); }
 .state-error { padding: 36px 16px; }
 .state-title { font-weight: 700; margin: 8px 0 4px; }
@@ -314,18 +319,18 @@ watch(publishable, (ok) => {
 /* 成功态卡片 */
 .success-box {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
-  padding: 18px; margin-bottom: 14px;
+  padding: 20px; margin-bottom: 14px;
   border: 1px solid var(--ok); border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--ok) 7%, transparent);
 }
-.success-title { font-weight: 700; }
+.success-title { font-weight: 700; font-size: 15px; }
 .success-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--muted); }
 .success-meta code { font-size: 12px; word-break: break-all; }
 
 /* 发布摘要 */
 .summary {
   display: flex; gap: 14px; align-items: flex-start;
-  padding: 14px; margin-bottom: 14px; min-height: 96px;
+  padding: 16px; margin-bottom: 14px; min-height: 96px;
   border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper);
 }
 .summary-cover { width: 96px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
@@ -340,7 +345,11 @@ watch(publishable, (ok) => {
 .readonly-tip { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
 /* 参数表单(与预览页同形) */
-.ctrl-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ctrl-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--el-fill-color-light);
+}
 .ctrl-group { display: inline-flex; align-items: center; gap: 8px; }
 .ctrl-divider { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
 .field-label { font-size: 13px; color: var(--muted); flex: none; white-space: nowrap; }

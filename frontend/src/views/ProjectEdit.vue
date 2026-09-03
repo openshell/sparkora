@@ -6,6 +6,7 @@
         <div>
           <span class="page-kicker">New Project</span>
           <h2>新建创作任务</h2>
+          <p class="head-sub">设定主题与素材，AI 将据此生成创作简报</p>
         </div>
         <div class="actions">
           <el-button text @click="$router.push('/')">← 返回</el-button>
@@ -13,39 +14,71 @@
       </div>
 
       <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="form-card">
-        <el-form-item label="主题" prop="topic" required>
-          <el-input v-model="form.topic" maxlength="200" show-word-limit
-                    placeholder="如：如何选择自部署的国产 AI 模型" />
-        </el-form-item>
-        <el-form-item label="关键词">
-          <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" />
-        </el-form-item>
-        <el-form-item label="关联车型（可选）">
-          <el-select v-model="form.carModelId" clearable filterable placeholder="选择车型，生成时注入其知识库参数" style="width:100%">
-            <el-option v-for="m in carModels" :key="m.id" :label="m.name" :value="m.id" />
-          </el-select>
-          <div class="form-tip" style="text-align:left;margin-top:4px">关联后，生成简报/正文时会检索该车型知识库，注入权威参数作为事实约束。</div>
-        </el-form-item>
-        <el-row :gutter="12">
-          <el-col :xs="24" :sm="12">
-            <el-form-item label="目标读者">
-              <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" />
-            </el-form-item>
-          </el-col>
-          <el-col :xs="24" :sm="12">
-            <el-form-item label="目标字数">
-              <el-input-number v-model="form.wordCountTarget" :min="100" :max="10000" :step="100" style="width:100%" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="备注">
-          <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="500" placeholder="可选" />
-        </el-form-item>
-        <el-form-item label="补充信息（可选）">
-          <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
-                    placeholder="个人见解、独家资讯等，生成简报/正文时会作为创作素材融入，如：我了解到该车型 2026 款将新增 XX 配置…" />
-          <div class="form-tip" style="text-align:left;margin-top:4px">填写后，生成简报/正文时会注入这些信息作为创作素材，不会遗漏关键内容。</div>
-        </el-form-item>
+        <!-- 区块一:创作主题(主输入,突出) -->
+        <section class="form-sec">
+          <div class="sec-head">
+            <span class="sec-index">01</span>
+            <div class="sec-title">
+              <div class="sec-name">创作主题</div>
+              <div class="sec-desc">一句话说清要写什么，这是简报与正文的锚点</div>
+            </div>
+          </div>
+          <el-form-item prop="topic" class="topic-item">
+            <el-input v-model="form.topic" maxlength="200" show-word-limit size="large"
+                      placeholder="如：如何选择自部署的国产 AI 模型" />
+          </el-form-item>
+        </section>
+
+        <!-- 区块二:内容设定 -->
+        <section class="form-sec">
+          <div class="sec-head">
+            <span class="sec-index">02</span>
+            <div class="sec-title">
+              <div class="sec-name">内容设定</div>
+              <div class="sec-desc">关键词、读者与篇幅，让生成更贴合目标</div>
+            </div>
+          </div>
+          <el-form-item label="关键词">
+            <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" />
+          </el-form-item>
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <el-form-item label="目标读者">
+                <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" />
+              </el-form-item>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <el-form-item label="目标字数">
+                <el-input-number v-model="form.wordCountTarget" :min="100" :max="10000" :step="100" style="width:100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </section>
+
+        <!-- 区块三:素材与约束 -->
+        <section class="form-sec">
+          <div class="sec-head">
+            <span class="sec-index">03</span>
+            <div class="sec-title">
+              <div class="sec-name">素材与约束</div>
+              <div class="sec-desc">关联车型知识库、补充个人见解，让内容有据可依</div>
+            </div>
+          </div>
+          <el-form-item label="关联车型（可选）">
+            <el-select v-model="form.carModelId" clearable filterable placeholder="选择车型，生成时注入其知识库参数" style="width:100%">
+              <el-option v-for="m in carModels" :key="m.id" :label="m.name" :value="m.id" />
+            </el-select>
+            <div class="form-tip" style="text-align:left;margin-top:4px">关联后，生成简报/正文时会检索该车型知识库，注入权威参数作为事实约束。</div>
+          </el-form-item>
+          <el-form-item label="补充信息（可选）">
+            <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
+                      placeholder="个人见解、独家资讯等，生成简报/正文时会作为创作素材融入，如：我了解到该车型 2026 款将新增 XX 配置…" />
+            <div class="form-tip" style="text-align:left;margin-top:4px">填写后，生成简报/正文时会注入这些信息作为创作素材，不会遗漏关键内容。</div>
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="500" placeholder="可选" />
+          </el-form-item>
+        </section>
 
         <div class="form-actions">
           <!-- 主操作唯一:「创建并生成简报」;仅存草稿降为次级按钮,取消为文字按钮 -->
@@ -118,10 +151,37 @@ const onSaveAndGenerate = async () => {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 24px 22px;
+  padding: 8px 22px 24px;
   box-shadow: var(--shadow-card);
 }
-.form-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.head-sub { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+
+/* 分区:编号 + 标题 + 描述,底部细线分隔 */
+.form-sec { padding: 20px 0 4px; }
+.form-sec + .form-sec { border-top: 1px dashed var(--line); }
+.sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.sec-index {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--brand-weak);
+  color: var(--brand-strong);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 700;
+}
+.sec-title { display: flex; flex-direction: column; gap: 2px; }
+.sec-name { font-family: var(--font-serif); font-size: 16px; font-weight: 700; color: var(--ink); }
+.sec-desc { font-size: 12px; color: var(--faint); }
+
+/* 主题主输入:更大、更醒目 */
+.topic-item :deep(.el-input__inner) { font-size: 16px; }
+
+.form-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .form-tip { margin: 10px 0 0; font-size: 12px; color: var(--faint); text-align: right; }
 @media (max-width: 768px) {
   .form-actions .el-button { flex: 1; }

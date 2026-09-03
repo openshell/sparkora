@@ -2,8 +2,11 @@
   <el-card class="step-card" shadow="never">
     <template #header>
       <span class="card-head">
-        <span class="step-title serif">Step 4 · 排版预览</span>
-        <span class="meta">微信样式实时预览 · 与发布同源(文颜)</span>
+        <span class="head-main">
+          <span class="step-title serif">Step 4 · 排版预览</span>
+          <span class="step-sub">微信样式实时预览 · 与发布同源(文颜)</span>
+        </span>
+        <span class="meta">左编辑 · 右预览</span>
       </span>
     </template>
 
@@ -427,7 +430,9 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 
 <style scoped>
 .card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
+.head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .step-title { font-size: 16px; font-weight: 700; }
+.step-sub { font-size: 12px; color: var(--faint); }
 .card-head .meta { font-size: 12px; color: var(--muted); }
 /* 控件微动效(150-200ms,无布局位移) */
 .ctrl-bar :deep(.el-button) { transition: background-color .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease; }
@@ -451,7 +456,11 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
   text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; }
 
 /* ===== 工具栏(三段分组:选择器 | 开关 | 动作;统一 36px 高度) ===== */
-.ctrl-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ctrl-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--el-fill-color-light);
+}
 .ctrl-group { display: inline-flex; align-items: center; gap: 8px; }
 .ctrl-divider { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
 

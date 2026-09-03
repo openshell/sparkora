@@ -2,7 +2,10 @@
   <el-card class="step-card" shadow="never">
     <template #header>
       <span class="card-head">
-        <span class="step-title serif">Step 3 · 配图</span>
+        <span class="head-main">
+          <span class="step-title serif">Step 3 · 配图</span>
+          <span class="step-sub">从图库选用封面与插图，或用 AI 生成补充</span>
+        </span>
         <span v-if="snapshot" class="meta">
           封面 {{ snapshot.coverImageId ? '已选' : '未选' }} · 插图 {{ bodyIds.length }} 张
         </span>
@@ -28,12 +31,22 @@
 
       <template v-else-if="snapshot">
         <!-- 图库选用(主入口):本步不再承担图库维护,上传/删除去「图库」页 -->
-        <p class="muted">
-          从图库点「设封面 / 加插图」选用；图不够时先到 <router-link to="/images">图库</router-link> 上传，
-          或在本页用 AI 生成后选用。
-        </p>
+        <div class="pick-hero">
+          <div class="pick-icon"><el-icon :size="26"><Picture /></el-icon></div>
+          <div class="pick-text">
+            <div class="pick-title serif">为当前版本配图</div>
+            <p class="muted">
+              从图库点「设封面 / 加插图」选用；图不够时先到 <router-link to="/images">图库</router-link> 上传，
+              或在本页用 AI 生成后选用。
+            </p>
+          </div>
+        </div>
 
         <!-- AI 生成(可选补充)：文生图 / 图生图 -->
+        <div class="section-head gen-head">
+          <span class="sec-title">AI 生成补充</span>
+          <span class="muted-small">产物先进图库，再点选使用</span>
+        </div>
         <el-tabs v-model="activeTab" class="src-tabs">
           <el-tab-pane label="AI 文生图" name="text2img">
             <el-form label-position="top" class="gen-form" @submit.prevent>
@@ -155,7 +168,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { imageApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { useProjectDetailStore } from '../../store/project-detail'
-import { WarningFilled } from '@element-plus/icons-vue'
+import { WarningFilled, Picture } from '@element-plus/icons-vue'
 
 /**
  * Step 3 · 配图（S3b）。职责:从图库选用(封面/插图)+ AI 生成补充。
@@ -283,7 +296,9 @@ const onComplete = async () => {
 
 <style scoped>
 .card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
+.head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .step-title { font-size: 16px; font-weight: 700; }
+.step-sub { font-size: 12px; color: var(--faint); }
 .card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
 .muted { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 4px 0 10px; }
 .muted-small { color: var(--muted); font-size: 12px; }
@@ -292,7 +307,19 @@ const onComplete = async () => {
 .state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
 .sec-title { font-weight: 700; margin-right: 10px; }
 .section-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.gen-head { margin-top: 4px; }
 .empty-state { padding: 8px 0 16px; }
+
+/* 配图 hero */
+.pick-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+.pick-icon {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 52px; height: 52px; border-radius: 14px;
+  background: var(--brand-gradient); color: #fff; box-shadow: var(--shadow-hover);
+}
+.pick-text { min-width: 0; }
+.pick-title { font-size: 18px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+.pick-text .muted { margin: 0; }
 
 .gen-form { max-width: 560px; }
 .size-select { width: 240px; }
@@ -303,9 +330,12 @@ const onComplete = async () => {
 .ref-meta { display: flex; flex-direction: column; gap: 4px; }
 .ref-name { font-size: 12px; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
-.img-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; background: var(--card); transition: border-color .2s, box-shadow .2s; }
-.img-card:hover { box-shadow: var(--shadow-hover); }
+.img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
+.img-card {
+  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px;
+  background: var(--card); transition: border-color .2s, box-shadow .2s, transform .2s;
+}
+.img-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
 .img-card.cover { border-color: var(--ok); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 18%, transparent); }
 .img-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); }
 .img-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
