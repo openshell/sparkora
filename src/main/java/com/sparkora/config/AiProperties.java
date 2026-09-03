@@ -15,11 +15,18 @@ public class AiProperties {
     private String baseUrl = "https://axo.caiqz.cn";
     private String apiKey;
     private String model;
+    /** 向量化模型(S6 车型知识库 RAG 用;实测 Qwen3-Embedding-8B,1024 维)。 */
+    private String embeddingModel;
     private String imageModel;
     /** 逗号分隔的图片模型列表，按序轮询（图片模型不稳定）；为空时回退到 imageModel 单个。 */
     private String imageModels;
     private long timeoutMs = 120000;
     private double temperature = 0.7;
+
+    /** 车型知识库 RAG:逐块相似度门槛,低于该值的检索块不注入 prompt(S6.1;默认 0.3,待按真实分数分布校准)。 */
+    private double ragMinScore = 0.3;
+    /** 车型知识库 RAG:整体置信度门槛,全部命中块的最高相似度低于该值时整体抛弃(S6.1;默认 0.5,须 >= ragMinScore,待校准)。 */
+    private double ragRejectScore = 0.5;
 
     /** 解析图片模型轮询列表：优先 imageModels，为空回退 imageModel。 */
     public List<String> imageModelList() {

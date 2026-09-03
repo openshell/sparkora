@@ -3,6 +3,7 @@ package com.sparkora.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
+import com.sparkora.car.service.CarRagService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
@@ -39,18 +40,23 @@ public class VersionService {
     private final ArticleVersionMapper versionMapper;
     private final StyleProfileMapper styleMapper;
     private final AiClient aiClient;
+    private final CarRagService ragService;
+    private final ArticleProjectCarService carService;
     private final ObjectMapper json;
 
     private static final String LABELS = "ABCDEFGHIJ";
 
     public VersionService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
                           ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
-                          AiClient aiClient, ObjectMapper json) {
+                          AiClient aiClient, CarRagService ragService,
+                          ArticleProjectCarService carService, ObjectMapper json) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
         this.styleMapper = styleMapper;
         this.aiClient = aiClient;
+        this.ragService = ragService;
+        this.carService = carService;
         this.json = json;
     }
 
@@ -91,28 +97,36 @@ public class VersionService {
         if (styles.isEmpty()) throw new IllegalArgumentException("所选风格不存在");
 
         // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
-        //    仅当「处于非生成中状态」或「生成中但已陈旧(超阈值,进程已死)」才生效;
-        //    陈旧判定与抢占在同一 WHERE,无竞态窗口,卡死项目可自愈
+        //    仅当「READY/VERSIONS_READY(首生成或追加)」或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效;
+        //    陈旧分支必须限定生成中状态,否则任何 updated_at 较旧的下游状态都会被误放行、状态机回退。
+        //    状态守护:VERSIONS_READY 之后(PUBLISHED_DRAFT)已触发下一步,再生成版本会把状态机拉回 VERSIONS_READY,拒绝。
         java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
         int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
                 .eq("id", projectId)
-                .and(w -> w.notIn("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                        .or().lt("updated_at", staleCutoff))
+                .and(w -> w.in("status", "READY", "VERSIONS_READY")
+                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                                .lt("updated_at", staleCutoff)))
                 .set("status", "GENERATING_VERSIONS")
                 .set("last_version_error", null)
                 .set("updated_at", LocalDateTime.now()));
-        if (claimed == 0) throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        if (claimed == 0) throw new IllegalStateException(BriefService.projectStatusGuardMsg(p, "生成版本"));
         p.setStatus("GENERATING_VERSIONS");
 
         List<ArticleVersionEntity> created = new ArrayList<>();
         List<String> perVersionErrors = new ArrayList<>();
+        // S6.1 RAG 必查:「必查+降级可见」。检索一次供全部版本共用(同一项目同一主题,无需逐版重复检索);
+        // 失败/低置信不阻断,状态随每版落库,并在 prompt 中向 AI 声明要求 factRisks 标注数据缺失。
+        List<Long> modelIds = carService.listModelIds(projectId);
+        CarRagService.RagResult rag = modelIds.isEmpty()
+                ? CarRagService.RagResult.EMPTY
+                : ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
         try {
             // 2) 每个选中风格生成一版
             int i = 0;
             for (StyleProfileEntity style : styles) {
                 String label = String.valueOf(LABELS.charAt(i++));
                 try {
-                    ArticleVersionEntity v = generateOne(p, brief, style, label);
+                    ArticleVersionEntity v = generateOne(p, brief, style, label, rag);
                     versionMapper.insert(v);
                     created.add(v);
                 } catch (Exception e) {
@@ -147,11 +161,12 @@ public class VersionService {
     }
 
     private ArticleVersionEntity generateOne(ArticleProjectEntity p, ArticleBriefEntity brief,
-                                             StyleProfileEntity style, String label) throws Exception {
+                                             StyleProfileEntity style, String label,
+                                             CarRagService.RagResult rag) throws Exception {
         String sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
                 + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
                 + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
-        AiClient.ChatResult cr = aiClient.chatJson(sys, buildUserPrompt(p, brief), 4096);
+        AiClient.ChatResult cr = aiClient.chatJson(sys, buildUserPrompt(p, brief, rag), 4096);
         var node = json.readTree(cr.content());
         String title = node.path("title").asText("");
         String contentMd = node.path("contentMd").asText("");
@@ -166,13 +181,14 @@ public class VersionService {
         v.setStyleTag(style.getName());
         v.setAiModel(cr.model());
         v.setTokenUsage(cr.totalTokens());
+        v.setRagStatus(rag.status().name());
         v.setWordCount(contentMd.length());
         v.setCreatedAt(LocalDateTime.now());
         return v;
     }
 
-    private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
-        return """
+    private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b, CarRagService.RagResult rag) {
+        String base = """
                 主题：%s
                 关键词：%s
                 目标读者：%s
@@ -190,6 +206,25 @@ public class VersionService {
                 p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
                 nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
                 nv(b.getOutline()), nv(b.getFactRisks()));
+        // S6:简报阶段用户点选的标题,作为本版标题偏好(优先采用,可微调)
+        if (p.getSelectedTitle() != null && !p.getSelectedTitle().isBlank()) {
+            base += "\n\n【用户已选定标题,请优先采用该标题作为本版标题(可微调措辞,勿偏离原意)】\n" + p.getSelectedTitle();
+        }
+        // S6:补充信息(用户个人见解/独家资讯等)作为创作素材注入,要求融入正文
+        if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
+            base += "\n\n【用户补充信息(个人见解/独家资讯等),请在正文中自然融入,不得遗漏关键信息】\n" + p.getExtraInfo();
+        }
+        // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 标注数据风险)
+        if (rag.ok()) {
+            base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + rag.context();
+        } else if (rag.status() == CarRagService.RagStatus.FAILED) {
+            base += "\n\n【知识库检索提示】车型知识库本次检索失败,你未能获得权威数据。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
+        } else if (rag.status() == CarRagService.RagStatus.LOW_CONFIDENCE) {
+            base += "\n\n【知识库检索提示】车型知识库有数据但与主题相关性过低(最高相似度 " + String.format("%.2f", rag.maxScore())
+                    + ",低于可信门槛),已全部抛弃,不要参考。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
+        }
+        // NO_KNOWLEDGE:无车型对象或无命中,与现状一致,不注入不提示
+        return base;
     }
 
     /** 列出项目全部版本（按创建序）。 */
@@ -208,6 +243,31 @@ public class VersionService {
         p.setCurrentVersionId(versionId);
         p.setUpdatedAt(LocalDateTime.now());
         projectMapper.updateById(p);
+    }
+
+    /**
+     * 保存版本正文(S4 预览页左栏编辑)。仅更新 contentMd;字数上限随 brief 生成口径,这里只防御超长。
+     */
+    public void updateContent(Long projectId, Long versionId, String contentMd) {
+        if (contentMd == null || contentMd.isBlank()) throw new IllegalArgumentException("正文不能为空");
+        if (contentMd.length() > 200_000) throw new IllegalArgumentException("正文过长(上限 20 万字符)");
+        ArticleVersionEntity v = versionMapper.selectById(versionId);
+        if (v == null || !v.getProjectId().equals(projectId))
+            throw new IllegalArgumentException("版本不存在或不属于该项目");
+        v.setContentMd(contentMd);
+        versionMapper.updateById(v);
+    }
+
+    /**
+     * 编辑版本标题(S6)。仅更新 title;空串清除。
+     */
+    public void updateTitle(Long projectId, Long versionId, String title) {
+        if (title != null && title.length() > 200) throw new IllegalArgumentException("标题不能超过 200 字");
+        ArticleVersionEntity v = versionMapper.selectById(versionId);
+        if (v == null || !v.getProjectId().equals(projectId))
+            throw new IllegalArgumentException("版本不存在或不属于该项目");
+        v.setTitle(title == null || title.isBlank() ? null : title);
+        versionMapper.updateById(v);
     }
 
     private static String nv(String s) { return s == null || s.isBlank() ? "未指定" : s; }

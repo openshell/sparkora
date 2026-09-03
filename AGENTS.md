@@ -9,11 +9,15 @@
 - **后端** `src/` — Spring Boot 3.3.4(Java 21)+ MyBatis-Plus 3.5.7 + Spring Security(JWT, jjwt 0.12.6)+ PostgreSQL。入口 `src/main/java/com/sparkora/SparkoraApplication.java`。包结构 `com.sparkora`,Maven 构建(`pom.xml`)。
 - **前端** `frontend/` — Vue 3 + Vite 5 + Element Plus 2.8 + Pinia + vue-router,`unplugin-auto-import`/`unplugin-vue-components` 自动引入 Element Plus 组件。移动端优先响应式,不引 Vant 等额外移动端框架。
 - **规格文档** `docs/s0-spec.md` 是唯一权威规格(路由/权限/字段级/接口契约/状态机);`prototypes/` 存 HTML 原型。
-- 当前阶段:已完成 S0~S2a(登录、项目 CRUD、简报生成、多版本正文、风格库)+ S3b 配图模块(三来源:上传/文生图/图生图,流程改五步:简报→版本→配图→预览→发布,「校验」步骤 2026-08-28 决策取消;状态机至 IMAGES_READY)。
+- 当前阶段:已完成 S0~S4(登录、项目 CRUD、简报生成、多版本正文、风格库、配图三来源、wenyan 同核预览 + 七牛图床)+ **S5 发布模块**(五步流程闭环:发布步 `StepPublish.vue` → `PublishService`(与预览同源渲染,gzhContent JSON)→ 远程 wenyan-server `/upload`→`/publish` → 公众号草稿箱;发布成功进 `PUBLISHED_DRAFT`(终态,可重发覆盖);2026-08-31 实测 2.0.11 接口:`/verify` 是 GET、`/upload` multipart 字段名 `file`、`/publish` 收 JSON `{fileId}`,字段级契约与验收状态见 spec §12)。
 
 ## Commands
 
 ```bash
+# 联调环境一键控制(推荐):start/stop/restart/status/logs,目标可选 backend|frontend|all
+./dev.sh start                    # 启动前后端(日志在 /tmp/sparkora-logs/,探活 /api/auth/me)
+./dev.sh restart backend          # 只重启后端(改 Java 代码后常用)
+./dev.sh logs backend -f          # 跟随后端日志;./dev.sh logs [目标] [行数|-f]
 # 后端(仓库根目录)
 mvn -q -DskipTests compile        # 编译(已验证;默认 maven 仓库只读时加 -Dmaven.repo.local=/tmp/m2repo)
 mvn spring-boot:run               # 本地运行,端口读 .env 的 SERVER_PORT(当前 5661;application.yml 默认 8080),读根目录 .env
@@ -44,9 +48,32 @@ npm run build                     # 产线构建(已验证)
 - 实体审计字段(created_by / created_at / updated_at / deleted)由控制器手工赋值,沿用现有写法。
 - 前端页面用 Element Plus(`el-form` + rules 校验,移动端单列、触控目标 ≥44px);图标用 `@element-plus/icons-vue`;不新增重型 UI 框架。
 - 表结构变更:改 `schema.sql`(幂等)+ 对应 entity/mapper + `docs/s0-spec.md` 字段级表格,三处同步。
-- 配图存储 `data/`(已 gitignore),`/images/**` 由 `WebConfig` 静态映射 `IMAGE_STORAGE_DIR`;AI 生成图必须转存本地不留临时 URL。
+- 配图存储(S6):图库完全依赖图床,本地不留——图片入库即直接转存(`ImageStorage` 抽象,当前实现 `QiniuService`);`storage_path`/`/images/**` 静态映射已删除,`IMAGE_STORAGE_DIR` 仅作 wenyan 渲染临时文件落位;新增来源 `byd`(比亚迪同步图转存,`CarModelService.persistIntroImages`,单图失败不阻断)。
+- S4 预览:wenyan CLI render(同核)+ 图床公网 URL(`QINIU_*`,兼容裸 AK/SK),契约与限制见 spec §11;`docs/img.md` 为七牛接入文档(密钥只放 .env)。
+- S5 发布:`WenyanServerService`(客户端,x-api-key)+ `PublishService`(预览同源渲染→upload→publish→PUBLISHED_DRAFT 可重发);`WENYAN_MCP_PUBLISH_TIMEOUT_MS` 默认 30s;发布验收清单见 spec §12。
 
 ## Notes
 
 - Reasonix 配置:`reasonix.toml`(permissions/sandbox 预授权)、`.reasonix/skills/`(sparkora-dev 联调、sparkora-spec-check 规格核对)、`.reasonix/settings.json` + `.reasonix/hooks/secret-guard.sh`(PostToolUse 检测 .env 密钥误入代码)。项目记忆即本文件(AGENTS.md)。
 - (待补充)
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->

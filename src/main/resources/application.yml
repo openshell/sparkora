@@ -43,22 +43,55 @@ sparkora:
     base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
     api-key: ${AI_API_KEY:}
     model: ${AI_MODEL:}
+    embedding-model: ${AI_EMBEDDING_MODEL:}   # S6:向量化模型(车型知识库 RAG,实测 Qwen3-Embedding-8B)
     image-model: ${AI_IMAGE_MODEL:}
     image-models: ${AI_IMAGE_MODELS:}   # 逗号分隔，按序轮询（图片模型不稳定）
     timeout-ms: ${AI_TIMEOUT_MS:120000}
     temperature: ${AI_TEMPERATURE:0.7}
+    rag-min-score: ${AI_RAG_MIN_SCORE:0.3}      # S6.1:逐块相似度门槛(低于不注入)
+    rag-reject-score: ${AI_RAG_REJECT_SCORE:0.5} # S6.1:整体置信度门槛(最高分低于则全部抛弃)
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
   wenyan:
-    enabled: ${WENYAN_MCP_ENABLED:false}
-    bin: ${WENYAN_MCP_BIN:wenyan-mcp}
+    # S4 方案 A:预览用本机 CLI render(与 server 同核),发布(S5)走远程 server;
+    # 发布通道是否可用只看 server-url+server-api-key(旧 WENYAN_MCP_ENABLED 开关已废弃移除)
     server-url: ${WENYAN_MCP_SERVER_URL:}
     server-api-key: ${WENYAN_MCP_SERVER_API_KEY:}
+    # S4 方案 A:预览用本机 CLI render(与 server 同核),发布(S5)走远程 server
+    cli-path: ${WENYAN_CLI_PATH:wenyan}
+    default-theme: ${WENYAN_DEFAULT_THEME:default}
+    theme-names: ${WENYAN_THEME_NAMES:default,lapis,orangeheart,phycat}
+    highlight: ${WENYAN_HIGHLIGHT:solarized-light}
+    mac-style: ${WENYAN_MAC_STYLE:true}
+    footnote: ${WENYAN_FOOTNOTE:true}
+    render-timeout-ms: ${WENYAN_RENDER_TIMEOUT_MS:30000}
+    # S5 发布:远程 server HTTP 调用读超时(错误 key 曾有挂起行为,不宜过长)
+    publish-timeout-ms: ${WENYAN_MCP_PUBLISH_TIMEOUT_MS:30000}
   image:
-    storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S3b:配图本地存储(/images/** 静态映射)
+    storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S6:数据盘目录(仅 wenyan 渲染临时文件落位;图片不再落本地)
     max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}
+  car:
+    # S6:车型知识库(比亚迪官网公开 JSON API,无鉴权)
+    goods-list-url: ${CAR_GOODS_LIST_URL:https://cms-api.byd.com/car/byd/cn/goodsListForSearch}
+    goods-info-url: ${CAR_GOODS_INFO_URL:https://cms-api.byd.com/car/byd/cn/getGoodsInfoById}
+    goods-params-url: ${CAR_GOODS_PARAMS_URL:https://site-api.byd.com/domestic-official-api/goods/goodsParams}
+    goods-attr-list-url: ${CAR_GOODS_ATTR_LIST_URL:https://cms-api.byd.com/car/byd/cn/getGoodsAttrListForCompareByGoodsId}
+    timeout-ms: ${CAR_TIMEOUT_MS:30000}
+    # goodsParams 接口 HMAC 签名(官网 JS 硬编码,可覆盖)
+    hmac-sign-key: ${CAR_HMAC_SIGN_KEY:4a3688a5gcd88g443fga6b7fcb}
+    hmac-secret-key: ${CAR_HMAC_SECRET_KEY:fcb8f0ddg5c92g45b7g9d33g04cc55d3be3b}
+    sync-enabled: ${CAR_SYNC_ENABLED:false}
+    sync-cron: ${CAR_SYNC_CRON:0 0 3 * * ?}
+  qiniu:
+    enabled: ${QINIU_ENABLED:true}
+    access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK
+    secret-key: ${QINIU_SECRET_KEY:${SK:}}
+    bucket: ${QINIU_BUCKET:caiqz}             # 唯一绑定外链域名的空间
+    upload-host: ${QINIU_UPLOAD_HOST:http://up-z2.qiniup.com}   # z2 区域实测
+    public-domain: ${QINIU_PUBLIC_DOMAIN:http://pic.caiqz.cn}   # http-only(https 未配证书)
+    token-ttl-seconds: ${QINIU_TOKEN_TTL:3600}
 
 logging:
   level:

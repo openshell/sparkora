@@ -5,7 +5,7 @@
         <span class="page-kicker">Image Library</span>
         <h2 class="serif">图库</h2>
       </div>
-      <span class="muted-small">共 {{ images.length }} 张 · 文章配图在项目「配图」步骤从图库选用</span>
+      <span class="muted-small">共 {{ images.length }} 张 · 文章配图在项目「预览」步骤从图库选用</span>
     </div>
 
     <!-- 上传 + 过滤 -->
@@ -30,7 +30,7 @@
     </div>
 
     <div v-else-if="!images.length" class="empty-state">
-      <el-empty description="图库为空：上传图片，或在项目「配图」步骤用 AI 生成" :image-size="100" />
+      <el-empty description="图库为空：上传图片，或在项目「预览」步骤用 AI 生成" :image-size="100" />
     </div>
 
     <!-- 图库网格 -->
@@ -63,7 +63,7 @@ import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
 
-/** 图库维护页:上传 / 浏览 / 删除。文章配图(选用封面/插图)在项目「配图」步骤进行,两处互不混责。 */
+/** 图库维护页:上传 / 浏览 / 删除。文章配图(选用封面/插图)在项目「预览」步骤进行,两处互不混责。 */
 const user = useUserStore()
 const images = ref([])
 const projects = ref([])          // 供「按项目过滤」下拉
@@ -72,10 +72,10 @@ const loadError = ref('')
 const uploading = ref(false)
 const deletingId = ref(null)
 
-const imgUrl = (img) => `/images/${img.storagePath}`
+const imgUrl = (img) => img?.url || ''
 const matchFilter = (img) =>
   projectFilter.value === '' || projectFilter.value == null || img.projectId === projectFilter.value
-const sourceLabel = (s) => ({ upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图' }[s] || s)
+const sourceLabel = (s) => ({ upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图', byd: '比亚迪' }[s] || s)
 const shortTime = (t) => (t || '').slice(5, 16).replace('T', ' ')
 const projectLabel = (img) => {
   if (img.projectId == null) return '全局'

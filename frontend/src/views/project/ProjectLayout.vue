@@ -27,7 +27,7 @@
         <el-alert v-if="project && project.lastVersionError" type="warning" :closable="false" show-icon
                   :title="`版本生成提示：${project.lastVersionError}`" class="top-alert" />
 
-        <!-- 六步创作向导:编号式步骤导航(自绘,可点/锁定/当前态),移动端横向滑动 -->
+        <!-- 五步创作向导:编号式步骤导航(自绘,可点/锁定/当前态),移动端横向滑动 -->
         <nav class="steps-nav" aria-label="创作步骤">
           <button v-for="(s, i) in STEPS" :key="s.key" type="button"
                   class="step-pill" :class="stepClass(i)" :disabled="i > maxReachable"
@@ -66,9 +66,8 @@ import { Check, Lock, WarningFilled } from '@element-plus/icons-vue'
 const STEPS = [
   { key: 'brief', title: '简报', route: 'brief' },
   { key: 'versions', title: '版本', route: 'versions' },
-  { key: 'images', title: '配图', route: 'images' },
-  { key: 'preview', title: '预览' },
-  { key: 'publish', title: '发布' }
+  { key: 'preview', title: '预览', route: 'preview' },
+  { key: 'publish', title: '发布', route: 'publish' }
 ]
 
 const route = useRoute()
@@ -88,7 +87,8 @@ const maxReachable = computed(() => maxReachableStepOf(project.value?.status))
 const routeStepIndex = computed(() => {
   const name = route.name
   if (name === 'project-versions') return 1
-  if (name === 'project-images') return 2
+  if (name === 'project-preview') return 2
+  if (name === 'project-publish') return 3
   return 0
 })
 
@@ -102,6 +102,12 @@ const loadProject = async () => {
   loadingProject.value = true
   await store.ensureProject(route.params.id, { force: true })
   loadingProject.value = false
+  // 中断重进自动定位:若当前路由落后于最新流程节点(如从列表进入默认落在简报页),自动跳到该做的步骤
+  const targetStep = activeStepOf(project.value?.status)
+  if (routeStepIndex.value < targetStep) {
+    const step = STEPS[targetStep]
+    if (step?.route) router.replace({ name: `project-${step.key}`, params: { id: route.params.id } })
+  }
 }
 
 // 生成中状态轮询收敛到 store(唯一事实源驱动)。store 四层共享的仅 store 四层共用,由状态翻转自动停止

@@ -23,8 +23,12 @@ import java.util.Map;
 public class ImageController {
 
     private final ImageService service;
+    private final com.sparkora.config.WenyanProperties wenyanProps;
 
-    public ImageController(ImageService service) { this.service = service; }
+    public ImageController(ImageService service, com.sparkora.config.WenyanProperties wenyanProps) {
+        this.service = service;
+        this.wenyanProps = wenyanProps;
+    }
 
     /** 数字字段健壮解析：兼容 Number(Integer/Long/…) 与字符串形式（"4"/" 4"），空/非法返回 null 或抛 400。 */
     private static Long toLong(Object v, String field) {
@@ -111,6 +115,20 @@ public class ImageController {
         } catch (Exception ex) {
             return R.fail(500, ex.getMessage());
         }
+    }
+
+    /** 预览参数清单(S4):主题/高亮清单与开关默认值,读 .env(WENYAN_*),前端下拉同源。 */
+    @GetMapping("/preview-options")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<Map<String, Object>> previewOptions() {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("themes", wenyanProps.themeNameList());
+        m.put("highlights", java.util.List.of("solarized-light", "monokai", "github", "dracula"));
+        m.put("defaultTheme", wenyanProps.getDefaultTheme());
+        m.put("highlight", wenyanProps.getHighlight());
+        m.put("macStyle", wenyanProps.isMacStyle());
+        m.put("footnote", wenyanProps.isFootnote());
+        return R.ok(m);
     }
 
     private static Long requireProjectId(Map<String, Object> body) {

@@ -1,0 +1,3 @@
+{"file":"docs/s0-spec.md","reason":"验收对照权威:spec-check 需逐条核对 §10 契约与实现一致性"}
+{"file":".trellis/tasks/09-03-image-library-refactor/prd.md","reason":"验收标准 AC1-AC7 与关键决策,检查基线"}
+{"file":".trellis/tasks/09-03-image-library-refactor/design.md","reason":"权衡记录与兼容回滚设计,检查时对照实现是否偏离"}

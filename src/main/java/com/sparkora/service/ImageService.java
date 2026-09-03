@@ -10,6 +10,7 @@ import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.ImageAssetMapper;
+import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -23,30 +24,24 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * 配图服务（S3b）。三来源统一入库：upload / ai-text2img / ai-img2img。
+ * 配图服务（S3b + S6）。四来源统一入库：upload / ai-text2img / ai-img2img / byd。
  *
- * 要点：
+ * 要点（S6 图库完全依赖图床，本地不留）：
  *  - 上传校验：png/jpg/webp，≤ IMAGE_MAX_UPLOAD_MB；
- *  - AI 生成（文生图/图生图）返回的 URL（或 data URL）一律转存本地，失败则整次报错，不留死链；
- *  - 文件落 {IMAGE_STORAGE_DIR}/yyyy/MM/uuid.ext，/images/** 由 WebConfig 静态映射；
+ *  - AI 生成（文生图/图生图）返回的 URL（或 data URL）一律下载字节后直接转存图床，失败则整次报错，不留死链；
+ *  - 图片入库即直接转存图床（storageKey），本地不落盘；
  *  - 封面/插图挂当前版本（ArticleVersionEntity.coverImageId/bodyImageIds），增删幂等；
- *  - 「完成配图」：VERSIONS_READY→IMAGES_READY，重复点击幂等；同步调用不引入新生成中状态。
+ *  - 配图并入预览步骤：不再有独立「完成配图」状态推进（VERSIONS_READY 后直接可预览/发布）。
  */
 @Slf4j
 @Service
@@ -64,6 +59,7 @@ public class ImageService {
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
     private final AiImageClient aiImageClient;
+    private final ImageStorage imageStorage;
 
     private final java.net.http.HttpClient transferClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -72,17 +68,18 @@ public class ImageService {
 
     public ImageService(ImageProperties imageProps, ImageAssetMapper imageMapper,
                         ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
-                        AiImageClient aiImageClient) {
+                        AiImageClient aiImageClient, ImageStorage imageStorage) {
         this.imageProps = imageProps;
         this.imageMapper = imageMapper;
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.aiImageClient = aiImageClient;
+        this.imageStorage = imageStorage;
     }
 
     // ==================== 上传 ====================
 
-    /** 上传不再限定必须在项目流程内:图库独立维护,projectId 允许为空(全局图库)。 */
+    /** 上传不再限定必须在项目流程内:图库独立维护,projectId 允许为空(全局图库)。图片直接转存图床。 */
     public ImageAssetEntity upload(Long projectId, MultipartFile file, String operator) {
         if (projectId != null) ensureProject(projectId);
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("请选择要上传的图片");
@@ -108,12 +105,13 @@ public class ImageService {
         ImageAssetEntity e = new ImageAssetEntity();
         e.setProjectId(projectId);
         e.setFileName(safeName(file.getOriginalFilename(), "upload.png"));
-        e.setStoragePath(store(bytes, ext));
         e.setSource("upload");
+        e.setStorageKey(imageStorage.upload(bytes, ext));
         fillSize(e, bytes);
         e.setCreatedBy(operator);
         e.setCreatedAt(LocalDateTime.now());
         imageMapper.insert(e);
+        fillUrl(e);
         log.info("上传配图 project={} id={} file={}（{}KB）", projectId, e.getId(), e.getFileName(), file.getSize() / 1024);
         return e;
     }
@@ -135,12 +133,12 @@ public class ImageService {
         if (refImageId == null) throw new IllegalArgumentException("请选择参考图");
         ImageAssetEntity ref = imageMapper.selectById(refImageId);
         if (ref == null) throw new IllegalArgumentException("参考图不存在");
-        byte[] refBytes = readLocal(ref.getStoragePath());
-        String url = aiImageClient.generateImage2Image(prompt, refBytes, fileBaseName(ref.getStoragePath()), normalizeSize(size));
+        byte[] refBytes = imageStorage.download(ref.getStorageKey());
+        String url = aiImageClient.generateImage2Image(prompt, refBytes, fileBaseName(ref.getFileName()), normalizeSize(size));
         return saveGenerated(projectId, url, prompt, refImageId, "ai-img2img", operator);
     }
 
-    /** AI 生成结果统一转存本地（临时 URL/data URL 均不留存）。转存失败整次报错，不留死链。 */
+    /** AI 生成结果统一转存图床（临时 URL/data URL 均不留存）。转存失败整次报错，不留死链。 */
     private ImageAssetEntity saveGenerated(Long projectId, String url, String prompt,
                                            Long refImageId, String source, String operator) {
         byte[] bytes = fetchBytes(url);
@@ -148,15 +146,16 @@ public class ImageService {
         ImageAssetEntity e = new ImageAssetEntity();
         e.setProjectId(projectId);
         e.setFileName(promptSummary(prompt) + "." + ext);
-        e.setStoragePath(store(bytes, ext));
         e.setSource(source);
+        e.setStorageKey(imageStorage.upload(bytes, ext));
         e.setPromptText(prompt.length() > 2000 ? prompt.substring(0, 2000) : prompt);
         e.setRefImageId(refImageId);
         fillSize(e, bytes);
         e.setCreatedBy(operator);
         e.setCreatedAt(LocalDateTime.now());
         imageMapper.insert(e);
-        log.info("AI 配图已转存 project={} id={} source={}（{}KB）", projectId, e.getId(), source, bytes.length / 1024);
+        fillUrl(e);
+        log.info("AI 配图已转存图床 project={} id={} source={}（{}KB）", projectId, e.getId(), source, bytes.length / 1024);
         return e;
     }
 
@@ -167,12 +166,30 @@ public class ImageService {
         QueryWrapper<ImageAssetEntity> qw = new QueryWrapper<>();
         if (projectId != null) qw.eq("project_id", projectId);
         qw.orderByDesc("id");
-        return imageMapper.selectList(qw);
+        List<ImageAssetEntity> list = imageMapper.selectList(qw);
+        list.forEach(this::fillUrl);
+        return list;
+    }
+
+    /** 填充非持久化 url 字段（由 storageKey 拼图床公网 URL）。 */
+    private void fillUrl(ImageAssetEntity img) {
+        if (img.getStorageKey() != null && !img.getStorageKey().isBlank()) {
+            img.setUrl(imageStorage.publicUrl(img.getStorageKey()));
+        }
+    }
+
+    /** 由图库记录 id 取图床公网 URL（图片入库即已转存，storageKey 非空）。 */
+    public String publicUrl(Long imageId) {
+        ImageAssetEntity img = imageMapper.selectById(imageId);
+        if (img == null) throw new IllegalArgumentException("图片不存在: " + imageId);
+        if (img.getStorageKey() == null || img.getStorageKey().isBlank())
+            throw new IllegalStateException("图片未转存图床: " + imageId);
+        return imageStorage.publicUrl(img.getStorageKey());
     }
 
     /**
      * 删除图库图（ADMIN/EDITOR）。被封面/插图引用时拒绝并给出引用方提示，避免版本配图死链。
-     * 删除落库记录 + 本地文件；文件缺失不阻断（记录照删）。
+     * 删除落库记录 + 图床对象（非阻塞，失败仅 warn）。
      */
     public void delete(Long id) {
         ImageAssetEntity img = imageMapper.selectById(id);
@@ -188,15 +205,12 @@ public class ImageService {
         if (!refs.isEmpty()) {
             List<String> marks = refs.stream().map(v -> "项目#" + v.getProjectId() + "版本#" + v.getId())
                     .toList();
-            throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应配图步骤移除后再删除");
+            throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应预览步骤移除后再删除");
         }
         imageMapper.deleteById(id);
-        try {
-            java.nio.file.Files.deleteIfExists(imageProps.storageRoot().resolve(img.getStoragePath()));
-        } catch (IOException e) {
-            log.warn("图片文件删除失败（记录已删）: {} {}", img.getStoragePath(), e.getMessage());
-        }
-        log.info("删除配图 id={} path={}", id, img.getStoragePath());
+        // 同步删图床对象(非阻塞,失败仅告警)
+        imageStorage.delete(img.getStorageKey());
+        log.info("删除配图 id={} key={}", id, img.getStorageKey());
     }
 
     /** 配图快照（三角色可读）：全量图库（含全局图，与配图选用口径一致）+ 当前版本封面/插图。 */
@@ -244,33 +258,6 @@ public class ImageService {
         versionMapper.updateById(v);
     }
 
-    /** 完成配图：VERSIONS_READY→IMAGES_READY；IMAGES_READY 重复点击幂等返回。原子条件更新防竞态。 */
-    public void completeImages(Long projectId) {
-        ArticleProjectEntity p = projectMapper.selectById(projectId);
-        if (p == null) throw new IllegalArgumentException("项目不存在");
-        String status = p.getStatus();
-        if ("IMAGES_READY".equals(status)) return;   // 幂等
-        if (!"VERSIONS_READY".equals(status))
-            throw new IllegalStateException("当前状态为 " + status + "，仅版本就绪后可完成配图");
-        ArticleVersionEntity v = currentVersion(p);
-        boolean hasCover = v != null && v.getCoverImageId() != null;
-        boolean hasBody = v != null && !bodyIdListOf(v).isEmpty();
-        if (!hasCover && !hasBody)
-            throw new IllegalArgumentException("请先选定封面或至少一张插图");
-        // 原子条件更新:仅当仍处于 VERSIONS_READY 才写入 IMAGES_READY(受影响行数=0 视为并发竞态,幂等成功)
-        int updated = projectMapper.update(null,
-                new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                        .eq("id", projectId).eq("status", "VERSIONS_READY")
-                        .set("status", "IMAGES_READY")
-                        .set("updated_at", LocalDateTime.now()));
-        if (updated == 0) {
-            ArticleProjectEntity now = projectMapper.selectById(projectId);
-            if (now != null && "IMAGES_READY".equals(now.getStatus())) return;   // 并发下已被推进:幂等成功
-            throw new IllegalStateException(now == null ? "项目不存在" : ("项目状态已变为 " + now.getStatus() + "，请刷新后重试"));
-        }
-        log.info("完成配图 project={} → IMAGES_READY", projectId);
-    }
-
     // ==================== 内部工具 ====================
 
     private void ensureProject(Long projectId) {
@@ -303,20 +290,6 @@ public class ImageService {
         String s = size.trim().toLowerCase(java.util.Locale.ROOT);
         if (!ALLOWED_SIZES.contains(s)) throw new IllegalArgumentException("不支持的尺寸: " + s);
         return s;
-    }
-
-    /** 落盘 {root}/yyyy/MM/uuid.ext，返回相对路径（/images/ 的 URL 尾段）。 */
-    private String store(byte[] bytes, String ext) {
-        try {
-            String rel = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM"))
-                    + "/" + UUID.randomUUID() + "." + ext;
-            Path target = imageProps.storageRoot().resolve(rel);
-            java.nio.file.Files.createDirectories(target.getParent());
-            java.nio.file.Files.write(target, bytes);
-            return rel;
-        } catch (IOException e) {
-            throw new RuntimeException("图片落盘失败: " + e.getMessage(), e);
-        }
     }
 
     /** 下载 AI 返回的 URL（data URL 直接解码；http(s) 走 HttpClient）。 */
@@ -355,18 +328,6 @@ public class ImageService {
         }
     }
 
-    private byte[] readLocal(String storagePath) {
-        // 越界断言(纵深防御):storagePath 虽全由服务端生成,仍防 resolve 逃出根目录
-        Path target = imageProps.storageRoot().resolve(storagePath).normalize();
-        if (!target.startsWith(imageProps.storageRoot()))
-            throw new IllegalArgumentException("非法存储路径");
-        try {
-            return java.nio.file.Files.readAllBytes(target);
-        } catch (IOException e) {
-            throw new RuntimeException("读取参考图失败: " + storagePath, e);
-        }
-    }
-
     private static String extOf(String name) {
         if (name == null) return "";
         int dot = name.lastIndexOf('.');
@@ -394,10 +355,9 @@ public class ImageService {
     }
 
     /** 参考图传给 multipart 的文件名。 */
-    private static String fileBaseName(String storagePath) {
-        int slash = storagePath.lastIndexOf('/');
-        String name = slash < 0 ? storagePath : storagePath.substring(slash + 1);
-        return name.isBlank() ? "reference.png" : name;
+    private static String fileBaseName(String fileName) {
+        if (fileName == null || fileName.isBlank()) return "reference.png";
+        return fileName;
     }
 
     /** 生成图文件名用 prompt 摘要（替换非法字符，超长截断）。 */

@@ -1,0 +1,2 @@
+{"file": "docs/s0-spec.md", "reason": "状态机/配图模块/预览/发布契约权威规格，需同步移除 IMAGES_READY"}
+{"file": "frontend/src/constants/project.js", "reason": "状态常量唯一事实源，需移除 IMAGES_READY"}

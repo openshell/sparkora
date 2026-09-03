@@ -18,7 +18,17 @@ export const projectApi = {
   // 版本生成：body={styleIds:[...]}，每选一个风格生成一版；耗时较长放宽超时
   generateVersions: (id, styleIds) => http.post(`/projects/${id}/generate/versions`, { styleIds }, { timeout: 300000 }),
   listVersions: (id) => http.get(`/projects/${id}/versions`),
-  setCurrentVersion: (id, versionId) => http.put(`/projects/${id}/current-version`, null, { params: { versionId } })
+  setCurrentVersion: (id, versionId) => http.put(`/projects/${id}/current-version`, null, { params: { versionId } }),
+  // S5 发布:参数清单(主题/高亮/默认值 + 通道就绪度 + 历史发布信息)
+  publishOptions: (id) => http.get(`/projects/${id}/publish-options`),
+  // S5 发布到公众号草稿箱:渲染+上传+发布链路约十几秒,放宽超时(同 generateBrief);params={theme?, highlight?, macStyle?, footnote?}
+  publish: (id, params) => http.post(`/projects/${id}/publish`, null, { params, timeout: 120000 }),
+  // 编辑版本标题(S6);body={title}
+  saveTitle: (id, versionId, title) =>
+    http.put(`/projects/${id}/versions/${versionId}/title`, { title }),
+  // 简报阶段点选标题(S6);body={title},空串清除
+  setSelectedTitle: (id, title) =>
+    http.put(`/projects/${id}/selected-title`, { title })
 }
 
 export const styleApi = {
@@ -29,6 +39,27 @@ export const styleApi = {
   remove: (id) => http.delete(`/styles/${id}`),
   // 提炼入库：body={name, sourceText}，AI 耗时放宽超时
   extract: (name, sourceText) => http.post('/styles/extract', { name, sourceText }, { timeout: 120000 })
+}
+
+export const carApi = {
+  // 车型知识库（S6 RAG）
+  list: () => http.get('/car/models'),
+  detail: (id, versionId) => http.get(`/car/models/${id}`, { params: versionId ? { versionId } : {} }),
+  // 官网车型目录（供同步页手动选择）
+  catalog: () => http.get('/car/catalog'),
+  // 创建同步任务：body={goodsIds:[...]}，异步执行，返回 {jobId}
+  createJob: (goodsIds) => http.post('/car/sync/jobs', { goodsIds }),
+  // 查询同步任务进度
+  getJob: (id) => http.get(`/car/sync/jobs/${id}`),
+  // 同步任务历史
+  listJobs: () => http.get('/car/sync/jobs'),
+  // 重试任务失败项，返回新任务 {jobId}
+  retryJob: (id) => http.post(`/car/sync/jobs/${id}/retry`),
+  // 同步单个车型（详情页用，同步阻塞）
+  syncOne: (id) => http.post(`/car/models/${id}/sync`, null, { timeout: 300000 }),
+  remove: (id) => http.delete(`/car/models/${id}`),
+  // 内部问答检索：body={modelId, query, topK?}
+  rag: (modelId, query, topK) => http.post('/car/rag', { modelId, query, topK }, { timeout: 120000 })
 }
 
 export const imageApi = {
@@ -54,8 +85,13 @@ export const imageApi = {
   setCover: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/cover`),
   addBodyImage: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/body`, null, { params: { action: 'add' } }),
   removeBodyImage: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/body`, null, { params: { action: 'remove' } }),
-  // 完成配图：VERSIONS_READY→IMAGES_READY（幂等）
-  completeImages: (id) => http.post(`/projects/${id}/complete-images`),
   // 删除图库图（ADMIN/EDITOR；被引用时后端 400 并提示引用方）
-  remove: (imageId) => http.delete(`/images/${imageId}`)
+  remove: (imageId) => http.delete(`/images/${imageId}`),
+  // S4 预览:wenyan 同核渲染(方案 A);params={theme?, highlight?, macStyle?, footnote?}
+  preview: (id, params) => http.post(`/projects/${id}/preview`, null, { params }),
+  // 保存版本正文(S4 预览页左栏编辑);body={contentMd}
+  saveContent: (id, versionId, contentMd) =>
+    http.put(`/projects/${id}/versions/${versionId}/content`, { contentMd }),
+  // 预览参数清单(主题/高亮/开关默认值,读后端 .env 配置)
+  previewOptions: () => http.get('/images/preview-options')
 }
