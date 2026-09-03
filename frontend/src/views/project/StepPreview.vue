@@ -56,78 +56,10 @@
           </el-tooltip>
         </div>
         <span class="ctrl-divider" aria-hidden="true"></span>
-        <el-popover placement="bottom-start" :width="460" trigger="click" class="img-pop">
-          <template #reference>
-            <el-button size="small">
-              <el-icon style="margin-right: 4px"><Picture /></el-icon>
-              配图 {{ insertedCount }}/{{ snapshotImages.length }}
-            </el-button>
-          </template>
-          <div class="img-pop-body">
-            <el-tabs v-model="imgTab" class="img-tabs">
-              <!-- 图库:全量图库选用(插入正文 / 设封面) -->
-              <el-tab-pane label="图库" name="library">
-                <div v-if="!snapshotImages.length" class="img-pop-empty">图库为空：先到「图库」上传，或用下方 AI 生成</div>
-                <template v-else>
-                  <div class="img-pop-tip">点击「插入」到编辑器光标处；正文里没引用的插图不会出现在文章中</div>
-                  <div class="img-pop-grid">
-                    <div v-for="img in snapshotImages" :key="img.id" class="img-pop-cell"
-                         :class="{ inserted: insertedUrls.has(imgUrl(img)) }">
-                      <el-image :src="imgUrl(img)" fit="cover" class="img-pop-thumb" />
-                      <span v-if="img.id === coverImageId" class="img-pop-cover">封面</span>
-                      <span v-if="insertedUrls.has(imgUrl(img))" class="img-pop-check">✓</span>
-                      <div class="img-pop-actions">
-                        <el-button size="small" :disabled="busy" @click="insertBodyImage(img)">插入</el-button>
-                        <el-button size="small" :type="img.id === coverImageId ? 'success' : 'default'"
-                                   :disabled="img.id === coverImageId || busy" @click="onSetCover(img.id)">
-                          {{ img.id === coverImageId ? '✓ 封面' : '设封面' }}
-                        </el-button>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </el-tab-pane>
-              <!-- AI 生图:文生图 / 图生图,产物进图库后插入 -->
-              <el-tab-pane label="AI 生图" name="ai">
-                <el-tabs v-model="aiTab" class="ai-tabs">
-                  <el-tab-pane label="文生图" name="text2img">
-                    <el-input v-model="t2iPrompt" type="textarea" :rows="2"
-                              placeholder="例：俯瞰一杯咖啡与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
-                    <div class="ai-row">
-                      <el-select v-model="genSize" class="size-select">
-                        <el-option label="方图 1024×1024" value="1024x1024" />
-                        <el-option label="横图 1536×1024" value="1536x1024" />
-                        <el-option label="竖图 1024×1536" value="1024x1536" />
-                      </el-select>
-                      <el-button type="primary" :loading="generating" @click="onGenerateText">
-                        {{ generating ? '生成中…' : '生成并插入' }}
-                      </el-button>
-                    </div>
-                  </el-tab-pane>
-                  <el-tab-pane label="图生图" name="img2img">
-                    <div v-if="refImage" class="ref-pick">
-                      <img :src="imgUrl(refImage)" class="ref-thumb" alt="参考图" />
-                      <el-button size="small" text type="primary" @click="refDialog = true">重新选择</el-button>
-                    </div>
-                    <el-button v-else plain size="small" @click="refDialog = true">从图库选择参考图</el-button>
-                    <el-input v-model="i2iPrompt" type="textarea" :rows="2"
-                              placeholder="例：保持构图，改为蓝灰色科技感色调" />
-                    <div class="ai-row">
-                      <el-select v-model="genSize" class="size-select">
-                        <el-option label="方图 1024×1024" value="1024x1024" />
-                        <el-option label="横图 1536×1024" value="1536x1024" />
-                        <el-option label="竖图 1024×1536" value="1024x1536" />
-                      </el-select>
-                      <el-button type="primary" :disabled="!refImage" :loading="generating" @click="onGenerateFromImage">
-                        {{ generating ? '生成中…' : '生成并插入' }}
-                      </el-button>
-                    </div>
-                  </el-tab-pane>
-                </el-tabs>
-              </el-tab-pane>
-            </el-tabs>
-          </div>
-        </el-popover>
+        <el-button size="small" @click="imgDrawer = true">
+          <el-icon style="margin-right: 4px"><Picture /></el-icon>
+          配图 {{ insertedCount }}/{{ snapshotImages.length }}
+        </el-button>
         <span class="flex-sp"></span>
         <el-tag v-if="saveState === 'dirty'" type="warning" effect="plain" size="small">未保存</el-tag>
         <el-tag v-else-if="saveState === 'error'" type="danger" effect="plain" size="small">保存失败</el-tag>
@@ -206,6 +138,76 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 配图抽屉:图库选用 + AI 生图 -->
+    <el-drawer v-model="imgDrawer" title="配图" size="420px" class="img-drawer" :with-header="true">
+      <el-tabs v-model="imgTab" class="img-tabs">
+        <!-- 图库:全量图库选用(插入正文 / 设封面) -->
+        <el-tab-pane label="图库" name="library">
+          <div v-if="!snapshotImages.length" class="img-pop-empty">图库为空：先到「图库」上传，或用下方 AI 生成</div>
+          <template v-else>
+            <div class="img-pop-tip">点击图片插入到编辑器光标处；正文里没引用的插图不会出现在文章中</div>
+            <div class="img-pop-grid">
+              <div v-for="img in snapshotImages" :key="img.id" class="img-pop-cell"
+                   :class="{ inserted: insertedUrls.has(imgUrl(img)) }">
+                <div class="img-pop-thumb-wrap" @click="insertBodyImage(img)">
+                  <el-image :src="imgUrl(img)" fit="cover" class="img-pop-thumb" />
+                  <span v-if="img.id === coverImageId" class="img-pop-cover">封面</span>
+                  <span v-if="insertedUrls.has(imgUrl(img))" class="img-pop-check">✓</span>
+                  <div class="img-pop-hover">
+                    <el-icon><Plus /></el-icon> 插入正文
+                  </div>
+                </div>
+                <div class="img-pop-actions">
+                  <el-button size="small" :type="img.id === coverImageId ? 'success' : 'default'"
+                             :disabled="img.id === coverImageId || busy" @click="onSetCover(img.id)">
+                    {{ img.id === coverImageId ? '✓ 封面' : '设为封面' }}
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </el-tab-pane>
+        <!-- AI 生图:文生图 / 图生图,产物进图库后插入 -->
+        <el-tab-pane label="AI 生图" name="ai">
+          <el-tabs v-model="aiTab" class="ai-tabs">
+            <el-tab-pane label="文生图" name="text2img">
+              <el-input v-model="t2iPrompt" type="textarea" :rows="2"
+                        placeholder="例：俯瞰一杯咖啡与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
+              <div class="ai-row">
+                <el-select v-model="genSize" class="size-select">
+                  <el-option label="方图 1024×1024" value="1024x1024" />
+                  <el-option label="横图 1536×1024" value="1536x1024" />
+                  <el-option label="竖图 1024×1536" value="1024x1536" />
+                </el-select>
+                <el-button type="primary" :loading="generating" @click="onGenerateText">
+                  {{ generating ? '生成中…' : '生成并插入' }}
+                </el-button>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="图生图" name="img2img">
+              <div v-if="refImage" class="ref-pick">
+                <img :src="imgUrl(refImage)" class="ref-thumb" alt="参考图" />
+                <el-button size="small" text type="primary" @click="refDialog = true">重新选择</el-button>
+              </div>
+              <el-button v-else plain size="small" @click="refDialog = true">从图库选择参考图</el-button>
+              <el-input v-model="i2iPrompt" type="textarea" :rows="2"
+                        placeholder="例：保持构图，改为蓝灰色科技感色调" />
+              <div class="ai-row">
+                <el-select v-model="genSize" class="size-select">
+                  <el-option label="方图 1024×1024" value="1024x1024" />
+                  <el-option label="横图 1536×1024" value="1536x1024" />
+                  <el-option label="竖图 1024×1536" value="1024x1536" />
+                </el-select>
+                <el-button type="primary" :disabled="!refImage" :loading="generating" @click="onGenerateFromImage">
+                  {{ generating ? '生成中…' : '生成并插入' }}
+                </el-button>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </el-tab-pane>
+      </el-tabs>
+    </el-drawer>
   </el-card>
 </template>
 
@@ -217,7 +219,7 @@ import { renderMarkdownHtml, applyPreviewTheme, buildWechatHtml, sanitizeWenyanH
 import { CUSTOM_THEMES } from '../../utils/wenyanThemes'
 import MarkdownEditor from '../../components/MarkdownEditor.vue'
 import { ElMessage } from 'element-plus'
-import { DocumentCopy, Loading, WarningFilled, Check, Picture } from '@element-plus/icons-vue'
+import { DocumentCopy, Loading, WarningFilled, Check, Picture, Plus } from '@element-plus/icons-vue'
 
 /**
  * Step 3 · 排版预览(wenyan web 原版蓝本,Vue 重写)。
@@ -256,6 +258,7 @@ const previewBody = ref(null)
 const copying = ref(false)
 
 // ==== 配图面板状态(图库插入 + AI 生图) ====
+const imgDrawer = ref(false)        // 配图抽屉开关
 const imgTab = ref('library')       // 配图面板 tab:library | ai
 const aiTab = ref('text2img')       // AI 生图子 tab:text2img | img2img
 const t2iPrompt = ref('')
@@ -562,25 +565,33 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 .state-title { font-weight: 700; margin: 8px 0 4px; }
 .state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
 
-/* 配图面板(图库插入 + AI 生图) */
-.img-pop-body { padding: 2px; }
+/* 配图抽屉(图库插入 + AI 生图) */
+.img-drawer :deep(.el-drawer__body) { padding: 0 16px 16px; }
 .img-pop-tip { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; }
 .img-pop-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
 .img-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
 .img-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
 .ai-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
 .ai-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
-.img-pop-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 300px; overflow-y: auto; }
-.img-pop-cell { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+.img-pop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-height: 60vh; overflow-y: auto; }
+.img-pop-cell { position: relative; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color .2s, box-shadow .2s; background: var(--card); }
 .img-pop-cell:hover { border-color: var(--brand, var(--el-color-primary)); }
 .img-pop-cell.inserted { border-color: var(--ok, #67c23a); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #67c23a) 18%, transparent); }
+.img-pop-thumb-wrap { position: relative; cursor: pointer; }
 .img-pop-thumb { width: 100%; aspect-ratio: 1; display: block; }
+/* 悬浮「插入正文」提示(桌面 hover;移动端点击图片即插入) */
+.img-pop-hover {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 4px;
+  background: rgba(0,0,0,.45); color: #fff; font-size: 13px; font-weight: 600;
+  opacity: 0; transition: opacity .2s ease;
+}
+.img-pop-thumb-wrap:hover .img-pop-hover { opacity: 1; }
 .img-pop-cover { position: absolute; left: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
   text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; padding: 0 4px; }
 .img-pop-check { position: absolute; right: 4px; top: 4px; min-width: 16px; height: 16px; line-height: 16px;
   text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; }
-.img-pop-actions { display: flex; gap: 4px; padding: 4px; }
-.img-pop-actions .el-button { flex: 1; min-height: 28px; margin: 0; }
+.img-pop-actions { padding: 6px; }
+.img-pop-actions .el-button { width: 100%; min-height: 30px; margin: 0; }
 .ai-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
 .ai-row .size-select { width: 180px; }
 .ref-pick { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
@@ -661,6 +672,9 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
   .phone-device { width: 100%; max-width: 430px; }
   .theme-select, .hl-select { width: 100%; flex: auto; }
   .ctrl-divider { display: none; }
+  /* 移动端配图抽屉全屏,网格两列 */
+  .img-drawer { --el-drawer-size: 100% !important; }
+  .img-pop-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   .wenyan-preview { animation: none; }
