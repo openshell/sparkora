@@ -4,7 +4,7 @@
 
 [permissions]
 mode  = "ask"                                      # 未匹配规则的写操作仍需确认(默认安全)
-deny  = ["Bash(rm -rf *)", "Bash(git push*)", "Bash(mvn deploy*)"]
+deny  = ["Bash(rm -rf *)", "Bash(mvn deploy*)"]
 allow = [
   # ---- 后端构建 / 验证 ----
   "Bash(mvn -q -DskipTests compile*)",
@@ -36,6 +36,8 @@ allow = [
   "Bash(git branch*)",
   "Bash(git ls-files*)",
   "Bash(git check-ignore*)",
+  # ---- git 推送 ----
+  "Bash(git push*)",
   # ---- 联调探活 ----
   "Bash(curl -s http://localhost:5661/*)",
   "Bash(curl -s http://localhost:8080/*)",

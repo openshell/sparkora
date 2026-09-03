@@ -1,0 +1,5 @@
+{"file":"docs/s0-spec.md","reason":"字段级契约权威:§10 配图接口契约与 §12 发布契约是本次改写对象,实施前必须对照"}
+{"file":".trellis/tasks/09-03-image-library-refactor/design.md","reason":"本任务技术设计:契约变更、去重管线、批量生成循环、thumbUrl 派生 URL 方案"}
+{"file":"src/main/java/com/sparkora/service/ImageService.java","reason":"图库服务主体:list/projectImages 快照/上传与生成入库管线,改造核心"}
+{"file":"src/main/java/com/sparkora/web/controller/ImageController.java","reason":"接口层:list 参数扩展、generate 响应改数组、新增 regenerate"}
+{"file":"src/main/java/com/sparkora/service/QiniuService.java","reason":"图床实现:publicUrl/thumbUrl 派生、upload 语义,ImageStorage 实现参考"}
