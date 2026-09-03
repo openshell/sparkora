@@ -19,7 +19,7 @@ import java.util.Map;
  * 链路(同步,一次调用完成):
  *  1. previewService.preview(...) —— 项目状态校验 + 取图床 URL + wenyan render(与预览完全同参同源);
  *  2. 校验渲染未降级(降级 HTML 不进公众号);
- *  3. 组 gzhContent JSON(title + content=渲染 HTML)→ wenyan-server /upload → /publish(fileId)
+ *  3. 组 gzhContent JSON(title + content=渲染 HTML + cover=封面图床 URL)→ wenyan-server /upload → /publish(fileId)
  *     → {media_id}(上传后立即发布,远低于 server 端 10 分钟 TTL);
  *  4. 原子落库:status=PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error。
  *
@@ -74,13 +74,17 @@ public class PublishService {
         if (v.getCoverImageId() == null)
             throw new IllegalStateException("公众号要求文章至少要有封面图，请先在「预览」步骤为当前版本设置封面后再发布");
 
-        // 2) 组 gzhContent(publish JSON 文件内容):title 必填、content=渲染 HTML
-        //    微信草稿接口 title 上限 64 字符,超长截断防 400
+        // 2) 组 gzhContent(publish JSON 文件内容),字段对齐 wenyan 官方 frontmatter 契约:
+        //    title 必填(微信草稿接口上限 64 字符,超长截断防 400)、content=渲染 HTML、
+        //    cover=封面图床公网 URL(与预览 frontmatter cover 同源;server 端用它上传封面素材,
+        //    缺失时 server 会退化用正文首图当封面,导致封面与预览不一致,故显式传递)
         String title = v.getTitle() == null || v.getTitle().isBlank() ? "无标题" : v.getTitle();
         if (title.length() > 64) title = title.substring(0, 64);
         java.util.Map<String, Object> gzh = new LinkedHashMap<>();
         gzh.put("title", title);
         gzh.put("content", html);
+        String coverUrl = (String) rendered.get("coverUrl");
+        if (coverUrl != null && !coverUrl.isBlank()) gzh.put("cover", coverUrl);
 
         // 3) upload(json)→ publish(fileId) → media_id(同步链,TTL 10 分钟充裕)
         String gzhJson;

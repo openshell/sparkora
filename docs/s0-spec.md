@@ -378,13 +378,13 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 PublishService.publish
  → PreviewService.preview(同参同源:状态校验 + 取图床 URL + frontmatter + wenyan render)
  → 非 degraded 校验(降级 HTML 不进公众号)
- → gzhContent JSON { title(≤64,必填), content=渲染HTML }   ← asset:// 不用,图片全为图床 http URL
+ → gzhContent JSON { title(≤64,必填), content=渲染HTML, cover=封面图床URL? }   ← asset:// 不用,图片全为图床 http URL;cover 与预览 frontmatter 同源,缺失时 server 退化用正文首图当封面
  → wenyan-server POST /upload (multipart file=.json) → fileId
  → wenyan-server POST /publish (JSON {fileId}) → {media_id}
  → 原子落库 status=PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error
 ```
 
-- 封面与正文 `<img src="http(s)…">` 由 server 端 fetch 后转传微信(七牛 http URL 可用);**无封面时草稿无封面图,不阻塞发布**。
+- 封面与正文 `<img src="http(s)…">` 由 server 端 fetch 后转传微信(七牛 http URL 可用);无封面时 gzhContent 不带 cover,草稿封面由 server 退化取正文首图(可能无封面图,不阻塞发布)。
 - 失败语义:任何一步失败 → `last_publish_error` 落库、状态原样保留、`R.fail(400|500, 中文原因)`;可重试整链。
 
 #### 接口契约(全部 `R<T>` 包装;HTTP 200)

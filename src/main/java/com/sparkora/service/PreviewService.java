@@ -53,7 +53,8 @@ public class PreviewService {
     }
 
     /**
-     * 生成预览。返回 {html, theme, highlight, macStyle, footnote, degraded, degradedReason?}。
+     * 生成预览。返回 {html, theme, highlight, macStyle, footnote, degraded, degradedReason?, coverUrl?}。
+     * coverUrl 为封面图床公网 URL(未设封面时为 null),发布侧取它组 gzhContent.cover。
      */
     public Map<String, Object> preview(Long projectId, String theme, String highlight,
                                        Boolean macStyle, Boolean footnote) {
@@ -104,6 +105,9 @@ public class PreviewService {
             result.put("degraded", false);
         }
         result.put("html", html);
+        // 封面图床公网 URL 一并透出:发布时组进 gzhContent.cover( wenyan-server 用它上传封面素材),
+        // 与 frontmatter cover 同源,保证「预览所见封面 = 发布推送封面」
+        result.put("coverUrl", coverUrl);
         return result;
     }
 
