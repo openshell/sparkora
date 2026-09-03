@@ -112,9 +112,6 @@
         <div class="next-row">
           <!-- 再生成其他风格只在 VERSIONS_READY 可见:发布后属增量编辑,再触发会把状态机拉回 VERSIONS_READY -->
           <el-button v-if="project?.status === 'VERSIONS_READY'" :loading="submitting" @click="openAppend">再生成其他风格</el-button>
-          <el-button type="success" :disabled="!project?.currentVersionId" @click="gotoNext">
-            {{ project?.status === 'VERSIONS_READY' ? '选定当前版本 · 进入下一步（预览）→' : '去预览 →' }}
-          </el-button>
         </div>
       </div>
     </template>
@@ -194,6 +191,8 @@ const doGenerate = async (styleIds) => {
       ElMessage.success(`已生成 ${res.data?.length || 0} 版，默认选中本次第一版，可重新设定`)
     } else ElMessage.error(res.msg || '生成失败')
     await store.ensureProject(route.params.id, { force: true })
+    // 生成成功(VERSIONS_READY)后自动进入下一步:预览(配图已并入预览)
+    if (res.code === 0) gotoPreview()
   } catch (e) {
     ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
     await store.ensureProject(route.params.id, { force: true })
@@ -234,7 +233,7 @@ const saveTitle = async (v) => {
     ElMessage.error('保存失败：' + (e.response?.data?.msg || e.message || '网络异常'))
   } finally { savingTitle.value = false }
 }
-const gotoNext = () => {
+const gotoPreview = () => {
   // 下一步:VERSIONS_READY 及之后一律进预览(配图已并入预览步骤)
   router.push({ name: 'project-preview', params: { id: route.params.id } })
 }

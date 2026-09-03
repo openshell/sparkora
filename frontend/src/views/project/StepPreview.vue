@@ -126,6 +126,11 @@
           </div>
         </div>
       </div>
+
+      <!-- 底部:进入下一步(与简报/版本同款 next-row;发布成功后消失) -->
+      <div v-if="canGoPublish" class="next-row">
+        <el-button type="success" :disabled="!!renderError" @click="goPublish">去发布 →</el-button>
+      </div>
     </template>
 
     <!-- 参考图选择弹窗(图生图) -->
@@ -270,6 +275,8 @@ const generating = ref(false)       // AI 生成中
 const busy = ref(false)             // 封面操作中
 
 const previewable = computed(() => !!props.project && ['VERSIONS_READY', 'PUBLISHED_DRAFT'].includes(props.project.status))
+// 底部「去发布」按钮:版本就绪后显示,发布成功(终态)后消失
+const canGoPublish = computed(() => !!props.project && props.project.status === 'VERSIONS_READY')
 const dirty = computed(() => contentMd.value !== originalMd.value)
 const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
 
@@ -666,6 +673,10 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 @keyframes progress-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 底部进入下一步(与简报/版本同款 next-row) */
+.next-row { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
+.next-row .el-button:last-child { margin-left: auto; }
 
 @media (max-width: 900px) {
   .duo { grid-template-columns: 1fr; }

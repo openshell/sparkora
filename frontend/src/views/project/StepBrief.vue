@@ -98,7 +98,8 @@
       <div class="brief-actions">
         <!-- 重新生成只在 READY(简报就绪且版本未生成)时可见:版本已生成后再触发会把状态机拉回 READY -->
         <el-button v-if="canRegenerateBrief" :loading="submitting" @click="onGenerateBrief">重新生成</el-button>
-        <el-button type="success" @click="gotoVersions">
+        <!-- 进入下一步:仅当简报就绪且版本未生成时显示;版本已生成后自动跳转,不再重复提交 -->
+        <el-button v-if="canGoVersions" type="success" @click="gotoVersions">
           {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
         </el-button>
       </div>
@@ -152,6 +153,9 @@ const hasVersions = computed(() => props.project?.status === 'VERSIONS_READY' ||
 // 重新生成简报只在 READY 可见:VERSIONS_READY 及之后状态已触发下一步,再生成会把状态机拉回 READY
 const canRegenerateBrief = computed(() => props.project?.status === 'READY')
 
+// 进入版本按钮:仅简报就绪(READY)且版本未生成时显示;版本已生成后自动跳转,重进本页不再显示
+const canGoVersions = computed(() => props.project?.status === 'READY')
+
 const gotoVersions = () => router.push({ name: 'project-versions', params: { id: route.params.id } })
 
 const riskType = (l) => ({ high: 'danger', medium: 'warning', low: 'info' }[l] || 'info')
@@ -178,6 +182,8 @@ const onGenerateBrief = async () => {
     }
     // 成功/失败都要让布局层拿到最新 status(生成中/回退),供轮询与按钮态使用
     await store.ensureProject(route.params.id, { force: true })
+    // 生成成功(READY)后自动进入下一步:版本生成
+    if (res.code === 0) gotoVersions()
   } catch (e) {
     // 失败已由后端回写 lastBriefError 并回退状态,提示交给 alert 与拦截器
     await store.ensureProject(route.params.id, { force: true })

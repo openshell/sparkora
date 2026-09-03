@@ -102,6 +102,12 @@ const loadProject = async () => {
   loadingProject.value = true
   await store.ensureProject(route.params.id, { force: true })
   loadingProject.value = false
+  // 中断重进自动定位:若当前路由落后于最新流程节点(如从列表进入默认落在简报页),自动跳到该做的步骤
+  const targetStep = activeStepOf(project.value?.status)
+  if (routeStepIndex.value < targetStep) {
+    const step = STEPS[targetStep]
+    if (step?.route) router.replace({ name: `project-${step.key}`, params: { id: route.params.id } })
+  }
 }
 
 // 生成中状态轮询收敛到 store(唯一事实源驱动)。store 四层共享的仅 store 四层共用,由状态翻转自动停止
