@@ -49,6 +49,9 @@ public class PublishService {
     /** 发布(重发)到公众号草稿箱。参数与预览一致(theme/highlight/macStyle/footnote)。 */
     public java.util.Map<String, Object> publish(Long projectId, String theme, String highlight,
                                                  Boolean macStyle, Boolean footnote) {
+        long startAt = System.currentTimeMillis();
+        log.info("发布开始: project={} theme={} highlight={} macStyle={} footnote={}",
+                projectId, theme, highlight, macStyle, footnote);
         // 0) 发布通道配置检查(未配置直接中文报错,不触碰状态)
         serverService.requireConfigured();
 
@@ -87,7 +90,8 @@ public class PublishService {
             throw new IllegalStateException("发布内容序列化失败: " + e.getMessage(), e);
         }
         String fileId = serverService.uploadJson("sparkora-publish-" + projectId + ".json", gzhJson);
-        log.info("发布内容已上传 wenyan-server fileId={} ({} KB)", fileId, gzhJson.length() / 1024);
+        log.info("发布内容已上传 wenyan-server fileId={} ({} KB, 累计耗时 {} ms)",
+                fileId, gzhJson.length() / 1024, System.currentTimeMillis() - startAt);
         String mediaId = serverService.publish(fileId);
 
         // 4) 原子落库:PUBLISHED_DRAFT(可重发) + media_id/主题/时间,清错误
@@ -100,7 +104,8 @@ public class PublishService {
                 .set("published_at", now)
                 .set("last_publish_error", null)
                 .set("updated_at", now));
-        log.info("项目 {} 已发布到公众号草稿箱 media_id={} theme={}", projectId, mediaId, usedTheme);
+        log.info("项目 {} 已发布到公众号草稿箱 media_id={} theme={} (总耗时 {} ms)",
+                projectId, mediaId, usedTheme, System.currentTimeMillis() - startAt);
 
         java.util.Map<String, Object> result = new LinkedHashMap<>();
         result.put("mediaId", mediaId);
@@ -109,10 +114,11 @@ public class PublishService {
         return result;
     }
 
-    /** 发布失败:写 last_publish_error(不动状态,可重试)。 */
+    /** 发布失败:写 last_publish_error(不动状态,可重试),并在后端日志留完整错误。 */
     public void markFailure(Long projectId, String message) {
         String msg = message == null ? "未知错误" : message.replaceAll("\\s+", " ").trim();
         if (msg.length() > 990) msg = msg.substring(0, 990) + "…";
+        log.error("发布失败 project={} 原因: {}", projectId, msg);
         try {
             projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
                     .eq("id", projectId)

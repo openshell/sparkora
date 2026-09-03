@@ -41,6 +41,10 @@ public class WenyanServerService {
     public WenyanServerService(WenyanProperties props, ObjectMapper json) {
         this.props = props;
         this.json = json;
+        // 环境值常见「粘贴带出首尾空白」问题,会导致微信 40125 invalid appsecret / server 401 一类疑难;
+        // 这里统一 trim 回写(@ConfigurationProperties 单例 bean,启动期一次性处理),杜绝空格类配置事故
+        if (props.getServerUrl() != null) props.setServerUrl(props.getServerUrl().trim());
+        if (props.getServerApiKey() != null) props.setServerApiKey(props.getServerApiKey().trim());
         // 连接 5s:内网/公网 server 建连都不该慢;读超时用发布超时(错误 key 挂起场景靠它兜底,不宜过长)
         this.rest = RestClient.builder()
                 .requestFactory(org.springframework.boot.web.client.ClientHttpRequestFactories.get(
@@ -105,6 +109,7 @@ public class WenyanServerService {
 
     /** 发布:按 fileId 发布到公众号草稿箱,返回 media_id。fileId 须为 10 分钟内上传的 .json 文件。 */
     public String publish(String fileId) {
+        log.info("wenyan-server publish 开始: url={} fileId={}", props.getServerUrl() + "/publish", fileId);
         try {
             java.util.Map<String, String> payload = Map.of("fileId", fileId);
             String resp = rest.post()
@@ -126,8 +131,10 @@ public class WenyanServerService {
         } catch (IllegalStateException e) {
             throw e;
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            log.error("wenyan-server /publish HTTP {}: body={}", e.getStatusCode().value(), e.getResponseBodyAsString());
             throw new IllegalStateException(describeServerError(e));
         } catch (Exception e) {
+            log.error("wenyan-server /publish 请求失败", e);
             throw new IllegalStateException("发布请求失败: " + e.getMessage(), e);
         }
     }
@@ -184,14 +191,36 @@ public class WenyanServerService {
             try {
                 JsonNode node = json.readTree(body);
                 String desc = node.path("desc").asText("");
-                if (node.hasNonNull("code") && node.get("code").asInt(0) != 0 && !desc.isBlank()) return desc;
+                if (node.hasNonNull("code") && node.get("code").asInt(0) != 0 && !desc.isBlank()) {
+                    log.error("wenyan-server 返回业务失败: desc={}", desc);
+                    return wechatErrorHint(desc);
+                }
             } catch (Exception ignore) { }
             String shortBody = body.length() > 200 ? body.substring(0, 200) + "…" : body;
+            log.error("wenyan-server HTTP {} 非预期错误体: {}", e.getStatusCode().value(), shortBody);
             return "wenyan-server 错误(" + e.getStatusCode().value() + "): " + shortBody;
         }
         if (e.getCause() instanceof java.net.SocketTimeoutException)
             return "wenyan-server 响应超时(若已核对 API Key,请检查 server 是否存活)";
+        log.error("wenyan-server HTTP {} 错误: {}", e.getStatusCode().value(), e.getMessage());
         return "wenyan-server 错误: " + e.getMessage();
+    }
+
+    /**
+     * 微信侧错误码翻译(错误源自 wenyan-server → 微信开放接口):
+     *  40125 invalid appsecret:AppSecret 不对(或刚重置未同步)——本服务不持有 AppSecret,
+     *    需在 wenyan-server 所在机器修正其 WECHAT_APP_SECRET 并重启 server;
+     *  40001 credential 拿不到 / access_token 已吊销:AppSecret 失效或 IP 白名单拦截;
+     *  40164 IP 不在白名单:把 server 出口 IP 加入公众号「IP 白名单」。
+     */
+    private String wechatErrorHint(String desc) {
+        if (desc.contains("40125"))
+            return "微信 40125: AppSecret 不正确或已重置。AppSecret 由 wenyan-server 持有,请在其所在机器修正 WECHAT_APP_SECRET 并重启 server 后重试(" + desc + ")";
+        if (desc.contains("40001"))
+            return "微信 40001: 凭据无效或 IP 白名单拦截。请核对 wenyan-server 侧 WECHAT_APP_SECRET、确认本机出口 IP 已加入公众号「IP 白名单」(" + desc + ")";
+        if (desc.contains("40164"))
+            return "微信 40164: wenyan-server 出口 IP 不在公众号「IP 白名单」内,请在公众号后台添加后重试(" + desc + ")";
+        return desc;
     }
 
     private static String descOf(JsonNode node) {
