@@ -180,6 +180,10 @@ public class BriefService {
         // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 在 factRisks 标注)
         if (rag.ok()) {
             base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时在 factRisks 标注】\n" + rag.context();
+            if (rag.coveredText() != null && !rag.coveredText().isBlank()) {
+                base += "\n\n【知识库已覆盖参数(可直接引用其数值)】" + rag.coveredText();
+                base += "\n【覆盖度约束】上述清单之外的具体参数(如某续航/油耗/配置数值)知识库未覆盖,禁止编造具体数值:改用定性表述,并在 factRisks 中标注(注明「知识库未覆盖,发布前人工核实」)。";
+            }
         } else if (rag.status() == CarRagService.RagStatus.FAILED) {
             base += "\n\n【知识库检索提示】车型知识库本次检索失败,你未能获得权威数据。涉及车型参数/权益的表述必须在 factRisks 中标注风险(建议 riskLevel=high,suggestion 注明「知识库检索失败,发布前人工核实」),不得臆造具体参数。";
         } else if (rag.status() == CarRagService.RagStatus.LOW_CONFIDENCE) {

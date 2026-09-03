@@ -217,6 +217,10 @@ public class VersionService {
         // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 标注数据风险)
         if (rag.ok()) {
             base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + rag.context();
+            if (rag.coveredText() != null && !rag.coveredText().isBlank()) {
+                base += "\n\n【知识库已覆盖参数(仅可引用这些数值,严禁改写/换算/脑补其他数)】" + rag.coveredText();
+                base += "\n【覆盖度约束】上述清单之外的具体参数数值知识库未覆盖,正文中禁止出现具体数值——用定性表述,并在文末提示「详细参数以官方发布为准」。";
+            }
         } else if (rag.status() == CarRagService.RagStatus.FAILED) {
             base += "\n\n【知识库检索提示】车型知识库本次检索失败,你未能获得权威数据。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
         } else if (rag.status() == CarRagService.RagStatus.LOW_CONFIDENCE) {

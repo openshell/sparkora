@@ -170,6 +170,12 @@ public class CarDocService {
                             .inSql("param_id", "SELECT id FROM sparkora_car_param WHERE group_id = " + g.getId())
                             .orderByAsc("id"));
             if (cleans.isEmpty()) continue;
+            // S6.2:剔除"车型"表头行后仅剩不足 2 条有效参数的分组视为零信息表头块(如「XX参数表及配置表」),
+            // 跳过切块——这类块检索得分高(与主题名相似)但无任何参数值,会挤占 topK 配额
+            long meaningful = cleans.stream()
+                    .filter(c -> !"车型".equals(c.getParamKey()))
+                    .count();
+            if (meaningful < 2) continue;
             StringBuilder sb = new StringBuilder();
             sb.append("参数分组：").append(g.getGroupName()).append("\n");
             for (CarParamCleanEntity c : cleans) {

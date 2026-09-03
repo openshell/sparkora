@@ -27,7 +27,7 @@ public interface CarDocEmbeddingMapper {
      * 余弦相似度检索 top-K。embedding 传查询向量字面量字符串。
      * 返回 doc_id + chunk_text + score(余弦相似度,越大越相关)。
      */
-    @Select("SELECT e.doc_id AS \"docId\", d.chunk_text AS \"chunkText\", " +
+    @Select("SELECT e.doc_id AS \"docId\", d.chunk_text AS \"chunkText\", d.chunk_type AS \"chunkType\", " +
             "1 - (e.embedding <=> #{queryVec}::vector) AS \"score\" " +
             "FROM sparkora_car_doc_embedding e " +
             "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +

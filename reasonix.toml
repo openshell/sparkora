@@ -43,7 +43,11 @@ allow = [
   "Bash(curl -s http://localhost:8080/*)",
   "Bash(curl -s http://localhost:5173/*)",
   "Bash(curl -s -o /dev/null*)",
+  
+  "Bash(mvn test*)",
+  "Bash(mvn -q test*)",
 ]
+
 
 [sandbox]
 # 文件写入限定在本仓库;需要写 /tmp 日志时用 bash 的 additional_write_dirs 声明
