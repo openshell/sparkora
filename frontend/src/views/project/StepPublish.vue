@@ -215,9 +215,8 @@ const loadSummary = async () => {
     const targetId = res.data?.coverImageId
     if (targetId != null && images.length) {
       const img = images.find(x => x.id === targetId)
-      // 本地静态映射路径直接可用(浏览器同源可见)
-      if (img?.storagePath) coverUrl.value = `/images/${img.storagePath}`
-      else if (img?.qiniuUrl) coverUrl.value = img.qiniuUrl
+      // 图床公网 URL(入库即已转存,后端填充 url 字段)
+      if (img?.url) coverUrl.value = img.url
     }
     if (vid) {
       const vr = await projectApi.listVersions(projectId.value)

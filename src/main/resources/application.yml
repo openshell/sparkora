@@ -68,7 +68,7 @@ sparkora:
     # S5 发布:远程 server HTTP 调用读超时(错误 key 曾有挂起行为,不宜过长)
     publish-timeout-ms: ${WENYAN_MCP_PUBLISH_TIMEOUT_MS:30000}
   image:
-    storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S3b:配图本地存储(/images/** 静态映射)
+    storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S6:数据盘目录(仅 wenyan 渲染临时文件落位;图片不再落本地)
     max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}
   car:
     # S6:车型知识库(比亚迪官网公开 JSON API,无鉴权)

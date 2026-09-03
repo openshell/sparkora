@@ -48,8 +48,8 @@ npm run build                     # 产线构建(已验证)
 - 实体审计字段(created_by / created_at / updated_at / deleted)由控制器手工赋值,沿用现有写法。
 - 前端页面用 Element Plus(`el-form` + rules 校验,移动端单列、触控目标 ≥44px);图标用 `@element-plus/icons-vue`;不新增重型 UI 框架。
 - 表结构变更:改 `schema.sql`(幂等)+ 对应 entity/mapper + `docs/s0-spec.md` 字段级表格,三处同步。
-- 配图存储 `data/`(已 gitignore),`/images/**` 由 `WebConfig` 静态映射 `IMAGE_STORAGE_DIR`;AI 生成图必须转存本地不留临时 URL。
-- S4 预览:wenyan CLI render(同核)+ 七牛图床(`QINIU_*`,兼容裸 AK/SK),契约与限制见 spec §11;`docs/img.md` 为七牛接入文档(密钥只放 .env)。
+- 配图存储(S6):图库完全依赖图床,本地不留——图片入库即直接转存(`ImageStorage` 抽象,当前实现 `QiniuService`);`storage_path`/`/images/**` 静态映射已删除,`IMAGE_STORAGE_DIR` 仅作 wenyan 渲染临时文件落位;新增来源 `byd`(比亚迪同步图转存,`CarModelService.persistIntroImages`,单图失败不阻断)。
+- S4 预览:wenyan CLI render(同核)+ 图床公网 URL(`QINIU_*`,兼容裸 AK/SK),契约与限制见 spec §11;`docs/img.md` 为七牛接入文档(密钥只放 .env)。
 - S5 发布:`WenyanServerService`(客户端,x-api-key)+ `PublishService`(预览同源渲染→upload→publish→PUBLISHED_DRAFT 可重发);`WENYAN_MCP_PUBLISH_TIMEOUT_MS` 默认 30s;发布验收清单见 spec §12。
 
 ## Notes

@@ -17,7 +17,7 @@ import java.util.Map;
  * S5 发布服务(方案 A):预览与发布同渲染核,preview HTML = 发布真值。
  *
  * 链路(同步,一次调用完成):
- *  1. previewService.preview(...) —— 项目状态校验 + 配图七牛懒转存 + wenyan render(与预览完全同参同源);
+ *  1. previewService.preview(...) —— 项目状态校验 + 取图床 URL + wenyan render(与预览完全同参同源);
  *  2. 校验渲染未降级(降级 HTML 不进公众号);
  *  3. 组 gzhContent JSON(title + content=渲染 HTML)→ wenyan-server /upload → /publish(fileId)
  *     → {media_id}(上传后立即发布,远低于 server 端 10 分钟 TTL);
@@ -53,7 +53,7 @@ public class PublishService {
         serverService.requireConfigured();
 
         // 1) 同源渲染:内部做项目存在性/状态(VERSIONS_READY|PUBLISHED_DRAFT)/当前版本/参数白名单校验
-        //    并完成封面+插图的七牛懒转存(preview 与发布同一份组装,保证所见即所得)
+        //    并完成封面+插图的图床 URL 组装(preview 与发布同一份组装,保证所见即所得)
         java.util.Map<String, Object> rendered = previewService.preview(projectId, theme, highlight, macStyle, footnote);
         if (Boolean.TRUE.equals(rendered.get("degraded"))) {
             Object reason = rendered.get("degradedReason");

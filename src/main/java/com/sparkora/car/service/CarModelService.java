@@ -13,17 +13,25 @@ import com.sparkora.domain.entity.CarParamCleanEntity;
 import com.sparkora.domain.entity.CarParamEntity;
 import com.sparkora.domain.entity.CarParamGroupEntity;
 import com.sparkora.domain.entity.CarVersionEntity;
+import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.CarModelMapper;
 import com.sparkora.mapper.CarParamCleanMapper;
 import com.sparkora.mapper.CarParamGroupMapper;
 import com.sparkora.mapper.CarParamMapper;
 import com.sparkora.mapper.CarVersionMapper;
+import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.security.SecurityUtil;
+import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,12 +61,20 @@ public class CarModelService {
     private final CarParamCleanMapper cleanMapper;
     private final CarDocService docService;
     private final CarCleanService cleanService;
+    private final ImageAssetMapper imageMapper;
+    private final ImageStorage imageStorage;
     private final ObjectMapper json;
+
+    private final java.net.http.HttpClient imageClient = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build();
 
     public CarModelService(BydCmsClient client, CarModelMapper modelMapper,
                            CarVersionMapper versionMapper, CarParamGroupMapper groupMapper,
                            CarParamMapper paramMapper, CarParamCleanMapper cleanMapper,
-                           CarDocService docService, CarCleanService cleanService, ObjectMapper json) {
+                           CarDocService docService, CarCleanService cleanService,
+                           ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json) {
         this.client = client;
         this.modelMapper = modelMapper;
         this.versionMapper = versionMapper;
@@ -67,6 +83,8 @@ public class CarModelService {
         this.cleanMapper = cleanMapper;
         this.docService = docService;
         this.cleanService = cleanService;
+        this.imageMapper = imageMapper;
+        this.imageStorage = imageStorage;
         this.json = json;
     }
 
@@ -156,11 +174,74 @@ public class CarModelService {
         CarModelEntity model = persistModel(goodsId, item);
         persistVersions(model.getId(), attrs);
         persistParams(model.getId(), params);
+        // 2.5) 车型图片下载转存图床,写入图库(source='byd');单图失败不阻断整车型同步
+        persistIntroImages(model, item);
         // 3) 清洗参数(规则引擎 + AI 兜底)
         cleanService.cleanForModel(model.getId());
         // 4) 切分向量化(网络 embedding,无事务;基于清洗后数据)
         docService.rebuildForModel(model.getId());
         return model;
+    }
+
+    /**
+     * 车型介绍图(introduce URL 列表)下载转存图床,写入 sparkora_image_asset(source='byd',全局图库)。
+     * car_model.intro_images 更新为图库记录 id 列表(JSON 数组)。单图失败仅告警,不阻断整车型同步。
+     */
+    protected void persistIntroImages(CarModelEntity model, GoodsInfoDto.Item item) {
+        if (item == null || item.getIntroduce() == null || item.getIntroduce().isEmpty()) return;
+        List<Long> ids = new ArrayList<>();
+        for (String url : item.getIntroduce()) {
+            if (url == null || url.isBlank()) continue;
+            try {
+                byte[] bytes = downloadImage(url);
+                String ext = sniffImageExt(bytes);
+                ImageAssetEntity e = new ImageAssetEntity();
+                e.setProjectId(null);                       // 全局图库
+                e.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
+                e.setSource("byd");
+                e.setStorageKey(imageStorage.upload(bytes, ext));
+                e.setCreatedBy("system");
+                e.setCreatedAt(LocalDateTime.now());
+                imageMapper.insert(e);
+                ids.add(e.getId());
+                log.info("比亚迪车型图已转存图床 model={} url={} id={}", model.getName(), shorten(url), e.getId());
+            } catch (Exception ex) {
+                log.warn("比亚迪车型图转存失败(跳过): model={} url={} err={}", model.getName(), shorten(url), ex.getMessage());
+            }
+        }
+        if (!ids.isEmpty()) {
+            model.setIntroImages(toJson(ids));
+            modelMapper.updateById(model);
+        }
+    }
+
+    /** 下载图片字节(官网 URL)。 */
+    private byte[] downloadImage(String url) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(30)).GET().build();
+            HttpResponse<byte[]> resp = imageClient.send(req, HttpResponse.BodyHandlers.ofByteArray());
+            if (resp.statusCode() != 200) throw new IllegalStateException("HTTP " + resp.statusCode());
+            byte[] bytes = resp.body();
+            if (bytes == null || bytes.length == 0) throw new IllegalStateException("空内容");
+            return bytes;
+        } catch (Exception e) {
+            throw new RuntimeException("下载图片失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** 魔数嗅探图片扩展名(png/jpg/webp),识别不出兜底 png。 */
+    private static String sniffImageExt(byte[] bytes) {
+        if (bytes.length >= 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P') return "png";
+        if (bytes.length >= 3 && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8) return "jpg";
+        if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') return "webp";
+        return "png";
+    }
+
+    private static String shorten(String s) {
+        if (s == null) return "null";
+        return s.length() > 100 ? s.substring(0, 100) + "…" : s;
     }
 
     /** 入库车型主表(幂等 upsert)。 */

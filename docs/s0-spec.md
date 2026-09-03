@@ -207,7 +207,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | `SERVER_PORT` | 后端端口（默认 8080） | ✅ 启用 |
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | axonhub 统一入口 | ⏸ S0 仅预留配置类，不调 AI |
 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS` | 文生图 / **图生图**（axonhub，多模型逗号分隔轮询） | ✅ S3b 启用 |
-| `IMAGE_STORAGE_DIR` | 图片本地存储目录（上传/生成图转存） | ✅ S3b 启用 |
+| `IMAGE_STORAGE_DIR` | 数据盘目录（S6 起图片不再落本地；仅 wenyan 渲染临时文件落位） | ✅ S3b 启用 |
 | `WECHAT_*` | 公众号草稿发布 | ⏸ **S5 经 wenyan-server 发布(微信凭据配在 server 端,Sparkora 不直连微信)** |
 | `WENYAN_MCP_*` | wenyan 预览/发布 | ✅ S5 启用(SERVER_URL/SERVER_API_KEY/PUBLISH_TIMEOUT_MS;发布通道 = 远程 wenyan-server) |
 | `SEARXNG_*` / `CRAWL4AI_*` | 搜索/抓取素材 | ✖ 随「校验」步骤取消（2026-08-28 决策），不启用 |
@@ -255,7 +255,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 | 来源 | 说明 | 接口形态（axonhub / OpenAI 兼容） |
 |---|---|---|
-| 图库选图 | 用户上传图进图库，从图库选用 | 不调 AI（上传即转存本地） |
+| 图库选图 | 用户上传图进图库，从图库选用 | 不调 AI（上传即转存图床） |
 | 文生图 | prompt → 生成封面/插图 | `images/generations` |
 | **图生图** | 上传参考图 + prompt → 基于参考图生成 | `images/edits`（multipart 传参考图；若 axonhub/当前候选模型不支持则明确报错并提示改用文生图） |
 
@@ -266,17 +266,18 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | Long | 主键 |
-| project_id | Long | 关联项目（workspace 单租户 MVP，不单设 workspace_id） |
+| project_id | Long | 关联项目（workspace 单租户 MVP，不单设 workspace_id；可空=全局图库） |
 | file_name | String(255) | 原始文件名（生成图为 prompt 摘要命名） |
-| storage_path | String(500) | 本地相对存储路径（`/images/**` 静态映射根下的相对路径） |
-| source | String(20) | `upload` / `ai-text2img` / `ai-img2img` |
+| source | String(20) | `upload` / `ai-text2img` / `ai-img2img` / `byd` |
 | prompt_text | String | 生成 prompt（AI 来源时） |
 | ref_image_id | Long | **图生图**的参考图 id（自引用 sparkora_image_asset.id，可空） |
 | width / height | Integer | 尺寸（px；取不到时为空） |
+| storage_key | String(300) | 图床 key（**入库即转存，非空**；URL 由图床域名实时拼） |
 | created_by | String(64) | 审计：上传/生成操作人 |
 | created_at | Datetime | 创建时间 |
 
-- spec §0 原设计有 `workspace_id`/`style_json`/`storage_url`：MVP 单 workspace 故省 workspace_id；style_json 并入 prompt_text 不单设；storage_url 改 storage_path + 静态映射。
+- **S6 图库完全依赖图床，本地不留**：`storage_path` 字段已移除（历史本地图不迁移，作废）；`qiniu_key` 语义通用化为 `storage_key`。图片入库即直接转存图床，`/images/**` 静态映射已删除。
+- 非持久化字段 `url`：由 `storage_key` 实时拼图床公网 URL，供前端直接展示/引用（`@TableField(exist=false)`）。
 
 ### 版本-图片关联（挂版本，不挂项目）
 
@@ -293,17 +294,17 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/images` | 三角色 | `?projectId=` 过滤 | `{images[]}`（含 id,fileName,storagePath,source,promptText,width,height,createdAt） |
+| GET | `/api/images` | 三角色 | `?projectId=` 过滤 | `{images[]}`（含 id,fileName,source,promptText,width,height,storageKey,url,createdAt） |
 | POST | `/api/images/upload` | ADMIN/EDITOR | multipart `file` + `projectId?`（可空=全局图库） | `{image}`；类型限 png/jpg/webp，≤10MB（Spring multipart 限制同步 `IMAGE_MAX_UPLOAD_MB`），超限 `R.fail(400)` |
-| DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录+本地文件 |
+| DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录+图床对象 |
 | POST | `/api/images/generate-text` | ADMIN/EDITOR | `{projectId?, prompt, size?}` | `{image}`；AI 失败 `R.fail(500)` 含候选模型错误明细 |
 | POST | `/api/images/generate-from-image` | ADMIN/EDITOR | `{projectId?, refImageId, prompt, size?}` | `{image}`；provider 不支持 edits 时 `R.fail(500, 明确提示)` |
 | GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[]}`（当前版本配图快照；images 为**全量图库**——含全局图，与配图选用口径一致） |
 | POST | `/api/projects/{id}/images/{imageId}/cover` | ADMIN/EDITOR | — | `{ok:true}`（version.cover_image_id）；重复选同一张幂等 |
 | POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 version.body_image_ids）；重复添加幂等 |
 
-- 图片访问：`GET /images/**` 静态映射 `IMAGE_STORAGE_DIR`（permitAll，静态资源）；`storagePath` 形如 `2026/08/uuid.png`。
-- 文生图/图生图返回的 axonhub URL **必须转存本地**（临时 URL 会过期），转存失败则该次生成报错（不留死链）。
+- 图片访问：**图床公网 URL**（`url` 字段，由 `storage_key` 实时拼）。`/images/**` 静态映射已删除（S6 本地不留）。
+- 文生图/图生图返回的 axonhub URL **必须转存图床**（临时 URL 会过期），转存失败则该次生成报错（不留死链）。
 - 请求体数字字段（projectId/refImageId）统一健壮解析：兼容数字与字符串形式（前端路由参数为字符串）。
 - **S6 起 `complete-images` 接口已删除**（配图并入预览，不再有「完成配图」状态推进）。
 
@@ -325,18 +326,18 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | 预览 | 本机 `wenyan CLI`（`@wenyan-md/cli`，`WENYAN_CLI_PATH`）`render` 命令 | 纯排版输出 HTML，不碰微信 |
 | 发布(S5) | 远程 `wenyan-server`（`WENYAN_MCP_SERVER_URL`，微信凭据配在 server 端） | `POST /upload`(+`x-api-key`)→fileId;`POST /publish`(fileId+.json)→`{media_id}` |
 
-- 图片正文/封面**全部转七牛公网 URL**（不再走 `asset://fileId` 通道，fileId 10 分钟 TTL 复杂度归零）。
-- 配图顺序：预览/发布组装时对 `qiniu_key IS NULL` 的相关图调 `QiniuService.ensureUploaded(imageId)`（懒转存），key=`sparkora/{imageId}.{ext}`（服务端生成，覆盖上传天然幂等）；`sparkora_image_asset.qiniu_key` 只存 key，URL 由 `QINIU_PUBLIC_DOMAIN` 实时拼。
-- **配图组装规则（2026-09-01 定稿，预览与发布同参）**：`buildMarkdown`/前端 `buildFullMd` 统一组装为 frontmatter(`title`+有封面时 `cover: <图URL>`，**含闭合 `---`**) + 正文；**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（本地 `/images/**` 引用在组装时懒转存七牛）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（预览与发布同规则，所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
+- 图片正文/封面**全部为图床公网 URL**（不再走 `asset://fileId` 通道，fileId 10 分钟 TTL 复杂度归零）。
+- **S6 图库完全依赖图床，本地不留**：图片入库即直接转存图床（`ImageStorage.upload`），`storage_key` 非空；预览/发布组装时直接取 `storage_key` 拼公网 URL，**不再懒转存**。图床供应商抽象层 `ImageStorage`（当前实现七牛 `QiniuService`），切换供应商只需新增实现类 + 改配置。
+- **配图组装规则（2026-09-01 定稿，预览与发布同参）**：`buildMarkdown`/前端 `buildFullMd` 统一组装为 frontmatter(`title`+有封面时 `cover: <图URL>`，**含闭合 `---`**) + 正文；**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（图床公网 URL）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（预览与发布同规则，所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
 - **插图落点（2026-09-01 交互定稿）**：预览页工具栏「插图」面板按选定顺序列出已选插图，点击即以 markdown 图片语法插入编辑器光标处（左栏 md 可见可编辑，正文已引用的在面板内标绿 ✓）；正文里没引用的插图不会出现在文章中（不自动追加文末），口径在面板内明示。
-- 删除图：`ImageService.delete` 落库删除 + 本地文件 + 七牛对象（非阻塞，失败仅 warn）。
+- 删除图：`ImageService.delete` 落库删除 + 图床对象（非阻塞，失败仅 warn）。
 - 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名白名单防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
 
 ### 数据模型增量（幂等 ALTER）
 
 | 表.列 | 类型 | 说明 |
 |---|---|---|
-| sparkora_image_asset.qiniu_key | VARCHAR(300) | 七牛 key（null=未转存） |
+| sparkora_image_asset.storage_key | VARCHAR(300) | 图床 key（**入库即转存，非空**；原 qiniu_key 语义通用化） |
 | sparkora_article_project.publish_media_id | VARCHAR(128) | S5 公众号草稿箱 media_id |
 | sparkora_article_project.publish_theme | VARCHAR(64) | 发布所用主题 |
 | sparkora_article_project.published_at | TIMESTAMP | 发布时间 |
@@ -375,9 +376,9 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 ```
 PublishService.publish
- → PreviewService.preview(同参同源:状态校验 + 七牛懒转存 + frontmatter + wenyan render)
+ → PreviewService.preview(同参同源:状态校验 + 取图床 URL + frontmatter + wenyan render)
  → 非 degraded 校验(降级 HTML 不进公众号)
- → gzhContent JSON { title(≤64,必填), content=渲染HTML }   ← asset:// 不用,图片全为七牛 http URL
+ → gzhContent JSON { title(≤64,必填), content=渲染HTML }   ← asset:// 不用,图片全为图床 http URL
  → wenyan-server POST /upload (multipart file=.json) → fileId
  → wenyan-server POST /publish (JSON {fileId}) → {media_id}
  → 原子落库 status=PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error

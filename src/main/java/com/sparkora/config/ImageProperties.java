@@ -7,12 +7,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * 图片存储配置。对应 .env: IMAGE_STORAGE_DIR（图片本地存储目录，上传/AI 生成图统一转存于此）。
+ * 图片配置。对应 .env: IMAGE_STORAGE_DIR（数据盘目录，用于 wenyan 渲染临时文件落位）、IMAGE_MAX_UPLOAD_MB。
+ * S6 起图片不再落本地，storageDir 仅作数据盘临时目录（createTempMd 用）。
  */
 @Data
 @ConfigurationProperties(prefix = "sparkora.image")
 public class ImageProperties {
-    /** 本地存储目录；/images/** 静态映射该目录。 */
+    /** 数据盘目录（wenyan 渲染临时文件落位；不再存图片）。 */
     private String storageDir = "./data/images";
     /** 上传大小上限（MB）。 */
     private int maxUploadMb = 10;

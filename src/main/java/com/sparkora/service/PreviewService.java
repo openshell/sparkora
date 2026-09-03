@@ -36,19 +36,17 @@ public class PreviewService {
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
     private final ImageService imageService;
-    private final QiniuService qiniuService;
     private final ImageProperties imageProps;
     private final WenyanProperties wenyanProps;
     private final WenyanServerService serverService;
 
     public PreviewService(ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
-                          ImageService imageService, QiniuService qiniuService,
+                          ImageService imageService,
                           ImageProperties imageProps, WenyanProperties wenyanProps,
                           WenyanServerService serverService) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.imageService = imageService;
-        this.qiniuService = qiniuService;
         this.imageProps = imageProps;
         this.wenyanProps = wenyanProps;
         this.serverService = serverService;
@@ -72,13 +70,13 @@ public class PreviewService {
         boolean mac = macStyle == null ? wenyanProps.isMacStyle() : macStyle;
         boolean fn = footnote == null ? wenyanProps.isFootnote() : footnote;
 
-        // 1) 图片 URL 化:封面 + 正文插图全转七牛公网 URL(懒转存,已转存复用)
-        String coverUrl = v.getCoverImageId() == null ? null : qiniuService.ensureUploaded(v.getCoverImageId());
+        // 1) 图片 URL 化:封面 + 正文插图直接取图床公网 URL(入库即已转存,storageKey 非空)
+        String coverUrl = v.getCoverImageId() == null ? null : imageService.publicUrl(v.getCoverImageId());
         List<String> bodyUrls = new ArrayList<>();
-        for (Long imageId : bodyIdListOf(v)) bodyUrls.add(qiniuService.ensureUploaded(imageId));
+        for (Long imageId : bodyIdListOf(v)) bodyUrls.add(imageService.publicUrl(imageId));
 
         // 2) 组装 markdown:frontmatter(title/author/cover)+ 正文;
-        //    正文里本地 /images/ 引用替换为七牛 URL;插图落点完全由正文 markdown 引用决定,
+        //    正文里图片引用即为图床公网 URL;插图落点完全由正文 markdown 引用决定,
         //    未引用的选定插图不自动追加(与预览页 buildFullMd 同规则,所见即所得)
         String md = buildMarkdown(v.getTitle(), coverUrl, v.getContentMd(), bodyUrls);
 
@@ -110,8 +108,9 @@ public class PreviewService {
     }
 
     /**
-     * frontmatter(title/cover=七牛 URL)+ 正文;正文本地 /images/ 引用替换为七牛 URL。
+     * frontmatter(title/cover=图床 URL)+ 正文。
      * 插图落点完全由正文 markdown 引用决定:未引用的选定插图不自动追加文末(与预览页 buildFullMd 同规则,所见即所得)。
+     * 正文里的图片引用即为图床公网 URL(前端插入时直接用 img.url),无需再本地 URL 化。
      */
     private String buildMarkdown(String title, String coverUrl, String contentMd, List<String> bodyImageUrls) {
         StringBuilder sb = new StringBuilder();
@@ -120,31 +119,8 @@ public class PreviewService {
         if (coverUrl != null && !coverUrl.isBlank()) sb.append("cover: ").append(coverUrl).append('\n');
         sb.append("---\n\n");
         String body = contentMd == null ? "" : contentMd.replace("<br>", "\n");
-        // 本地相对引用 URL 化:/images/2026/xx.png → 七牛;对应资产才能找到(按文件名在图库反查已转存的图)
-        body = replaceLocalImages(body);
         sb.append(body).append('\n');
         return sb.toString();
-    }
-
-    /** 把正文里的本地 /images/ 引用替换为七牛公网 URL( wenyan-server 只能拉公网 URL)。 */
-    private String replaceLocalImages(String body) {
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("!\\[[^]]*]\\((/images/[^)]+)\\)").matcher(body);
-        StringBuffer out = new StringBuffer();
-        while (m.find()) {
-            String localPath = m.group(1);   // /images/2026/08/uuid.png
-            String storageRel = localPath.substring("/images/".length());
-            String url;
-            try {
-                url = qiniuService.ensureUploadedByStoragePath(storageRel);
-            } catch (Exception e) {
-                log.warn("正文本地图转存失败(保留原样): {} {}", localPath, e.getMessage());
-                url = localPath;
-            }
-            m.appendReplacement(out, java.util.regex.Matcher.quoteReplacement("![](" + url + ")"));
-        }
-        m.appendTail(out);
-        return out.toString();
     }
 
     /** 主题名白名单校验(防 CLI 参数注入;清单来自 .env 的 WENYAN_THEME_NAMES)。 */

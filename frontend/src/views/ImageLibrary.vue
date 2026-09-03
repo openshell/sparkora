@@ -72,10 +72,10 @@ const loadError = ref('')
 const uploading = ref(false)
 const deletingId = ref(null)
 
-const imgUrl = (img) => `/images/${img.storagePath}`
+const imgUrl = (img) => img?.url || ''
 const matchFilter = (img) =>
   projectFilter.value === '' || projectFilter.value == null || img.projectId === projectFilter.value
-const sourceLabel = (s) => ({ upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图' }[s] || s)
+const sourceLabel = (s) => ({ upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图', byd: '比亚迪' }[s] || s)
 const shortTime = (t) => (t || '').slice(5, 16).replace('T', ' ')
 const projectLabel = (img) => {
   if (img.projectId == null) return '全局'

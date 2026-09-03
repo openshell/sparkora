@@ -16,7 +16,7 @@ import java.util.Base64;
 @Data
 @ConfigurationProperties(prefix = "sparkora.qiniu")
 public class QiniuProperties {
-    /** 开关:AK 未配置时为 false,预览自动降级本地 /images/**,发布前置校验拦截。 */
+    /** 开关:AK 未配置时为 false,上传/生成直接报错(图床未配置)。 */
     private boolean enabled;
     private String accessKey;
     private String secretKey;

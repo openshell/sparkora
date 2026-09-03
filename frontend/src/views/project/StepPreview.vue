@@ -295,14 +295,14 @@ const insertedUrls = computed(() => {
 })
 /** 已插入正文的插图数量(配图按钮角标)。 */
 const insertedCount = computed(() => insertedUrls.value.size)
-/** 图库图片本地访问 url。 */
-const imgUrl = (img) => `/images/${img.storagePath}`
+/** 图库图片图床公网 URL(入库即已转存,后端填充 url 字段)。 */
+const imgUrl = (img) => img?.url || ''
 
 /** frontmatter(title + cover,闭合 ---)+ 正文;插图落点完全由正文 markdown 引用决定(不自动追加文末)。 */
 const buildFullMd = () => {
   const title = versionTitle.value || '无标题'
   let out = `---\ntitle: ${title}\n`
-  if (coverImage.value) out += `cover: /images/${coverImage.value.storagePath}\n`
+  if (coverImage.value) out += `cover: ${coverImage.value.url}\n`
   out += `---\n\n`
   return out + (contentMd.value || '')
 }
