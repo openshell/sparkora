@@ -370,6 +370,11 @@ const onPreviewStyleChange = async () => {
 /** footnote 变化影响 DOM 结构(脚注区),需要重渲染。 */
 const onWechatRebuild = () => { scheduleRender() }
 
+/** 编辑器正文变更(v-model 更新 contentMd 后):防抖重渲染预览。手动插图/粘贴图/打字均走此入口。 */
+const onEdit = () => {
+  scheduleRender()
+}
+
 // ==== 滚动同步(百分比映射,防循环) ====
 let syncingScroll = null
 const onEditorScroll = (percent) => {
