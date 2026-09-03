@@ -195,6 +195,10 @@ public class VersionService {
                 p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
                 nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
                 nv(b.getOutline()), nv(b.getFactRisks()));
+        // S6:简报阶段用户点选的标题,作为本版标题偏好(优先采用,可微调)
+        if (p.getSelectedTitle() != null && !p.getSelectedTitle().isBlank()) {
+            base += "\n\n【用户已选定标题,请优先采用该标题作为本版标题(可微调措辞,勿偏离原意)】\n" + p.getSelectedTitle();
+        }
         // S6:补充信息(用户个人见解/独家资讯等)作为创作素材注入,要求融入正文
         if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
             base += "\n\n【用户补充信息(个人见解/独家资讯等),请在正文中自然融入,不得遗漏关键信息】\n" + p.getExtraInfo();
@@ -241,6 +245,18 @@ public class VersionService {
         if (v == null || !v.getProjectId().equals(projectId))
             throw new IllegalArgumentException("版本不存在或不属于该项目");
         v.setContentMd(contentMd);
+        versionMapper.updateById(v);
+    }
+
+    /**
+     * 编辑版本标题(S6)。仅更新 title;空串清除。
+     */
+    public void updateTitle(Long projectId, Long versionId, String title) {
+        if (title != null && title.length() > 200) throw new IllegalArgumentException("标题不能超过 200 字");
+        ArticleVersionEntity v = versionMapper.selectById(versionId);
+        if (v == null || !v.getProjectId().equals(projectId))
+            throw new IllegalArgumentException("版本不存在或不属于该项目");
+        v.setTitle(title == null || title.isBlank() ? null : title);
         versionMapper.updateById(v);
     }
 

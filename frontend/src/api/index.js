@@ -22,7 +22,13 @@ export const projectApi = {
   // S5 发布:参数清单(主题/高亮/默认值 + 通道就绪度 + 历史发布信息)
   publishOptions: (id) => http.get(`/projects/${id}/publish-options`),
   // S5 发布到公众号草稿箱:渲染+上传+发布链路约十几秒,放宽超时(同 generateBrief);params={theme?, highlight?, macStyle?, footnote?}
-  publish: (id, params) => http.post(`/projects/${id}/publish`, null, { params, timeout: 120000 })
+  publish: (id, params) => http.post(`/projects/${id}/publish`, null, { params, timeout: 120000 }),
+  // 编辑版本标题(S6);body={title}
+  saveTitle: (id, versionId, title) =>
+    http.put(`/projects/${id}/versions/${versionId}/title`, { title }),
+  // 简报阶段点选标题(S6);body={title},空串清除
+  setSelectedTitle: (id, title) =>
+    http.put(`/projects/${id}/selected-title`, { title })
 }
 
 export const styleApi = {

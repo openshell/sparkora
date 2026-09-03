@@ -83,6 +83,7 @@ public class ArticleProjectController {
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
         e.setCarModelId(req.getCarModelId());
         e.setExtraInfo(req.getExtraInfo());
+        e.setSelectedTitle(req.getSelectedTitle());
         e.setRemark(req.getRemark());
         e.setStatus("DRAFT");
         e.setCreatedBy(cu.getUsername());
@@ -105,6 +106,7 @@ public class ArticleProjectController {
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
         e.setCarModelId(req.getCarModelId());
         e.setExtraInfo(req.getExtraInfo());
+        e.setSelectedTitle(req.getSelectedTitle());
         e.setRemark(req.getRemark());
         e.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(e);
@@ -206,6 +208,35 @@ public class ArticleProjectController {
         } catch (Exception ex) {
             return R.fail(500, "保存失败: " + ex.getMessage());
         }
+    }
+
+    /** 编辑版本标题（S6;ADMIN/EDITOR）。body: {"title":"..."}。 */
+    @PutMapping("/{id}/versions/{versionId}/title")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> updateVersionTitle(@PathVariable Long id, @PathVariable Long versionId,
+                                       @RequestBody java.util.Map<String, String> body) {
+        try {
+            versionService.updateTitle(id, versionId, body.get("title"));
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "保存失败: " + ex.getMessage());
+        }
+    }
+
+    /** 简报阶段点选标题（S6;ADMIN/EDITOR）。body: {"title":"..."}，空串清除。 */
+    @PutMapping("/{id}/selected-title")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> setSelectedTitle(@PathVariable Long id, @RequestBody java.util.Map<String, String> body) {
+        ArticleProjectEntity e = mapper.selectById(id);
+        if (e == null) return R.fail(404, "项目不存在");
+        String title = body.get("title");
+        if (title != null && title.length() > 200) return R.fail(400, "标题不能超过 200 字");
+        e.setSelectedTitle(title == null || title.isBlank() ? null : title);
+        e.setUpdatedAt(LocalDateTime.now());
+        mapper.updateById(e);
+        return R.ok();
     }
 
     // ==================== 配图（S3b，字段级契约见 spec §10）====================

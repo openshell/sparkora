@@ -29,37 +29,61 @@
     <div v-else-if="!brief" class="muted intro">
       <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
                 :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
-      <p>由 AI 生成标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入多版本生成。</p>
-      <el-button type="primary" :loading="submitting" @click="onGenerateBrief">
-        <el-icon class="btn-icon"><MagicStick /></el-icon>生成简报
-      </el-button>
+      <div class="intro-hero">
+        <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
+        <div class="intro-title serif">让 AI 先想清楚，再动笔</div>
+        <p>由 AI 生成标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入多版本生成。</p>
+        <el-button type="primary" :loading="submitting" @click="onGenerateBrief" size="large">
+          <el-icon class="btn-icon"><MagicStick /></el-icon>生成简报
+        </el-button>
+      </div>
     </div>
 
     <!-- ④ 简报正文(有数据必渲染;上次失败提示以轻量条幅叠加在内容上方) -->
     <div v-else class="brief">
       <el-alert v-if="project && project.lastBriefError" type="warning" :closable="false" show-icon
                 :title="`上次重新生成失败，以下为当前简报：${project.lastBriefError}`" class="brief-alert" />
+
+      <!-- 标题候选:刊头式,可点选(选中后作为版本生成的标题偏好;版本已生成后禁用) -->
       <section class="brief-sec">
-        <div class="brief-label"><el-icon><CollectionTag /></el-icon>标题候选</div>
-        <div class="tag-row">
-          <el-tag v-for="(t,i) in brief.titleCandidates" :key="i" type="info" effect="plain" class="title-tag serif">{{ t }}</el-tag>
+        <div class="brief-label"><el-icon><CollectionTag /></el-icon>标题候选
+          <span class="label-hint">{{ canPickTitle ? '点选一个作为版本标题偏好' : '版本已生成，标题偏好已锁定' }}</span>
         </div>
+        <div class="tag-row">
+          <button v-for="(t,i) in brief.titleCandidates" :key="i" type="button"
+                  class="title-tag serif" :class="{ picked: t === selectedTitle, disabled: !canPickTitle }"
+                  :disabled="!canPickTitle"
+                  :title="!canPickTitle ? '版本已生成，标题偏好已锁定' : (t === selectedTitle ? '已选中，点击取消' : '点击选用此标题')"
+                  @click="onPickTitle(t)">
+            <el-icon v-if="t === selectedTitle" class="pick-check"><Check /></el-icon>{{ t }}
+          </button>
+        </div>
+        <p v-if="selectedTitle" class="pick-tip">已选用「{{ selectedTitle }}」，生成版本时将优先采用此标题。</p>
+        <p v-else-if="!canPickTitle" class="pick-tip locked">版本已生成，标题偏好已锁定；如需调整请重新生成版本。</p>
       </section>
-      <section class="brief-sec">
-        <div class="brief-label"><el-icon><User /></el-icon>目标读者</div>
-        <div class="brief-text">{{ brief.audienceRefine }}</div>
-      </section>
-      <section class="brief-sec">
-        <div class="brief-label"><el-icon><Lightning /></el-icon>核心观点</div>
-        <ul class="list"><li v-for="(v,i) in brief.coreViewpoints" :key="i">{{ v }}</li></ul>
-      </section>
+
+      <!-- 受众 + 核心观点:两栏卡片 -->
+      <div class="brief-grid">
+        <section class="brief-sec panel">
+          <div class="brief-label"><el-icon><User /></el-icon>目标读者</div>
+          <div class="brief-text">{{ brief.audienceRefine }}</div>
+        </section>
+        <section class="brief-sec panel">
+          <div class="brief-label"><el-icon><Lightning /></el-icon>核心观点</div>
+          <ul class="list"><li v-for="(v,i) in brief.coreViewpoints" :key="i">{{ v }}</li></ul>
+        </section>
+      </div>
+
+      <!-- 大纲:编号章节 -->
       <section class="brief-sec">
         <div class="brief-label"><el-icon><Tickets /></el-icon>大纲</div>
         <div v-for="(o,i) in brief.outline" :key="i" class="outline-item">
-          <div class="outline-head serif">{{ i+1 }}. {{ o.heading }}</div>
+          <div class="outline-head serif"><span class="outline-num">{{ i+1 }}</span>{{ o.heading }}</div>
           <ul class="sub-list"><li v-for="(s,j) in o.subPoints" :key="j">{{ s }}</li></ul>
         </div>
       </section>
+
+      <!-- 事实风险点 -->
       <section class="brief-sec">
         <div class="brief-label"><el-icon><Warning /></el-icon>事实风险点</div>
         <div v-for="(r,i) in brief.factRisks" :key="i" class="risk-item">
@@ -89,7 +113,7 @@ import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingBrief } from '../../constants/project'
 import { useProjectDetailStore, parseBrief } from '../../store/project-detail'
-import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled } from '@element-plus/icons-vue'
+import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled, Check } from '@element-plus/icons-vue'
 
 // 数据全部来自 project-detail store(布局层已负责装载与轮询,这里只读 + 触发动作)
 const props = defineProps({ project: Object })
@@ -100,6 +124,24 @@ const router = useRouter()
 const brief = computed(() => props.project ? store.brief(route.params.id) : null)
 const briefError = computed(() => props.project ? store.briefError(route.params.id) : '')
 const submitting = ref(false)   // 本轮会话内主动点击的 loading(按钮态)
+
+// S6:简报阶段选定的标题(来自 project.selectedTitle,点选后写回后端)
+const selectedTitle = computed(() => props.project?.selectedTitle || '')
+// 标题点选只在 READY(简报就绪、版本未生成)可用:版本已生成后点选无意义(不影响已生成版本),锁定
+const canPickTitle = computed(() => props.project?.status === 'READY')
+const onPickTitle = async (t) => {
+  if (!canPickTitle.value) return   // 状态守卫:版本已生成后不再触发接口
+  const next = t === selectedTitle.value ? '' : t   // 再点一次取消
+  try {
+    const res = await projectApi.setSelectedTitle(route.params.id, next)
+    if (res.code === 0) {
+      await store.ensureProject(route.params.id, { force: true })
+      ElMessage.success(next ? '已选用该标题' : '已取消选用')
+    } else ElMessage.error(res.msg || '操作失败')
+  } catch (e) {
+    ElMessage.error('操作失败：' + (e.response?.data?.msg || e.message || '网络异常'))
+  }
+}
 
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingBrief = computed(() => isGeneratingBrief(props.project?.status))
@@ -148,10 +190,21 @@ const onGenerateBrief = async () => {
 .step-title { font-size: 16px; font-weight: 700; }
 .card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
 .muted { color: var(--muted); font-size: 13px; }
-.intro p { line-height: 1.7; }
 .brief-alert { margin-bottom: 12px; }
 .state-error { padding: 36px 16px; }
 .btn-icon { margin-right: 2px; }
+
+/* 引导态:居中 hero */
+.intro-hero { text-align: center; padding: 28px 12px 8px; }
+.intro-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; border-radius: 18px;
+  background: var(--brand-gradient); color: #fff;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-hover);
+}
+.intro-title { font-size: 20px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+.intro-hero p { line-height: 1.7; max-width: 420px; margin: 0 auto 18px; }
 
 .generating { padding: 4px 0; }
 .gen-tip { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
@@ -161,20 +214,57 @@ const onGenerateBrief = async () => {
 .brief-sec { margin-bottom: 18px; }
 .brief-label { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-bottom: 8px; font-size: 13px; letter-spacing: .04em; color: var(--ink); }
 .brief-label .el-icon { color: var(--brand); }
+.label-hint { font-weight: normal; font-size: 12px; color: var(--faint); letter-spacing: 0; }
 .brief-text { font-size: 14px; line-height: 1.7; }
+
+/* 受众 + 观点:两栏卡片 */
+.brief-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.panel { background: var(--el-fill-color-light); border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 18px; }
+.panel .brief-label { margin-bottom: 6px; }
+
 .tag-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.title-tag { max-width: 100%; height: auto; white-space: normal !important; word-break: break-word; line-height: 1.5; padding: 6px 12px; font-size: 14px; }
+.title-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 100%; height: auto; white-space: normal !important; word-break: break-word;
+  line-height: 1.5; padding: 8px 14px; font-size: 15px;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--card); color: var(--ink);
+  cursor: pointer; text-align: left;
+  transition: border-color .2s, color .2s, background .2s, box-shadow .2s;
+}
+.title-tag:hover { border-color: var(--brand); color: var(--brand); }
+.title-tag.picked { border-color: var(--brand); background: var(--brand-weak); color: var(--brand-strong); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 15%, transparent); }
+.title-tag.disabled { cursor: not-allowed; opacity: .6; }
+.title-tag.disabled:hover { border-color: var(--line-strong); color: var(--ink); }
+.pick-check { color: var(--brand-strong); }
+.pick-tip { margin: 8px 0 0; font-size: 12px; color: var(--brand-strong); }
+.pick-tip.locked { color: var(--faint); }
 .list, .sub-list { margin: 0; padding-left: 18px; }
 .list li, .sub-list li { font-size: 14px; line-height: 1.8; }
+
+/* 大纲:编号章节 */
 .outline-item { margin-bottom: 10px; }
-.outline-head { font-weight: 700; font-size: 14px; }
+.outline-head { display: flex; align-items: baseline; gap: 10px; font-weight: 700; font-size: 14px; }
+.outline-num {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  background: var(--brand-weak); color: var(--brand-strong);
+  font-size: 12px; font-weight: 700;
+}
 .sub-list { margin-top: 2px; }
 .sub-list li { color: var(--muted); font-size: 13px; }
+
 .risk-item { background: var(--el-fill-color-light); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; }
 .risk-line { display: flex; align-items: flex-start; gap: 8px; }
 .risk-tag { flex-shrink: 0; margin-top: 2px; }
 .risk-claim { font-size: 14px; line-height: 1.6; }
 .risk-sug { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-@media (max-width: 768px) { .title-tag { width: 100%; } .brief-actions .el-button { flex: 1; } }
+
+@media (max-width: 768px) {
+  .brief-grid { grid-template-columns: 1fr; }
+  .title-tag { width: 100%; }
+  .brief-actions .el-button { flex: 1; }
+}
 </style>

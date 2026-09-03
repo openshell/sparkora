@@ -31,6 +31,10 @@ public class ProjectRequest {
     @Size(max = 5000)
     private String extraInfo;
 
+    /** S6:简报阶段选定的标题(可选;用户从标题候选中点选,生成版本时作为标题偏好注入 prompt)。 */
+    @Size(max = 200)
+    private String selectedTitle;
+
     @Size(max = 500)
     private String remark;
 }

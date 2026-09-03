@@ -126,6 +126,9 @@ ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS car_model_id BIGIN
 -- S6:补充信息(可选;用户个人见解/独家资讯等,生成 brief/版本时注入 prompt 作为创作素材)
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS extra_info TEXT;
 
+-- S6:简报阶段选定的标题(可选;用户从标题候选中点选,生成版本时作为标题偏好注入 prompt)
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS selected_title VARCHAR(200);
+
 -- 预置角色（幂等插入）
 INSERT INTO sparkora_role (code, name)
 SELECT 'ADMIN', '管理员'
