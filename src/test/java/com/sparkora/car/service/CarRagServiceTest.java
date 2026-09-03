@@ -128,4 +128,73 @@ class CarRagServiceTest {
         assertEquals(0.9, r.maxScore(), 1e-9);
         assertTrue(r.context().contains("块一") && r.context().contains("块二"));
     }
+
+    @Test
+    void 权益块限流_参数块优先_总块数受配额约束() {
+        FakeMapper mapper = new FakeMapper();
+        java.util.List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("chunkText", "购车权益内容" + i + "很长的文本");
+            m.put("chunkType", "RIGHTS");
+            m.put("score", 0.9 - i * 0.01);
+            rows.add(m);
+        }
+        Map<String, Object> p1 = new HashMap<>();
+        p1.put("chunkText", "参数分组：动力性能\n前电机最大功率（kW）：200");
+        p1.put("chunkType", "PARAM_GROUP");
+        p1.put("score", 0.62);
+        rows.add(p1);
+        Map<String, Object> p2 = new HashMap<>();
+        p2.put("chunkText", "参数分组：尺寸参数\n轴距（mm）：3030");
+        p2.put("chunkType", "PARAM_GROUP");
+        p2.put("score", 0.60);
+        rows.add(p2);
+        mapper.byModelId.put(1L, rows);
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "海狮08EV", 4);
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        String ctx = r.context();
+        assertTrue(ctx.contains("前电机最大功率"), "参数块必须入选");
+        int blocks = ctx.split("\\n---\\n").length;
+        assertTrue(blocks <= 5, "总块数受配额约束(6 权益+2 参数,权益上限 8/3=2,总 ≤4,去重边界 5): got " + blocks);
+        assertTrue(!ctx.contains("购车权益内容5"), "低分权益块应被配额挤掉");
+    }
+
+
+    @Test
+    void 表头块_仅一行_被丢弃() {
+        FakeMapper mapper = new FakeMapper();
+        Map<String, Object> header = new HashMap<>();
+        header.put("chunkText", "参数分组：海狮08EV参数表及配置表");
+        header.put("chunkType", "PARAM_GROUP");
+        header.put("score", 0.99);
+        Map<String, Object> param = new HashMap<>();
+        param.put("chunkText", "参数分组：动力性能\n前电机最大功率（kW）：200");
+        param.put("chunkType", "PARAM_GROUP");
+        param.put("score", 0.6);
+        mapper.byModelId.put(1L, java.util.List.of(header, param));
+        CarRagService svc = newService(mapper);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        assertTrue(r.context().contains("前电机最大功率"));
+        assertTrue(!r.context().contains("海狮08EV参数表及配置表"), "单行表头块必须丢弃");
+    }
+
+    @Test
+    void 子查询派生_含参数词时生成对应子查询() {
+        CarRagService svc = newService(new FakeMapper());
+        var subs = svc.deriveSubQueries("海狮08EV 价格和续航怎么样?");
+        assertTrue(subs.stream().anyMatch(x -> x.contains("价格")));
+        assertTrue(subs.stream().anyMatch(x -> x.contains("续航")));
+        assertTrue(svc.deriveSubQueries("海狮08EV 好看吗").isEmpty());
+    }
+
+    @Test
+    void 覆盖度摘要_抽取键值对_跳过有无值() {
+        String s2 = CarRagService.extractParamSummary("参数分组：动力性能\n前电机最大功率（kW）：200\niTAC智能扭矩控制系统：无\n车漆颜色：可选装");
+        assertTrue(s2.contains("前电机最大功率（kW）→200"));
+        assertTrue(!s2.contains("iTAC"), "「无」类布尔值不入摘要");
+        assertTrue(!s2.contains("车漆颜色"), "「可选装」不入摘要");
+    }
 }
