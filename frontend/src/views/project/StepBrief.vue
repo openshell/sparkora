@@ -4,6 +4,10 @@
       <span class="card-head">
         <span class="step-title serif">Step 1 · 生成创作简报</span>
         <span v-if="brief" class="meta">模型 {{ brief.aiModel }} · {{ brief.tokenUsage }} tokens</span>
+        <!-- S6.1:知识库检索状态(随 brief 落库,刷新/重进可见) -->
+        <span v-if="brief && brief.ragStatus" class="meta rag-meta">
+          <el-tag :type="ragTagType(brief.ragStatus)" size="small" effect="plain" round>知识库 · {{ ragLabel(brief.ragStatus) }}</el-tag>
+        </span>
       </span>
     </template>
 
@@ -161,6 +165,14 @@ const gotoVersions = () => router.push({ name: 'project-versions', params: { id:
 const riskType = (l) => ({ high: 'danger', medium: 'warning', low: 'info' }[l] || 'info')
 const riskLabel = (l) => ({ high: '高风险', medium: '中风险', low: '低风险' }[l] || l)
 
+// S6.1 知识库检索状态文案与标签色
+const ragLabel = (st) => ({
+  OK: '已引用', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用',
+}[st] || st)
+const ragTagType = (st) => ({
+  OK: 'success', LOW_CONFIDENCE: 'warning', FAILED: 'danger', NO_KNOWLEDGE: 'info',
+}[st] || 'info')
+
 // 重试入口:store 层做并发去重,失败信息落在 store.briefError
 const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 
@@ -195,6 +207,8 @@ const onGenerateBrief = async () => {
 .card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
 .step-title { font-size: 16px; font-weight: 700; }
 .card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
+.rag-meta { margin-left: 8px; }
+
 .muted { color: var(--muted); font-size: 13px; }
 .brief-alert { margin-bottom: 12px; }
 .state-error { padding: 36px 16px; }

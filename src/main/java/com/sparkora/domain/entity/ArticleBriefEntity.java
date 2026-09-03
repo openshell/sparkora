@@ -30,5 +30,6 @@ public class ArticleBriefEntity {
     private String factRisks;        // JSON
     private String aiModel;
     private Integer tokenUsage;
+    private String ragStatus;      // S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
     private LocalDateTime createdAt;
 }

@@ -114,13 +114,19 @@ public class VersionService {
 
         List<ArticleVersionEntity> created = new ArrayList<>();
         List<String> perVersionErrors = new ArrayList<>();
+        // S6.1 RAG 必查:「必查+降级可见」。检索一次供全部版本共用(同一项目同一主题,无需逐版重复检索);
+        // 失败/低置信不阻断,状态随每版落库,并在 prompt 中向 AI 声明要求 factRisks 标注数据缺失。
+        List<Long> modelIds = carService.listModelIds(projectId);
+        CarRagService.RagResult rag = modelIds.isEmpty()
+                ? CarRagService.RagResult.EMPTY
+                : ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
         try {
             // 2) 每个选中风格生成一版
             int i = 0;
             for (StyleProfileEntity style : styles) {
                 String label = String.valueOf(LABELS.charAt(i++));
                 try {
-                    ArticleVersionEntity v = generateOne(p, brief, style, label);
+                    ArticleVersionEntity v = generateOne(p, brief, style, label, rag);
                     versionMapper.insert(v);
                     created.add(v);
                 } catch (Exception e) {
@@ -155,11 +161,12 @@ public class VersionService {
     }
 
     private ArticleVersionEntity generateOne(ArticleProjectEntity p, ArticleBriefEntity brief,
-                                             StyleProfileEntity style, String label) throws Exception {
+                                             StyleProfileEntity style, String label,
+                                             CarRagService.RagResult rag) throws Exception {
         String sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
                 + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
                 + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
-        AiClient.ChatResult cr = aiClient.chatJson(sys, buildUserPrompt(p, brief), 4096);
+        AiClient.ChatResult cr = aiClient.chatJson(sys, buildUserPrompt(p, brief, rag), 4096);
         var node = json.readTree(cr.content());
         String title = node.path("title").asText("");
         String contentMd = node.path("contentMd").asText("");
@@ -174,12 +181,13 @@ public class VersionService {
         v.setStyleTag(style.getName());
         v.setAiModel(cr.model());
         v.setTokenUsage(cr.totalTokens());
+        v.setRagStatus(rag.status().name());
         v.setWordCount(contentMd.length());
         v.setCreatedAt(LocalDateTime.now());
         return v;
     }
 
-    private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
+    private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b, CarRagService.RagResult rag) {
         String base = """
                 主题：%s
                 关键词：%s
@@ -206,18 +214,16 @@ public class VersionService {
         if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
             base += "\n\n【用户补充信息(个人见解/独家资讯等),请在正文中自然融入,不得遗漏关键信息】\n" + p.getExtraInfo();
         }
-        // S6 RAG:项目关联车型时,跨车型检索知识库注入权威参数作为事实约束
-        List<Long> modelIds = carService.listModelIds(p.getId());
-        if (!modelIds.isEmpty()) {
-            try {
-                String ctx = ragService.buildContextForModels(modelIds, p.getTopic(), 8, 0.3);
-                if (!ctx.isBlank()) {
-                    base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + ctx;
-                }
-            } catch (Exception e) {
-                log.warn("版本 RAG 检索失败 project={}: {}", p.getId(), e.getMessage());
-            }
+        // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 标注数据风险)
+        if (rag.ok()) {
+            base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + rag.context();
+        } else if (rag.status() == CarRagService.RagStatus.FAILED) {
+            base += "\n\n【知识库检索提示】车型知识库本次检索失败,你未能获得权威数据。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
+        } else if (rag.status() == CarRagService.RagStatus.LOW_CONFIDENCE) {
+            base += "\n\n【知识库检索提示】车型知识库有数据但与主题相关性过低(最高相似度 " + String.format("%.2f", rag.maxScore())
+                    + ",低于可信门槛),已全部抛弃,不要参考。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
         }
+        // NO_KNOWLEDGE:无车型对象或无命中,与现状一致,不注入不提示
         return base;
     }
 

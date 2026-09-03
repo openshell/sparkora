@@ -23,6 +23,11 @@ public class AiProperties {
     private long timeoutMs = 120000;
     private double temperature = 0.7;
 
+    /** 车型知识库 RAG:逐块相似度门槛,低于该值的检索块不注入 prompt(S6.1;默认 0.3,待按真实分数分布校准)。 */
+    private double ragMinScore = 0.3;
+    /** 车型知识库 RAG:整体置信度门槛,全部命中块的最高相似度低于该值时整体抛弃(S6.1;默认 0.5,须 >= ragMinScore,待校准)。 */
+    private double ragRejectScore = 0.5;
+
     /** 解析图片模型轮询列表：优先 imageModels，为空回退 imageModel。 */
     public List<String> imageModelList() {
         String raw = (imageModels != null && !imageModels.isBlank()) ? imageModels : imageModel;

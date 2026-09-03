@@ -90,14 +90,21 @@ public class BriefService {
         p.setStatus("GENERATING_BRIEF");
 
         try {
-            // 2) 调 AI（无事务，慢操作）
+            // 2) RAG 必查(S6.1「必查+降级可见」):项目关联车型时强制检索知识库。
+            //    检索失败/整体低置信不阻断生成,但状态随 brief 落库并在 prompt 中向 AI 声明,要求 factRisks 标注数据缺失。
+            List<Long> modelIds = carService.listModelIds(projectId);
+            CarRagService.RagResult rag = modelIds.isEmpty()
+                    ? CarRagService.RagResult.EMPTY
+                    : ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
+
+            // 3) 调 AI（无事务，慢操作）
             AiClient.ChatResult cr = aiClient.chatJson(
                     buildSystemPrompt(),
-                    buildUserPrompt(p),
+                    buildUserPrompt(p, rag),
                     2048);
             BriefDto dto = json.readValue(cr.content(), BriefDto.class);
 
-            // 3) 写 brief 行 + 置 READY（短事务）
+            // 4) 写 brief 行 + 置 READY（短事务）
             ArticleBriefEntity b = new ArticleBriefEntity();
             b.setProjectId(projectId);
             b.setTitleCandidates(json.writeValueAsString(dto.getTitleCandidates()));
@@ -107,6 +114,7 @@ public class BriefService {
             b.setFactRisks(json.writeValueAsString(dto.getFactRisks()));
             b.setAiModel(cr.model());
             b.setTokenUsage(cr.totalTokens());
+            b.setRagStatus(rag.status().name());
             b.setCreatedAt(LocalDateTime.now());
             briefMapper.insert(b);
 
@@ -152,7 +160,7 @@ public class BriefService {
                 """;
     }
 
-    private String buildUserPrompt(ArticleProjectEntity p) {
+    private String buildUserPrompt(ArticleProjectEntity p, CarRagService.RagResult rag) {
         String base = """
                 主题：%s
                 关键词：%s
@@ -169,18 +177,16 @@ public class BriefService {
         if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
             base += "\n\n【用户补充信息(个人见解/独家资讯等),请作为创作素材融入核心观点与大纲,不得遗漏关键信息】\n" + p.getExtraInfo();
         }
-        // S6 RAG:项目关联车型时,跨车型检索知识库注入权威参数作为事实约束
-        List<Long> modelIds = carService.listModelIds(p.getId());
-        if (!modelIds.isEmpty()) {
-            try {
-                String ctx = ragService.buildContextForModels(modelIds, p.getTopic(), 8, 0.3);
-                if (!ctx.isBlank()) {
-                    base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时在 factRisks 标注】\n" + ctx;
-                }
-            } catch (Exception e) {
-                log.warn("brief RAG 检索失败 project={}: {}", p.getId(), e.getMessage());
-            }
+        // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 在 factRisks 标注)
+        if (rag.ok()) {
+            base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时在 factRisks 标注】\n" + rag.context();
+        } else if (rag.status() == CarRagService.RagStatus.FAILED) {
+            base += "\n\n【知识库检索提示】车型知识库本次检索失败,你未能获得权威数据。涉及车型参数/权益的表述必须在 factRisks 中标注风险(建议 riskLevel=high,suggestion 注明「知识库检索失败,发布前人工核实」),不得臆造具体参数。";
+        } else if (rag.status() == CarRagService.RagStatus.LOW_CONFIDENCE) {
+            base += "\n\n【知识库检索提示】车型知识库有数据但与主题相关性过低(最高相似度 " + String.format("%.2f", rag.maxScore())
+                    + ",低于可信门槛),已全部抛弃,不要参考。涉及车型具体参数/权益的表述必须在 factRisks 中标注风险(建议 riskLevel=high,suggestion 注明「知识库无可信数据,发布前人工核实」),不得臆造具体参数。";
         }
+        // NO_KNOWLEDGE:无车型对象或无命中,与现状一致,不注入不提示
         return base;
     }
 

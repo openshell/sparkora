@@ -85,6 +85,9 @@
             <div class="version-head">
               <el-tag size="small" effect="dark" round class="v-label">{{ v.versionLabel }}</el-tag>
               <el-tag size="small" type="info" effect="plain" round>{{ v.styleTag }}</el-tag>
+              <!-- S6.1:本版生成时的知识库检索状态(FAILED/LOW_CONFIDENCE 时提示参数未经知识库核实) -->
+              <el-tag v-if="v.ragStatus === 'FAILED' || v.ragStatus === 'LOW_CONFIDENCE'"
+                      size="small" type="warning" effect="plain" round>参数未经知识库核实</el-tag>
               <span class="version-meta">{{ v.wordCount }}字 · {{ v.aiModel }}</span>
             </div>
             <div class="version-title-row">

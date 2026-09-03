@@ -49,9 +49,13 @@ CREATE TABLE IF NOT EXISTS sparkora_article_brief (
     fact_risks         TEXT,        -- JSON 数组 [{claim, riskLevel, suggestion}]
     ai_model           VARCHAR(64), -- 实际使用的模型
     token_usage        INTEGER,     -- total tokens
+    rag_status         VARCHAR(20), -- S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
     created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_brief_project ON sparkora_article_brief(project_id);
+
+-- S6.1 增量迁移(已部署旧库幂等补列):知识库检索状态随 brief/version 落库供前端展示
+ALTER TABLE sparkora_article_brief   ADD COLUMN IF NOT EXISTS rag_status VARCHAR(20);
 
 -- S1 增量迁移（已部署的旧库通过 ALTER 补列；IF NOT EXISTS 幂等，新库执行也无副作用）
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_brief_id BIGINT;
@@ -68,10 +72,13 @@ CREATE TABLE IF NOT EXISTS sparkora_article_version (
     style_tag          VARCHAR(20),                  -- 风格标记：正式 / 活泼 / 干货 等
     ai_model           VARCHAR(64),
     token_usage        INTEGER,
+    rag_status         VARCHAR(20), -- S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
     word_count         INTEGER,
     created_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_version_project ON sparkora_article_version(project_id);
+
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS rag_status VARCHAR(20);
 
 -- S1b 增量迁移
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_version_id BIGINT;
