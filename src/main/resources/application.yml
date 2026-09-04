@@ -53,6 +53,11 @@ sparkora:
     rag-kb-topk: ${AI_RAG_KB_TOPK:4}            # S7:通用知识库生成检索注入块数上限(与车型域配额独立)
     rag-kb-enabled: ${AI_RAG_KB_ENABLED:true}   # S7:通用知识库总开关(false 回退 S6.2 纯车型域)
     rag-anchor-boost: ${AI_RAG_ANCHOR_BOOST:1.15} # S8:锚点车型块分数加权系数(统一检索重排)
+  deep:                                  # S9 深度生成模式
+    search-web-enabled: ${SEARCH_WEB_ENABLED:true}   # 研究子代理外部搜索总开关
+    tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)
+    research-timeout-ms: ${DEEP_RESEARCH_TIMEOUT_MS:120000}    # 单子代理超时
+    max-agents: ${DEEP_MAX_AGENTS:4}                            # 子代理数上限
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}

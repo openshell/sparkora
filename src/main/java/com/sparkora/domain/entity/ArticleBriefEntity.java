@@ -31,5 +31,12 @@ public class ArticleBriefEntity {
     private String aiModel;
     private Integer tokenUsage;
     private String ragStatus;      // S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
+    // ===== S9 深度生成模式(gen_mode=DEEP 时使用;快速模式全空) =====
+    private String genMode;            // FAST/DEEP
+    private String clarifyQuestions;   // JSON [{q,type,options[],required}]
+    private String clarifyAnswers;     // JSON [{q,a}] 锁定需求
+    private String researchPlan;       // JSON {keyQuestions[],dataNeeds[],hypotheses[],toolHints[]}
+    private String researchNotes;      // JSON [{agentId,question,status,facts[],gaps[]}] 逐子代理状态
+    private String factSheet;          // JSON {entries[{key,value,source,confidence}],gaps[],warnings[]}
     private LocalDateTime createdAt;
 }

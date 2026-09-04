@@ -2,7 +2,8 @@
 // 后端状态机(S6 起 6 态):DRAFT → GENERATING_BRIEF → READY → GENERATING_VERSIONS → VERSIONS_READY → PUBLISHED_DRAFT
 // (2026-08-28 决策:「校验」步骤彻底取消,六步改五步;失败会回退并写 lastBriefError / lastVersionError;
 //  S5 决策:发布成功进 PUBLISHED_DRAFT(公众号草稿箱已收),可重发覆盖,不再回退;
-//  S6 决策:配图并入预览步骤,彻底移除 IMAGES_READY,VERSIONS_READY 后直接可预览/发布)
+//  S6 决策:配图并入预览步骤,彻底移除 IMAGES_READY,VERSIONS_READY 后直接可预览/发布;
+//  S9 决策:深度模式为 brief 层产物状态(gen_mode=DEEP),项目状态机不改——CLARIFYING/RESEARCHING 为 brief 侧展示态)
 export const PROJECT_STATUS = {
   DRAFT:               { label: '草稿',       tagType: 'info',    step: 0 },
   GENERATING_BRIEF:    { label: '简报生成中', tagType: 'warning', step: 0, generating: 'brief' },

@@ -508,3 +508,78 @@ PublishService.publish
 - [x] 三角色冒烟:viewer publish 403;DRAFT 项目 publish `R.fail(400)`;publish-options 探活 publishEnabled=true
 - [x] `mvn test`(空测试集)/ `npm run build` 通过
 - [ ] 真实发布进公众号草稿箱(publish 全链)→ **留用户真机验收**
+### 13. 深度生成模式（S9，正式规格，2026-09-04）
+
+> 六阶段流程：①理解（研究计划）→ ②一次性澄清表单 → ③并行子代理研究（KB+WEB）→ ④事实手册 → ⑤深度写作 → ⑥数值回查。
+> 深度模式仅作用于 brief 层（`gen_mode=DEEP`），**项目状态机（§4）不变**；`CLARIFYING/RESEARCHING` 为 /deep/status 展示态，非项目状态。
+> 断点续跑：每阶段产物落库（research_plan→clarify_questions→clarify_answers→research_notes→fact_sheet），从任意阶段恢复。
+
+#### 数据模型（schema.sql 幂等，已同步 entity）
+
+- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`。
+- `sparkora_article_version` 增列：`fact_risks TEXT`（数值回查结果，JSON 数组 `[{claim,riskLevel,suggestion}]`）。
+
+#### 接口契约（全部 `R<T>` 包装；方法级 `@PreAuthorize`；前缀 `/api/projects/{projectId}/deep`）
+
+| 方法 | 路径 | 权限 | 请求 | 响应 |
+|---|---|---|---|---|
+| POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | `{briefId, researchPlan, questions}`；新建 brief(gen_mode=DEEP) |
+| POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
+| POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, done}`（同步阻塞；前端轮询 status） |
+| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, stylePrompt?}` | `{versionId}`（版本 fact_risks 落库） |
+| GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
+
+- stage 判定（brief 层展示态）：`RESEARCH_DONE`（fact_sheet 非空）> `RESEARCHING`（research_notes 非空）> `CLARIFIED`（answers 非空）> `CLARIFYING`（questions 非空）> `NONE`。
+- toolHealth：KB 恒 true；SEARXNG/TAVILY 为惰性状态（`lastCallHadResults`/`lastOk`，初值乐观，调用失败自动降 false），并受 `SEARCH_WEB_ENABLED` 门禁。
+- 权限冒烟：viewer 访问写接口 403（`hasAnyRole('ADMIN','EDITOR')`）。
+
+#### 工具层（SearchTool 抽象，`com.sparkora.deep.tool`）
+
+| 工具 | 实现 | 来源 | 降级语义 |
+|---|---|---|---|
+| KB | `KnowledgeSearchTool` | 委托 `CarRagService.retrieveForGeneration` 统一检索（§6c，S8） | 异常 warn，不抛出 |
+| SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + lastCallHadResults=false；不重试 |
+| TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}` | 密钥未配置/失败 → available()=false |
+- WEB 选择顺序：SEARXNG → Tavily（拿到结果即止）；每子代理 webQuota=`max(1, 8/n)`，`SEARCH_WEB_ENABLED=false` 时为 0（纯 KB）。
+- `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 modelName 字段。
+- 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.ai.deep.tavily-api-key`（dotenv 注入 System property，嵌套占位符 `${A:${B:}}` Spring 不支持，故 yml 只挂 `TAVILY_API_KEY`）。
+
+#### 研究笔记 / 事实手册结构
+
+- research_notes：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount}]`；factsJson=`{facts:[{claim,value,source:{type:"KB|WEB",url,modelName,docId},confidence}],gaps:[...]}`。
+- fact_sheet（FactSheetService.merge，按 claim 去重聚合）：`{entries:[{key,claim,value,sources:{type,url,modelName,docId},crossCount,confidence}],gaps:[...],warnings:[...]}`。
+- 置信度规则：多源交叉(≥2) 0.85 交叉标注 / KB 0.9 / 单一 WEB 0.4 + warnings「仅单一 WEB 源,待核实」/ 冲突 0.3。
+- 已知限制：WEB 命中为摘要级（snippet），不做正文抓取；低置信条目以 warnings 提示人工核实。
+
+#### 深度写作与数值回查
+
+- `DeepWriterService.write`：fact_sheet 条目进 prompt + 铁律「数值必须逐字出自手册」→ `AiClient.chat`（非 JSON 方法）→ 落 version（复用版本链路）。
+- 数值回查（正则，0 次 LLM）：抽取正文数值（万/千分位/百分比/带单位 km|kWh|kW|mm|L/100km|s）与手册比对，手册外数值 → `fact_risks` `[{claim,riskLevel:"high",suggestion:"发布前必须人工核实或删除"}]` 落版本字段。
+- 2026-09-04 实测：version 1917 字符，捕获手册外「25万」high 1 条。
+
+#### 前端（`views/project/deep/` 四组件 + StepBrief 深度分支）
+
+- `DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）。
+- StepBrief.vue：模式切换（FAST/DEEP）→ deepStage 流转 NONE→CLARIFYING→CLARIFIED→RESEARCHING→RESEARCH_DONE → 生成；onMounted 断点恢复；`onBackFast` 退回快速模式。CLARIFYING/RESEARCHING 仅 brief 层展示态，项目状态机不变（constants/project.js 注释）。
+- 移动端：单列纵排、抽屉全屏、触控 ≥44px。
+
+#### 配置（.env.example 已同步）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SEARCH_WEB_ENABLED` | `true` | WEB 搜索总开关（SEARXNG+Tavily） |
+| `TAVILY_API_KEY` / `DEEP_TAVILY_API_KEY` | 空 | Tavily 密钥（.env；DEEP_ 前缀可覆盖） |
+| `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署，2026-09-04 迁移至 192.168.3.108:5676） |
+| `CRAWL4AI_BASE_URL` | 空 | 预留：正文抓取工具未接入（摘要级搜索的后续增强） |
+| `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap） |
+| `DEEP_MAX_AGENTS` | `4` | 子代理数上限（虚拟线程 per-task executor） |
+
+#### 验收状态（2026-09-04）
+
+- [x] AC1 深度模式端到端（项目20/briefId=18：clarify 5 问→锁定→run agents=4 done=4→fact_sheet→generate versionId=16）
+- [x] AC2 并行研究：4 虚拟线程子代理并行，全部 DONE（首次 run 因 toolHints 序列化 bug 全 KB，修复后 webCalls=5/6）
+- [x] AC3 WEB 来源进手册：fact_sheet 6 条含 2 条 WEB（海狮08 22.99万起/海狮06 12.99-19.98万），置信度 4×0.9+2×0.4，warnings 4 条
+- [x] AC4 写作+数值回查：version 1917 字符；fact_risks 捕获手册外「25万」riskLevel=high
+- [x] AC5 快速模式回归：项目21（FAST brief id=19 + version id=17/18）全通过，深度/快速互不影响
+- [x] AC6 `mvn test-compile surefire:test` 44 全绿；`npx vite build` 绿（48s）
+- [ ] AC7 研究过程可视化 UI 真机走查（计划→表单→进度→手册→生成）→ **留用户浏览器验收**

@@ -57,6 +57,14 @@ CREATE INDEX IF NOT EXISTS idx_brief_project ON sparkora_article_brief(project_i
 -- S6.1 增量迁移(已部署旧库幂等补列):知识库检索状态随 brief/version 落库供前端展示
 ALTER TABLE sparkora_article_brief   ADD COLUMN IF NOT EXISTS rag_status VARCHAR(20);
 
+-- S9 增量迁移(深度生成模式):产物随 brief 落库,可断点续跑(gen_mode=DEEP 时使用,快速模式全空)
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS gen_mode           VARCHAR(10) DEFAULT 'FAST'; -- FAST/DEEP
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS clarify_questions  TEXT; -- JSON [{q,type,options[],required}]
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS clarify_answers    TEXT; -- JSON [{q,a}]
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS research_plan       TEXT; -- JSON {keyQuestions[],dataNeeds[],hypotheses[],toolHints[]}
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS research_notes      TEXT; -- JSON [{agentId,question,status,facts[],gaps[]}]
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS fact_sheet          TEXT; -- JSON {entries[{key,value,source,confidence}],gaps[],warnings[]}
+
 -- S1 增量迁移（已部署的旧库通过 ALTER 补列；IF NOT EXISTS 幂等，新库执行也无副作用）
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_brief_id BIGINT;
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_brief_error VARCHAR(1000);
@@ -79,6 +87,8 @@ CREATE TABLE IF NOT EXISTS sparkora_article_version (
 CREATE INDEX IF NOT EXISTS idx_version_project ON sparkora_article_version(project_id);
 
 ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS rag_status VARCHAR(20);
+-- S9 增量迁移:数值回查结果随版本落库(深度模式;快速模式为空)
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS fact_risks TEXT;
 
 -- S1b 增量迁移
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_version_id BIGINT;

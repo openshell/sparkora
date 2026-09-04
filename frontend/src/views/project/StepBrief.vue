@@ -29,18 +29,39 @@
       </p>
     </div>
 
-    <!-- ③ 无简报:引导语(含上次失败原因,若后端记录过) -->
+    <!-- ③ 无简报:引导语(含上次失败原因,若后端记录过);深度模式入口(S9) -->
     <div v-else-if="!brief" class="muted intro">
       <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
                 :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
+      <!-- 深度模式分支:模式选择 → 计划/澄清表单/进度面板/手册 -->
+      <template v-if="deepStage !== 'NONE' || deepMode">
+        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
+        <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
+        <ClarifyForm v-else-if="deepStage === 'CLARIFIED'" :questions="deepQuestions" :locked="true" :answers="deepAnswers" />
+        <ResearchProgress v-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'" :brief-id="deepBriefId" />
+        <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
+        <div class="deep-actions">
+          <el-button v-if="deepStage === 'NONE' && !deepMode" @click="deepMode = true">深度模式(先研究再写)</el-button>
+          <el-button v-if="deepMode && deepStage === 'NONE'" type="primary" :loading="deepBusy" @click="onDeepClarify">生成研究计划</el-button>
+          <el-button v-if="deepStage === 'RESEARCH_DONE'" type="success" :loading="deepBusy" @click="onDeepGenerate">生成正文(基于事实手册)→</el-button>
+          <el-button v-if="deepStage !== 'NONE'" text @click="onBackFast">返回快速模式</el-button>
+        </div>
+      </template>
+      <template v-else>
       <div class="intro-hero">
         <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
         <div class="intro-title serif">让 AI 先想清楚，再动笔</div>
         <p>由 AI 生成标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入多版本生成。</p>
-        <el-button type="primary" :loading="submitting" @click="onGenerateBrief" size="large">
-          <el-icon class="btn-icon"><MagicStick /></el-icon>生成简报
-        </el-button>
+        <div class="gen-mode-row">
+          <el-button type="primary" :loading="submitting" @click="onGenerateBrief" size="large">
+            <el-icon class="btn-icon"><MagicStick /></el-icon>生成简报
+          </el-button>
+          <el-button size="large" @click="deepMode = true">
+            <el-icon class="btn-icon"><DataAnalysis /></el-icon>深度模式(多代理研究)
+          </el-button>
+        </div>
       </div>
+      </template>
     </div>
 
     <!-- ④ 简报正文(有数据必渲染;上次失败提示以轻量条幅叠加在内容上方) -->
@@ -118,7 +139,12 @@ import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingBrief } from '../../constants/project'
 import { useProjectDetailStore, parseBrief } from '../../store/project-detail'
-import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled, Check } from '@element-plus/icons-vue'
+import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled, Check, DataAnalysis } from '@element-plus/icons-vue'
+import DeepPlanCard from './deep/DeepPlanCard.vue'
+import ClarifyForm from './deep/ClarifyForm.vue'
+import ResearchProgress from './deep/ResearchProgress.vue'
+import FactSheetSummary from './deep/FactSheetSummary.vue'
+import http from '../../api/http'
 
 // 数据全部来自 project-detail store(布局层已负责装载与轮询,这里只读 + 触发动作)
 const props = defineProps({ project: Object })
@@ -201,6 +227,90 @@ const onGenerateBrief = async () => {
     await store.ensureProject(route.params.id, { force: true })
   } finally { submitting.value = false }
 }
+
+// ==================== S9 深度模式 ====================
+const deepMode = ref(false)          // 用户点了「深度模式」入口
+const deepBusy = ref(false)
+const deepBriefId = ref(null)
+const deepStage = ref('NONE')        // NONE/CLARIFYING/CLARIFIED/RESEARCHING/RESEARCH_DONE
+const deepPlan = ref(null)
+const deepQuestions = ref([])
+const deepAnswers = ref([])
+const deepFactSheet = ref(null)
+
+// 项目已有进行中的深度 brief → 恢复状态(断点续跑)
+onMounted(async () => {
+  try {
+    const { data } = await http.get(`/projects/${route.params.id}/deep/status`)
+    const d = data.data || {}
+    if (d.genMode === 'DEEP') {
+      deepBriefId.value = d.briefId
+      deepStage.value = d.stage || 'NONE'
+      deepPlan.value = d.researchPlan ? (typeof d.researchPlan === 'string' ? JSON.parse(d.researchPlan) : d.researchPlan) : null
+      deepQuestions.value = d.questions ? (typeof d.questions === 'string' ? JSON.parse(d.questions) : d.questions) : []
+      deepAnswers.value = d.answers ? (typeof d.answers === 'string' ? JSON.parse(d.answers) : d.answers) : []
+      deepFactSheet.value = d.factSheet || null
+    }
+  } catch { /* 深度接口异常不影响快速模式 */ }
+})
+
+const onDeepClarify = async () => {
+  deepBusy.value = true
+  try {
+    const { data } = await http.post(`/projects/${route.params.id}/deep/clarify`,
+      { topic: props.project?.topic || props.project?.name, extraInfo: props.project?.extraInfo || '' })
+    if (data.code !== 0) throw new Error(data.msg)
+    deepBriefId.value = data.data.briefId
+    deepPlan.value = data.data.researchPlan ? JSON.parse(data.data.researchPlan) : null
+    deepQuestions.value = data.data.questions ? JSON.parse(data.data.questions) : []
+    deepStage.value = 'CLARIFYING'
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || e.message || '研究计划生成失败') }
+  finally { deepBusy.value = false }
+}
+
+const onClarifySubmit = async (answers) => {
+  deepBusy.value = true
+  try {
+    const { data } = await http.post(`/projects/${route.params.id}/deep/clarify-answer`,
+      { briefId: deepBriefId.value, answers })
+    if (data.code !== 0) throw new Error(data.msg)
+    deepAnswers.value = data.data.locked ? JSON.parse(data.data.locked) : []
+    deepStage.value = 'CLARIFIED'
+    // 锁定即开跑研究
+    await onDeepRun()
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || '锁定失败') }
+  finally { deepBusy.value = false }
+}
+
+const onDeepRun = async () => {
+  deepBusy.value = true
+  deepStage.value = 'RESEARCHING'
+  try {
+    const { data } = await http.post(`/projects/${route.params.id}/deep/run`, { briefId: deepBriefId.value })
+    if (data.code !== 0) throw new Error(data.msg)
+    // 完成后拉一次 status 取手册
+    const st = await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)
+    deepFactSheet.value = st.data.data?.factSheet || null
+    deepStage.value = 'RESEARCH_DONE'
+    ElMessage.success('研究完成,事实手册已生成')
+  } catch (e) { deepStage.value = 'CLARIFIED'; ElMessage.error(e?.response?.data?.msg || '研究失败') }
+  finally { deepBusy.value = false }
+}
+
+const onDeepGenerate = async () => {
+  deepBusy.value = true
+  try {
+    const { data } = await http.post(`/projects/${route.params.id}/deep/generate`,
+      { briefId: deepBriefId.value })
+    if (data.code !== 0) throw new Error(data.msg)
+    ElMessage.success('深度正文已生成')
+    await store.ensureProject(route.params.id, { force: true })
+    router.push({ name: 'project-versions', params: { id: route.params.id } })
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || '深度写作失败') }
+  finally { deepBusy.value = false }
+}
+
+const onBackFast = () => { deepMode.value = false; deepStage.value = 'NONE' }
 </script>
 
 <style scoped>

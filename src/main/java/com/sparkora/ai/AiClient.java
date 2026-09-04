@@ -77,6 +77,30 @@ public class AiClient {
         }
     }
 
+    /**
+     * 普通文本 chat(非 JSON 约束;S9 深度写作用)。
+     */
+    public ChatResult chat(String systemPrompt, String userPrompt, int maxTokens) {
+        Map<String, Object> body = Map.of(
+                "model", resolveTextModel(),
+                "messages", List.of(
+                        Map.of("role", "system", "content", systemPrompt),
+                        Map.of("role", "user", "content", userPrompt)),
+                "temperature", props.getTemperature(),
+                "max_tokens", maxTokens
+        );
+        try {
+            String resp = rest.post()
+                    .uri("/v1/chat/completions")
+                    .body(body)
+                    .retrieve()
+                    .body(String.class);
+            return parseChat(resp);
+        } catch (Exception e) {
+            throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
+        }
+    }
+
     private ChatResult parseChat(String resp) {
         try {
             JsonNode root = mapper.readTree(resp);
