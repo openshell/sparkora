@@ -118,7 +118,7 @@ POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 AD
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/projects` | 三角色 | `page,size,topic,status` | `{rows[],total,page,size}` |
+| GET | `/api/projects` | 三角色 | `page,size,topic,status,orderBy,orderDir` | `{rows[],total,page,size}` |
 | GET | `/api/projects/{id}` | 三角色 | — | `{project}`（S1/S1b 起含 current_brief_id / current_version_id / last_*_error） |
 | POST | `/api/projects` | ADMIN/EDITOR | §3.2 表单 JSON | `{id}` |
 | PUT | `/api/projects/{id}` | ADMIN/EDITOR | 表单 JSON | `{ok:true}` |
@@ -130,6 +130,8 @@ POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 AD
 | PUT | `/api/projects/{id}/current-version` | ADMIN/EDITOR | `?versionId=` | `{ok:true}` |
 | GET | `/api/styles` | 三角色 | `?enabledOnly=` | `{styles[]}` |
 | POST | `/api/styles/extract` | ADMIN/EDITOR | `{name, sourceText}` | `{style}` |
+
+> `orderBy` 白名单:`updatedAt`(默认)/`createdAt`;`orderDir`:`desc`(默认)/`asc`;非法值静默回退默认。其余参数语义不变。
 
 > S3b 配图接口（`/api/images/**`、`/api/projects/{id}/images/**`）字段级契约见 §10。S6 起 `complete-images` 已删除。
 

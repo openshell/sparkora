@@ -60,12 +60,18 @@ public class ArticleProjectController {
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "10") long size,
             @RequestParam(required = false) String topic,
-            @RequestParam(required = false) String status) {
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String orderBy,
+            @RequestParam(required = false) String orderDir) {
 
         QueryWrapper<ArticleProjectEntity> qw = new QueryWrapper<>();
         if (topic != null && !topic.isBlank()) qw.like("topic", topic);
         if (status != null && !status.isBlank()) qw.eq("status", status);
-        qw.orderByDesc("updated_at");
+        // 排序白名单:仅允许映射到固定列名,非法值静默回退默认(updated_at desc),
+        // 原始参数字符串绝不透传 QueryWrapper,避免 SQL 注入面。
+        String col = "createdAt".equals(orderBy) ? "created_at" : "updated_at";
+        boolean asc = "asc".equalsIgnoreCase(orderDir);
+        if (asc) qw.orderByAsc(col); else qw.orderByDesc(col);
 
         Page<ArticleProjectEntity> p = new Page<>(page, size);
         Page<ArticleProjectEntity> result = mapper.selectPage(p, qw);
