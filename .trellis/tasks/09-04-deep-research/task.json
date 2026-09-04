@@ -1,0 +1,29 @@
+{
+  "id": "deep-research",
+  "name": "deep-research",
+  "title": "文章生成多代理深度研究与统一知识库",
+  "description": "父任务:统一检索去门禁(A)+六阶段多代理生成流程(B:研究计划/一次性澄清/子代理并行研究/事实手册/数值回查),外部搜索 SEARXNG+Tavily",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-09-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feat/project-list-enhance",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-04-unified-retrieval",
+    "09-04-deep-generation"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

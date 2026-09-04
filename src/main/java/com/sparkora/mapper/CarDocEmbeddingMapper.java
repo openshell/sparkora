@@ -46,4 +46,27 @@ public interface CarDocEmbeddingMapper {
             "WHERE d.deleted = 0 " +
             "GROUP BY d.model_id")
     List<Map<String, Object>> countByModel();
+
+    /**
+     * 统一检索(S8 去门禁):车型域与 KB 域同向量空间 UNION ALL 全库检索,按余弦分排序。
+     * 返回行:source(CAR/KB)/docId/modelId(可空)/chunkType/chunkText/score/modelName(车型名或知识标题)。
+     * 仅含有效块(car_doc.deleted=0;kb_doc.deleted=0 且 enabled)。
+     */
+    @Select("SELECT * FROM ( " +
+            "SELECT 'CAR' AS \"source\", e.doc_id AS \"docId\", d.model_id AS \"modelId\", " +
+            "       d.chunk_type AS \"chunkType\", d.chunk_text AS \"chunkText\", " +
+            "       1 - (e.embedding <=> #{queryVec}::vector) AS \"score\", m.name AS \"modelName\" " +
+            "FROM sparkora_car_doc_embedding e " +
+            "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
+            "JOIN sparkora_car_model m ON m.id = d.model_id " +
+            "UNION ALL " +
+            "SELECT 'KB' AS \"source\", e.chunk_id AS \"docId\", NULL AS \"modelId\", " +
+            "       'KB_CHUNK' AS \"chunkType\", c.chunk_text AS \"chunkText\", " +
+            "       1 - (e.embedding <=> #{queryVec}::vector) AS \"score\", d2.title AS \"modelName\" " +
+            "FROM sparkora_kb_chunk_embedding e " +
+            "JOIN sparkora_kb_chunk c ON c.id = e.chunk_id " +
+            "JOIN sparkora_kb_doc d2 ON d2.id = c.doc_id AND d2.deleted = 0 AND d2.enabled = TRUE " +
+            ") u ORDER BY \"score\" DESC LIMIT #{limit}")
+    List<Map<String, Object>> searchTopKUnified(@Param("queryVec") String queryVec,
+                                                @Param("limit") int limit);
 }

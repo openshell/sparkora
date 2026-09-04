@@ -32,6 +32,8 @@ public class AiProperties {
     private int ragKbTopk = 4;
     /** 通用知识库(KB)总开关:关闭即回退 S6.2 纯车型域行为(异常时一键回滚点,S7)。 */
     private boolean ragKbEnabled = true;
+    /** 统一检索锚点加权系数(S8):锚点车型(source=CAR 且 modelId∈anchor)块分数 × 该系数重排;默认 1.15。 */
+    private double ragAnchorBoost = 1.15;
 
     /** 解析图片模型轮询列表：优先 imageModels，为空回退 imageModel。 */
     public List<String> imageModelList() {

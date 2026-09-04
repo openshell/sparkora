@@ -37,8 +37,14 @@ public class CarRagService {
     /** 检索结果项。 */
     public record Hit(String chunkText, double score) {}
 
-    /** 带类型与分数的检索命中(配额分层用)。chunkType: MODEL_INFO/PARAM_GROUP/RIGHTS/FEATURE。 */
+    /** 带类型与分数的检索命中(配额分层用)。chunkType: MODEL_INFO/PARAM_GROUP/RIGHTS/FEATURE/KB_CHUNK。 */
     public record TypedHit(String chunkText, String chunkType, double score) {}
+
+    /** 统一检索命中(S8):TypedHit + 来源域与来源名(车型名/知识标题),供行内来源标注与锚点加权。 */
+    public record UnifiedHit(String chunkText, String chunkType, double score,
+                             String source, Long modelId, String modelName) {
+        TypedHit toTyped() { return new TypedHit(chunkText, chunkType, score); }
+    }
 
     /** 知识库检索状态:OK 命中并过门槛 / LOW_CONFIDENCE 整体置信度过低已抛弃 / FAILED 检索异常降级 / NO_KNOWLEDGE 无车型对象或无命中。 */
     public enum RagStatus { OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE }
@@ -161,63 +167,71 @@ public class CarRagService {
      * @param query    查询文本(主查询)
      * @param topK     每车型每查询返回条数(车型域)
      */
-    public RagResult retrieveForGeneration(List<Long> modelIds, String query, int topK) {
+    /**
+     * 生成前必查入口(S8 统一检索):
+     * 车型域与 KB 域**同向量空间全库检索**(searchTopKUnified),「项目关联车型」降为锚点加权——
+     * 数据可达性不再依赖用户手动关联(文章18误伤:海狮08数据在库,未关联即查不到)。
+     *
+     * 检索策略(S6.2 资产全部保留):
+     *   1) 主查询 + 参数级子查询,均走统一检索,chunkText 去重合并;
+     *   2) 锚点加权:CAR 块 modelId∈anchorModelIds → score × AI_RAG_ANCHOR_BOOST(重排,非过滤);
+     *   3) 配额:PARAM_GROUP/MODEL_INFO 优先,RIGHTS/FEATURE ≤1/3,KB_CHUNK 独立配额 ragKbTopk;
+     *      AI_RAG_KB_ENABLED=false 时 KB 块在配额层排除(等价 S6 行为);
+     *   4) 行内来源标注:【车型数据:名称】/【通用知识:标题】,首行「知识来源:…」按命中构成。
+     *
+     * 状态判定(S6.1 语义不变):
+     *   无命中 → NO_KNOWLEDGE;命中但最高分 < rejectScore → LOW_CONFIDENCE(全抛弃);
+     *   检索异常 → FAILED(降级可见);其余 → OK。
+     *
+     * @param query           查询文本(主查询)
+     * @param topK            注入块数上限(核心块)
+     * @param anchorModelIds  锚点车型 id(项目关联;可空,仅影响加权)
+     */
+    public RagResult retrieveForGeneration(String query, int topK, List<Long> anchorModelIds) {
         if (query == null || query.isBlank()) {
-            return RagResult.EMPTY;
-        }
-        boolean hasModels = modelIds != null && modelIds.stream().anyMatch(java.util.Objects::nonNull);
-        if (!hasModels && !aiProps.isRagKbEnabled()) {
-            // 未关联车型且通用域关闭 → S6.2 原行为(无知识对象)
             return RagResult.EMPTY;
         }
         double minScore = aiProps.getRagMinScore();
         double rejectScore = aiProps.getRagRejectScore();
-        List<TypedHit> merged = new ArrayList<>();
+        boolean kbEnabled = aiProps.isRagKbEnabled();
+        java.util.Set<Long> anchors = anchorModelIds == null ? java.util.Set.of()
+                : anchorModelIds.stream().filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        List<UnifiedHit> merged = new ArrayList<>();
         boolean anyFailure = false;
-        List<TypedHit> kbHits = List.of();
-        for (Long modelId : modelIds == null ? List.<Long>of() : modelIds) {
-            if (modelId == null) continue;
-            try {
-                // 主查询
-                List<TypedHit> primary = retrieveTyped(modelId, query, topK);
-                merged.addAll(primary);
-                // 参数级子查询(S6.2 P0-3):从查询文本抽参数词派生子查询;仅补主查询未命中的块(按 chunkText 去重)
-                java.util.Set<String> seen = new java.util.HashSet<>();
-                primary.forEach(h -> seen.add(h.chunkText()));
-                for (String sub : deriveSubQueries(query)) {
-                    for (TypedHit h : retrieveTyped(modelId, sub, topK)) {
-                        if (seen.add(h.chunkText())) merged.add(h);
-                    }
+        try {
+            // 主查询(统一全库;过采样,配额/加权后再截)
+            List<UnifiedHit> primary = retrieveUnified(query, Math.max(topK * 4, 32));
+            merged.addAll(primary);
+            // 参数级子查询(S6.2):同走统一检索,chunkText 去重补命中
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            primary.forEach(h -> seen.add(h.chunkText()));
+            for (String sub : deriveSubQueries(query)) {
+                for (UnifiedHit h : retrieveUnified(sub, Math.max(topK * 2, 16))) {
+                    if (seen.add(h.chunkText())) merged.add(h);
                 }
-            } catch (Exception e) {
-                // 必查但降级可见:单车型失败不抛出,标记 FAILED,继续尝试其余车型
-                anyFailure = true;
-                log.warn("生成前知识库检索失败 modelId={} query={}: {}", modelId, query, e.getMessage());
             }
+        } catch (Exception e) {
+            // 必查但降级可见:检索失败不抛出,标 FAILED
+            anyFailure = true;
+            log.warn("生成前统一知识库检索失败 query={}: {}", query, e.getMessage());
         }
-        // 通用域检索(S7):独立配额,不与车型域混算
-        if (aiProps.isRagKbEnabled()) {
-            try {
-                kbHits = retrieveKb(query, aiProps.getRagKbTopk());
-            } catch (Exception e) {
-                anyFailure = true;
-                log.warn("生成前通用知识库检索失败 query={}: {}", query, e.getMessage());
+        // 锚点加权(S8):CAR 块 modelId∈anchor → 分数 × boost(重排用,不改变相似度门槛判定基数)
+        double boost = aiProps.getRagAnchorBoost();
+        List<UnifiedHit> boosted = new ArrayList<>();
+        for (UnifiedHit h : merged) {
+            if ("CAR".equals(h.source()) && anchors.contains(h.modelId())) {
+                boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), Math.min(1.0, h.score() * boost),
+                        h.source(), h.modelId(), h.modelName()));
+            } else {
+                boosted.add(h);
             }
         }
         int rawHit = 0;
         double maxScore = 0;
-        for (TypedHit h : merged) {
+        for (UnifiedHit h : boosted) {
             if (h.score() < minScore) continue;
             rawHit++;
             maxScore = Math.max(maxScore, h.score());
-        }
-        // KB 块并入统计(逐块门槛同 minScore;maxScore 跨两域取最大)
-        java.util.List<TypedHit> kbPassed = new java.util.ArrayList<>();
-        for (TypedHit h : kbHits) {
-            if (h.score() < minScore) continue;
-            rawHit++;
-            maxScore = Math.max(maxScore, h.score());
-            kbPassed.add(h);
         }
         if (anyFailure) {
             return new RagResult(RagStatus.FAILED, "", rawHit, maxScore);
@@ -226,32 +240,86 @@ public class CarRagService {
             return RagResult.EMPTY;
         }
         if (maxScore < rejectScore) {
-            // 整体置信度过低:命中了但不相关,全部抛弃,不得与「无命中」混淆
-            log.info("知识库检索整体置信度过低已抛弃 modelIds={} hitCount={} maxScore={} rejectScore={} query={}",
-                    modelIds, rawHit, maxScore, rejectScore, query);
+            log.info("统一知识库检索整体置信度过低已抛弃 anchors={} hitCount={} maxScore={} rejectScore={} query={}",
+                    anchors, rawHit, maxScore, rejectScore, query);
             return new RagResult(RagStatus.LOW_CONFIDENCE, "", rawHit, maxScore);
         }
-
-        // 知识来源行(S7):前端展示与 prompt 均可见双源构成
-        String sourceLine = kbPassed.isEmpty() ? "知识来源：车型数据" 
-                : (merged.isEmpty() ? "知识来源：通用知识库" : "知识来源：车型数据 + 通用知识库");
-        // 分层配额去重合并(车型域):参数块优先,权益/特性类合计不超过 1/3;表头块(仅 1 行)丢弃
-        List<TypedHit> selected = applyQuota(merged, topK * Math.max(1,
-                modelIds == null ? 0 : (int) modelIds.stream().filter(java.util.Objects::nonNull).count()));
+        // 统一配额选择:核心(PARAM_GROUP/MODEL_INFO)优先 + 权益类 ≤1/3 + KB 独立配额
+        List<UnifiedHit> coreCandidates = new ArrayList<>();
+        List<UnifiedHit> softCandidates = new ArrayList<>();
+        List<UnifiedHit> kbCandidates = new ArrayList<>();
+        for (UnifiedHit h : boosted) {
+            if (h.score() < minScore) continue;
+            if (isHeaderChunk(h.toTyped())) continue;
+            if ("KB".equals(h.source())) {
+                if (kbEnabled) coreCandidates.add(h);   // KB 块并入核心候选池,配额阶段独立截取
+            } else if ("RIGHTS".equals(h.chunkType()) || "FEATURE".equals(h.chunkType())) {
+                softCandidates.add(h);
+            } else {
+                coreCandidates.add(h);
+            }
+        }
+        coreCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
+        softCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
+        // 核心块配额:carTopK 给车型核心块(锚点车型数×topK,至少 topK),KB 独立配额不挤占
+        int carQuota = Math.max(topK, topK * Math.max(1, anchors.size()));
+        List<UnifiedHit> carSelected = coreCandidates.stream()
+                .filter(h -> !"KB".equals(h.source())).toList();
+        int kbQuota = kbEnabled ? aiProps.getRagKbTopk() : 0;
+        List<UnifiedHit> kbSelected = coreCandidates.stream()
+                .filter(h -> "KB".equals(h.source())).limit(kbQuota).toList();
+        int softCap = Math.max(1, carQuota / 3);
+        List<UnifiedHit> softSelected = softCandidates.stream().limit(Math.min(softCap, Math.max(0, carQuota - carSelected.size()))).toList();
+        List<UnifiedHit> selected = new ArrayList<>(carSelected);
+        selected.addAll(softSelected);
+        selected.addAll(kbSelected);
+        selected.sort((a, b) -> Double.compare(b.score(), a.score()));
+        // 来源构成
+        boolean hasCar = selected.stream().anyMatch(h -> "CAR".equals(h.source()));
+        boolean hasKb = selected.stream().anyMatch(h -> "KB".equals(h.source()));
+        String sourceLine = hasCar && hasKb ? "知识来源：车型数据 + 通用知识库"
+                : (hasKb ? "知识来源：通用知识库" : "知识来源：车型数据");
         StringBuilder sb = new StringBuilder();
         StringBuilder covered = new StringBuilder();
-        if (!merged.isEmpty() || !kbPassed.isEmpty()) sb.append(sourceLine).append("\n---\n");
-        // KB 块独立配额注入(带来源前缀,不参与车型参数覆盖度统计)
-        for (TypedHit h : kbPassed) {
-            sb.append("【通用知识】").append(h.chunkText()).append("\n---\n");
+        sb.append(sourceLine).append("\n---\n");
+        for (UnifiedHit h : selected) {
+            if ("KB".equals(h.source())) {
+                sb.append("【通用知识：").append(h.modelName() == null ? "" : h.modelName()).append("】")
+                  .append(h.chunkText()).append("\n---\n");
+            } else {
+                sb.append("【车型数据：").append(h.modelName() == null ? "" : h.modelName()).append("】")
+                  .append(h.chunkText()).append("\n---\n");
+                covered.append(extractParamSummary(h.chunkText()));
+            }
         }
-        for (TypedHit h : selected) {
-            sb.append(h.chunkText()).append("\n---\n");
-            covered.append(extractParamSummary(h.chunkText()));
-        }
-        log.info("RAG 分层配额检索完成 modelIds={} raw={} selected={} kb={} maxScore={}",
-                modelIds, rawHit, selected.size(), kbPassed.size(), maxScore);
+        log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={}) maxScore={}",
+                anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(), maxScore);
         return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString());
+    }
+
+    /** 旧签名(S7 兼容委托):modelIds 语义变为锚点车型。 */
+    public RagResult retrieveForGeneration(List<Long> modelIds, String query, int topK) {
+        return retrieveForGeneration(query, topK, modelIds);
+    }
+
+    /**
+     * 统一检索(S8):全库 top-K,跨车型域与 KB 域。
+     */
+    public List<UnifiedHit> retrieveUnified(String query, int limit) {
+        if (query == null || query.isBlank() || limit <= 0) return List.of();
+        String vec = embeddingClient.embed(query);
+        List<Map<String, Object>> rows = embMapper.searchTopKUnified(vec, limit);
+        List<UnifiedHit> hits = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
+            String type = row.get("chunkType") == null ? "PARAM_GROUP" : String.valueOf(row.get("chunkType"));
+            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
+            String source = row.get("source") == null ? "CAR" : String.valueOf(row.get("source"));
+            Long modelId = row.get("modelId") == null ? null : ((Number) row.get("modelId")).longValue();
+            String modelName = row.get("modelName") == null ? "" : String.valueOf(row.get("modelName"));
+            hits.add(new UnifiedHit(text, type, score, source, modelId, modelName));
+        }
+        return hits;
     }
 
     /**

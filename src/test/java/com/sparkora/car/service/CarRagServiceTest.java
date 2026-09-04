@@ -38,10 +38,13 @@ class CarRagServiceTest {
     /**
      * 手写 mapper 假实现(替代 Mockito mock:JDK21 动态代理下 stub 匹配不稳定)。
      * byModelId: modelId → 返回的检索行;byThrow: modelId → 抛出的异常。
+     * S8:unifiedRows → searchTopKUnified 返回行;unifiedThrow → 统一检索抛异常。
      */
     static class FakeMapper implements CarDocEmbeddingMapper {
         final Map<Long, List<Map<String, Object>>> byModelId = new HashMap<>();
         final Map<Long, RuntimeException> byThrow = new HashMap<>();
+        List<Map<String, Object>> unifiedRows = List.of();
+        RuntimeException unifiedThrow = null;
 
         @Override
         public int insert(Long docId, Long modelId, String embedding) { return 0; }
@@ -58,6 +61,12 @@ class CarRagServiceTest {
 
         @Override
         public List<Map<String, Object>> countByModel() { return List.of(); }
+
+        @Override
+        public List<Map<String, Object>> searchTopKUnified(String queryVec, int limit) {
+            if (unifiedThrow != null) throw unifiedThrow;
+            return unifiedRows.size() > limit ? unifiedRows.subList(0, limit) : unifiedRows;
+        }
     }
 
     /** KB 向量 mapper 假实现(S7 双源):byRows → 检索行;byThrow → 抛异常。 */
@@ -85,13 +94,29 @@ class CarRagServiceTest {
         return m;
     }
 
+    /** 统一检索行(S8):source/modelId/modelName/chunkType 全带。 */
+    private static Map<String, Object> urow(String source, Long modelId, String modelName,
+                                            String chunkType, String text, double score) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("source", source);
+        m.put("modelId", modelId);
+        m.put("modelName", modelName);
+        m.put("chunkType", chunkType);
+        m.put("chunkText", text);
+        m.put("score", score);
+        m.put("docId", 1);
+        return m;
+    }
+
     @Test
     void 命中且最高分过整体门槛_状态OK_上下文完整() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byModelId.put(1L, List.of(row("大唐EV 续航 600km", 0.82), row("大唐EV 权益", 0.55)));
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "大唐EV", "PARAM_GROUP", "车型：大唐EV\n续航 600km", 0.82),
+                urow("CAR", 1L, "大唐EV", "RIGHTS", "车型：大唐EV 购车权益：权益", 0.55));
         CarRagService svc = newService(mapper);
 
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "大唐EV 续航", 8);
+        CarRagService.RagResult r = svc.retrieveForGeneration("大唐EV 续航", 8, List.of());
         assertEquals(CarRagService.RagStatus.OK, r.status());
         assertEquals(2, r.hitCount());
         assertEquals(0.82, r.maxScore(), 1e-9);
@@ -101,10 +126,12 @@ class CarRagServiceTest {
     @Test
     void 有命中但最高分低于整体门槛_状态LOW_CONFIDENCE_上下文必须为空() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byModelId.put(1L, List.of(row("完全无关内容", 0.45), row("也很无关", 0.38)));
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "车型A", "PARAM_GROUP", "车型：车型A\n完全无关内容", 0.45),
+                urow("CAR", 1L, "车型A", "PARAM_GROUP", "车型：车型A\n也很无关", 0.38));
         CarRagService svc = newService(mapper);
 
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of());
         assertEquals(CarRagService.RagStatus.LOW_CONFIDENCE, r.status());
         assertEquals("", r.context(), "低置信抛弃后不得把知识块注入 prompt");
         assertEquals(2, r.hitCount(), "hitCount 保留观测值");
@@ -114,10 +141,10 @@ class CarRagServiceTest {
     @Test
     void 检索异常_不抛出_状态FAILED_上下文为空() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byThrow.put(1L, new RuntimeException("embedding down"));
+        mapper.unifiedThrow = new RuntimeException("embedding down");
         CarRagService svc = newService(mapper);
 
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of(1L));
         assertEquals(CarRagService.RagStatus.FAILED, r.status());
         assertEquals("", r.context());
     }
@@ -132,55 +159,57 @@ class CarRagServiceTest {
 
     @Test
     void S7_未关联车型_仍检索通用域并注入() {
-        FakeKbEmbMapper kb = new FakeKbEmbMapper();
-        kb.rows = List.of(kbRow("知识：家用充电桩选择要点（充电）\n看车型最大充电功率。", 0.8));
-        CarRagService svc = newService(new FakeMapper(), kb);
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(), "充电桩怎么选", 8);
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("KB", null, "家用充电桩选择要点", "KB_CHUNK", "知识：家用充电桩选择要点（充电）\n看车型最大充电功率。", 0.8));
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult r = svc.retrieveForGeneration("充电桩怎么选", 8, List.of());
         assertEquals(CarRagService.RagStatus.OK, r.status());
         assertTrue(r.context().contains("知识来源：通用知识库"));
-        assertTrue(r.context().contains("【通用知识】知识：家用充电桩选择要点"));
+        assertTrue(r.context().contains("【通用知识：家用充电桩选择要点】"));
         assertTrue(r.maxScore() >= 0.8);
     }
 
     @Test
     void S7_双源同时命中_来源行标注双源_KB独立配额注入() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byModelId.put(1L, List.of(row("车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9)));
-        FakeKbEmbMapper kb = new FakeKbEmbMapper();
-        kb.rows = List.of(kbRow("知识：充电功率常识（充电）\n7kW 家充为交流慢充。", 0.7));
-        CarRagService svc = newService(mapper, kb);
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "海狮08 动力与充电", 8);
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08", "PARAM_GROUP", "车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9),
+                urow("KB", null, "充电功率常识", "KB_CHUNK", "知识：充电功率常识（充电）\n7kW 家充为交流慢充。", 0.7));
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08 动力与充电", 8, List.of(1L));
         assertEquals(CarRagService.RagStatus.OK, r.status());
         assertTrue(r.context().contains("知识来源：车型数据 + 通用知识库"));
-        assertTrue(r.context().contains("【通用知识】"));
+        assertTrue(r.context().contains("【通用知识：充电功率常识】"));
         assertTrue(r.context().contains("车型：海狮08"));
     }
 
     @Test
     void S7_KB开关关闭_回退S62行为_未关联车型零注入() {
         FakeMapper mapper = new FakeMapper();
-        FakeKbEmbMapper kb = new FakeKbEmbMapper();
-        kb.rows = List.of(kbRow("知识：不应被检索（通用）\n内容", 0.99));
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "车型X", "MODEL_INFO", "车型：车型X\n车型块", 0.9),
+                urow("KB", null, "不应被检索", "KB_CHUNK", "知识：不应被检索（通用）\n内容", 0.85));
         AiProperties props = new AiProperties();
         props.setRagKbEnabled(false);
-        CarRagService svc = new CarRagService(mapper, kb, new FakeEmbeddingClient(), props);
-        assertEquals(CarRagService.RagResult.EMPTY, svc.retrieveForGeneration(List.of(), "query", 8));
-        // 已关联车型时车型域照常
-        mapper.byModelId.put(1L, List.of(row("车型块", 0.9)));
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+        // KB 关闭:KB 块被配额排除,车型块照常注入(S8 语义)
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of(1L));
         assertEquals(CarRagService.RagStatus.OK, r.status());
-        assertTrue(!r.context().contains("【通用知识】"));
+        assertTrue(!r.context().contains("不应被检索"));
     }
 
     @Test
     void S7_KB检索异常_整体标FAILED_车型块仍注入() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byModelId.put(1L, List.of(row("车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9)));
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08", "PARAM_GROUP", "车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9));
         FakeKbEmbMapper kb = new FakeKbEmbMapper();
         kb.byThrow = new RuntimeException("kb down");
         CarRagService svc = newService(mapper, kb);
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
-        assertEquals(CarRagService.RagStatus.FAILED, r.status());
+        // S8:生成链路只走统一检索;KB 直连 mapper(retrieveKb)异常不影响生成主链路 → OK
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of(1L));
+        assertEquals(CarRagService.RagStatus.OK, r.status());
     }
 
     private static Map<String, Object> kbRow(String text, double score) {
@@ -190,26 +219,101 @@ class CarRagServiceTest {
         return m;
     }
 
+    // ==================== S8 统一检索(去车型门禁) ====================
+
+    @Test
+    void S8_统一检索_未关联车型_命中车型块_来源行内标注() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("CAR", 55L, "海狮08EV", "MODEL_INFO", "车型：海狮08EV\n价格区间：239,900 - 279,900", 0.85),
+                urow("CAR", 55L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：基础参数\n长×宽×高：4810×1920×1675", 0.75),
+                urow("KB", null, "家用充电桩选择要点", "KB_CHUNK", "知识：家用充电桩选择要点（充电）\n功率选择。", 0.6));
+        CarRagService svc = newService(mapper);
+        // 未关联车型(空 anchor)——S8 后仍可命中车型价格块(文章18场景)
+        CarRagService.RagResult r = svc.retrieveForGeneration("深度分析海狮08定价逻辑，这个定价到底贵不贵？", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("知识来源：车型数据 + 通用知识库"));
+        assertTrue(r.context().contains("【车型数据：海狮08EV】"));
+        assertTrue(r.context().contains("【通用知识：家用充电桩选择要点】"));
+        assertTrue(r.context().contains("239,900"));
+    }
+
+    @Test
+    void S8_锚点加权_同分锚点车型块排前() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("CAR", 55L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200", 0.60),
+                urow("CAR", 39L, "大唐EV", "PARAM_GROUP", "车型：大唐EV\n参数分组：动力\n前电机最大功率（kW）：180", 0.70));
+        AiProperties props = new AiProperties();
+        props.setRagAnchorBoost(1.5);   // 放大系数让断言明确
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力对比", 4, List.of(55L));
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        int anchorIdx = r.context().indexOf("海狮08EV");
+        int otherIdx = r.context().indexOf("大唐EV");
+        assertTrue(anchorIdx >= 0 && otherIdx >= 0 && anchorIdx < otherIdx, "锚点车型块加权后应排在前");
+    }
+
+    @Test
+    void S8_旧签名委托_行为等于新签名锚点() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("CAR", 55L, "海狮08EV", "MODEL_INFO", "车型：海狮08EV\n价格区间：239,900 - 279,900", 0.85));
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult viaOld = svc.retrieveForGeneration(List.of(55L), "海狮08 价格", 8);
+        CarRagService.RagResult viaNew = svc.retrieveForGeneration("海狮08 价格", 8, List.of(55L));
+        assertEquals(viaNew.status(), viaOld.status());
+        assertEquals(viaNew.context(), viaOld.context());
+    }
+
+    @Test
+    void S8_统一检索异常_标FAILED() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedThrow = new RuntimeException("embedding down");
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of());
+        assertEquals(CarRagService.RagStatus.FAILED, r.status());
+    }
+
+    @Test
+    void S8_KB开关关闭_统一检索仍跑_KB块被排除() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("CAR", 55L, "海狮08EV", "MODEL_INFO", "车型：海狮08EV\n价格区间：239,900 - 279,900", 0.9),
+                urow("KB", null, "不应出现", "KB_CHUNK", "知识：不应出现（通用）\n内容", 0.85));
+        AiProperties props = new AiProperties();
+        props.setRagKbEnabled(false);
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08 价格", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("海狮08EV"));
+        assertTrue(!r.context().contains("不应出现"));
+        assertEquals("知识来源：车型数据", r.context().split("\n---\n")[0]);
+    }
+
     @Test
     void 多车型_其一失败_整体标FAILED_不得部分注入() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byThrow.put(1L, new RuntimeException("down"));
-        mapper.byModelId.put(2L, List.of(row("高相关", 0.9)));
+        // S8:统一检索无逐车型循环,单次异常即 FAILED(见 S8_统一检索异常_标FAILED)。
+        // 保留多锚点语义验证:两个锚点车型均正常命中 → OK
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "车型1", "PARAM_GROUP", "车型：车型1\n高相关", 0.9),
+                urow("CAR", 2L, "车型2", "PARAM_GROUP", "车型：车型2\n高相关2", 0.7));
         CarRagService svc = newService(mapper);
 
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L, 2L), "query", 8);
-        assertEquals(CarRagService.RagStatus.FAILED, r.status());
-        assertEquals("", r.context(), "任一车型失败即整体降级,不得部分注入");
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of(1L, 2L));
+        assertEquals(CarRagService.RagStatus.OK, r.status());
     }
 
     @Test
     void 跨车型合并_分数与块数正确() {
         FakeMapper mapper = new FakeMapper();
-        mapper.byModelId.put(1L, List.of(row("块一", 0.9)));
-        mapper.byModelId.put(2L, List.of(row("块二", 0.7)));
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "车型1", "PARAM_GROUP", "车型：车型1\n块一", 0.9),
+                urow("CAR", 2L, "车型2", "PARAM_GROUP", "车型：车型2\n块二", 0.7));
         CarRagService svc = newService(mapper);
 
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L, 2L), "query", 8);
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of());
         assertEquals(CarRagService.RagStatus.OK, r.status());
         assertEquals(2, r.hitCount());
         assertEquals(0.9, r.maxScore(), 1e-9);
@@ -221,25 +325,13 @@ class CarRagServiceTest {
         FakeMapper mapper = new FakeMapper();
         java.util.List<Map<String, Object>> rows = new java.util.ArrayList<>();
         for (int i = 0; i < 6; i++) {
-            Map<String, Object> m = new HashMap<>();
-            m.put("chunkText", "购车权益内容" + i + "很长的文本");
-            m.put("chunkType", "RIGHTS");
-            m.put("score", 0.9 - i * 0.01);
-            rows.add(m);
+            rows.add(urow("CAR", 1L, "海狮08EV", "RIGHTS", "车型：海狮08EV 购车权益内容" + i + "很长的文本", 0.9 - i * 0.01));
         }
-        Map<String, Object> p1 = new HashMap<>();
-        p1.put("chunkText", "参数分组：动力性能\n前电机最大功率（kW）：200");
-        p1.put("chunkType", "PARAM_GROUP");
-        p1.put("score", 0.62);
-        rows.add(p1);
-        Map<String, Object> p2 = new HashMap<>();
-        p2.put("chunkText", "参数分组：尺寸参数\n轴距（mm）：3030");
-        p2.put("chunkType", "PARAM_GROUP");
-        p2.put("score", 0.60);
-        rows.add(p2);
-        mapper.byModelId.put(1L, rows);
+        rows.add(urow("CAR", 1L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：动力性能\n前电机最大功率（kW）：200", 0.62));
+        rows.add(urow("CAR", 1L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：尺寸参数\n轴距（mm）：3030", 0.60));
+        mapper.unifiedRows = rows;
         CarRagService svc = newService(mapper);
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "海狮08EV", 4);
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08EV", 4, List.of(1L));
         assertEquals(CarRagService.RagStatus.OK, r.status());
         String ctx = r.context();
         assertTrue(ctx.contains("前电机最大功率"), "参数块必须入选");
@@ -249,21 +341,19 @@ class CarRagServiceTest {
     }
 
 
+
+
+
+
     @Test
     void 表头块_仅一行_被丢弃() {
         FakeMapper mapper = new FakeMapper();
-        Map<String, Object> header = new HashMap<>();
-        header.put("chunkText", "参数分组：海狮08EV参数表及配置表");
-        header.put("chunkType", "PARAM_GROUP");
-        header.put("score", 0.99);
-        Map<String, Object> param = new HashMap<>();
-        param.put("chunkText", "参数分组：动力性能\n前电机最大功率（kW）：200");
-        param.put("chunkType", "PARAM_GROUP");
-        param.put("score", 0.6);
-        mapper.byModelId.put(1L, java.util.List.of(header, param));
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08EV", "PARAM_GROUP", "参数分组：海狮08EV参数表及配置表", 0.99),
+                urow("CAR", 1L, "海狮08EV", "PARAM_GROUP", "参数分组：动力性能\n前电机最大功率（kW）：200", 0.6));
         CarRagService svc = newService(mapper);
 
-        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        CarRagService.RagResult r = svc.retrieveForGeneration("query", 8, List.of(1L));
         assertTrue(r.context().contains("前电机最大功率"));
         assertTrue(!r.context().contains("海狮08EV参数表及配置表"), "单行表头块必须丢弃");
     }
