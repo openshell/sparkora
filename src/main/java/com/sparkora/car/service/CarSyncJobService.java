@@ -2,6 +2,7 @@ package com.sparkora.car.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.car.dto.CleanStats;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.CarSyncJobEntity;
 import com.sparkora.mapper.CarModelMapper;
@@ -86,11 +87,19 @@ public class CarSyncJobService {
         List<Map<String, Object>> failedItems = new ArrayList<>();
         int success = 0;
         int failed = 0;
+        // 清洗方式聚合(可观测:RULE/AI/FALLBACK 汇总,随任务收尾日志输出)
+        int aggRule = 0, aggAi = 0, aggFallback = 0;
         for (String goodsId : goodsIds) {
             try {
                 // 先置 SYNCING 中间态,再入库(入库成功 persistModel 会置 SUCCESS)
                 markSyncing(goodsId);
-                modelService.syncOne(goodsId);
+                CarModelService.SyncOutcome outcome = modelService.syncOne(goodsId);
+                CleanStats st = outcome.cleanStats();
+                aggRule += st.getRule();
+                aggAi += st.getAi();
+                aggFallback += st.getFallback();
+                log.info("车型同步完成 goodsId={} name={} 清洗统计 RULE={} AI={} FALLBACK={}",
+                        goodsId, outcome.model().getName(), st.getRule(), st.getAi(), st.getFallback());
                 success++;
             } catch (Exception e) {
                 failed++;
@@ -106,6 +115,10 @@ public class CarSyncJobService {
             job.setFailed(failed);
             jobMapper.updateById(job);
         }
+        log.info("同步任务完成 jobId={} 清洗聚合 total={} RULE={} AI={} FALLBACK={} (fallbackPct={}%)",
+                jobId, aggRule + aggAi + aggFallback, aggRule, aggAi, aggFallback,
+                (aggRule + aggAi + aggFallback) == 0 ? 0
+                        : aggFallback * 100 / (aggRule + aggAi + aggFallback));
         finish(job, success, failed, failedItems);
     }
 

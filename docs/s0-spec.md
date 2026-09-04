@@ -222,6 +222,19 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - 修复生效前提：**重新同步车型**（旧表头块仍在库中，检索层已兜底过滤，但建议重同步清理）。
 - 生成时后端须运行 S6.2 代码（历史教训：S6.1 合入后进程未重启，生成仍走旧链路）。
 
+**数据清洗链路治理（S6b，2026-09-04；kb-clean-audit 任务，修复清洗可观测与切块质量）**：
+
+| 项 | 契约 |
+|---|---|
+| 清洗方式三态 | `car_param_clean.clean_method` ∈ `RULE`(规则引擎命中) / `AI`(LLM 兜底) / `FALLBACK`(双失败 STRING 原样,需人工关注)；**不再出现把兜底误标 RULE 的旧行为**,旧数据需重清洗刷新口径 |
+| 清洗统计 | `CleanStats`(RULE/AI/FALLBACK 计数)：随 `cleanForModel` 日志汇总、同步任务聚合日志(`fallbackPct`)、`GET /api/car/models/{id}/clean-stats` 按 method/valueType 分组查询(三角色可读) |
+| PARAM_GROUP 块首行 | 固定 `车型：<全名>`(消除 EV/DM-i 同系跨版本检索混淆,即 S6.2 P1 遗留项);块行文本 `参数名：清洗值` |
+| 清洗值展示 | 优先 `car_param_clean.param_value`,缺失回退 `raw_value`;NUMBER/LIST 类型且值不含单位时拼接单位(如 `2820mm`);清洗与原始值均缺省跳过该行 |
+| 向量重建 | `rebuildForModel`:embedding 并发(固定线程池 ≤4)+ 单块失败重试 1 次;完成日志输出「成功 X/失败 Z」,失败块记 sortOrder(消除静默丢块) |
+| 生效前提 | 切块口径变更**仅对新重建的车型生效**;存量 56 车型需逐个重建向量(体检发现 408/1293 块历史向量缺失,重建一并补齐) |
+
+体检报告（量化）见 `.trellis/tasks/09-04-kb-clean-audit/research/clean-audit-report.md`：规则引擎覆盖 98.8%+（口径可信度受旧误标影响，重清洗后复测）；AI 兜底 9 行中 4 行「无值清成空串」属错误输出（P2 建议：AI 返回空值视为失败不落库）；**31.6% 文档块无向量（历史静默丢失）**；单车型 39 清洗行 6432（占 60%）疑似多版本摊平，待核查。
+
 ---
 
 ## 7. 已定决策（S0 落地依据）

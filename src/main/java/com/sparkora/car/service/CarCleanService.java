@@ -2,6 +2,7 @@ package com.sparkora.car.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.car.dto.CleanStats;
 import com.sparkora.car.dto.ParamCleanResult;
 import com.sparkora.domain.entity.CarParamCleanEntity;
 import com.sparkora.domain.entity.CarParamEntity;
@@ -48,15 +49,16 @@ public class CarCleanService {
         this.json = json;
     }
 
-    /** 清洗某车型的全部参数(先清后插,幂等)。 */
+    /** 清洗某车型的全部参数(先清后插,幂等)。返回清洗方式统计(可观测,供同步任务与统计接口使用)。 */
     @Transactional
-    public void cleanForModel(Long modelId) {
+    public CleanStats cleanForModel(Long modelId) {
         cleanMapper.delete(new QueryWrapper<CarParamCleanEntity>().eq("model_id", modelId));
         List<CarVersionEntity> versions = versionMapper.selectList(
                 new QueryWrapper<CarVersionEntity>().eq("model_id", modelId).orderByAsc("sort_order"));
         List<CarParamEntity> params = paramMapper.selectList(
                 new QueryWrapper<CarParamEntity>().eq("model_id", modelId).orderByAsc("sort_order"));
 
+        CleanStats stats = new CleanStats();
         for (CarParamEntity p : params) {
             // 解析全版本值(下标对齐版本)
             List<String> values = parseValues(p.getValuesJson());
@@ -68,9 +70,12 @@ public class CarCleanService {
                 String raw = values.get(i);
                 ParamCleanResult r = cleanOne(p.getParamName(), raw);
                 if (r == null) continue;
+                stats.count(r.getCleanMethod());
                 insertClean(p, versionId, raw, r);
             }
         }
+        stats.logSummary(log, modelId);
+        return stats;
     }
 
     /** 清洗单个值:规则优先,规则覆盖不了走 AI。 */
@@ -80,12 +85,13 @@ public class CarCleanService {
         // 规则覆盖不了,AI 兜底
         ParamCleanResult ai = aiCleaner.clean(paramName, raw);
         if (ai != null) return ai;
-        // AI 也失败,降级为 STRING 原样
+        // AI 也失败,降级为 STRING 原样;method 标 FALLBACK(区别于规则命中 RULE / AI 兜底 AI,
+        // 供清洗质量统计与人工复核定位,勿再误标 RULE)
         ParamCleanResult fallback = new ParamCleanResult();
         fallback.setParamKey(paramName);
         fallback.setValueType("STRING");
         fallback.setValue(raw);
-        fallback.setCleanMethod("RULE");
+        fallback.setCleanMethod("FALLBACK");
         return fallback;
     }
 

@@ -8,6 +8,7 @@ import com.sparkora.car.dto.GoodsAttrListDto;
 import com.sparkora.car.dto.GoodsInfoDto;
 import com.sparkora.car.dto.GoodsParamsDto;
 import com.sparkora.car.dto.CarModelDetailDto;
+import com.sparkora.car.dto.CleanStats;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.CarParamCleanEntity;
 import com.sparkora.domain.entity.CarParamEntity;
@@ -110,6 +111,38 @@ public class CarModelService {
         return modelMapper.selectById(id);
     }
 
+    /**
+     * 单车型清洗质量统计(可观测,AC4/体检报告用)。
+     * 按 clean_method 分组计数;另给 value_type 分布与可疑 STRING 兜底计数。
+     * 注意:仅统计新口径数据(clean_method ∈ RULE/AI/FALLBACK);旧数据的 RULE 混入需重清洗后口径才可信。
+     */
+    public Map<String, Object> cleanStats(Long id) {
+        CarModelEntity m = modelMapper.selectById(id);
+        if (m == null) throw new IllegalArgumentException("车型不存在");
+        List<CarParamCleanEntity> cleans = cleanMapper.selectList(
+                new QueryWrapper<CarParamCleanEntity>().eq("model_id", id));
+        Map<String, Long> byMethod = cleans.stream().collect(
+                java.util.stream.Collectors.groupingBy(
+                        c -> c.getCleanMethod() == null ? "UNKNOWN" : c.getCleanMethod(),
+                        java.util.stream.Collectors.counting()));
+        Map<String, Long> byValueType = cleans.stream().collect(
+                java.util.stream.Collectors.groupingBy(
+                        c -> c.getValueType() == null ? "UNKNOWN" : c.getValueType(),
+                        java.util.stream.Collectors.counting()));
+        long fallbackString = cleans.stream()
+                .filter(c -> "FALLBACK".equals(c.getCleanMethod()))
+                .count();
+        long total = cleans.size();
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("modelName", m.getName());
+        out.put("total", total);
+        out.put("byMethod", byMethod);
+        out.put("byValueType", byValueType);
+        out.put("fallbackCount", fallbackString);
+        out.put("fallbackPct", total == 0 ? 0 : fallbackString * 100 / total);
+        return out;
+    }
+
     /** 车型详情聚合(含版本/分组/参数)。versionId 指定展示清洗参数的版本,为空取第一个版本。 */
     public CarModelDetailDto detail(Long id, Long versionId) {
         CarModelEntity m = modelMapper.selectById(id);
@@ -158,8 +191,10 @@ public class CarModelService {
     /**
      * 同步单个车型(按 goodsId)。幂等:已存在则更新,不存在则新建。
      * 网络采集无事务;入库短事务。由 CarSyncJobService 异步任务驱动。
+     *
+     * @return 同步结果:模型 + 清洗方式统计(可观测)。
      */
-    public CarModelEntity syncOne(String goodsId) {
+    public SyncOutcome syncOne(String goodsId) {
         // 1) 采集(无事务,慢)
         GoodsInfoDto info = client.goodsInfo(goodsId);
         GoodsParamsDto.ParamsData params = client.goodsParams(goodsId);
@@ -176,12 +211,15 @@ public class CarModelService {
         persistParams(model.getId(), params);
         // 2.5) 车型图片下载转存图床,写入图库(source='byd');单图失败不阻断整车型同步
         persistIntroImages(model, item);
-        // 3) 清洗参数(规则引擎 + AI 兜底)
-        cleanService.cleanForModel(model.getId());
+        // 3) 清洗参数(规则引擎 + AI 兜底);统计随清洗落库,同步任务记录进 job 明细
+        CleanStats stats = cleanService.cleanForModel(model.getId());
         // 4) 切分向量化(网络 embedding,无事务;基于清洗后数据)
         docService.rebuildForModel(model.getId());
-        return model;
+        return new SyncOutcome(model, stats);
     }
+
+    /** 同步结果:车型 + 清洗方式统计(供同步任务聚合记录)。 */
+    public record SyncOutcome(CarModelEntity model, CleanStats cleanStats) {}
 
     /**
      * 车型介绍图(introduce URL 列表)下载转存图床,写入 sparkora_image_asset(source='byd',全局图库)。

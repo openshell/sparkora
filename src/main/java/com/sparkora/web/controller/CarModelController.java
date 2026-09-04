@@ -104,14 +104,18 @@ public class CarModelController {
         return R.fail(400, "全量同步已取消,请在同步页选择车型后同步");
     }
 
-    /** 同步单个车型(按 goodsId)。 */
+    /** 同步单个车型(按 goodsId)。返回车型与清洗统计摘要。 */
     @PostMapping("/models/{id}/sync")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<CarModelEntity> syncOne(@PathVariable Long id) {
+    public R<Map<String, Object>> syncOne(@PathVariable Long id) {
         try {
             CarModelEntity m = service.get(id);
             if (m == null) return R.fail(404, "车型不存在");
-            return R.ok(service.syncOne(m.getGoodsId()));
+            CarModelService.SyncOutcome outcome = service.syncOne(m.getGoodsId());
+            Map<String, Object> data = new java.util.LinkedHashMap<>();
+            data.put("model", outcome.model());
+            data.put("cleanStats", outcome.cleanStats());
+            return R.ok(data);
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
         }
@@ -123,6 +127,17 @@ public class CarModelController {
         try {
             service.delete(id);
             return R.ok();
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+    }
+
+    /** 单车型清洗质量统计(可观测):按 clean_method 分组计数 + 可疑 STRING 兜底占比。 */
+    @GetMapping("/models/{id}/clean-stats")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<Map<String, Object>> cleanStats(@PathVariable Long id) {
+        try {
+            return R.ok(service.cleanStats(id));
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
         }

@@ -72,14 +72,49 @@ public class CarDocService {
         // 2) 购车权益块(按条切)
         docs.addAll(buildRightsDocs(m));
         // 3) 参数分组块(核心,仅 PARAM_GROUP 粒度)
-        docs.addAll(buildParamGroupDocs(modelId));
+        docs.addAll(buildParamGroupDocs(m));
 
+        // S6b:embedding 调用并发化(固定小线程池,不随车型数膨胀)+ 单块失败重试 1 次;
+        // 结束输出成功/失败计数,失败块记 id——消除「静默丢块」与千次串行 HTTP。
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.min(4, Math.max(1, docs.size())));
+        java.util.List<java.util.concurrent.Callable<Boolean>> tasks = new ArrayList<>();
+        java.util.List<CarDocEntity> failedDocs = java.util.Collections.synchronizedList(new ArrayList<>());
+        java.util.concurrent.atomic.AtomicInteger okCount = new java.util.concurrent.atomic.AtomicInteger();
         for (CarDocEntity doc : docs) {
-            try {
-                insertDocWithEmbedding(doc);
-            } catch (Exception e) {
-                log.warn("文档块向量化失败 model={} type={}: {}", modelId, doc.getChunkType(), e.getMessage());
-            }
+            tasks.add(() -> {
+                try {
+                    try {
+                        insertDocWithEmbedding(doc);
+                    } catch (Exception first) {
+                        // 单块失败重试 1 次( embedding 服务抖动场景);重试仍失败才计失败
+                        log.warn("文档块向量化失败将重试 model={} type={} err={}", modelId, doc.getChunkType(), first.getMessage());
+                        insertDocWithEmbedding(doc);
+                    }
+                    okCount.incrementAndGet();
+                    return Boolean.TRUE;
+                } catch (Exception e) {
+                    failedDocs.add(doc);
+                    log.warn("文档块向量化失败(已重试) model={} type={} sortOrder={} err={}",
+                            modelId, doc.getChunkType(), doc.getSortOrder(), e.getMessage());
+                    return Boolean.FALSE;
+                }
+            });
+        }
+        try {
+            pool.invokeAll(tasks);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            pool.shutdown();
+        }
+        int total = docs.size();
+        int failed = failedDocs.size();
+        if (failed > 0) {
+            log.warn("车型向量重建完成(有缺失) model={} 成功 {}/{} 失败块 sortOrder={}",
+                    modelId, okCount.get(), total, failedDocs.stream().map(CarDocEntity::getSortOrder).toList());
+        } else {
+            log.info("车型向量重建完成 model={} 成功 {}/{}", modelId, okCount.get(), total);
         }
     }
 
@@ -150,8 +185,11 @@ public class CarDocService {
         return out;
     }
 
-    /** 参数分组块(核心,仅 PARAM_GROUP 粒度;基于清洗后数据)。 */
-    private List<CarDocEntity> buildParamGroupDocs(Long modelId) {
+    /** 参数分组块(核心,仅 PARAM_GROUP 粒度;基于清洗后数据)。
+     *  S6b:块文本改用清洗值(「参数名:值+单位」,清洗缺失回退原始值),首行加车型全名——
+     *  消除跨动力版本(EV/DM-i)同名车系检索混淆(S6.2 P1 遗留),并让清洗价值传导到检索层。 */
+    private List<CarDocEntity> buildParamGroupDocs(CarModelEntity m) {
+        Long modelId = m.getId();
         List<CarDocEntity> out = new ArrayList<>();
         List<CarParamGroupEntity> groups = groupMapper.selectList(
                 new QueryWrapper<CarParamGroupEntity>().eq("model_id", modelId).orderByAsc("sort_order"));
@@ -177,9 +215,12 @@ public class CarDocService {
                     .count();
             if (meaningful < 2) continue;
             StringBuilder sb = new StringBuilder();
+            sb.append("车型：").append(nv(m.getName())).append("\n");
             sb.append("参数分组：").append(g.getGroupName()).append("\n");
             for (CarParamCleanEntity c : cleans) {
-                sb.append(c.getParamKey()).append("：").append(nv(c.getParamValue())).append("\n");
+                String display = cleanDisplay(c);
+                if (display == null) continue;   // 清洗与原始值均缺失,跳过该行
+                sb.append(c.getParamKey()).append("：").append(display).append("\n");
             }
             CarDocEntity d = new CarDocEntity();
             d.setModelId(modelId);
@@ -193,4 +234,23 @@ public class CarDocService {
     }
 
     private static String nv(String s) { return s == null || s.isBlank() ? "—" : s; }
+
+    /**
+     * 清洗值展示文本(块内「参数名：值」的值部分)。
+     * 优先清洗主值(clean.param_value);缺失回退原始值(rawValue)。
+     * NUMBER/LIST 类型且值本身不含单位时拼接单位(如 2820→2820mm),让块文本自带量纲、利于向量检索对齐。
+     * ENUM(有/无/可选装)与 STRING 保持原样不拼单位。
+     */
+    static String cleanDisplay(CarParamCleanEntity c) {
+        String v = c.getParamValue();
+        if (v == null || v.isBlank()) v = c.getRawValue();
+        if (v == null || v.isBlank()) return null;
+        String unit = c.getUnit();
+        String type = c.getValueType();
+        boolean numericLike = "NUMBER".equals(type) || "LIST".equals(type);
+        if (numericLike && unit != null && !unit.isBlank() && !v.contains(unit)) {
+            return v + unit;
+        }
+        return v;
+    }
 }

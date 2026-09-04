@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "thinking guides: cross-layer(表结构→服务→检索→生成跨层)与 code-reuse(检索合并/配额逻辑复用 S6.2)"}
+{"file": ".trellis/tasks/09-04-kb-generalize/research/current-chain.md", "reason": "现状链路与可复用资产、测试假件模式"}

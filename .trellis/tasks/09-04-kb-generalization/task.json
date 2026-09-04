@@ -1,0 +1,29 @@
+{
+  "id": "kb-generalization",
+  "name": "kb-generalization",
+  "title": "汽车知识库泛化与清洗链路治理",
+  "description": "父任务:车型库泛化为通用汽车知识库(向量检索支撑非对比类文章)+比亚迪数据清洗链路体检与优化,统揽子任务与集成验收",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-09-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-04-kb-generalize",
+    "09-04-kb-clean-audit"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
