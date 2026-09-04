@@ -33,22 +33,28 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { DataAnalysis, Loading } from '@element-plus/icons-vue'
 import http from '../../../api/http'
 
 const props = defineProps({ briefId: { type: Number, required: true } })
+const emit = defineEmits(['done'])
 const agents = ref([])
 const toolHealth = ref({ SEARXNG: false, TAVILY: false })
 const webEnabled = ref(true)
 const polling = ref(false)
 let timer = null
+let doneEmitted = false
 
-const allDone = computed(() => agents.value.length > 0 && agents.value.every(a => a.status !== 'RUNNING' && a.status !== 'PENDING'))
+const allDone = computed(() => agents.value.length > 0
+  && agents.value.every(a => a.status === 'DONE' || a.status === 'FALLBACK' || a.status === 'FAILED'))
 const pct = computed(() => agents.value.length === 0 ? 0
-  : Math.round(agents.value.filter(a => a.status !== 'RUNNING' && a.status !== 'PENDING').length / agents.value.length * 100))
+  : Math.round(agents.value.filter(a => a.status === 'DONE' || a.status === 'FALLBACK' || a.status === 'FAILED').length / agents.value.length * 100))
 const factCount = (a) => {
   try { const f = typeof a.factsJson === 'string' ? JSON.parse(a.factsJson) : a.factsJson; return (f.facts || []).length } catch { return 0 }
+}
+const gapCount = (a) => {
+  try { const f = typeof a.factsJson === 'string' ? JSON.parse(a.factsJson) : a.factsJson; return (f.gaps || []).length } catch { return 0 }
 }
 const tagType = (s) => ({ DONE: 'success', FALLBACK: 'warning', FAILED: 'danger', RUNNING: 'warning', PENDING: 'info' }[s] || 'info')
 const label = (s) => ({ DONE: '已完成', FALLBACK: '降级完成', FAILED: '失败', RUNNING: '进行中', PENDING: '排队' }[s] || s)
@@ -60,7 +66,7 @@ const poll = async () => {
     const d = data.data || {}
     if (d.agents) {
       const arr = typeof d.agents === 'string' ? JSON.parse(d.agents) : d.agents
-      agents.value = arr.map(a => ({ ...a, status: a.status === 'DONE' || a.status === 'FALLBACK' || a.status === 'FAILED' ? a.status : 'RUNNING' }))
+      agents.value = arr.map(a => ({ ...a, status: a.status || 'PENDING' }))   // 保留后端真实状态
       toolHealth.value = d.toolHealth || toolHealth.value
     }
   } catch { /* 轮询失败静默,下次再试 */ }
@@ -68,13 +74,20 @@ const poll = async () => {
 }
 const routeId = () => window.location.pathname.split('/')[2]
 
-let tick = 0
+// 全部完成 → 通知父组件(仅一次),并停止轮询
+watch(allDone, (v) => {
+  if (v && !doneEmitted) {
+    doneEmitted = true
+    clearInterval(timer)
+    emit('done')
+  }
+})
+
 onMounted(() => {
   poll()
-  timer = setInterval(() => { if (++tick % 2 === 0) poll() }, 4000)   // 2s 一次(隔次避免堆积)
+  timer = setInterval(poll, 2000)   // 2s 轮询逐 agent 进度
 })
 onUnmounted(() => clearInterval(timer))
-defineExpose({ allDone })
 </script>
 
 <style scoped>

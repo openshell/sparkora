@@ -38,7 +38,7 @@
         <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
         <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
         <ClarifyForm v-else-if="deepStage === 'CLARIFIED'" :questions="deepQuestions" :locked="true" :answers="deepAnswers" />
-        <ResearchProgress v-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'" :brief-id="deepBriefId" />
+        <ResearchProgress v-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'" :brief-id="deepBriefId" @done="onResearchDone" />
         <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
         <div class="deep-actions">
           <el-button v-if="deepStage === 'NONE' && !deepMode" @click="deepMode = true">深度模式(先研究再写)</el-button>
@@ -220,8 +220,7 @@ const onGenerateBrief = async () => {
     }
     // 成功/失败都要让布局层拿到最新 status(生成中/回退),供轮询与按钮态使用
     await store.ensureProject(route.params.id, { force: true })
-    // 生成成功(READY)后自动进入下一步:版本生成
-    if (res.code === 0) gotoVersions()
+    // 生成成功后停留在简报页展示简报,由用户点「进入多版本生成」再进版本页(不再自动跳转)
   } catch (e) {
     // 失败已由后端回写 lastBriefError 并回退状态,提示交给 alert 与拦截器
     await store.ensureProject(route.params.id, { force: true })
@@ -286,15 +285,21 @@ const onDeepRun = async () => {
   deepBusy.value = true
   deepStage.value = 'RESEARCHING'
   try {
+    // run 为异步启动(202 语义):立即返回,后台逐 agent 执行;进度由 ResearchProgress 2s 轮询展示
     const { data } = await http.post(`/projects/${route.params.id}/deep/run`, { briefId: deepBriefId.value })
     if (data.code !== 0) throw new Error(data.msg)
-    // 完成后拉一次 status 取手册
+  } catch (e) { deepStage.value = 'CLARIFIED'; ElMessage.error(e?.response?.data?.msg || e.message || '研究启动失败') }
+  finally { deepBusy.value = false }
+}
+
+// ResearchProgress 全部 agent 完成时触发:拉手册并切到 RESEARCH_DONE
+const onResearchDone = async () => {
+  try {
     const st = await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)
     deepFactSheet.value = st.data.data?.factSheet || null
     deepStage.value = 'RESEARCH_DONE'
     ElMessage.success('研究完成,事实手册已生成')
-  } catch (e) { deepStage.value = 'CLARIFIED'; ElMessage.error(e?.response?.data?.msg || '研究失败') }
-  finally { deepBusy.value = false }
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || '拉取事实手册失败') }
 }
 
 const onDeepGenerate = async () => {
