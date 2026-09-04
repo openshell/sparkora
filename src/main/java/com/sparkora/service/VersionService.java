@@ -115,11 +115,9 @@ public class VersionService {
         List<ArticleVersionEntity> created = new ArrayList<>();
         List<String> perVersionErrors = new ArrayList<>();
         // S6.1 RAG 必查:「必查+降级可见」。检索一次供全部版本共用(同一项目同一主题,无需逐版重复检索);
-        // 失败/低置信不阻断,状态随每版落库,并在 prompt 中向 AI 声明要求 factRisks 标注数据缺失。
+        // S7 双源:未关联车型也查通用知识库(空 modelIds 由 retrieveForGeneration 内部处理,不再短路)。
         List<Long> modelIds = carService.listModelIds(projectId);
-        CarRagService.RagResult rag = modelIds.isEmpty()
-                ? CarRagService.RagResult.EMPTY
-                : ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
+        CarRagService.RagResult rag = ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
         try {
             // 2) 每个选中风格生成一版
             int i = 0;

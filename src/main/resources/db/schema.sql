@@ -317,3 +317,38 @@ CREATE TABLE IF NOT EXISTS sparkora_article_project_car (
 );
 CREATE INDEX IF NOT EXISTS idx_project_car_project ON sparkora_article_project_car(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_car_model ON sparkora_article_project_car(car_model_id);
+
+-- ============================================================================
+-- S7:通用汽车知识库(车型库泛化;kb-generalize 任务)
+-- 与车型域(sparkora_car_doc)并行:手工知识条目 → 切块 → 向量,支撑非车型对比主题检索。
+-- 设计:doc/chunk/embedding 三表,以 doc 为根,无 model_id 约束;chunk 统一类型 KB_CHUNK。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sparkora_kb_doc (
+    id          BIGSERIAL PRIMARY KEY,
+    title       VARCHAR(200) NOT NULL,              -- 知识标题(如「家用充电桩选择要点」)
+    domain      VARCHAR(50)  NOT NULL DEFAULT '通用',-- 领域标签: 通用/充电/保养/政策/技术科普…
+    content     TEXT         NOT NULL,              -- 原始正文(纯文本/Markdown)
+    enabled     BOOLEAN      NOT NULL DEFAULT TRUE, -- 停用后重建向量时跳过(检索层无特判)
+    created_by  VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     SMALLINT     NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sparkora_kb_chunk (
+    id          BIGSERIAL PRIMARY KEY,
+    doc_id      BIGINT       NOT NULL REFERENCES sparkora_kb_doc(id),
+    seq         INT          NOT NULL,              -- 块序号(同 doc 内连续)
+    chunk_text  TEXT         NOT NULL,              -- 首行固定「知识:<title>(<domain>)」
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_doc ON sparkora_kb_chunk(doc_id);
+
+CREATE TABLE IF NOT EXISTS sparkora_kb_chunk_embedding (
+    id          BIGSERIAL PRIMARY KEY,
+    chunk_id    BIGINT       NOT NULL REFERENCES sparkora_kb_chunk(id),
+    embedding   vector(1024) NOT NULL,              -- Qwen3-Embedding-8B,与 car_doc_embedding 同维
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec ON sparkora_kb_chunk_embedding
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);

@@ -207,6 +207,8 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 |---|---|---|
 | `AI_RAG_MIN_SCORE` | `0.3` | 逐块相似度门槛，低于不注入（沿用 S6 原硬编码值） |
 | `AI_RAG_REJECT_SCORE` | `0.5` | 整体置信度门槛：全部命中块的最高相似度低于该值 → `LOW_CONFIDENCE` 全部抛弃 |
+| `AI_RAG_KB_TOPK` | `4` | 通用知识库生成检索注入块数上限（与车型域配额独立；§6c） |
+| `AI_RAG_KB_ENABLED` | `true` | 通用知识库总开关，false 回退 S6.2 纯车型域（§6c） |
 
 **诚实边界**：相似度衡量**相关性**而非事实正确性——知识库本身存错的数据会以高相似度被当作权威注入；防错依赖入库源头（比亚迪同步 + 人工清洗），检索门槛不承诺拦截知识库错误数据。
 
@@ -235,6 +237,46 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 
 体检报告（量化）见 `.trellis/tasks/09-04-kb-clean-audit/research/clean-audit-report.md`：规则引擎覆盖 98.8%+（口径可信度受旧误标影响，重清洗后复测）；AI 兜底 9 行中 4 行「无值清成空串」属错误输出（P2 建议：AI 返回空值视为失败不落库）；**31.6% 文档块无向量（历史静默丢失）**；单车型 39 清洗行 6432（占 60%）疑似多版本摊平，待核查。
 
+### 6c. 通用汽车知识库「KB 双源检索」（S7，2026-09-04）
+
+**语义**：知识来源从「仅车型域」扩展为**双源**——车型域（BYD 同步，既有）+ 通用域（手工录入知识，新增）。项目**未关联车型时生成（简报/正文）仍必查通用域**，不再零注入；已关联车型时双源独立配额合并。四态状态机与降级语义（§6b）不变。
+
+**数据层（schema.sql S7 区块，幂等）**：
+
+| 表 | 字段 | 说明 |
+|---|---|---|
+| `sparkora_kb_doc` | id / title(≤200) / domain(默认「通用」) / content / enabled / created_by / 审计字段 / deleted | 手工知识条目;逻辑删 |
+| `sparkora_kb_chunk` | id / doc_id FK / seq / chunk_text / created_at | 检索块;chunk_text 首行固定「知识：<title>（<domain>）」 |
+| `sparkora_kb_chunk_embedding` | id / chunk_id FK / embedding vector(1024) / created_at | 向量;ivfflat cosine lists=100(与 car_doc_embedding 同参) |
+
+**服务与切块**：`com.sparkora.kb.service.KbDocService` — create/update/delete/list/get/rebuild；切块：空行分段、单段 ≤500 字符、超长按句读（。；；！？）切分合并、段内换行转空格；重建幂等（先物理清 chunk+embedding 再重嵌）；embedding 单块失败 warn+计数（EmbedStats total/success/failed），块缺失用 rebuild 补齐。
+
+**API（`/api/kb`，@PreAuthorize：读=三角色,写=ADMIN/EDITOR）**：
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/kb/docs` | 列表(含 chunkCount) |
+| GET | `/api/kb/docs/{id}` | 详情(含 content) |
+| POST | `/api/kb/docs` | 新建(@Valid KbDocSaveDto,自动切块向量化) |
+| PUT | `/api/kb/docs/{id}` | 编辑(自动重建;enabled=false 清块) |
+| DELETE | `/api/kb/docs/{id}` | 删除(逻辑删文档+物理清块) |
+| POST | `/api/kb/docs/{id}/rebuild` | 手动重建,返回 {total,success,failed} |
+
+**检索契约（`retrieveForGeneration` S7 升级）**：
+
+| 项 | 行为 |
+|---|---|
+| 车型域 | modelIds 非空：S6.2 分层配额+参数子查询，行为不变 |
+| 通用域 | `AI_RAG_KB_ENABLED=true` 时**始终检索**（含未关联车型），独立配额 `AI_RAG_KB_TOPK`(默认 4)，与车型域互不挤占 |
+| 来源标注 | 上下文首行「知识来源：车型数据 / 通用知识库 / 车型数据 + 通用知识库」；KB 块带「【通用知识】」前缀 |
+| 覆盖度声明 | coveredText 仅统计车型参数块，KB 块不参与「参数覆盖」语义 |
+| 状态判定 | 任一域异常 → FAILED（另一域正常结果仍注入，降级可见非硬阻断）；双源合并后判定同 §6b（rawHit==0→NO_KNOWLEDGE，maxScore<reject→LOW_CONFIDENCE，其余 OK） |
+| 回退 | `AI_RAG_KB_ENABLED=false` 回退 S6.2 纯车型域行为（未关联车型=零注入） |
+
+**前端**：`/kb` 知识库页（列表卡片/新建编辑抽屉/删除确认/重建向量含失败提示；移动端单列），TopBar「知识库」入口。
+
+**配置**：`AI_RAG_KB_TOPK`(默认 4) / `AI_RAG_KB_ENABLED`(默认 true)，见 §9 配置表。
+
 ---
 
 ## 7. 已定决策（S0 落地依据）
@@ -260,6 +302,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | axonhub 统一入口 | ⏸ S0 仅预留配置类，不调 AI |
 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS` | 文生图 / **图生图**（axonhub，多模型逗号分隔轮询） | ✅ S3b 启用 |
 | `AI_RAG_MIN_SCORE` / `AI_RAG_REJECT_SCORE` | 知识库 RAG 检索门槛(逐块/整体;契约见 §6b) | ✅ S6.1 启用 |
+| `AI_RAG_KB_TOPK` / `AI_RAG_KB_ENABLED` | 通用知识库检索配额/总开关(契约见 §6c) | ✅ S7 启用 |
 | `IMAGE_STORAGE_DIR` | 数据盘目录（S6 起图片不再落本地；仅 wenyan 渲染临时文件落位） | ✅ S3b 启用 |
 | `WECHAT_*` | 公众号草稿发布 | ⏸ **S5 经 wenyan-server 发布(微信凭据配在 server 端,Sparkora 不直连微信)** |
 | `WENYAN_MCP_*` | wenyan 预览/发布 | ✅ S5 启用(SERVER_URL/SERVER_API_KEY/PUBLISH_TIMEOUT_MS;发布通道 = 远程 wenyan-server) |

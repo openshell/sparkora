@@ -21,11 +21,15 @@ import java.util.Map;
 public class CarRagService {
 
     private final CarDocEmbeddingMapper embMapper;
+    private final com.sparkora.mapper.KbChunkEmbeddingMapper kbEmbMapper;
     private final EmbeddingClient embeddingClient;
     private final AiProperties aiProps;
 
-    public CarRagService(CarDocEmbeddingMapper embMapper, EmbeddingClient embeddingClient, AiProperties aiProps) {
+    public CarRagService(CarDocEmbeddingMapper embMapper,
+                         com.sparkora.mapper.KbChunkEmbeddingMapper kbEmbMapper,
+                         EmbeddingClient embeddingClient, AiProperties aiProps) {
         this.embMapper = embMapper;
+        this.kbEmbMapper = kbEmbMapper;
         this.embeddingClient = embeddingClient;
         this.aiProps = aiProps;
     }
@@ -146,19 +150,32 @@ public class CarRagService {
      *   检索过程异常(embedding 挂了等)  → FAILED(生成继续,调用方需提示 AI 标注数据缺失)
      *   其余(命中且过整体门槛)          → OK(注入上下文)
      *
-     * @param modelIds 车型 id 列表(空/全 null → NO_KNOWLEDGE)
+     * S7 双源升级:
+     *   - 车型域(modelIds 非空):沿用 S6.2 分层配额+子查询,行为不变;
+     *   - 通用域(KB,AI_RAG_KB_ENABLED 时):始终检索,独立配额 ragKbTopk(与车型域互不挤占),
+     *     块注入时加「【通用知识】」前缀;未关联车型(modelIds 空)不再短路,仍查通用域;
+     *   - 覆盖度声明(coveredText)仅统计车型参数块(KB 块不参与「参数覆盖」语义);
+     *   - 多源失败:任一域异常 → FAILED(语义不变),但另一域正常结果仍注入(降级可见,非硬阻断)。
+     *
+     * @param modelIds 车型 id 列表(可空;空=未关联车型,仅查通用域)
      * @param query    查询文本(主查询)
-     * @param topK     每车型每查询返回条数
+     * @param topK     每车型每查询返回条数(车型域)
      */
     public RagResult retrieveForGeneration(List<Long> modelIds, String query, int topK) {
-        if (modelIds == null || modelIds.isEmpty() || query == null || query.isBlank()) {
+        if (query == null || query.isBlank()) {
+            return RagResult.EMPTY;
+        }
+        boolean hasModels = modelIds != null && modelIds.stream().anyMatch(java.util.Objects::nonNull);
+        if (!hasModels && !aiProps.isRagKbEnabled()) {
+            // 未关联车型且通用域关闭 → S6.2 原行为(无知识对象)
             return RagResult.EMPTY;
         }
         double minScore = aiProps.getRagMinScore();
         double rejectScore = aiProps.getRagRejectScore();
         List<TypedHit> merged = new ArrayList<>();
         boolean anyFailure = false;
-        for (Long modelId : modelIds) {
+        List<TypedHit> kbHits = List.of();
+        for (Long modelId : modelIds == null ? List.<Long>of() : modelIds) {
             if (modelId == null) continue;
             try {
                 // 主查询
@@ -178,12 +195,29 @@ public class CarRagService {
                 log.warn("生成前知识库检索失败 modelId={} query={}: {}", modelId, query, e.getMessage());
             }
         }
+        // 通用域检索(S7):独立配额,不与车型域混算
+        if (aiProps.isRagKbEnabled()) {
+            try {
+                kbHits = retrieveKb(query, aiProps.getRagKbTopk());
+            } catch (Exception e) {
+                anyFailure = true;
+                log.warn("生成前通用知识库检索失败 query={}: {}", query, e.getMessage());
+            }
+        }
         int rawHit = 0;
         double maxScore = 0;
         for (TypedHit h : merged) {
             if (h.score() < minScore) continue;
             rawHit++;
             maxScore = Math.max(maxScore, h.score());
+        }
+        // KB 块并入统计(逐块门槛同 minScore;maxScore 跨两域取最大)
+        java.util.List<TypedHit> kbPassed = new java.util.ArrayList<>();
+        for (TypedHit h : kbHits) {
+            if (h.score() < minScore) continue;
+            rawHit++;
+            maxScore = Math.max(maxScore, h.score());
+            kbPassed.add(h);
         }
         if (anyFailure) {
             return new RagResult(RagStatus.FAILED, "", rawHit, maxScore);
@@ -198,16 +232,43 @@ public class CarRagService {
             return new RagResult(RagStatus.LOW_CONFIDENCE, "", rawHit, maxScore);
         }
 
-        // 分层配额去重合并:参数块优先,权益/特性类合计不超过 1/3;表头块(仅 1 行)丢弃
-        List<TypedHit> selected = applyQuota(merged, topK * Math.max(1, modelIds.size()));
+        // 知识来源行(S7):前端展示与 prompt 均可见双源构成
+        String sourceLine = kbPassed.isEmpty() ? "知识来源：车型数据" 
+                : (merged.isEmpty() ? "知识来源：通用知识库" : "知识来源：车型数据 + 通用知识库");
+        // 分层配额去重合并(车型域):参数块优先,权益/特性类合计不超过 1/3;表头块(仅 1 行)丢弃
+        List<TypedHit> selected = applyQuota(merged, topK * Math.max(1,
+                modelIds == null ? 0 : (int) modelIds.stream().filter(java.util.Objects::nonNull).count()));
         StringBuilder sb = new StringBuilder();
         StringBuilder covered = new StringBuilder();
+        if (!merged.isEmpty() || !kbPassed.isEmpty()) sb.append(sourceLine).append("\n---\n");
+        // KB 块独立配额注入(带来源前缀,不参与车型参数覆盖度统计)
+        for (TypedHit h : kbPassed) {
+            sb.append("【通用知识】").append(h.chunkText()).append("\n---\n");
+        }
         for (TypedHit h : selected) {
             sb.append(h.chunkText()).append("\n---\n");
             covered.append(extractParamSummary(h.chunkText()));
         }
-        log.info("RAG 分层配额检索完成 modelIds={} raw={} selected={} maxScore={}", modelIds, rawHit, selected.size(), maxScore);
+        log.info("RAG 分层配额检索完成 modelIds={} raw={} selected={} kb={} maxScore={}",
+                modelIds, rawHit, selected.size(), kbPassed.size(), maxScore);
         return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString());
+    }
+
+    /**
+     * 通用域检索(S7):全库 top-K,无车型约束。供 retrieveForGeneration 与 KB 问答使用。
+     * 返回 TypedHit(chunkType 固定 "KB_CHUNK")。
+     */
+    public List<TypedHit> retrieveKb(String query, int topK) {
+        if (query == null || query.isBlank() || topK <= 0) return List.of();
+        String vec = embeddingClient.embed(query);
+        List<Map<String, Object>> rows = kbEmbMapper.searchTopK(vec, topK);
+        List<TypedHit> hits = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
+            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
+            hits.add(new TypedHit(text, "KB_CHUNK", score));
+        }
+        return hits;
     }
 
     /** 查询文本中包含的参数关键词 → 子查询(「参数词 + 车型上下文」由调用方模型名已含于 query 时自动生效)。 */

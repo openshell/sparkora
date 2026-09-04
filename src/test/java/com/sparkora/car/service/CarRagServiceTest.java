@@ -13,14 +13,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * S6.1「必查+降级可见」门槛逻辑单测(纯 Mockito,不连 PG/embedding)。
- * 覆盖:OK / LOW_CONFIDENCE(整体抛弃,context 必须为空) / FAILED(异常不抛出) / NO_KNOWLEDGE(无对象)。
+ * S6.1「必查+降级可见」门槛逻辑单测(手写假件,不连 PG/embedding)。
+ * 覆盖:OK / LOW_CONFIDENCE(整体抛弃,context 必须为空) / FAILED(异常不抛出) / NO_KNOWLEDGE(无对象);
+ * S7 扩展:双源合并(KB 块带【通用知识】前缀)/ 未关联车型仍查 KB / KB 开关关闭 / KB 异常→FAILED。
  */
 class CarRagServiceTest {
 
     private CarRagService newService(FakeMapper mapper) {
-        AiProperties props = new AiProperties(); // 默认 ragMinScore=0.3 / ragRejectScore=0.5
-        return new CarRagService(mapper, new FakeEmbeddingClient(), props);
+        return newService(mapper, new FakeKbEmbMapper());
+    }
+
+    private CarRagService newService(FakeMapper mapper, FakeKbEmbMapper kbMapper) {
+        AiProperties props = new AiProperties(); // 默认 ragMinScore=0.3 / ragRejectScore=0.5 / kbTopk=4 / kbEnabled=true
+        return new CarRagService(mapper, kbMapper, new FakeEmbeddingClient(), props);
     }
 
     /** 手写 embedding 客户端假实现(固定返回合法向量字符串,不发起 HTTP)。 */
@@ -49,6 +54,24 @@ class CarRagServiceTest {
             RuntimeException e = byThrow.get(modelId);
             if (e != null) throw e;
             return byModelId.getOrDefault(modelId, List.of());
+        }
+    }
+
+    /** KB 向量 mapper 假实现(S7 双源):byRows → 检索行;byThrow → 抛异常。 */
+    static class FakeKbEmbMapper implements com.sparkora.mapper.KbChunkEmbeddingMapper {
+        List<Map<String, Object>> rows = List.of();
+        RuntimeException byThrow = null;
+
+        @Override
+        public int insert(Long chunkId, String embedding) { return 0; }
+
+        @Override
+        public int deleteByDocId(Long docId) { return 0; }
+
+        @Override
+        public List<Map<String, Object>> searchTopK(String queryVec, int limit) {
+            if (byThrow != null) throw byThrow;
+            return rows.size() > limit ? rows.subList(0, limit) : rows;
         }
     }
 
@@ -98,9 +121,70 @@ class CarRagServiceTest {
 
     @Test
     void 无车型对象_状态NO_KNOWLEDGE() {
+        // S7:未关联车型但 KB 开启且 KB 无命中 → 仍为 EMPTY(NO_KNOWLEDGE)
         CarRagService svc = newService(new FakeMapper());
         assertEquals(CarRagService.RagResult.EMPTY, svc.retrieveForGeneration(List.of(), "query", 8));
         assertEquals(CarRagService.RagResult.EMPTY, svc.retrieveForGeneration(null, "query", 8));
+    }
+
+    @Test
+    void S7_未关联车型_仍检索通用域并注入() {
+        FakeKbEmbMapper kb = new FakeKbEmbMapper();
+        kb.rows = List.of(kbRow("知识：家用充电桩选择要点（充电）\n看车型最大充电功率。", 0.8));
+        CarRagService svc = newService(new FakeMapper(), kb);
+        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(), "充电桩怎么选", 8);
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("知识来源：通用知识库"));
+        assertTrue(r.context().contains("【通用知识】知识：家用充电桩选择要点"));
+        assertTrue(r.maxScore() >= 0.8);
+    }
+
+    @Test
+    void S7_双源同时命中_来源行标注双源_KB独立配额注入() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.byModelId.put(1L, List.of(row("车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9)));
+        FakeKbEmbMapper kb = new FakeKbEmbMapper();
+        kb.rows = List.of(kbRow("知识：充电功率常识（充电）\n7kW 家充为交流慢充。", 0.7));
+        CarRagService svc = newService(mapper, kb);
+        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "海狮08 动力与充电", 8);
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("知识来源：车型数据 + 通用知识库"));
+        assertTrue(r.context().contains("【通用知识】"));
+        assertTrue(r.context().contains("车型：海狮08"));
+    }
+
+    @Test
+    void S7_KB开关关闭_回退S62行为_未关联车型零注入() {
+        FakeMapper mapper = new FakeMapper();
+        FakeKbEmbMapper kb = new FakeKbEmbMapper();
+        kb.rows = List.of(kbRow("知识：不应被检索（通用）\n内容", 0.99));
+        AiProperties props = new AiProperties();
+        props.setRagKbEnabled(false);
+        CarRagService svc = new CarRagService(mapper, kb, new FakeEmbeddingClient(), props);
+        assertEquals(CarRagService.RagResult.EMPTY, svc.retrieveForGeneration(List.of(), "query", 8));
+        // 已关联车型时车型域照常
+        mapper.byModelId.put(1L, List.of(row("车型块", 0.9)));
+        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(!r.context().contains("【通用知识】"));
+    }
+
+    @Test
+    void S7_KB检索异常_整体标FAILED_车型块仍注入() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.byModelId.put(1L, List.of(row("车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9)));
+        FakeKbEmbMapper kb = new FakeKbEmbMapper();
+        kb.byThrow = new RuntimeException("kb down");
+        CarRagService svc = newService(mapper, kb);
+        CarRagService.RagResult r = svc.retrieveForGeneration(List.of(1L), "query", 8);
+        assertEquals(CarRagService.RagStatus.FAILED, r.status());
+    }
+
+    private static Map<String, Object> kbRow(String text, double score) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("chunkText", text);
+        m.put("score", score);
+        return m;
     }
 
     @Test

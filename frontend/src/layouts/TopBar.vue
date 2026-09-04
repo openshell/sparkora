@@ -6,6 +6,7 @@
       <router-link v-if="user.isLoggedIn" to="/images" class="nav-link">图库</router-link>
       <router-link v-if="user.isEditorOrAbove" to="/styles" class="nav-link">风格库</router-link>
       <router-link v-if="user.isLoggedIn" to="/car" class="nav-link">车型库</router-link>
+      <router-link v-if="user.isLoggedIn" to="/kb" class="nav-link">知识库</router-link>
     </nav>
     <div class="actions">
       <template v-if="user.isLoggedIn">

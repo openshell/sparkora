@@ -50,6 +50,8 @@ sparkora:
     temperature: ${AI_TEMPERATURE:0.7}
     rag-min-score: ${AI_RAG_MIN_SCORE:0.3}      # S6.1:逐块相似度门槛(低于不注入)
     rag-reject-score: ${AI_RAG_REJECT_SCORE:0.5} # S6.1:整体置信度门槛(最高分低于则全部抛弃)
+    rag-kb-topk: ${AI_RAG_KB_TOPK:4}            # S7:通用知识库生成检索注入块数上限(与车型域配额独立)
+    rag-kb-enabled: ${AI_RAG_KB_ENABLED:true}   # S7:通用知识库总开关(false 回退 S6.2 纯车型域)
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}

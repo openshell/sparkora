@@ -28,6 +28,11 @@ public class AiProperties {
     /** 车型知识库 RAG:整体置信度门槛,全部命中块的最高相似度低于该值时整体抛弃(S6.1;默认 0.5,须 >= ragMinScore,待校准)。 */
     private double ragRejectScore = 0.5;
 
+    /** 通用知识库(KB)生成检索:单次注入通用域块数上限(S7;默认 4,与车型域配额独立互不挤占)。 */
+    private int ragKbTopk = 4;
+    /** 通用知识库(KB)总开关:关闭即回退 S6.2 纯车型域行为(异常时一键回滚点,S7)。 */
+    private boolean ragKbEnabled = true;
+
     /** 解析图片模型轮询列表：优先 imageModels，为空回退 imageModel。 */
     public List<String> imageModelList() {
         String raw = (imageModels != null && !imageModels.isBlank()) ? imageModels : imageModel;

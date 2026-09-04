@@ -90,12 +90,10 @@ public class BriefService {
         p.setStatus("GENERATING_BRIEF");
 
         try {
-            // 2) RAG 必查(S6.1「必查+降级可见」):项目关联车型时强制检索知识库。
+            // 2) RAG 必查(S6.1「必查+降级可见」;S7 双源:未关联车型仍查通用知识库,由 retrieveForGeneration 内部处理)
             //    检索失败/整体低置信不阻断生成,但状态随 brief 落库并在 prompt 中向 AI 声明,要求 factRisks 标注数据缺失。
             List<Long> modelIds = carService.listModelIds(projectId);
-            CarRagService.RagResult rag = modelIds.isEmpty()
-                    ? CarRagService.RagResult.EMPTY
-                    : ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
+            CarRagService.RagResult rag = ragService.retrieveForGeneration(modelIds, p.getTopic(), 8);
 
             // 3) 调 AI（无事务，慢操作）
             AiClient.ChatResult cr = aiClient.chatJson(
