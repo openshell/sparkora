@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引:实施前必读,定位 database/error-handling/quality 分册"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量规范:QueryWrapper 白名单、DTO 校验、controller 写法需对齐"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "非法 orderBy/orderDir 参数需静默回退默认而非报错,错误处理约定对齐"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "排序参数映射列名的 MyBatis-Plus 查询约定"}
