@@ -294,10 +294,11 @@ const onDeepRun = async () => {
 
 // ResearchProgress 全部 agent 完成时触发:拉手册并切到 RESEARCH_DONE
 const onResearchDone = async () => {
+  // 无论手册拉取是否成功,都先推进状态(避免停在 RESEARCHING 导致进度面板无限轮询)
+  deepStage.value = 'RESEARCH_DONE'
   try {
     const st = await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)
     deepFactSheet.value = st.data?.factSheet || null
-    deepStage.value = 'RESEARCH_DONE'
     ElMessage.success('研究完成,事实手册已生成')
   } catch (e) { ElMessage.error(e?.response?.data?.msg || '拉取事实手册失败') }
 }

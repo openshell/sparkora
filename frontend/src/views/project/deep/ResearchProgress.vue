@@ -45,6 +45,7 @@ const webEnabled = ref(true)
 const polling = ref(false)
 let timer = null
 let doneEmitted = false
+let startedAt = Date.now()
 
 const allDone = computed(() => agents.value.length > 0
   && agents.value.every(a => a.status === 'DONE' || a.status === 'FALLBACK' || a.status === 'FAILED'))
@@ -59,6 +60,13 @@ const gapCount = (a) => {
 const tagType = (s) => ({ DONE: 'success', FALLBACK: 'warning', FAILED: 'danger', RUNNING: 'warning', PENDING: 'info' }[s] || 'info')
 const label = (s) => ({ DONE: '已完成', FALLBACK: '降级完成', FAILED: '失败', RUNNING: '进行中', PENDING: '排队' }[s] || s)
 
+const finish = () => {
+  if (doneEmitted) return
+  doneEmitted = true
+  clearInterval(timer)
+  emit('done')
+}
+
 const poll = async () => {
   polling.value = true
   try {
@@ -69,23 +77,21 @@ const poll = async () => {
       agents.value = arr.map(a => ({ ...a, status: a.status || 'PENDING' }))   // 保留后端真实状态
       toolHealth.value = d.toolHealth || toolHealth.value
     }
+    // 兜底:后端 stage 已是 RESEARCH_DONE(研究完成)也触发 done,不依赖 agent 状态
+    if (d.stage === 'RESEARCH_DONE') finish()
   } catch { /* 轮询失败静默,下次再试 */ }
   finally { polling.value = false }
 }
 const routeId = () => window.location.pathname.split('/')[2]
 
 // 全部完成 → 通知父组件(仅一次),并停止轮询
-watch(allDone, (v) => {
-  if (v && !doneEmitted) {
-    doneEmitted = true
-    clearInterval(timer)
-    emit('done')
-  }
-})
+watch(allDone, (v) => { if (v) finish() })
 
 onMounted(() => {
   poll()
   timer = setInterval(poll, 2000)   // 2s 轮询逐 agent 进度
+  // 超时兜底:5 分钟仍未完成(任何异常导致 agent 状态卡住)强制 done,避免无限轮询
+  setTimeout(() => { if (!doneEmitted) finish() }, 5 * 60 * 1000)
 })
 onUnmounted(() => clearInterval(timer))
 </script>
