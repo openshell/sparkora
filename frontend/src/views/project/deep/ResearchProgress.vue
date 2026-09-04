@@ -62,8 +62,8 @@ const label = (s) => ({ DONE: '已完成', FALLBACK: '降级完成', FAILED: '�
 const poll = async () => {
   polling.value = true
   try {
-    const { data } = await http.get(`/projects/${routeId()}/deep/status?briefId=${props.briefId}`)
-    const d = data.data || {}
+    const res = await http.get(`/projects/${routeId()}/deep/status?briefId=${props.briefId}`)
+    const d = res.data || {}
     if (d.agents) {
       const arr = typeof d.agents === 'string' ? JSON.parse(d.agents) : d.agents
       agents.value = arr.map(a => ({ ...a, status: a.status || 'PENDING' }))   // 保留后端真实状态

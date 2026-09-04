@@ -240,8 +240,8 @@ const deepFactSheet = ref(null)
 // 项目已有进行中的深度 brief → 恢复状态(断点续跑)
 onMounted(async () => {
   try {
-    const { data } = await http.get(`/projects/${route.params.id}/deep/status`)
-    const d = data.data || {}
+    const res = await http.get(`/projects/${route.params.id}/deep/status`)
+    const d = res.data || {}
     if (d.genMode === 'DEEP') {
       deepBriefId.value = d.briefId
       deepStage.value = d.stage || 'NONE'
@@ -256,12 +256,12 @@ onMounted(async () => {
 const onDeepClarify = async () => {
   deepBusy.value = true
   try {
-    const { data } = await http.post(`/projects/${route.params.id}/deep/clarify`,
+    const res = await http.post(`/projects/${route.params.id}/deep/clarify`,
       { topic: props.project?.topic || props.project?.name, extraInfo: props.project?.extraInfo || '' })
-    if (data.code !== 0) throw new Error(data.msg)
-    deepBriefId.value = data.data.briefId
-    deepPlan.value = data.data.researchPlan ? JSON.parse(data.data.researchPlan) : null
-    deepQuestions.value = data.data.questions ? JSON.parse(data.data.questions) : []
+    if (res.code !== 0) throw new Error(res.msg)
+    deepBriefId.value = res.data.briefId
+    deepPlan.value = res.data.researchPlan ? JSON.parse(res.data.researchPlan) : null
+    deepQuestions.value = res.data.questions ? JSON.parse(res.data.questions) : []
     deepStage.value = 'CLARIFYING'
   } catch (e) { ElMessage.error(e?.response?.data?.msg || e.message || '研究计划生成失败') }
   finally { deepBusy.value = false }
@@ -270,10 +270,10 @@ const onDeepClarify = async () => {
 const onClarifySubmit = async (answers) => {
   deepBusy.value = true
   try {
-    const { data } = await http.post(`/projects/${route.params.id}/deep/clarify-answer`,
+    const res = await http.post(`/projects/${route.params.id}/deep/clarify-answer`,
       { briefId: deepBriefId.value, answers })
-    if (data.code !== 0) throw new Error(data.msg)
-    deepAnswers.value = data.data.locked ? JSON.parse(data.data.locked) : []
+    if (res.code !== 0) throw new Error(res.msg)
+    deepAnswers.value = res.data.locked ? JSON.parse(res.data.locked) : []
     deepStage.value = 'CLARIFIED'
     // 锁定即开跑研究
     await onDeepRun()
@@ -286,8 +286,8 @@ const onDeepRun = async () => {
   deepStage.value = 'RESEARCHING'
   try {
     // run 为异步启动(202 语义):立即返回,后台逐 agent 执行;进度由 ResearchProgress 2s 轮询展示
-    const { data } = await http.post(`/projects/${route.params.id}/deep/run`, { briefId: deepBriefId.value })
-    if (data.code !== 0) throw new Error(data.msg)
+    const res = await http.post(`/projects/${route.params.id}/deep/run`, { briefId: deepBriefId.value })
+    if (res.code !== 0) throw new Error(res.msg)
   } catch (e) { deepStage.value = 'CLARIFIED'; ElMessage.error(e?.response?.data?.msg || e.message || '研究启动失败') }
   finally { deepBusy.value = false }
 }
@@ -296,7 +296,7 @@ const onDeepRun = async () => {
 const onResearchDone = async () => {
   try {
     const st = await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)
-    deepFactSheet.value = st.data.data?.factSheet || null
+    deepFactSheet.value = st.data?.factSheet || null
     deepStage.value = 'RESEARCH_DONE'
     ElMessage.success('研究完成,事实手册已生成')
   } catch (e) { ElMessage.error(e?.response?.data?.msg || '拉取事实手册失败') }
@@ -305,9 +305,9 @@ const onResearchDone = async () => {
 const onDeepGenerate = async () => {
   deepBusy.value = true
   try {
-    const { data } = await http.post(`/projects/${route.params.id}/deep/generate`,
+    const res = await http.post(`/projects/${route.params.id}/deep/generate`,
       { briefId: deepBriefId.value })
-    if (data.code !== 0) throw new Error(data.msg)
+    if (res.code !== 0) throw new Error(res.msg)
     ElMessage.success('深度正文已生成')
     await store.ensureProject(route.params.id, { force: true })
     router.push({ name: 'project-versions', params: { id: route.params.id } })
