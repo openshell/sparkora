@@ -55,6 +55,9 @@ class CarRagServiceTest {
             if (e != null) throw e;
             return byModelId.getOrDefault(modelId, List.of());
         }
+
+        @Override
+        public List<Map<String, Object>> countByModel() { return List.of(); }
     }
 
     /** KB 向量 mapper 假实现(S7 双源):byRows → 检索行;byThrow → 抛异常。 */

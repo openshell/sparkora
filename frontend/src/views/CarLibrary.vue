@@ -11,6 +11,9 @@
           <el-button v-if="user.isEditorOrAbove" @click="$router.push('/car/sync')">
             <el-icon class="btn-icon"><Refresh /></el-icon>同步车型
           </el-button>
+          <el-button v-if="user.isAdmin" :loading="rebuildingAll" @click="onRebuildAll">
+            <el-icon class="btn-icon"><MagicStick /></el-icon>重建全部向量
+          </el-button>
         </div>
       </div>
 
@@ -106,7 +109,7 @@ import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import TopBar from '../layouts/TopBar.vue'
-import { Refresh, WarningFilled, Search, Loading, CircleCheck, Van } from '@element-plus/icons-vue'
+import { Refresh, WarningFilled, Search, Loading, CircleCheck, Van, MagicStick } from '@element-plus/icons-vue'
 
 const user = useUserStore()
 const loading = ref(false)
@@ -120,6 +123,25 @@ const statusFilter = ref('all')
 const syncingId = ref(null)
 const job = ref(null)
 const jobId = ref(null)
+// 批量重建全部向量(ADMIN,一次性运维)
+const rebuildingAll = ref(false)
+const onRebuildAll = () => {
+  ElMessageBox.confirm('对全部车型重建向量(新切块口径+补齐缺失块),耗时较长(每车型约十几秒),确认执行?', '批量重建向量', { type: 'warning' })
+    .then(async () => {
+      rebuildingAll.value = true
+      try {
+        const { data } = await http.post('/car/models/rebuild-all')
+        const st = data.data || {}
+        st.failed > 0
+          ? ElMessage.warning(`重建完成:成功 ${st.success}/${st.total},失败车型 ${st.failed}(id: ${st.failedModelIds})`)
+          : ElMessage.success(`重建完成:${st.success}/${st.total} 个车型已按新口径重建`)
+      } catch (e) {
+        ElMessage.error(e?.response?.data?.msg || '批量重建失败')
+      } finally {
+        rebuildingAll.value = false
+      }
+    }).catch(() => {})
+}
 let pollTimer = null
 
 const networks = computed(() => [...new Set(rows.value.map(r => r.salesNetwork).filter(Boolean))])

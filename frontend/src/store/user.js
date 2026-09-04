@@ -9,7 +9,8 @@ export const useUserStore = defineStore('user', {
   getters: {
     isLoggedIn: (s) => !!s.token,
     role: (s) => s.user?.role || '',
-    isEditorOrAbove: (s) => s.user?.role === 'ADMIN' || s.user?.role === 'EDITOR'
+    isEditorOrAbove: (s) => s.user?.role === 'ADMIN' || s.user?.role === 'EDITOR',
+    isAdmin: (s) => s.user?.role === 'ADMIN'
   },
   actions: {
     async login(username, password) {

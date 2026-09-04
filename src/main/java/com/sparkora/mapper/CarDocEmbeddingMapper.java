@@ -37,4 +37,13 @@ public interface CarDocEmbeddingMapper {
     List<Map<String, Object>> searchTopK(@Param("modelId") Long modelId,
                                          @Param("queryVec") String queryVec,
                                          @Param("limit") int limit);
+
+    /** 全库向量对账统计(S6b):每车型块数与有向量块数(不拉向量本体,轻量聚合)。仅统计未逻辑删除的块。 */
+    @Select("SELECT d.model_id AS \"modelId\", COUNT(*) AS \"chunkCount\", " +
+            "COUNT(e.id) AS \"embeddedCount\" " +
+            "FROM sparkora_car_doc d " +
+            "LEFT JOIN sparkora_car_doc_embedding e ON e.doc_id = d.id " +
+            "WHERE d.deleted = 0 " +
+            "GROUP BY d.model_id")
+    List<Map<String, Object>> countByModel();
 }

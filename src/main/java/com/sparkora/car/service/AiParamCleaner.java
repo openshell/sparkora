@@ -40,10 +40,17 @@ public class AiParamCleaner {
                     "参数名：" + paramName + "\n原始值：" + rawValue,
                     1024);
             JsonNode node = json.readTree(cr.content());
+            // S6b 空值防线:AI 返回 value 空/全空白视为清洗失败(体检发现 4 行「无值清成空串」错误输出),
+            // 返回 null 走 FALLBACK 兜底,避免空串污染 car_param_clean
+            String aiValue = node.path("value").asText("");
+            if (aiValue.isBlank()) {
+                log.warn("AI 参数清洗返回空值视为失败 {}={}", paramName, rawValue);
+                return null;
+            }
             ParamCleanResult r = new ParamCleanResult();
             r.setParamKey(node.path("paramKey").asText(paramName));
             r.setValueType(node.path("valueType").asText("STRING"));
-            r.setValue(node.path("value").asText(""));
+            r.setValue(aiValue);
             r.setUnit(node.path("unit").isNull() ? null : node.path("unit").asText());
             r.setEnumValue(node.path("enumValue").isNull() ? null : node.path("enumValue").asText());
             if (node.path("numericValue").isNumber()) {

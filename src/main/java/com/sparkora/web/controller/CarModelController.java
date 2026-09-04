@@ -143,6 +143,28 @@ public class CarModelController {
         }
     }
 
+    /** 全库向量对账统计(可观测):块数/有向量数/缺失数+缺失明细 topN。 */
+    @GetMapping("/models/vector-stats")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<Map<String, Object>> vectorStats() {
+        try {
+            return R.ok(service.vectorStats());
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+    }
+
+    /** 批量重建全部车型向量(一次性运维操作,同步接口;耗时=车型数×块数×embedding)。 */
+    @PostMapping("/models/rebuild-all")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> rebuildAll() {
+        try {
+            return R.ok(service.rebuildAll());
+        } catch (Exception e) {
+            return R.fail(500, "批量重建失败: " + e.getMessage());
+        }
+    }
+
     /** 内部问答检索。body: {modelId, query, topK?}。返回命中的知识块文本。 */
     @PostMapping("/rag")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")

@@ -16,6 +16,7 @@ import com.sparkora.domain.entity.CarParamGroupEntity;
 import com.sparkora.domain.entity.CarVersionEntity;
 import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.CarModelMapper;
+import com.sparkora.mapper.CarDocEmbeddingMapper;
 import com.sparkora.mapper.CarParamCleanMapper;
 import com.sparkora.mapper.CarParamGroupMapper;
 import com.sparkora.mapper.CarParamMapper;
@@ -62,6 +63,7 @@ public class CarModelService {
     private final CarParamCleanMapper cleanMapper;
     private final CarDocService docService;
     private final CarCleanService cleanService;
+    private final CarDocEmbeddingMapper embStatsMapper;
     private final ImageAssetMapper imageMapper;
     private final ImageStorage imageStorage;
     private final ObjectMapper json;
@@ -75,6 +77,7 @@ public class CarModelService {
                            CarVersionMapper versionMapper, CarParamGroupMapper groupMapper,
                            CarParamMapper paramMapper, CarParamCleanMapper cleanMapper,
                            CarDocService docService, CarCleanService cleanService,
+                           CarDocEmbeddingMapper embStatsMapper,
                            ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json) {
         this.client = client;
         this.modelMapper = modelMapper;
@@ -84,6 +87,7 @@ public class CarModelService {
         this.cleanMapper = cleanMapper;
         this.docService = docService;
         this.cleanService = cleanService;
+        this.embStatsMapper = embStatsMapper;
         this.imageMapper = imageMapper;
         this.imageStorage = imageStorage;
         this.json = json;
@@ -219,6 +223,67 @@ public class CarModelService {
     }
 
     /** 同步结果:车型 + 清洗方式统计(供同步任务聚合记录)。 */
+    /**
+     * 全库向量对账统计(S6b 遗留项 R4):块数/有向量块数/缺失块数 + 缺失明细 topN。
+     * 消除「静默丢块」对账盲区(体检靠手工 SQL 才发现 31.6% 缺失)。
+     */
+    public Map<String, Object> vectorStats() {
+        List<CarModelEntity> models = modelMapper.selectList(null);
+        Map<Long, String> nameById = new java.util.LinkedHashMap<>();
+        for (CarModelEntity m : models) nameById.put(m.getId(), m.getName());
+        // 每车型「块数 vs 有向量块数」一次 SQL(embStatsMapper 按注解 SQL 统计,不拉向量本体)
+        int chunkCount = 0, embedded = 0;
+        List<Map<String, Object>> missingTopN = new ArrayList<>();
+        for (Map<String, Object> row : embStatsMapper.countByModel()) {
+            long modelId = ((Number) row.get("modelId")).longValue();
+            long total = ((Number) row.get("chunkCount")).longValue();
+            long emb = ((Number) row.get("embeddedCount")).longValue();
+            long missing = total - emb;
+            chunkCount += (int) total;
+            embedded += (int) emb;
+            if (missing > 0) {
+                Map<String, Object> item = new java.util.LinkedHashMap<>();
+                item.put("modelId", modelId);
+                item.put("modelName", nameById.getOrDefault(modelId, String.valueOf(modelId)));
+                item.put("missing", missing);
+                missingTopN.add(item);
+            }
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("modelCount", models.size());
+        out.put("chunkCount", chunkCount);
+        out.put("embeddedCount", embedded);
+        out.put("missingCount", chunkCount - embedded);
+        out.put("missingTopN", missingTopN);
+        return out;
+    }
+
+    /**
+     * 批量重建全部车型向量(S6b 遗留项 R1):逐车型 rebuildForModel(新切块口径+向量补齐)。
+     * 单车型失败不阻断其余;返回汇总。一次性运维操作,同步接口(前端 loading)。
+     */
+    public Map<String, Object> rebuildAll() {
+        List<CarModelEntity> models = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByAsc("id"));
+        int okModels = 0, failedModels = 0;
+        StringBuilder failedIds = new StringBuilder();
+        for (CarModelEntity m : models) {
+            try {
+                docService.rebuildForModel(m.getId());
+                okModels++;
+            } catch (Exception e) {
+                failedModels++;
+                failedIds.append(m.getId()).append(',');
+                log.warn("批量重建失败 model={}: {}", m.getId(), e.getMessage());
+            }
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("total", models.size());
+        out.put("success", okModels);
+        out.put("failed", failedModels);
+        out.put("failedModelIds", failedIds.length() > 0 ? failedIds.substring(0, failedIds.length() - 1) : "");
+        return out;
+    }
+
     public record SyncOutcome(CarModelEntity model, CleanStats cleanStats) {}
 
     /**
@@ -316,14 +381,16 @@ public class CarModelService {
         return m;
     }
 
-    /** 入库版本(先清后插,幂等)。 */
+    /** 入库版本(先清后插,幂等)。S6b:同名版本去重(官网接口按模块重复推送版本列表,实测 ×2~×10),只保留首个。 */
     @Transactional
     protected void persistVersions(Long modelId, List<GoodsAttrListDto.Version> attrs) {
         versionMapper.delete(new QueryWrapper<CarVersionEntity>().eq("model_id", modelId));
         if (attrs == null) return;
+        java.util.Set<String> seen = new java.util.HashSet<>();
         int i = 0;
         for (GoodsAttrListDto.Version v : attrs) {
             if (v.getName() == null || v.getName().isBlank()) continue;
+            if (!seen.add(v.getName().trim())) continue;   // 重复版本行跳过(数据源冗余,见 research/flatten-findings.md)
             CarVersionEntity e = new CarVersionEntity();
             e.setModelId(modelId);
             e.setVersionName(v.getName());
@@ -336,15 +403,17 @@ public class CarModelService {
         }
     }
 
-    /** 入库参数分组+明细(先清后插,幂等)。 */
+    /** 入库参数分组+明细(先清后插,幂等)。S6b:同名分组去重(官网按页签/模块重复推送,车型39 实测 136 组/17 名),只保留首个。 */
     @Transactional
     protected void persistParams(Long modelId, GoodsParamsDto.ParamsData params) {
         groupMapper.delete(new QueryWrapper<CarParamGroupEntity>().eq("model_id", modelId));
         paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", modelId));
         if (params == null || params.getConfigs() == null) return;
+        java.util.Set<String> seenGroups = new java.util.HashSet<>();
         int gi = 0;
         for (GoodsParamsDto.Config cfg : params.getConfigs()) {
             if (cfg.getName() == null || cfg.getName().isBlank()) continue;
+            if (!seenGroups.add(cfg.getName().trim())) continue;   // 重复同名分组整组跳过(参数行与组重复绑定)
             CarParamGroupEntity g = new CarParamGroupEntity();
             g.setModelId(modelId);
             g.setGroupName(cfg.getName());
