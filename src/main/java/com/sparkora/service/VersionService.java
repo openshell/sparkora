@@ -179,6 +179,7 @@ public class VersionService {
         v.setAiModel(cr.model());
         v.setTokenUsage(cr.totalTokens());
         v.setRagStatus(rag.status().name());
+        v.setRagCitations(BriefService.citationsJson(rag));
         v.setWordCount(contentMd.length());
         v.setCreatedAt(LocalDateTime.now());
         return v;

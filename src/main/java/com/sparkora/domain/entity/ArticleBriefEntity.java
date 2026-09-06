@@ -31,6 +31,7 @@ public class ArticleBriefEntity {
     private String aiModel;
     private Integer tokenUsage;
     private String ragStatus;      // S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
+    private String ragCitations;   // R3:知识库引用明细 JSON [{source,modelName,chunkType,score,chunkText}]
     // ===== S9 深度生成模式(gen_mode=DEEP 时使用;快速模式全空) =====
     private String genMode;            // FAST/DEEP
     private String clarifyQuestions;   // JSON [{q,type,options[],required}]

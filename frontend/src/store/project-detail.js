@@ -168,5 +168,6 @@ export function parseBrief(b) {
   if (!b) return null
   const j = (s) => { try { return JSON.parse(s) } catch { return [] } }
   return { ...b, titleCandidates: j(b.titleCandidates), coreViewpoints: j(b.coreViewpoints),
-    outline: j(b.outline), factRisks: j(b.factRisks) }
+    outline: j(b.outline), factRisks: j(b.factRisks),
+    ragCitations: j(b.ragCitations) }
 }

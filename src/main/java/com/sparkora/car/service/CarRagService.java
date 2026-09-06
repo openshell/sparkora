@@ -50,17 +50,40 @@ public class CarRagService {
     public enum RagStatus { OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE }
 
     /**
+     * 知识引用条目(S6.1 扩展:rag_citations 落库,前端简报/版本页可核查「AI 引用了哪些知识」)。
+     * @param source     来源域 CAR(车型数据)| KB(通用知识库)
+     * @param modelName  车型名或知识标题(检索块自带的标注名)
+     * @param chunkType  块类型 MODEL_INFO/PARAM_GROUP/RIGHTS/FEATURE/KB_CHUNK
+     * @param score      相似度分数(锚点加权后的排序分)
+     * @param chunkText  块文本摘要(截断,详见 CITE_TEXT_MAX)
+     */
+    public record Citation(String source, String modelName, String chunkType, double score, String chunkText) {}
+
+    /** 引用摘要单条文本截断长度(前端展示只需首行概要,控制 rag_citations 体积)。 */
+    private static final int CITE_TEXT_MAX = 120;
+
+    /** 单次检索引用条目上限(与注入 prompt 的 selected 列表同量级,防 JSON 超列)。 */
+    private static final int CITE_MAX = 24;
+
+    /**
      * 检索结果(供生成链路「必查+降级可见」使用)。
      * @param status      检索状态
      * @param context     注入 prompt 的知识上下文文本(抛弃/失败/无命中时为空串)
      * @param hitCount    通过逐块门槛命中的块数(含被整体门槛抛弃的命中数,用于观测)
      * @param maxScore    本轮检索最高相似度(整体门槛判断依据;无命中为 0)
      * @param coveredText 已覆盖参数摘要(「参数名→值」拼接,逗号分隔;未覆盖场景为空串)
+     * @param citations   注入 prompt 的命中块明细(与 context 同源;OK 时非空,其余状态为空列表)
      */
-    public record RagResult(RagStatus status, String context, int hitCount, double maxScore, String coveredText) {
-        public static final RagResult EMPTY = new RagResult(RagStatus.NO_KNOWLEDGE, "", 0, 0, "");
+    public record RagResult(RagStatus status, String context, int hitCount, double maxScore,
+                            String coveredText, java.util.List<Citation> citations) {
+        public static final RagResult EMPTY =
+                new RagResult(RagStatus.NO_KNOWLEDGE, "", 0, 0, "", java.util.List.of());
         public RagResult(RagStatus status, String context, int hitCount, double maxScore) {
             this(status, context, hitCount, maxScore, "");
+        }
+        /** 兼容旧调用(不带 citations,视作空)。 */
+        public RagResult(RagStatus status, String context, int hitCount, double maxScore, String coveredText) {
+            this(status, context, hitCount, maxScore, coveredText, java.util.List.of());
         }
         public boolean ok() { return status == RagStatus.OK; }
     }
@@ -294,7 +317,18 @@ public class CarRagService {
         }
         log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={}) maxScore={}",
                 anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(), maxScore);
-        return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString());
+        // R3 知识引用明细(RagResult 附带,与注入 context 同源):仅 OK 时非空;截断防超列。
+
+        java.util.List<Citation> cites = new ArrayList<>(Math.min(selected.size(), CITE_MAX));
+        for (UnifiedHit h : selected) {
+
+            if (cites.size() >= CITE_MAX) break;
+            String text = h.chunkText();
+            if (text != null && text.length() > CITE_TEXT_MAX) text = text.substring(0, CITE_TEXT_MAX) + "…";
+            cites.add(new Citation(h.source(), h.modelName() == null ? "" : h.modelName(),
+                    h.chunkType(), h.score(), text == null ? "" : text));
+        }
+        return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString(), cites);
     }
 
     /** 旧签名(S7 兼容委托):modelIds 语义变为锚点车型。 */

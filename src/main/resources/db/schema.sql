@@ -65,6 +65,9 @@ ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS research_plan       
 ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS research_notes      TEXT; -- JSON [{agentId,question,status,facts[],gaps[]}]
 ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS fact_sheet          TEXT; -- JSON {entries[{key,value,source,confidence}],gaps[],warnings[]}
 
+-- R3 增量迁移(知识库引用明细):随 brief/version 落库,前端简报/版本页展示「AI 引用了哪些知识」
+ALTER TABLE sparkora_article_brief   ADD COLUMN IF NOT EXISTS rag_citations TEXT; -- JSON [{source,modelName,chunkType,score,chunkText}]
+
 -- S1 增量迁移（已部署的旧库通过 ALTER 补列；IF NOT EXISTS 幂等，新库执行也无副作用）
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_brief_id BIGINT;
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS last_brief_error VARCHAR(1000);
@@ -89,6 +92,8 @@ CREATE INDEX IF NOT EXISTS idx_version_project ON sparkora_article_version(proje
 ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS rag_status VARCHAR(20);
 -- S9 增量迁移:数值回查结果随版本落库(深度模式;快速模式为空)
 ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS fact_risks TEXT;
+-- R3 增量迁移:知识库引用明细(与 rag_status 同源检索的命中块,JSON [{source,modelName,chunkType,score,chunkText}])
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS rag_citations TEXT;
 
 -- S1b 增量迁移
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS current_version_id BIGINT;

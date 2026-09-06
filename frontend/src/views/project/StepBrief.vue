@@ -43,7 +43,10 @@
         <div class="deep-actions">
           <el-button v-if="deepStage === 'NONE' && !deepMode" @click="deepMode = true">深度模式(先研究再写)</el-button>
           <el-button v-if="deepMode && deepStage === 'NONE'" type="primary" :loading="deepBusy" @click="onDeepClarify">生成研究计划</el-button>
-          <el-button v-if="deepStage === 'RESEARCH_DONE'" type="success" :loading="deepBusy" @click="onDeepGenerate">生成正文(基于事实手册)→</el-button>
+          <!-- 研究完成:自动简报已在后台生成;若失败(lastBriefError)可手动重试,也可跳过简报直接写正文 -->
+          <el-button v-if="deepStage === 'RESEARCH_DONE' && project && (project.lastBriefError || project.status === 'DRAFT')"
+                     type="warning" :loading="deepBusy" @click="onDeepBriefRetry">重新生成简报</el-button>
+          <el-button v-if="deepStage === 'RESEARCH_DONE'" :loading="deepBusy" @click="onDeepGenerate">跳过简报,直接生成正文 →</el-button>
           <el-button v-if="deepStage !== 'NONE'" text @click="onBackFast">返回快速模式</el-button>
         </div>
       </template>
@@ -120,6 +123,14 @@
         </div>
       </section>
 
+      <!-- R3:知识库引用明细(本次简报检索注入 AI 的命中块,可展开核查) -->
+      <section class="brief-sec">
+        <div class="brief-label"><el-icon><CollectionTag /></el-icon>知识库引用
+          <span class="label-hint">{{ citationsHint(brief) }}</span>
+        </div>
+        <CitationList :citations="brief.ragCitations" :rag-status="brief.ragStatus" :fact-sheet="brief.factSheet" />
+      </section>
+
       <div class="brief-actions">
         <!-- 重新生成只在 READY(简报就绪且版本未生成)时可见:版本已生成后再触发会把状态机拉回 READY -->
         <el-button v-if="canRegenerateBrief" :loading="submitting" @click="onGenerateBrief">重新生成</el-button>
@@ -144,6 +155,7 @@ import DeepPlanCard from './deep/DeepPlanCard.vue'
 import ClarifyForm from './deep/ClarifyForm.vue'
 import ResearchProgress from './deep/ResearchProgress.vue'
 import FactSheetSummary from './deep/FactSheetSummary.vue'
+import CitationList from './deep/CitationList.vue'
 import http from '../../api/http'
 
 // 数据全部来自 project-detail store(布局层已负责装载与轮询,这里只读 + 触发动作)
@@ -191,6 +203,16 @@ const gotoVersions = () => router.push({ name: 'project-versions', params: { id:
 const riskType = (l) => ({ high: 'danger', medium: 'warning', low: 'info' }[l] || 'info')
 const riskLabel = (l) => ({ high: '高风险', medium: '中风险', low: '低风险' }[l] || l)
 
+// R3:知识库引用区提示文案(检索状态 + 深度手册来源合并口径)
+const citationsHint = (b) => {
+  const localN = Array.isArray(b?.ragCitations) ? b.ragCitations.length : 0
+  const sheet = typeof b?.factSheet === 'string' ? b.factSheet : ''
+  let sheetN = 0
+  if (sheet) { try { sheetN = (JSON.parse(sheet).entries || []).length } catch { sheetN = 0 } }
+  if (localN + sheetN) return `本次生成引用了 ${localN + sheetN} 条知识来源`
+  return { OK: '本次生成未注入知识块', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用' }[b?.ragStatus] || ''
+}
+
 // S6.1 知识库检索状态文案与标签色
 const ragLabel = (st) => ({
   OK: '已引用', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用',
@@ -236,6 +258,12 @@ const deepPlan = ref(null)
 const deepQuestions = ref([])
 const deepAnswers = ref([])
 const deepFactSheet = ref(null)
+
+// 路由意图参数 ?gen=DEEP(创建页/仅存草稿的续接意图):直接展开深度面板,随后清掉 query 防刷新残留
+if (route.query.gen === 'DEEP') {
+  deepMode.value = true
+  router.replace({ query: { ...route.query, gen: undefined } })
+}
 
 // 项目已有进行中的深度 brief → 恢复状态(断点续跑)
 onMounted(async () => {
@@ -299,8 +327,24 @@ const onResearchDone = async () => {
   try {
     const st = await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)
     deepFactSheet.value = st.data?.factSheet || null
-    ElMessage.success('研究完成,事实手册已生成')
+    ElMessage.success('研究完成,事实手册已生成;简报正在基于手册自动生成…')
   } catch (e) { ElMessage.error(e?.response?.data?.msg || '拉取事实手册失败') }
+  // 自动简报由后端异步触发,项目状态会经 GENERATING_BRIEF→READY,布局层轮询会拉到简报
+  await store.ensureProject(route.params.id, { force: true })
+}
+
+// 深度简报手动重试(自动生成失败时)
+const onDeepBriefRetry = async () => {
+  deepBusy.value = true
+  try {
+    const res = await projectApi.generateDeepBrief(route.params.id, deepBriefId.value)
+    if (res.code === 0) ElMessage.success('简报已生成')
+    else ElMessage.error(res.msg || '简报生成失败')
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || '简报生成失败') }
+  finally {
+    deepBusy.value = false
+    await store.ensureProject(route.params.id, { force: true })
+  }
 }
 
 const onDeepGenerate = async () => {

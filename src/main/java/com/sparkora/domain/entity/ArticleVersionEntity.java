@@ -25,6 +25,7 @@ public class ArticleVersionEntity {
     private String aiModel;
     private Integer tokenUsage;
     private String ragStatus;      // S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
+    private String ragCitations;   // R3:知识库引用明细 JSON [{source,modelName,chunkType,score,chunkText}]
     private String factRisks;      // S9:数值回查结果 JSON [{claim,riskLevel,suggestion}](深度模式)
     private Integer wordCount;
     private Long coverImageId;      // S3b：该版本封面（sparkora_image_asset.id，可空）

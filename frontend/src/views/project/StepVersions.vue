@@ -88,7 +88,13 @@
               <!-- S6.1:本版生成时的知识库检索状态(FAILED/LOW_CONFIDENCE 时提示参数未经知识库核实) -->
               <el-tag v-if="v.ragStatus === 'FAILED' || v.ragStatus === 'LOW_CONFIDENCE'"
                       size="small" type="warning" effect="plain" round>参数未经知识库核实</el-tag>
+              <!-- R3:知识库引用明细(本版检索注入的命中块) -->
+              <el-tag v-if="citationCount(v)" size="small" type="success" effect="plain" round
+                      @click="toggleCites(v.id)">引用 {{ citationCount(v) }}</el-tag>
               <span class="version-meta">{{ v.wordCount }}字 · {{ v.aiModel }}</span>
+            </div>
+            <div v-if="citesOpen[v.id]" class="version-cites">
+              <CitationList :citations="v.ragCitations" :rag-status="v.ragStatus" />
             </div>
             <div class="version-title-row">
               <div class="version-title serif">{{ v.title }}</div>
@@ -130,6 +136,8 @@ import { ElMessage } from 'element-plus'
 import { isGeneratingVersions } from '../../constants/project'
 import { useProjectDetailStore } from '../../store/project-detail'
 import { Loading, WarningFilled, Edit, MagicStick } from '@element-plus/icons-vue'
+import CitationList from './deep/CitationList.vue'
+import { reactive } from 'vue'
 
 // 数据全部来自 project-detail store(布局层已负责项目详情与轮询,这里只读 + 触发动作)
 const props = defineProps({ project: Object })
@@ -152,6 +160,17 @@ const submitting = ref(false)     // 本轮会话内主动点击的 loading
 const editingTitleId = ref(null)  // S6:正在编辑标题的版本 id
 const titleDraft = ref('')        // S6:标题编辑草稿
 const savingTitle = ref(false)    // S6:标题保存中
+
+// R3:知识库引用展开状态(按版本 id;默认收起,点「引用 N」标签展开)
+const citesOpen = reactive({})
+const citationCount = (v) => {
+  if (Array.isArray(v?.ragCitations)) return v.ragCitations.length
+  if (typeof v?.ragCitations === 'string' && v.ragCitations) {
+    try { const a = JSON.parse(v.ragCitations); return Array.isArray(a) ? a.length : 0 } catch { return 0 }
+  }
+  return 0
+}
+const toggleCites = (id) => { citesOpen[id] = !citesOpen[id] }
 
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingVersions = computed(() => isGeneratingVersions(props.project?.status))
@@ -330,6 +349,7 @@ watch(() => props.project, (p) => { if (p) { loadVersions(); loadStyles() } })
 .version-content :deep(ul), .version-content :deep(ol) { padding-left: 20px; margin: 6px 0; }
 .version-content :deep(code) { background: var(--el-fill-color-light); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
 .version-actions { display: flex; gap: 8px; margin-top: 12px; }
+.version-cites { margin: 10px 0; padding: 10px 12px; background: var(--el-fill-color-light, #f7f7f7); border-radius: 8px; }
 .next-row { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
 .next-row .el-button:last-child { margin-left: auto; }
 

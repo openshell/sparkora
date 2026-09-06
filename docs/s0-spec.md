@@ -174,6 +174,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - 表单 = §3.2 中「表单」列字段，字段级校验：`topic` 必填、长度限制。
 - 操作：保存（DRAFT）或「创建并生成 Brief →」（DRAFT→GENERATING_BRIEF→READY，S0 只落库）。
 - 校验错误逐字段 `el-form` 提示，后端 `@Validated` 兜底。
+- **思考深度（S9 增补，2026-09-05）**：创建表单含「思考深度」单选（`genDepth: FAST|DEEP`，默认 FAST，前端专用字段不随 create 提交）。FAST=创建后直发 `/generate/brief`；DEEP=创建后直发 `/deep/clarify`（研究计划+反问），两者均 120s 超时并发起，**立即跳详情页**，生成过程由详情页按 `project.status` 轮询展示（不再在创建页等待 1~2 分钟）。跳转携带意图参数 `?gen=FAST|DEEP`（仅存草稿也带，DEEP 时 StepBrief 展开深度面板），StepBrief 读取后即清除。
 
 ---
 
@@ -202,6 +203,8 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - 抛弃/失败**不得与「无命中」混淆**：`LOW_CONFIDENCE`/`FAILED` 必须显式落库，前端据此提示。
 
 **字段级**：`sparkora_article_brief.rag_status`、`sparkora_article_version.rag_status` — `VARCHAR(20)`，可空（历史行为数据为 NULL，前端不展示）；GET brief/versions 响应自然携带该字段，无独立接口。
+
+**知识引用明细（R3，2026-09-05 增补）**：`sparkora_article_brief.rag_citations`、`sparkora_article_version.rag_citations` — `TEXT`（JSON 数组 `[{source:"CAR|KB", modelName, chunkType, score, chunkText}]`），检索 OK 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 ragStatus 显示降级文案。**WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 fact_sheet，行为不变。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
 
 **检索门槛**（粗调值，**待按真实 query 分数分布校准**；`REJECT` 须 ≥ `MIN`）：
 
@@ -516,8 +519,8 @@ PublishService.publish
 
 #### 数据模型（schema.sql 幂等，已同步 entity）
 
-- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`。
-- `sparkora_article_version` 增列：`fact_risks TEXT`（数值回查结果，JSON 数组 `[{claim,riskLevel,suggestion}]`）。
+- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`、`rag_citations TEXT`（R3 知识引用明细）。
+- `sparkora_article_version` 增列：`fact_risks TEXT`（数值回查结果，JSON 数组 `[{claim,riskLevel,suggestion}]`）、`rag_citations TEXT`（R3 知识引用明细）。
 
 #### 接口契约（全部 `R<T>` 包装；方法级 `@PreAuthorize`；前缀 `/api/projects/{projectId}/deep`）
 
@@ -527,6 +530,7 @@ PublishService.publish
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
 | POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, done}`（同步阻塞；前端轮询 status） |
 | POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, stylePrompt?}` | `{versionId}`（版本 fact_risks 落库） |
+| POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突） |
 | GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
 
 - stage 判定（brief 层展示态）：`RESEARCH_DONE`（fact_sheet 非空）> `RESEARCHING`（research_notes 非空）> `CLARIFIED`（answers 非空）> `CLARIFYING`（questions 非空）> `NONE`。
@@ -541,6 +545,9 @@ PublishService.publish
 | SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + lastCallHadResults=false；不重试 |
 | TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}` | 密钥未配置/失败 → available()=false |
 - WEB 选择顺序：SEARXNG → Tavily（拿到结果即止）；每子代理 webQuota=`max(1, 8/n)`，`SEARCH_WEB_ENABLED=false` 时为 0（纯 KB）。
+- **KB 锚点感知检索（R1，2026-09-06）**：`KnowledgeSearchTool.search(query, maxResults, anchors)` 委托 `retrieveForGeneration`（锚点加权 + 参数级子查询 + 核心块/权益块分层配额）；锚点由 `DeepResearchService.resolveAnchors` 解析（项目关联车型为准 → `CarModelMatcherService` 按主题识别兜底，失败不阻断）；子代理 KB 检索 query 用「主题 + 问题」复合语料（纯问题如「价格对比」缺车型上下文相似度必散）。非 OK 状态返回空列表归 gaps（行为同旧）。
+- **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块（命中含 MODEL_INFO/价格区间文本）时跳过 WEB 补查——WEB 只补 KB 缺口，不与 KB 平行全问题重搜、不得覆盖 KB 结论。
+- **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB 来源 → **KB 胜出**（不比较相似度/置信度，量纲不同不可比；按来源身份定优先级：本系统知识库（比亚迪同步清洗）> 外部 WEB）。WEB 条目降级为该条目 `alternatives`（URL 列表）留证据，并写 warnings「以知识库为准；外部来源(N 条)有异说,未采用」。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
 - `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 modelName 字段。
 - 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.ai.deep.tavily-api-key`（dotenv 注入 System property，嵌套占位符 `${A:${B:}}` Spring 不支持，故 yml 只挂 `TAVILY_API_KEY`）。
 
@@ -559,8 +566,13 @@ PublishService.publish
 
 #### 前端（`views/project/deep/` 四组件 + StepBrief 深度分支）
 
+- 反问题型：`input` / `single`（radio）/ `multi`（checkbox，车型锚点多选；提交时以「、」拼接、回显时按「、」还原数组）。ClarifyForm 支持全部三型（2026-09-05 增补 multi）。
+- **反问必须基于车库名录（2026-09-05 修复）**：`ClarifyService` 注入 `CarModelService.list()` 名录（名称+价格区间）进 prompt；规则：车型/竞品/对比类问题的 options 只能从名录选、不得编造；主题指向某款/某系列车型时必须有一道 multi 锚点车型题（options 覆盖名录中含该系列词的全部车型）。车库获取失败降级为不注入并提示不编造车型。
+- **竞品对比题强制多选（R1，2026-09-05）**：prompt 明确「对比/竞品/比较/竞对类问题 type=multi（选项 2~4 个竞品 + 「不对比」兜底）」；后端 `ClarifyService.normalizeQuestions` 确定性归一化兜底（不依赖 LLM 遵守）：问题文本含竞品信号词（对比/竞品/比较/竞对/竞争）的选项题强制 `type=multi` 并补「不对比」选项（缺省时）；无选项的竞品题归 `input`（自由填写）；解析失败原样保留不阻断。
+- **「其他(自行填写)」（R2，2026-09-05）**：`ClarifyForm.vue` 对 single/multi 题渲染「其他(自行填写)」入口——single 选中后切文本框（提交取文本框内容），multi 勾选后文本并入答案（「、」拼接）；锁定回显时不在 options 中的答案自动归「其他」并回填。
 - `DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）。
-- StepBrief.vue：模式切换（FAST/DEEP）→ deepStage 流转 NONE→CLARIFYING→CLARIFIED→RESEARCHING→RESEARCH_DONE → 生成；onMounted 断点恢复；`onBackFast` 退回快速模式。CLARIFYING/RESEARCHING 仅 brief 层展示态，项目状态机不变（constants/project.js 注释）。
+- **研究完成 → 自动生成简报（2026-09-05 修复）**：`DeepResearchService.runAsync` 落 fact_sheet 后自动调 `BriefService.generateFromFactSheet`（LLM 一次，以事实手册为唯一事实来源 + 锁定需求 → 简报五字段落同一条 DEEP brief 行，`currentBriefId` 指向该行，状态机 GENERATING_BRIEF→READY）；失败不回滚研究产物（回 DRAFT + lastBriefError，深度面板可手动重试 `/deep/brief`，也可「跳过简报直接生成正文」）。修复「确定研究计划/研究完成后没有简报页面」的结构性缺陷。
+- StepBrief.vue：模式切换（FAST/DEEP）→ deepStage 流转 NONE→CLARIFYING→CLARIFIED→RESEARCHING→RESEARCH_DONE → 生成；onMounted 断点恢复；`onBackFast` 退回快速模式。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（constants/project.js 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。
 - 移动端：单列纵排、抽屉全屏、触控 ≥44px。
 
 #### 配置（.env.example 已同步）

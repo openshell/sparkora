@@ -73,19 +73,11 @@ public class BriefService {
             throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
         }
 
-        // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
+        // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态,FAST/DEEP 共用 claimGenerating）:
         //    仅当「DRAFT/READY(正常生成/重生成)」或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效;
         //    陈旧分支必须限定生成中状态,否则任何 updated_at 较旧的下游状态都会被误放行、状态机回退。
         //    状态守护:VERSIONS_READY 及之后已触发下一步,再生成简报会把状态机拉回 READY,拒绝。
-        java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
-        int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                .eq("id", projectId)
-                .and(w -> w.in("status", "DRAFT", "READY")
-                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                                .lt("updated_at", staleCutoff)))
-                .set("status", "GENERATING_BRIEF")
-                .set("last_brief_error", null)
-                .set("updated_at", LocalDateTime.now()));
+        int claimed = claimGenerating(projectId);
         if (claimed == 0) throw new IllegalStateException(projectStatusGuardMsg(p, "重新生成简报"));
         p.setStatus("GENERATING_BRIEF");
 
@@ -112,6 +104,7 @@ public class BriefService {
             b.setAiModel(cr.model());
             b.setTokenUsage(cr.totalTokens());
             b.setRagStatus(rag.status().name());
+            b.setRagCitations(citationsJson(rag));
             b.setCreatedAt(LocalDateTime.now());
             briefMapper.insert(b);
 
@@ -140,6 +133,118 @@ public class BriefService {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null || p.getCurrentBriefId() == null) return null;
         return briefMapper.selectById(p.getCurrentBriefId());
+    }
+
+    /**
+     * R3:知识引用明细序列化(rag_citations 列)。OK 且有命中才落;异常不阻断生成(落 null)。
+     * 截断防御:超 8000 字符整体置 null(引用明细是辅助信息,不能因超列毁掉本次生成)。
+     */
+    static String citationsJson(CarRagService.RagResult rag) {
+        try {
+            if (rag == null || rag.citations() == null || rag.citations().isEmpty()) return null;
+            String s = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(rag.citations());
+            return s.length() > 8000 ? null : s;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 基于深度研究事实手册生成简报（S9 增补）：研究完成后自动调用，也可 POST /deep/brief 手动重试。
+     * 落简报字段到同一条 DEEP brief 行并把项目状态机推到 READY（currentBriefId 指向该行），
+     * 前端简报页据此正常展示——修复「确定研究计划后没有简报页面」的结构性缺陷。
+     * 状态守护与 FAST generate 相同：DRAFT/READY 可触发，生成中未过期拒绝，VERSIONS_READY 及之后拒绝。
+     */
+    public ArticleBriefEntity generateFromFactSheet(Long projectId, Long briefId) {
+        ArticleProjectEntity p = projectMapper.selectById(projectId);
+        if (p == null) throw new IllegalArgumentException("项目不存在");
+        ArticleBriefEntity b = briefMapper.selectById(briefId);
+        if (b == null || !projectId.equals(b.getProjectId()) || !"DEEP".equals(b.getGenMode()))
+            throw new IllegalArgumentException("深度 brief 不存在");
+        if (b.getFactSheet() == null || b.getFactSheet().isBlank())
+            throw new IllegalStateException("事实手册尚未生成，请先完成研究");
+        if (stuckGenerating(p)) {
+            throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        }
+        int claimed = claimGenerating(projectId);
+        if (claimed == 0) throw new IllegalStateException(projectStatusGuardMsg(p, "生成简报"));
+        p.setStatus("GENERATING_BRIEF");
+
+        try {
+            // AI 调用（无事务）：以事实手册为主要事实来源 + 用户锁定需求产出结构化简报
+            AiClient.ChatResult cr = aiClient.chatJson(
+                    buildDeepBriefSystemPrompt(),
+                    buildDeepBriefUserPrompt(p, b),
+                    2048);
+            BriefDto dto = json.readValue(cr.content(), BriefDto.class);
+
+            // 落同一条 DEEP brief 行（gen_mode 保持 DEEP，研究产物不覆盖）
+            b.setTitleCandidates(json.writeValueAsString(dto.getTitleCandidates()));
+            b.setAudienceRefine(dto.getAudienceRefine());
+            b.setCoreViewpoints(json.writeValueAsString(dto.getCoreViewpoints()));
+            b.setOutline(json.writeValueAsString(dto.getOutline()));
+            b.setFactRisks(json.writeValueAsString(dto.getFactRisks()));
+            b.setAiModel(cr.model());
+            b.setTokenUsage(cr.totalTokens());
+            briefMapper.updateById(b);
+
+            p.setCurrentBriefId(b.getId());
+            p.setStatus("READY");
+            p.setLastBriefError(null);
+            p.setUpdatedAt(LocalDateTime.now());
+            projectMapper.updateById(p);
+            return b;
+        } catch (Exception e) {
+            // 失败回 DRAFT 并记录原因；brief 行不动（无简报字段，前端保留深度面板可重试）
+            String reason = e.getMessage();
+            if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
+            log.warn("深度简报生成失败 project={} brief={}: {}", projectId, briefId, reason, e);
+            p.setStatus("DRAFT");
+            p.setLastBriefError(reason);
+            p.setUpdatedAt(LocalDateTime.now());
+            projectMapper.updateById(p);
+            throw new AiException("深度简报生成失败: " + reason, e);
+        }
+    }
+
+    /** 原子抢占置 GENERATING_BRIEF（FAST/DEEP 共用）：仅 DRAFT/READY 或陈旧生成中可成功。 */
+    private int claimGenerating(Long projectId) {
+        java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
+        return projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                .eq("id", projectId)
+                .and(w -> w.in("status", "DRAFT", "READY")
+                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                                .lt("updated_at", staleCutoff)))
+                .set("status", "GENERATING_BRIEF")
+                .set("last_brief_error", null)
+                .set("updated_at", LocalDateTime.now()));
+    }
+
+    /** 深度简报 system prompt：以事实手册为唯一事实来源，数值/参数必须逐字出自手册。 */
+    private String buildDeepBriefSystemPrompt() {
+        return """
+                你是新媒体内容策划专家。基于「事实手册」和用户已锁定的需求,输出一份结构化创作 Brief。
+                铁律:手册中出现的数值/参数/价格必须逐字引用,不得改写或补充手册外数字;手册未覆盖的表述放入 factRisks。
+                只输出 JSON 对象，字段如下，不要任何额外文字：
+                {
+                  "titleCandidates": ["3个标题候选"],
+                  "audienceRefine": "细化后的目标读者一句话描述",
+                  "coreViewpoints": ["2-4条核心观点"],
+                  "outline": [{"heading":"章节标题","subPoints":["2-4个要点"]}],
+                  "factRisks": [{"claim":"文中可能提到的事实性表述","riskLevel":"low|medium|high","suggestion":"核实/表述建议"}]
+                }
+                factRisks:从手册的 warnings 与低置信条目派生,至少 1 条。所有内容用中文。
+                """;
+    }
+
+    /** 深度简报 user prompt：主题 + 锁定需求 + 事实手册（含来源与置信度）。 */
+    private String buildDeepBriefUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
+        StringBuilder user = new StringBuilder("主题:").append(p.getTopic()).append('\n');
+        if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
+            user.append("用户锁定需求:").append(b.getClarifyAnswers()).append('\n');
+        }
+        user.append("事实手册(唯一事实来源,数值逐字引用):").append(b.getFactSheet());
+        return user.toString();
     }
 
     private String buildSystemPrompt() {
