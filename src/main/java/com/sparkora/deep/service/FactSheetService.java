@@ -54,8 +54,38 @@ public class FactSheetService {
             JsonNode first = list.get(0);
             String type = first.path("source").path("type").asText("KB");
             double confidence;
+            // R2 冲突裁决(2026-09-06):同 claim 同时含 KB 与 WEB 来源时 KB 胜出——
+            // 不比较相似度/置信度(量纲不同不可比),按来源类型定优先级:
+            // 本系统知识库(比亚迪同步清洗入库) > 外部 WEB(论坛/资讯,不可控)。
+            // WEB 条目不删:降级为 alternatives 佐证留证据,warnings 提示「以知识库为准」。
+            boolean hasKb = list.stream().anyMatch(f -> "KB".equals(f.path("source").path("type").asText()));
+            boolean hasWeb = list.stream().anyMatch(f -> "WEB".equals(f.path("source").path("type").asText()));
+            if (hasKb && hasWeb) {
+                JsonNode kbFirst = list.stream()
+                        .filter(f -> "KB".equals(f.path("source").path("type").asText()))
+                        .findFirst().orElse(first);
+                List<String> altUrls = new ArrayList<>();
+                for (JsonNode f : list) {
+                    String u = f.path("source").path("url").asText("");
+                    if ("WEB".equals(f.path("source").path("type").asText()) && !u.isBlank()) altUrls.add(u);
+                }
+                confidence = kbFirst.path("confidence").asDouble(0.9);
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("key", e.getKey());
+                entry.put("value", kbFirst.path("value").asText(""));
+                entry.put("claim", kbFirst.path("claim").asText(""));
+                entry.put("sources", kbFirst.path("source"));
+                entry.put("crossCount", list.size());
+                entry.put("confidence", confidence);
+                if (!altUrls.isEmpty()) {
+                    entry.put("alternatives", altUrls);
+                    warnings.add("「" + truncate(e.getKey(), 30) + "」以知识库为准;外部来源(" + altUrls.size() + " 条)有异说,未采用");
+                }
+                entries.add(entry);
+                continue;
+            }
             if (list.size() >= 2 && !sameSource(list)) {
-                confidence = 0.85;   // 多源交叉(不同来源)
+                confidence = 0.85;   // 多源交叉(不同来源,同类)
                 type = "MULTI";
             } else if ("KB".equals(type)) {
                 confidence = first.path("confidence").asDouble(0.9);

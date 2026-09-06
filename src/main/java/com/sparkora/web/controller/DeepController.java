@@ -30,12 +30,15 @@ public class DeepController {
     private final DeepResearchService researchService;
     private final DeepWriterService writerService;
     private final ArticleBriefMapper briefMapper;
+    /** 深度简报生成(手动重试 /deep/brief) */
+    private final com.sparkora.service.BriefService briefService;
     private final com.sparkora.deep.tool.SearxngSearchTool searxngTool;
     private final com.sparkora.deep.tool.TavilySearchTool tavilyTool;
     private final com.sparkora.config.DeepProperties deepProps;
 
     public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
+                          com.sparkora.service.BriefService briefService,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
                           com.sparkora.config.DeepProperties deepProps) {
@@ -43,6 +46,7 @@ public class DeepController {
         this.researchService = researchService;
         this.writerService = writerService;
         this.briefMapper = briefMapper;
+        this.briefService = briefService;
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
         this.deepProps = deepProps;
@@ -119,6 +123,22 @@ public class DeepController {
             return R.fail(400, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, "深度写作失败: " + e.getMessage());
+        }
+    }
+
+    /** 基于事实手册生成简报(手动重试入口;研究完成后后端也会自动触发一次)。body: {briefId}。 */
+    @PostMapping("/brief")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<ArticleBriefEntity> deepBrief(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
+        try {
+            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
+            return R.ok(briefService.generateFromFactSheet(projectId, briefId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
         }
     }
 

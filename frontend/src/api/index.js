@@ -28,7 +28,19 @@ export const projectApi = {
     http.put(`/projects/${id}/versions/${versionId}/title`, { title }),
   // 简报阶段点选标题(S6);body={title},空串清除
   setSelectedTitle: (id, title) =>
-    http.put(`/projects/${id}/selected-title`, { title })
+    http.put(`/projects/${id}/selected-title`, { title }),
+  // S9 深度模式:研究计划+反问(clarify 约 10~30s,放宽超时同 generateBrief)
+  startDeep: (id, topic, extraInfo = '') =>
+    http.post(`/projects/${id}/deep/clarify`, { topic, extraInfo }, { timeout: 120000 }),
+  // S9 深度模式:锁定反问答案
+  submitDeepAnswers: (id, briefId, answers) =>
+    http.post(`/projects/${id}/deep/clarify-answer`, { briefId, answers }),
+  // S9 深度模式:锁定答案并立即开跑多代理研究(前端轮询 status 展示进度)
+  runDeep: (id, briefId) => http.post(`/projects/${id}/deep/run`, { briefId }),
+  // S9 深度模式:基于事实手册生成深度正文
+  generateDeep: (id, briefId) => http.post(`/projects/${id}/deep/generate`, { briefId }),
+  // S9 深度模式:基于事实手册生成简报(自动生成失败后的手动重试;约十几秒,放宽超时)
+  generateDeepBrief: (id, briefId) => http.post(`/projects/${id}/deep/brief`, { briefId }, { timeout: 120000 })
 }
 
 export const styleApi = {

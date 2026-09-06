@@ -43,22 +43,33 @@ public class SubAgentRunner {
     public record Note(String question, String status, String factsJson, int webCount) {}
 
     /**
-     * 执行单个研究问题。
+     * 执行单个研究问题(锚点感知版,R1 2026-09-06)。
+     * KB 检索:复合 query(锚点车型 + 问题)+ 锚点加权统一通道,保证「大唐EV 价格对比」类问题命中价块;
+     * WEB:gap 驱动——仅当 KB 命中不足以覆盖(无 KB 命中,或 KB 全是车型域块而问题为对比/策略类)时定向补查,
+     * 不再与 KB 平行全问题重搜(WEB 命中不得覆盖 KB 已回答部分)。
      * @param question     研究问题
      * @param toolsAllowed 允许的工具集(如 [KB, WEB])
      * @param webQuota     本问题 WEB 调用剩余额度
+     * @param anchors      锚点车型 id(项目关联/主题识别;可空)
+     * @param topic        项目主题(复合 query 语料;可空)
      */
-    public Note research(String question, List<String> toolsAllowed, int webQuota) {
+    public Note research(String question, List<String> toolsAllowed, int webQuota, List<Long> anchors, String topic) {
         List<SearchTool.SearchHit> hits = new ArrayList<>();
-        // 1) 本地 KB(必用)
+        // 1) 本地 KB(必用,锚点加权):复合语料 = 主题(含车型名) + 研究问题
+        String kbQuery = compositeQuery(topic, question);
         try {
-            hits.addAll(kbTool.search(question, 8));
+            hits.addAll(kbTool.search(kbQuery, 8, anchors));
         } catch (Exception e) {
             log.warn("KB 工具调用失败 question={}: {}", question, e.getMessage());
         }
-        // 2) WEB(SEARXNG→Tavily 降级;额度受控)
+        boolean kbHit = hits.stream().anyMatch(h -> "KB".equals(h.type()));
+        // 2) WEB(SEARXNG→Tavily 降级;额度受控):gap 驱动——KB 已命中车型域权威块时不再全问题重搜,
+        //    仅在 KB 无命中时补查(WEB 结果只补缺口,不覆盖 KB 结论;冲突裁决在 FactSheetService.merge)
         boolean webUsed = false;
-        if (toolsAllowed.contains("WEB") && props.isSearchWebEnabled() && webQuota > 0) {
+        boolean kbAuthoritative = hits.stream().anyMatch(h ->
+                "KB".equals(h.type()) && (h.title() != null && h.title().contains("MODEL_INFO")
+                        || (h.snippet() != null && h.snippet().contains("价格区间"))));
+        if (toolsAllowed.contains("WEB") && props.isSearchWebEnabled() && webQuota > 0 && !kbAuthoritative) {
             for (SearchTool webTool : List.of(searxngTool, tavilyTool)) {
                 if (hits.stream().anyMatch(h -> "WEB".equals(h.type()))) break;
                 if (!webTool.available()) continue;
@@ -93,6 +104,16 @@ public class SubAgentRunner {
             log.warn("研究子代理 LLM 汇总失败,降级为原始条目 question={}: {}", question, e.getMessage());
             return new Note(question, "FALLBACK", rawFallback(hits), 0);
         }
+    }
+
+    /** 复合 KB 检索语料:主题(通常含车型名) + 研究问题,解决「纯问题如『价格对比』缺车型上下文、相似度必散」的检索短板。(R1) */
+    private static String compositeQuery(String topic, String question) {
+        String t = topic == null ? "" : topic.trim();
+        String q = question == null ? "" : question.trim();
+        if (t.isEmpty()) return q;
+        if (q.isEmpty()) return t;
+        if (t.contains(q) || q.contains(t)) return t.length() >= q.length() ? t : q;
+        return t + ", " + q;
     }
 
     private String chat(String system, String user) throws Exception {

@@ -27,6 +27,18 @@
             <el-input v-model="form.topic" maxlength="200" show-word-limit size="large"
                       placeholder="如：如何选择自部署的国产 AI 模型" />
           </el-form-item>
+          <!-- 思考深度:创建时即选定生成模式(S9)。FAST=直接生成简报;DEEP=先出研究计划+反问,确认后再研究 -->
+          <el-form-item label="思考深度" class="depth-item">
+            <el-radio-group v-model="form.genDepth">
+              <el-radio-button value="FAST">标准模式</el-radio-button>
+              <el-radio-button value="DEEP">深度模式（研究 + 反问）</el-radio-button>
+            </el-radio-group>
+            <div class="form-tip" style="text-align:left;margin-top:4px">
+              {{ form.genDepth === 'DEEP'
+                ? '深度模式：先由 AI 生成研究计划并向你反问补充信息，确认后多代理并行研究（KB+联网）再写作，耗时更长。'
+                : '标准模式：直接生成创作简报（通常 1~2 分钟）。需要更严谨的事实依据时选深度模式。' }}
+            </div>
+          </el-form-item>
         </section>
 
         <!-- 区块二:内容设定 -->
@@ -89,7 +101,7 @@
           <el-button :loading="saving" @click="onSave">仅存草稿</el-button>
           <el-button type="primary" :loading="loading" @click="onSaveAndGenerate">创建并生成简报 →</el-button>
         </div>
-        <p class="form-tip">「创建并生成简报」会立即调用 AI 生成创作简报（通常需要 1~2 分钟）。</p>
+        <p class="form-tip">「创建并生成简报」会立即进入详情页并调用 AI 生成创作简报（通常需要 1~2 分钟）；深度模式先生成研究计划并进入反问环节。</p>
       </el-form>
     </div>
   </div>
@@ -107,8 +119,12 @@ const formRef = ref()
 const loading = ref(false)   // 创建并生成
 const saving = ref(false)    // 仅存草稿
 const carModels = ref([])    // S6:车型知识库列表(可选关联)
-const form = reactive({ topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelIds: [], extraInfo: '' })
-const rules = { topic: [{ required: true, message: '请输入主题', trigger: 'blur' }] }
+const form = reactive({ topic: '', genDepth: 'FAST', keywords: '', audience: '', wordCountTarget: 1500, remark: '', carModelIds: [], extraInfo: '' })
+const rules = {
+  topic: [{ required: true, message: '请输入主题', trigger: 'blur' }],
+  // 思考深度必选(默认 FAST);仅 FAST/DEEP 两个合法值
+  genDepth: [{ required: true, validator: (_r, v, cb) => (v === 'FAST' || v === 'DEEP' ? cb() : cb(new Error('请选择思考深度'))), trigger: 'change' }],
+}
 
 onMounted(async () => {
   try { const res = await carApi.list(); carModels.value = res.data || [] } catch { carModels.value = [] }
@@ -116,7 +132,8 @@ onMounted(async () => {
 
 const doSave = async () => {
   await formRef.value.validate()
-  const res = await projectApi.create(form)
+  const { genDepth, ...payload } = form   // genDepth 是前端生成意图,不随项目创建提交后端
+  const res = await projectApi.create(payload)
   return res.data
 }
 
@@ -125,27 +142,36 @@ const onSave = async () => {
   try {
     const id = await doSave()
     ElMessage.success('已保存为草稿')
-    router.push(`/projects/${id}`)
+    router.push(`/projects/${id}?gen=${form.genDepth}`)
   } finally { saving.value = false }
 }
 
+// 创建并生成:主按钮只负责「创建 + 发起生成」,立即进详情页;
+// 生成过程由详情页按 project.status 展示(布局层 4s 轮询,简报页以 GENERATING_BRIEF 状态为事实源)。
 const onSaveAndGenerate = async () => {
-  let id = null
+  await formRef.value.validate()
   loading.value = true
   try {
-    id = await doSave()
-    const res = await projectApi.generateBrief(id)
-    // 后端把生成失败包装为 R.fail 且 HTTP 200,必须检查业务码
-    if (res.code === 0) ElMessage.success('已创建，简报生成完成')
-    else ElMessage.warning('已创建草稿，但简报生成失败，可在详情页重试')
+    const id = await doSave()
+    router.push(`/projects/${id}?gen=${form.genDepth}`)
+    try {
+      if (form.genDepth === 'DEEP') {
+        // 深度模式:发起研究计划+反问(brief 落库 gen_mode=DEEP,StepBrief onMounted 会恢复 CLARIFYING 态)
+        // 失败也不必回退页面:详情页深度面板仍可手动点「生成研究计划」重试
+        await projectApi.startDeep(id, form.topic.trim(), form.extraInfo || '')
+        ElMessage.success('研究计划已生成，请在简报页确认反问信息')
+      } else {
+        // 标准模式:发起简报生成。AI 调用 1~2 分钟,放宽超时与按钮一致(120s),
+        // 避免默认 30s 超时把已受理的请求误报为「生成失败」
+        await projectApi.generateBrief(id)
+        ElMessage.success('已创建，简报生成完成')
+      }
+    } catch (e) {
+      // 发起失败:已跳详情页,状态/lastBriefError 可见,由用户在页面内重试
+    }
   } catch (e) {
-    // 网络层异常也已建出草稿:进详情页可看 lastBriefError 并重试;
-    // 仅表单校验失败(id 为空)时静默,由表单 rules 提示
-    if (id) ElMessage.warning('已创建草稿，但简报生成失败，可在详情页重试')
-  } finally {
-    loading.value = false
-    if (id) router.push(`/projects/${id}`)
-  }
+    // 仅创建本身失败(网络异常):留在此页;表单校验失败由 rules 提示,不重复弹窗
+  } finally { loading.value = false }
 }
 </script>
 
