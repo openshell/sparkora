@@ -369,7 +369,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 > **2026-09-03 S6 决策**：配图并入预览步骤，不再有独立「配图」步与「完成配图」状态推进。配图入口在预览工具栏「配图」面板，提供**图库插入**（全量图库选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，产物进图库后插入正文）两种来源。车型库图片接入**预留**（暂不开发）。
 
-### 数据模型（`sparkora_image_asset`，S3b 新表）
+### 数据模型（`sparkora_image_asset`，S3b 新表；S10 增量见文末）
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -387,6 +387,17 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - **S6 图库完全依赖图床，本地不留**：`storage_path` 字段已移除（历史本地图不迁移，作废）；`qiniu_key` 语义通用化为 `storage_key`。图片入库即直接转存图床，`/images/**` 静态映射已删除。
 - 非持久化字段 `url`：由 `storage_key` 实时拼图床公网 URL，供前端直接展示/引用（`@TableField(exist=false)`）。
 
+**S10 增量字段（幂等 ALTER；存量行为 NULL，旧代码兼容）**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| content_hash | VARCHAR(64) | 内容哈希（sha256 hex）。入库去重：命中已有记录**不重复上传图床**，返回已有记录（`dedupeHit=true`，前端提示「复用」）。仅新增入库必填；存量回填明确不做。索引 `idx_image_asset_hash` |
+| gen_model | VARCHAR(100) | 生成留档：实际命中的模型名（AI 来源；上传/BYD 为空） |
+| gen_size | VARCHAR(20) | 生成留档：请求尺寸（`auto`/未指定为 NULL）；regenerate 用它复现尺寸 |
+
+- 非持久化字段新增：`thumbUrl`（七牛 imageView2/2/w/360/format/webp 派生；非七牛实现降级为 url）、`dedupeHit`（Boolean，去重命中标记）。
+- **去重管线（四来源统一）**：upload / 文生图 / 图生图 / BYD 同步入库均走 `ImageService.persistOrReuse`（算哈希→查命中→复用或上传图床）。BYD 额外收益：车型同步幂等重跑不重复占图床对象。并发同哈希双写容忍（先查后插，竞态窗口最多多传一份对象）。
+
 ### 版本-图片关联（挂版本，不挂项目）
 
 `sparkora_article_version` 增列（幂等 ALTER）：
@@ -398,28 +409,30 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 > 理由：多版本各有排版，预览/发布按「当前版本」取图；项目级关联无法表达版本间差异。
 
-### 配图 API（全部 `R<T>` 包装；HTTP 200）
+### 配图 API（全部 `R<T>` 包装；HTTP 200；S10 起检索/生成契约升级）
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/images` | 三角色 | `?projectId=` 过滤 | `{images[]}`（含 id,fileName,source,promptText,width,height,storageKey,url,createdAt） |
-| POST | `/api/images/upload` | ADMIN/EDITOR | multipart `file` + `projectId?`（可空=全局图库） | `{image}`；类型限 png/jpg/webp，≤10MB（Spring multipart 限制同步 `IMAGE_MAX_UPLOAD_MB`），超限 `R.fail(400)` |
+| GET | `/api/images` | 三角色 | `?projectId=&source=&keyword=&page=1&size=24` 组合查询（source 白名单 upload/ai-text2img/ai-img2img/byd，非法值 400；keyword 命中 file_name/prompt_text，ILIKE） | `PageResult`：`{rows[], total, page, size}`；rows 内每条含 url + thumbUrl。**S10 起不再返回全量列表** |
+| POST | `/api/images/upload` | ADMIN/EDITOR | multipart `file` + `projectId?`（可空=全局图库） | `{image}`（含 `dedupeHit`：内容哈希命中已有记录时 true，不重复传图床）；类型限 png/jpg/webp，≤10MB（`IMAGE_MAX_UPLOAD_MB`），超限 `R.fail(400)` |
 | DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录+图床对象 |
-| POST | `/api/images/generate-text` | ADMIN/EDITOR | `{projectId?, prompt, size?}` | `{image}`；AI 失败 `R.fail(500)` 含候选模型错误明细 |
-| POST | `/api/images/generate-from-image` | ADMIN/EDITOR | `{projectId?, refImageId, prompt, size?}` | `{image}`；provider 不支持 edits 时 `R.fail(500, 明确提示)` |
-| GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[]}`（当前版本配图快照；images 为**全量图库**——含全局图，与配图选用口径一致） |
+| POST | `/api/images/generate-text` | ADMIN/EDITOR | `{projectId?, prompt, size?, n?}`（`@Valid` DTO；n 1~4 默认 1） | **S10 起响应为数组** `{images[]}`：n 张候选逐张入库（后端循环 n 次单张调用，单张失败跳过，全部失败 `R.fail(500)` 含候选模型错误明细）；每张含 genModel/genSize/dedupeHit |
+| POST | `/api/images/generate-from-image` | ADMIN/EDITOR | `{projectId?, refImageId, prompt, size?, n?}`（`@Valid` DTO） | **S10 起响应为数组** `{images[]}`（同上）；provider 不支持 edits 时 `R.fail(500, 明确提示)` |
+| POST | `/api/images/{id}/regenerate` | ADMIN/EDITOR | —（S10 新增） | `{images[]}`（1 张）：用源图 prompt/gen_size 重新生成**新图**（不覆盖源图）。源图须 source∈{ai-text2img,ai-img2img} 且 prompt 非空，img2img 复用源图 ref_image_id（参考图已删则 400） |
+| GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[], coverImage?, bodyImages[]}`。**S10 语义改写**：`images` 从全量图库收缩为**当前版本引用的图**（封面+插图）；新增服务端解析的 `coverImage`（对象含 url）/`bodyImages`（按 bodyImageIds 顺序）。全量图库浏览改走 `GET /api/images` 分页接口 |
 | POST | `/api/projects/{id}/images/{imageId}/cover` | ADMIN/EDITOR | — | `{ok:true}`（version.cover_image_id）；重复选同一张幂等 |
 | POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 version.body_image_ids）；重复添加幂等 |
 
 - 图片访问：**图床公网 URL**（`url` 字段，由 `storage_key` 实时拼）。`/images/**` 静态映射已删除（S6 本地不留）。
+- **缩略图交付（S10）**：列表/网格用 `thumbUrl`（七牛 imageView2/2/w/360/format/webp，交付层转换零转码成本）；大图预览、正文插入、wenyan 拉图、公众号发布均用原图 `url`。非七牛图床实现降级 thumbUrl=url（`ObjectProvider` 可选注入，`ImageStorage` 接口不掺七牛特性）。
 - 文生图/图生图返回的 axonhub URL **必须转存图床**（临时 URL 会过期），转存失败则该次生成报错（不留死链）。
 - 请求体数字字段（projectId/refImageId）统一健壮解析：兼容数字与字符串形式（前端路由参数为字符串）。
 - **S6 起 `complete-images` 接口已删除**（配图并入预览，不再有「完成配图」状态推进）。
 
-### 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览）
+### 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级）
 
-- **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、按项目过滤、删除（ADMIN/EDITOR）。素材管理归图库，不在文章流程内。
-- **预览步配图面板（项目向导 Step3 并入 Step4）**：工具栏「配图」面板提供**图库插入**（全量图库选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，产物进图库后插入正文）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。
+- **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，el-pagination 翻页）；网格缩略图走 thumbUrl（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡展示 gen_model/gen_size 并提供**一键重生成**；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图从当前列表选参考图；n(1/2/4) 张候选生成，projectId 传空=全局图库，产物即进图库）。素材管理归图库，不在文章流程内。
+- **预览步配图面板（项目向导 Step3 并入 Step4）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。
 
 ---
 

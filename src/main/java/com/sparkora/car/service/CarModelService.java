@@ -65,6 +65,7 @@ public class CarModelService {
     private final CarCleanService cleanService;
     private final CarDocEmbeddingMapper embStatsMapper;
     private final ImageAssetMapper imageMapper;
+    private final com.sparkora.service.ImageService imageService;
     private final ImageStorage imageStorage;
     private final ObjectMapper json;
 
@@ -78,7 +79,8 @@ public class CarModelService {
                            CarParamMapper paramMapper, CarParamCleanMapper cleanMapper,
                            CarDocService docService, CarCleanService cleanService,
                            CarDocEmbeddingMapper embStatsMapper,
-                           ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json) {
+                           ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json,
+                           com.sparkora.service.ImageService imageService) {
         this.client = client;
         this.modelMapper = modelMapper;
         this.versionMapper = versionMapper;
@@ -91,6 +93,7 @@ public class CarModelService {
         this.imageMapper = imageMapper;
         this.imageStorage = imageStorage;
         this.json = json;
+        this.imageService = imageService;
     }
 
     /** 车型列表(按 id 倒序)。 */
@@ -298,16 +301,16 @@ public class CarModelService {
             try {
                 byte[] bytes = downloadImage(url);
                 String ext = sniffImageExt(bytes);
-                ImageAssetEntity e = new ImageAssetEntity();
-                e.setProjectId(null);                       // 全局图库
-                e.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
-                e.setSource("byd");
-                e.setStorageKey(imageStorage.upload(bytes, ext));
-                e.setCreatedBy("system");
-                e.setCreatedAt(LocalDateTime.now());
-                imageMapper.insert(e);
+                // S10:走 ImageService 统一入库管线（内容哈希去重;同步幂等重跑不重复占图床对象）
+                com.sparkora.domain.entity.ImageAssetEntity preset = new com.sparkora.domain.entity.ImageAssetEntity();
+                preset.setProjectId(null);                       // 全局图库
+                preset.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
+                preset.setSource("byd");
+                preset.setCreatedBy("system");
+                ImageAssetEntity e = imageService.persistOrReuse(bytes, ext, preset);
                 ids.add(e.getId());
-                log.info("比亚迪车型图已转存图床 model={} url={} id={}", model.getName(), shorten(url), e.getId());
+                log.info("比亚迪车型图已入库 model={} url={} id={} dedupe={}",
+                        model.getName(), shorten(url), e.getId(), Boolean.TRUE.equals(e.getDedupeHit()));
             } catch (Exception ex) {
                 log.warn("比亚迪车型图转存失败(跳过): model={} url={} err={}", model.getName(), shorten(url), ex.getMessage());
             }

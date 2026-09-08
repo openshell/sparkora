@@ -211,13 +211,9 @@ const loadSummary = async () => {
     const vid = res.data?.currentVersionId
     bodyImageIds.value = res.data?.bodyImageIds || []
     coverUrl.value = ''
-    const images = res.data?.images || []
-    const targetId = res.data?.coverImageId
-    if (targetId != null && images.length) {
-      const img = images.find(x => x.id === targetId)
-      // 图床公网 URL(入库即已转存,后端填充 url 字段)
-      if (img?.url) coverUrl.value = img.url
-    }
+    // S10:封面 URL 改读服务端解析的 coverImage.url（不再自行从全量 images find）
+    const img = res.data?.coverImage
+    if (img?.url) coverUrl.value = img.url
     if (vid) {
       const vr = await projectApi.listVersions(projectId.value)
       if (vr.code === 0) {

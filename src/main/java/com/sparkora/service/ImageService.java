@@ -1,6 +1,9 @@
 package com.sparkora.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sparkora.config.QiniuProperties;
+import com.sparkora.domain.dto.PageResult;
 import com.sparkora.ai.AiException;
 import com.sparkora.ai.AiImageClient;
 import com.sparkora.config.ImageProperties;
@@ -12,6 +15,7 @@ import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -60,6 +64,8 @@ public class ImageService {
     private final ArticleVersionMapper versionMapper;
     private final AiImageClient aiImageClient;
     private final ImageStorage imageStorage;
+    /** 七牛配置（可选注入：图床供应商非七牛时 bean 不存在，thumbUrl 降级为原图 url）。 */
+    private final ObjectProvider<QiniuProperties> qiniuProps;
 
     private final java.net.http.HttpClient transferClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -68,13 +74,15 @@ public class ImageService {
 
     public ImageService(ImageProperties imageProps, ImageAssetMapper imageMapper,
                         ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
-                        AiImageClient aiImageClient, ImageStorage imageStorage) {
+                        AiImageClient aiImageClient, ImageStorage imageStorage,
+                        ObjectProvider<QiniuProperties> qiniuProps) {
         this.imageProps = imageProps;
         this.imageMapper = imageMapper;
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.aiImageClient = aiImageClient;
         this.imageStorage = imageStorage;
+        this.qiniuProps = qiniuProps;
     }
 
     // ==================== 上传 ====================
@@ -102,73 +110,171 @@ public class ImageService {
                 && (sniffed.equals(ext) || ("jpg".equals(sniffed) && "jpeg".equals(ext)));
         if (!ok) throw new IllegalArgumentException("文件内容不是有效的 png/jpg/webp 图片");
 
-        ImageAssetEntity e = new ImageAssetEntity();
-        e.setProjectId(projectId);
-        e.setFileName(safeName(file.getOriginalFilename(), "upload.png"));
-        e.setSource("upload");
-        e.setStorageKey(imageStorage.upload(bytes, ext));
-        fillSize(e, bytes);
-        e.setCreatedBy(operator);
-        e.setCreatedAt(LocalDateTime.now());
-        imageMapper.insert(e);
-        fillUrl(e);
-        log.info("上传配图 project={} id={} file={}（{}KB）", projectId, e.getId(), e.getFileName(), file.getSize() / 1024);
+        ImageAssetEntity preset = new ImageAssetEntity();
+        preset.setProjectId(projectId);
+        preset.setFileName(safeName(file.getOriginalFilename(), "upload.png"));
+        preset.setSource("upload");
+        preset.setCreatedBy(operator);
+        ImageAssetEntity e = persistOrReuse(bytes, ext, preset);
+        if (Boolean.TRUE.equals(e.getDedupeHit())) {
+            log.info("上传去重复用已有记录 id={} file={}（{}KB）", e.getId(), e.getFileName(), file.getSize() / 1024);
+        } else {
+            log.info("上传配图 project={} id={} file={}（{}KB）", projectId, e.getId(), e.getFileName(), file.getSize() / 1024);
+        }
         return e;
     }
 
     // ==================== 文生图 / 图生图 ====================
 
-    /** 文生图（图库独立维护,projectId 允许为 null = 不挂项目的全局图）。 */
-    public ImageAssetEntity generateText2Image(Long projectId, String prompt, String size, String operator) {
+    /** 文生图（图库独立维护,projectId 允许为 null = 不挂项目的全局图）。
+     *  S10 M3：返回 URL 列表 + 实际命中模型名，循环 n 次单张入库（单张失败跳过，全部失败抛 AiException）。 */
+    public List<ImageAssetEntity> generateText2Image(Long projectId, String prompt, String size, int n, String operator) {
         if (projectId != null) ensureProject(projectId);
         if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("请输入生成提示词（prompt）");
-        String url = aiImageClient.generateText2Image(prompt, normalizeSize(size));
-        return saveGenerated(projectId, url, prompt, null, "ai-text2img", operator);
+        int count = n < 1 ? 1 : Math.min(n, 4);
+        String normSize = normalizeSize(size);
+        List<ImageAssetEntity> out = new ArrayList<>();
+        StringBuilder errs = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            try {
+                AiImageClient.GenResult g = aiImageClient.generateText2Image(prompt, normSize);
+                out.add(saveGenerated(projectId, g.url(), prompt, null, "ai-text2img", operator, g.model(), normSize));
+            } catch (Exception e) {
+                log.warn("文生图第 {} 张失败（跳过）: {}", i + 1, e.getMessage());
+                errs.append("第").append(i + 1).append("张: ").append(e.getMessage()).append("; ");
+            }
+        }
+        if (out.isEmpty()) throw new AiException("文生图全部失败: " + errs, null);
+        return out;
     }
 
-    /** 图生图（projectId 允许为 null;参考图可来自任意图库）。 */
-    public ImageAssetEntity generateImage2Image(Long projectId, Long refImageId, String prompt, String size, String operator) {
+    /** 图生图（projectId 允许为 null;参考图可来自任意图库）。S10 M3：循环 n 次单张入库。 */
+    public List<ImageAssetEntity> generateImage2Image(Long projectId, Long refImageId, String prompt, String size, int n, String operator) {
         if (projectId != null) ensureProject(projectId);
         if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("请输入生成提示词（prompt）");
         if (refImageId == null) throw new IllegalArgumentException("请选择参考图");
         ImageAssetEntity ref = imageMapper.selectById(refImageId);
         if (ref == null) throw new IllegalArgumentException("参考图不存在");
         byte[] refBytes = imageStorage.download(ref.getStorageKey());
-        String url = aiImageClient.generateImage2Image(prompt, refBytes, fileBaseName(ref.getFileName()), normalizeSize(size));
-        return saveGenerated(projectId, url, prompt, refImageId, "ai-img2img", operator);
+        int count = n < 1 ? 1 : Math.min(n, 4);
+        String normSize = normalizeSize(size);
+        List<ImageAssetEntity> out = new ArrayList<>();
+        StringBuilder errs = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            try {
+                AiImageClient.GenResult g = aiImageClient.generateImage2Image(prompt, refBytes, fileBaseName(ref.getFileName()), normSize);
+                out.add(saveGenerated(projectId, g.url(), prompt, refImageId, "ai-img2img", operator, g.model(), normSize));
+            } catch (Exception e) {
+                log.warn("图生图第 {} 张失败（跳过）: {}", i + 1, e.getMessage());
+                errs.append("第").append(i + 1).append("张: ").append(e.getMessage()).append("; ");
+            }
+        }
+        if (out.isEmpty()) throw new AiException("图生图全部失败: " + errs, null);
+        return out;
     }
 
-    /** AI 生成结果统一转存图床（临时 URL/data URL 均不留存）。转存失败整次报错，不留死链。 */
+    /** 重新生成（S10 M3）：用源图 prompt/gen_size 产新图（不覆盖源图）。返回 1 张候选。 */
+    public List<ImageAssetEntity> regenerate(Long imageId, String operator) {
+        ImageAssetEntity src = imageMapper.selectById(imageId);
+        if (src == null) throw new IllegalArgumentException("图片不存在: " + imageId);
+        if (!java.util.Set.of("ai-text2img", "ai-img2img").contains(src.getSource()))
+            throw new IllegalArgumentException("仅 AI 生成图可重新生成");
+        if (src.getPromptText() == null || src.getPromptText().isBlank())
+            throw new IllegalArgumentException("源图无 prompt，无法重新生成");
+        if ("ai-img2img".equals(src.getSource())) {
+            if (src.getRefImageId() == null) throw new IllegalArgumentException("源图无参考图，无法重新生成");
+            return generateImage2Image(orphanFallback(src.getProjectId()), src.getRefImageId(), src.getPromptText(),
+                    src.getGenSize(), 1, operator);
+        }
+        return generateText2Image(orphanFallback(src.getProjectId()), src.getPromptText(), src.getGenSize(), 1, operator);
+    }
+
+    /** 源图挂的项目若已被删除则回退全局图库（orphan 记录不阻断 AI 图重生成）。 */
+    private Long orphanFallback(Long projectId) {
+        if (projectId == null) return null;
+        return projectMapper.selectById(projectId) == null ? null : projectId;
+    }
+
+    /** AI 生成结果统一转存图床（临时 URL/data URL 均不留存）。转存失败整次报错，不留死链。
+     *  S10 起走统一入库管线（内容哈希去重）；M3 起留档 gen_model/gen_size。 */
     private ImageAssetEntity saveGenerated(Long projectId, String url, String prompt,
-                                           Long refImageId, String source, String operator) {
+                                           Long refImageId, String source, String operator,
+                                           String genModel, String genSize) {
         byte[] bytes = fetchBytes(url);
         String ext = sniffExt(bytes);
-        ImageAssetEntity e = new ImageAssetEntity();
-        e.setProjectId(projectId);
-        e.setFileName(promptSummary(prompt) + "." + ext);
-        e.setSource(source);
-        e.setStorageKey(imageStorage.upload(bytes, ext));
-        e.setPromptText(prompt.length() > 2000 ? prompt.substring(0, 2000) : prompt);
-        e.setRefImageId(refImageId);
-        fillSize(e, bytes);
-        e.setCreatedBy(operator);
-        e.setCreatedAt(LocalDateTime.now());
-        imageMapper.insert(e);
-        fillUrl(e);
-        log.info("AI 配图已转存图床 project={} id={} source={}（{}KB）", projectId, e.getId(), source, bytes.length / 1024);
+        ImageAssetEntity preset = new ImageAssetEntity();
+        preset.setProjectId(projectId);
+        preset.setFileName(promptSummary(prompt) + "." + ext);
+        preset.setSource(source);
+        preset.setPromptText(prompt.length() > 2000 ? prompt.substring(0, 2000) : prompt);
+        preset.setRefImageId(refImageId);
+        preset.setGenModel(genModel);
+        preset.setGenSize(genSize);
+        preset.setCreatedBy(operator);
+        ImageAssetEntity e = persistOrReuse(bytes, ext, preset);
+        if (Boolean.TRUE.equals(e.getDedupeHit())) {
+            log.info("AI 配图去重复用 id={} source={}（{}KB）", e.getId(), source, bytes.length / 1024);
+        } else {
+            log.info("AI 配图已转存图床 project={} id={} source={}（{}KB）", projectId, e.getId(), source, bytes.length / 1024);
+        }
         return e;
     }
 
     // ==================== 查询 / 封面 / 插图 / 完成配图 ====================
 
-    /** 图库列表（projectId 可选过滤；按 id 倒序，最新在前）。 */
-    public List<ImageAssetEntity> list(Long projectId) {
+    /** 来源参数白名单（spec §10；非法值 400）。 */
+    private static final java.util.Set<String> SOURCES = java.util.Set.of("upload", "ai-text2img", "ai-img2img", "byd");
+
+    /**
+     * 统一入库管线（S10 去重内聚）：四来源（upload/文生图/图生图/BYD）共用。
+     * 计算 sha256 → 查 content_hash 命中则复用已有记录（不重复传图床，dedupeHit=true）→ 未命中则上传图床 + insert。
+     * @param preset 由调用方填充领域字段（source/projectId/promptText/refImageId/genModel/genSize/fileName/createdBy），
+     *               本方法负责 contentHash/storageKey/width/height/createdAt 落库与 url/thumbUrl 回填。
+     * @return 已入库（或复用）的实体；dedupeHit=true 表示命中已有记录（前端提示「复用」）。
+     */
+    public ImageAssetEntity persistOrReuse(byte[] bytes, String ext, ImageAssetEntity preset) {
+        String hash = sha256Hex(bytes);
+        ImageAssetEntity hit = imageMapper.selectOne(new QueryWrapper<ImageAssetEntity>().eq("content_hash", hash).last("LIMIT 1"));
+        if (hit != null) {
+            fillDerived(hit);
+            hit.setDedupeHit(true);
+            log.info("配图去重命中 hash={} 复用记录 id={}（未上传图床）", hash, hit.getId());
+            return hit;
+        }
+        preset.setContentHash(hash);
+        preset.setStorageKey(imageStorage.upload(bytes, ext));
+        fillSize(preset, bytes);
+        preset.setCreatedAt(LocalDateTime.now());
+        imageMapper.insert(preset);
+        fillDerived(preset);
+        return preset;
+    }
+
+    /** SHA-256 → hex（入库去重用；图库规模小，查询走 content_hash 索引）。 */
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of().formatHex(md.digest(bytes));
+        } catch (Exception e) {
+            throw new IllegalStateException("计算内容哈希失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** 图库分页列表（S10：服务端筛选 + 分页，替代「全量拉取 + 前端过滤」）。 */
+    public PageResult<ImageAssetEntity> list(Long projectId, String source, String keyword, long page, long size) {
+        if (page < 1) page = 1;
+        if (size < 1 || size > 100) size = 24;
+        if (source != null && !source.isBlank() && !SOURCES.contains(source))
+            throw new IllegalArgumentException("不支持的图片来源: " + source);
         QueryWrapper<ImageAssetEntity> qw = new QueryWrapper<>();
         if (projectId != null) qw.eq("project_id", projectId);
+        if (source != null && !source.isBlank()) qw.eq("source", source);
+        String kw = keyword == null ? "" : keyword.trim();
+        if (!kw.isEmpty()) qw.and(w -> w.like("file_name", kw).or().like("prompt_text", kw));
         qw.orderByDesc("id");
-        List<ImageAssetEntity> list = imageMapper.selectList(qw);
-        list.forEach(this::fillUrl);
-        return list;
+        Page<ImageAssetEntity> p = imageMapper.selectPage(new Page<>(page, size), qw);
+        p.getRecords().forEach(this::fillDerived);
+        return new PageResult<>(p.getRecords(), p.getTotal(), p.getCurrent(), p.getSize());
     }
 
     /** 填充非持久化 url 字段（由 storageKey 拼图床公网 URL）。 */
@@ -176,6 +282,22 @@ public class ImageService {
         if (img.getStorageKey() != null && !img.getStorageKey().isBlank()) {
             img.setUrl(imageStorage.publicUrl(img.getStorageKey()));
         }
+    }
+
+    /** 填充非持久化 thumbUrl（S10：七牛 imageView2/webp 派生；非七牛实现降级为原图 url）。 */
+    private void fillThumbUrl(ImageAssetEntity img) {
+        QiniuProperties q = qiniuProps.getIfAvailable();
+        if (q != null && q.configured() && img.getUrl() != null) {
+            img.setThumbUrl(q.thumbUrl(img.getStorageKey()));
+        } else {
+            img.setThumbUrl(img.getUrl());
+        }
+    }
+
+    /** 列表/快照共用的展示派生字段填充（url + thumbUrl）。 */
+    private void fillDerived(ImageAssetEntity img) {
+        fillUrl(img);
+        fillThumbUrl(img);
     }
 
     /** 由图库记录 id 取图床公网 URL（图片入库即已转存，storageKey 非空）。 */
@@ -213,17 +335,40 @@ public class ImageService {
         log.info("删除配图 id={} key={}", id, img.getStorageKey());
     }
 
-    /** 配图快照（三角色可读）：全量图库（含全局图，与配图选用口径一致）+ 当前版本封面/插图。 */
+    /**
+     * 配图快照（三角色可读）。S10 语义改写：
+     * images 从「全量图库」收缩为「当前版本引用的图」（封面 + 插图，按 bodyImageIds 顺序在前）；
+     * 新增服务端解析的 coverImage / bodyImages（含 url，StepPublish/StepPreview 消费方不再自行 find）。
+     * 图库全量浏览走分页接口 GET /api/images（抽屉选图网格同源）。
+     */
     public Map<String, Object> projectImages(Long projectId) {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
         ArticleVersionEntity current = currentVersion(p);
+        Long coverImageId = current == null ? null : current.getCoverImageId();
+        List<Long> bodyImageIds = bodyIdListOf(current);
+        // 引用图集合 = 封面 + 插图；批量查询 + 内存排序（保持 bodyImageIds 顺序，封面置前）
+        java.util.LinkedHashSet<Long> refIds = new java.util.LinkedHashSet<>();
+        if (coverImageId != null) refIds.add(coverImageId);
+        refIds.addAll(bodyImageIds);
+        Map<Long, ImageAssetEntity> byId = refIds.isEmpty() ? Map.of()
+                : imageMapper.selectBatchIds(refIds).stream()
+                        .collect(Collectors.toMap(ImageAssetEntity::getId, e -> e));
+        List<ImageAssetEntity> bodyImages = bodyImageIds.stream().map(byId::get).filter(java.util.Objects::nonNull)
+                .peek(this::fillDerived).toList();
+        ImageAssetEntity coverImage = coverImageId == null ? null : byId.get(coverImageId);
+        if (coverImage != null) fillDerived(coverImage);
+        List<ImageAssetEntity> images = new ArrayList<>();
+        if (coverImage != null) images.add(coverImage);
+        images.addAll(bodyImages);
+
         Map<String, Object> m = new java.util.HashMap<>();
-        // 口径:配图步骤可选用任意库内图(全局图与各项目图),因此快照的 images 用全量图库
-        m.put("images", list(null));
+        m.put("images", images);                 // S10 起为「当前版本引用的图」（不再是全量图库）
         m.put("currentVersionId", current == null ? null : current.getId());
-        m.put("coverImageId", current == null ? null : current.getCoverImageId());
-        m.put("bodyImageIds", bodyIdListOf(current));
+        m.put("coverImageId", coverImageId);
+        m.put("bodyImageIds", bodyImageIds);
+        m.put("coverImage", coverImage);
+        m.put("bodyImages", bodyImages);
         return m;
     }
 

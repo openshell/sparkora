@@ -367,3 +367,16 @@ CREATE TABLE IF NOT EXISTS sparkora_kb_chunk_embedding (
 );
 CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec ON sparkora_kb_chunk_embedding
     USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- ============================================================================
+-- S10:图库系统性重构(检索组织/性能成本/AI 生成体验)
+-- 补列:内容哈希(sha256 hex,64 字符,入库去重;存量 NULL 允许,仅新增入库必填)
+--      + 生成留档(实际命中模型 / 请求尺寸;size 原样存,auto 存 NULL)。
+-- 存量哈希不回填(明确 out of scope);新列可空,旧代码兼容。
+-- 注意:不能用 DO $$ 块——Spring ScriptUtils 不支持 dollar-quote,全部单条幂等语句。
+-- ============================================================================
+ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
+ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS gen_model VARCHAR(100);
+ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS gen_size VARCHAR(20);
+CREATE INDEX IF NOT EXISTS idx_image_asset_hash ON sparkora_image_asset(content_hash);
+CREATE INDEX IF NOT EXISTS idx_image_asset_source ON sparkora_image_asset(source);

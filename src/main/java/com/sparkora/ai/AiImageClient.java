@@ -52,8 +52,8 @@ public class AiImageClient {
                 .build();
     }
 
-    /** 文生图：按序轮询候选模型，任一成功即返回 URL（http/https）或 data URL（base64）。 */
-    public String generateText2Image(String prompt, String size) {
+    /** 文生图：按序轮询候选模型，任一成功即返回 URL（http/https）或 data URL（base64）+ 实际命中模型名（S10 留档 gen_model）。 */
+    public GenResult generateText2Image(String prompt, String size) {
         List<String> models = props.imageModelList();
         if (models.isEmpty()) throw new AiException("AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置", null);
         StringBuilder errs = new StringBuilder();
@@ -67,7 +67,7 @@ public class AiImageClient {
                 String resp = postForJsonText("/v1/images/generations", body);
                 String url = parseFirstUrl(resp);
                 log.info("文生图成功 model={} url={}", model, shorten(url));
-                return url;
+                return new GenResult(url, model);
             } catch (Exception e) {
                 log.warn("文生图模型 {} 失败，尝试下一个: {}", model, e.getMessage());
                 errs.append("[").append(model).append("] ").append(e.getMessage()).append("; ");
@@ -78,10 +78,11 @@ public class AiImageClient {
 
     /**
      * 图生图：multipart POST /v1/images/edits，按序轮询候选模型（S3b 实现）。
+     * S10 起返回 URL + 实际命中模型名（留档 gen_model）。
      * @param refImageBytes 参考图字节
      * @param refFileName   参考图文件名（供 multipart 的 filename；png/jpg/webp）
      */
-    public String generateImage2Image(String prompt, byte[] refImageBytes, String refFileName, String size) {
+    public GenResult generateImage2Image(String prompt, byte[] refImageBytes, String refFileName, String size) {
         List<String> models = props.imageModelList();
         if (models.isEmpty()) throw new AiException("AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置", null);
         if (refImageBytes == null || refImageBytes.length == 0)
@@ -102,7 +103,7 @@ public class AiImageClient {
                 String resp = postMultipartForJsonText("/v1/images/edits", body);
                 String url = parseFirstUrl(resp);
                 log.info("图生图成功 model={} refSize={}B url={}", model, refImageBytes.length, shorten(url));
-                return url;
+                return new GenResult(url, model);
             } catch (Exception e) {
                 log.warn("图生图模型 {} 失败，尝试下一个: {}", model, e.getMessage());
                 errs.append("[").append(model).append("] ").append(e.getMessage()).append("; ");
@@ -111,6 +112,9 @@ public class AiImageClient {
         throw new AiException("所有图片模型均失败(图生图): " + errs + "。若提示接口不存在，"
                 + "说明该模型不支持 /v1/images/edits，请改用文生图或更换 AI_IMAGE_MODELS。", null);
     }
+
+    /** 生成结果：图片 URL + 实际命中模型名（S10 留档用）。 */
+    public record GenResult(String url, String model) {}
 
     /**
      * POST JSON 并以 byte[] 收响应再转字符串。

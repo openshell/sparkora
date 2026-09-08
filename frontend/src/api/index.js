@@ -75,8 +75,8 @@ export const carApi = {
 }
 
 export const imageApi = {
-  // 图库列表（projectId 可选过滤）
-  list: (projectId) => http.get('/images', { params: projectId ? { projectId } : {} }),
+  // 图库分页列表（S10）：?projectId=&source=&keyword=&page=&size=，total 供分页
+  list: (params) => http.get('/images', { params: { page: 1, size: 24, ...(params || {}) } }),
   // 上传图库图：multipart file + projectId?；projectId 为空/undefined 时不带该字段(全局图库)
   upload: (projectId, file) => {
     const fd = new FormData()
@@ -84,15 +84,21 @@ export const imageApi = {
     if (projectId != null && projectId !== '') fd.append('projectId', Number(projectId))
     return http.post('/images/upload', fd, { timeout: 120000 })
   },
-  // 文生图：body={projectId, prompt, size?}，AI 耗时放宽超时;projectId 一律转数字(路由参数是字符串)
-  generateText: (projectId, prompt, size) =>
-    http.post('/images/generate-text', { projectId: Number(projectId), prompt, size }, { timeout: 300000 }),
-  // 图生图：body={projectId, refImageId, prompt, size?}
-  generateFromImage: (projectId, refImageId, prompt, size) =>
-    http.post('/images/generate-from-image',
-      { projectId: Number(projectId), refImageId: refImageId == null ? null : Number(refImageId), prompt, size },
+  // 文生图：body={projectId?, prompt, size?, n?}，AI 耗时放宽超时;projectId 一律转数字(路由参数是字符串),null/空 = 全局图库
+  generateText: (projectId, prompt, size, n) =>
+    http.post('/images/generate-text',
+      { projectId: projectId == null || projectId === '' ? null : Number(projectId), prompt, size, n: n == null ? 1 : n },
       { timeout: 300000 }),
-  // 配图快照：{images[], currentVersionId, coverImageId, bodyImageIds[]}
+  // 图生图：body={projectId?, refImageId, prompt, size?, n?}
+  generateFromImage: (projectId, refImageId, prompt, size, n) =>
+    http.post('/images/generate-from-image',
+      { projectId: projectId == null || projectId === '' ? null : Number(projectId),
+        refImageId: refImageId == null ? null : Number(refImageId), prompt,
+        size, n: n == null ? 1 : n },
+      { timeout: 300000 }),
+  // 重新生成（S10）：同 prompt/gen_size 产新图（不覆盖源图），返回候选列表
+  regenerate: (imageId) => http.post(`/images/${imageId}/regenerate`, null, { timeout: 300000 }),
+  // 配图快照：{images[], currentVersionId, coverImageId, bodyImageIds[], coverImage?, bodyImages[]}（S10 起 images=引用图集合）
   projectImages: (id) => http.get(`/projects/${id}/images`),
   setCover: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/cover`),
   addBodyImage: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/body`, null, { params: { action: 'add' } }),

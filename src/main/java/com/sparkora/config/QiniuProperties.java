@@ -38,6 +38,15 @@ public class QiniuProperties {
     }
 
     /**
+     * 缩略图派生 URL（S10 交付层 webp）：imageView2 缩放至宽 360px + 转 webp。
+     * 七牛图片处理 API 语义（不引 SDK 拼串）；原图 URL 走 {@link #publicUrl(String)}。
+     * 说明：交付层转换即可吃 CDN 流量收益，不入库转码（Java 无原生 webp 编码器，入库转码非目标）。
+     */
+    public String thumbUrl(String key) {
+        return publicUrl(key) + "?imageView2/2/w/360/format/webp";
+    }
+
+    /**
      * 生成「指定 key 的覆盖上传」令牌:AK:sign:data。
      * sign = urlsafe_b64(HMAC-SHA1(SK, urlsafe_b64(putPolicy)));putPolicy 含 scope=bucket:key(覆盖语义)。
      */

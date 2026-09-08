@@ -1,11 +1,14 @@
 package com.sparkora.web.controller;
 
 import com.sparkora.common.R;
+import com.sparkora.domain.dto.ImageGenDTO;
+import com.sparkora.domain.dto.PageResult;
 import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.security.CurrentUser;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.service.ImageService;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -43,11 +46,19 @@ public class ImageController {
         }
     }
 
-    /** 图库列表（projectId 可选过滤）。 */
+    /** 图库分页列表（S10）：?projectId=&source=&keyword=&page=&size= 组合查询，响应 PageResult。 */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<List<ImageAssetEntity>> list(@RequestParam(required = false) Long projectId) {
-        return R.ok(service.list(projectId));
+    public R<PageResult<ImageAssetEntity>> list(@RequestParam(required = false) Long projectId,
+                                                @RequestParam(required = false) String source,
+                                                @RequestParam(required = false) String keyword,
+                                                @RequestParam(defaultValue = "1") long page,
+                                                @RequestParam(defaultValue = "24") long size) {
+        try {
+            return R.ok(service.list(projectId, source, keyword, page, size));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        }
     }
 
     /** 上传图库图（projectId 可选=全局图库）：multipart file。类型 png/jpg/webp，≤ IMAGE_MAX_UPLOAD_MB。 */
@@ -82,16 +93,14 @@ public class ImageController {
         }
     }
 
-    /** 文生图：body {projectId, prompt, size?}。projectId 兼容字符串/数字。 */
+    /** 文生图：body {projectId?, prompt, size?, n?}。S10：@Valid DTO + 响应改候选列表（n 张逐张入库）。 */
     @PostMapping("/generate-text")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<ImageAssetEntity> generateText(@RequestBody Map<String, Object> body) {
+    public R<List<ImageAssetEntity>> generateText(@Validated @RequestBody ImageGenDTO body) {
         try {
             CurrentUser cu = SecurityUtil.require();
-            Long projectId = requireProjectId(body);
-            String prompt = (String) body.get("prompt");
-            String size = (String) body.get("size");
-            return R.ok(service.generateText2Image(projectId, prompt, size, cu.getUsername()));
+            Long projectId = toLong(body.getProjectId(), "projectId");
+            return R.ok(service.generateText2Image(projectId, body.getPrompt(), body.getSize(), body.getN(), cu.getUsername()));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());
         } catch (Exception ex) {
@@ -99,17 +108,30 @@ public class ImageController {
         }
     }
 
-    /** 图生图：body {projectId, refImageId, prompt, size?}。数字字段兼容字符串/数字。 */
+    /** 图生图：body {projectId?, refImageId, prompt, size?, n?}。S10：@Valid DTO + 响应改候选列表。 */
     @PostMapping("/generate-from-image")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<ImageAssetEntity> generateFromImage(@RequestBody Map<String, Object> body) {
+    public R<List<ImageAssetEntity>> generateFromImage(@Validated @RequestBody ImageGenDTO body) {
         try {
             CurrentUser cu = SecurityUtil.require();
-            Long projectId = requireProjectId(body);
-            Long refImageId = toLong(body.get("refImageId"), "refImageId");
-            String prompt = (String) body.get("prompt");
-            String size = (String) body.get("size");
-            return R.ok(service.generateImage2Image(projectId, refImageId, prompt, size, cu.getUsername()));
+            Long projectId = toLong(body.getProjectId(), "projectId");
+            Long refImageId = toLong(body.getRefImageId(), "refImageId");
+            if (refImageId == null) return R.fail(400, "缺少 refImageId");
+            return R.ok(service.generateImage2Image(projectId, refImageId, body.getPrompt(), body.getSize(), body.getN(), cu.getUsername()));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
+        }
+    }
+
+    /** 重新生成（S10）：同源图 prompt/gen_size 产新图（不覆盖源图）。 */
+    @PostMapping("/{id}/regenerate")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<List<ImageAssetEntity>> regenerate(@PathVariable Long id) {
+        try {
+            CurrentUser cu = SecurityUtil.require();
+            return R.ok(service.regenerate(id, cu.getUsername()));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());
         } catch (Exception ex) {
@@ -129,11 +151,5 @@ public class ImageController {
         m.put("macStyle", wenyanProps.isMacStyle());
         m.put("footnote", wenyanProps.isFootnote());
         return R.ok(m);
-    }
-
-    private static Long requireProjectId(Map<String, Object> body) {
-        Long projectId = toLong(body.get("projectId"), "projectId");
-        if (projectId == null) throw new IllegalArgumentException("缺少 projectId");
-        return projectId;
     }
 }
