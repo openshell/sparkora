@@ -35,6 +35,10 @@ public class ArticleProjectEntity {
     private String lastPublishError;    // S5:最近一次发布失败原因(成功后清空)
     private String extraInfo;           // S6:补充信息(可选;个人见解/独家资讯等,生成时注入 prompt 作为创作素材)
     private String selectedTitle;       // S6:简报阶段选定的标题(可选;生成版本时作为标题偏好注入 prompt)
+    // ===== 文章仿写(09-09-article-imitation):项目级新模式 =====
+    private String genSource;           // 创作来源:TOPIC(默认)/IMITATION
+    private String imitationText;       // 参考原文全文(仅 IMITATION 非空)
+    private String imitationAnalysis;   // 原文分析结果 JSON(展示冗余存储)
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

@@ -28,6 +28,8 @@ public class ArticleVersionEntity {
     private String ragCitations;   // R3:知识库引用明细 JSON [{source,modelName,chunkType,score,chunkText}]
     private String factRisks;      // S9:数值回查结果 JSON [{claim,riskLevel,suggestion}](深度模式)
     private Integer wordCount;
+    private Double similarityScore;  // 文章仿写:与原文 5-gram 重合率 0~1(仅仿写版有值)
+    private String similarityReport; // 文章仿写:自检明细 JSON {maxRunLength,repeatedRuns:[{text,length}]}
     private Long coverImageId;      // S3b：该版本封面（sparkora_image_asset.id，可空）
     private String bodyImageIds;    // S3b：正文插图 id 列表（逗号分隔，有序）
     private LocalDateTime createdAt;

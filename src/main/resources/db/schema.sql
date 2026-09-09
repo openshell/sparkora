@@ -395,3 +395,15 @@ CREATE TABLE IF NOT EXISTS sparkora_setting (
     updated_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted            SMALLINT     NOT NULL DEFAULT 0       -- 逻辑删除(全局配置惯例:SMALLINT)
 );
+
+-- ============================================================================
+-- 文章仿写(09-09-article-imitation):项目级新模式 genSource=IMITATION。
+-- 原文/分析随 project 落库(1:1,不单设表);风格推荐随 brief 落库;
+-- 相似度自检结果随 version 落库。全部幂等 ADD COLUMN,回滚仅需代码回退。
+-- ============================================================================
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS gen_source          VARCHAR(20) NOT NULL DEFAULT 'TOPIC'; -- 创作来源:TOPIC/IMITATION
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS imitation_text     TEXT;                 -- 参考原文全文(仅 IMITATION 非空)
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS imitation_analysis TEXT;                 -- 原文分析结果 JSON(展示冗余存储)
+ALTER TABLE sparkora_article_brief   ADD COLUMN IF NOT EXISTS style_recommendations TEXT;              -- 风格推荐 JSON [{styleId,name,reason,matchScore}]
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS similarity_score   DOUBLE PRECISION;     -- 与原文 5-gram 重合率 0~1(仅仿写版有值)
+ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS similarity_report  TEXT;                 -- 自检明细 JSON {maxRunLength,repeatedRuns:[{text,length}]}

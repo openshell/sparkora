@@ -27,6 +27,7 @@ export const useProjectDetailStore = defineStore('projectDetail', {
     brief: (s) => (id) => s.map[String(id)]?.brief || null,
     versions: (s) => (id) => s.map[String(id)]?.versions || [],
     styles: (s) => (id) => s.map[String(id)]?.styles || [],
+    imitation: (s) => (id) => s.map[String(id)]?.imitation || null,
     projectError: (s) => (id) => s.map[String(id)]?.projectError || '',
     briefError: (s) => (id) => s.map[String(id)]?.briefError || '',
     versionsError: (s) => (id) => s.map[String(id)]?.versionsError || '',
@@ -38,9 +39,9 @@ export const useProjectDetailStore = defineStore('projectDetail', {
       const key = String(id)
       if (!this.map[key]) {
         this.map[key] = {
-          project: null, brief: null, versions: [], styles: [],
+          project: null, brief: null, versions: [], styles: [], imitation: null,
           projectError: '', briefError: '', versionsError: '', stylesError: '',
-          _projectLoading: false, _briefLoading: false, _versionsLoading: false, _stylesLoading: false
+          _projectLoading: false, _briefLoading: false, _versionsLoading: false, _stylesLoading: false, _imitationLoading: false
         }
       }
       return this.map[key]
@@ -129,6 +130,31 @@ export const useProjectDetailStore = defineStore('projectDetail', {
       }
     },
 
+    /** 文章仿写(09-09-article-imitation):分析+风格推荐(无则 null,正常路径不视为错误) */
+    async ensureImitation(id, { force = false } = {}) {
+      const e0 = this._entryOf(id)
+      if (!force && e0.imitation) return e0.imitation
+      if (e0._imitationLoading) return e0.imitation
+      e0._imitationLoading = true
+      try {
+        const res = await projectApi.getImitation(id)
+        const d = res.data
+        const j = (s) => { try { return JSON.parse(s) } catch { return null } }
+        this._entryOf(id).imitation = d ? {
+          ...d,
+          titleCandidates: d.titleCandidates ? j(d.titleCandidates) : [],
+          coreViewpoints: d.coreViewpoints ? j(d.coreViewpoints) : [],
+          outline: d.outline ? j(d.outline) : [],
+          recommendations: d.styleRecommendations ? (j(d.styleRecommendations) || []) : []
+        } : null
+        return this.imitation(id)
+      } catch (err) {
+        return null
+      } finally {
+        e0._imitationLoading = false
+      }
+    },
+
     /** 生成中轮询:GENerating_* 期间每 4s 刷详情,状态翻转即拉取相应数据后停止 */
     startPolling(id, { intervalMs = 4000 } = {}) {
       this.stopPolling()
@@ -138,7 +164,13 @@ export const useProjectDetailStore = defineStore('projectDetail', {
         const after = this.project(id)?.status
         if (!after || after === before) return
         // 状态翻转:按新状态拉取对应数据,然后停止轮询
-        if (after === 'READY') { await this.ensureBrief(id, { force: true }); this.stopPolling() }
+        // (仿写:READY 由分析产生——同刷 imitation;VERSIONS_READY 由仿写版本生成产生——版本列表里含相似度数据)
+        if (after === 'READY') {
+          await this.ensureBrief(id, { force: true })
+          const p = this.project(id)
+          if (p?.genSource === 'IMITATION') await this.ensureImitation(id, { force: true })
+          this.stopPolling()
+        }
         else if (after === 'VERSIONS_READY' || after === 'DRAFT') { await this.ensureVersions(id, { force: true }); this.stopPolling() }
       }, intervalMs)
     },
@@ -151,7 +183,7 @@ export const useProjectDetailStore = defineStore('projectDetail', {
     invalidate(id) {
       const e = this.map[String(id)]
       if (!e) return
-      e.brief = null; e.versions = []
+      e.brief = null; e.versions = []; e.imitation = null
     },
 
     /** 登出/长期离开时调用:清空全部缓存与轮询 */

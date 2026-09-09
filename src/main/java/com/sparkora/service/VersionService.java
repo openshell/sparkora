@@ -43,13 +43,16 @@ public class VersionService {
     private final CarRagService ragService;
     private final ArticleProjectCarService carService;
     private final ObjectMapper json;
+    /** 文章仿写(09-09-article-imitation):仿写 prompt 与相似度自检。 */
+    private final ImitationService imitationService;
 
     private static final String LABELS = "ABCDEFGHIJ";
 
     public VersionService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
                           ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
                           AiClient aiClient, CarRagService ragService,
-                          ArticleProjectCarService carService, ObjectMapper json) {
+                          ArticleProjectCarService carService, ObjectMapper json,
+                          ImitationService imitationService) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
@@ -58,6 +61,7 @@ public class VersionService {
         this.ragService = ragService;
         this.carService = carService;
         this.json = json;
+        this.imitationService = imitationService;
     }
 
     /**
@@ -114,9 +118,12 @@ public class VersionService {
 
         List<ArticleVersionEntity> created = new ArrayList<>();
         List<String> perVersionErrors = new ArrayList<>();
+        boolean imitation = "IMITATION".equals(p.getGenSource());
         // S8 统一检索:modelIds 降为写作锚点(加权),未关联也全库检索。
-        List<Long> modelIds = carService.listModelIds(projectId);
-        CarRagService.RagResult rag = ragService.retrieveForGeneration(p.getTopic(), 8, modelIds);
+        // 仿写模式跳过 RAG(任意题材原文与车型库强行匹配会注入无关数据约束,污染仿写;ragStatus 记 NO_KNOWLEDGE)
+        List<Long> modelIds = imitation ? List.of() : carService.listModelIds(projectId);
+        CarRagService.RagResult rag = imitation ? CarRagService.RagResult.EMPTY
+                : ragService.retrieveForGeneration(p.getTopic(), 8, modelIds);
         try {
             // 2) 每个选中风格生成一版
             int i = 0;
@@ -158,16 +165,35 @@ public class VersionService {
     }
 
     private ArticleVersionEntity generateOne(ArticleProjectEntity p, ArticleBriefEntity brief,
-                                             StyleProfileEntity style, String label,
-                                             CarRagService.RagResult rag) throws Exception {
-        String sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
-                + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
-                + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
-        AiClient.ChatResult cr = aiClient.chatJson(sys, buildUserPrompt(p, brief, rag), 4096);
+                                              StyleProfileEntity style, String label,
+                                              CarRagService.RagResult rag) throws Exception {
+        boolean imitation = "IMITATION".equals(p.getGenSource());
+        String sys;
+        String user;
+        if (imitation) {
+            // 文章仿写(09-09-article-imitation):风格指令 + 仿写铁律(保留观点组织/禁照搬/去图)
+            sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
+                    + "\n\n你是文章仿写专家。基于【参考原文】以指定风格重新表达,铁律:"
+                    + "\n1. 保留原文的观点组织与信息脉络,但必须用全新的语言重新表达;"
+                    + "\n2. 严禁连续 10 字以上照搬原句;"
+                    + "\n3. 不得保留原文任何图片链接、图注、配图说明,正文不得出现任何图片占位或「配图」字样。"
+                    + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
+                    + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
+            user = buildImitationPrompt(p, brief);
+        } else {
+            sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
+                    + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
+                    + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
+            user = buildUserPrompt(p, brief, rag);
+        }
+        AiClient.ChatResult cr = aiClient.chatJson(sys, user, 4096);
         var node = json.readTree(cr.content());
         String title = node.path("title").asText("");
         String contentMd = node.path("contentMd").asText("");
         if (contentMd.isBlank()) throw new AiException("contentMd 为空（可能 max_tokens 不足被截断）", null);
+
+        // 仿写双保险去图(09-09-article-imitation R3):prompt 约束之外,生成后正则二次清洗
+        if (imitation) contentMd = stripImages(contentMd);
 
         ArticleVersionEntity v = new ArticleVersionEntity();
         v.setProjectId(p.getId());
@@ -181,8 +207,52 @@ public class VersionService {
         v.setRagStatus(rag.status().name());
         v.setRagCitations(BriefService.citationsJson(rag));
         v.setWordCount(contentMd.length());
+        // 仿写:生成后本地相似度自检,结果随版本落库(仅警示不阻断)
+        if (imitation && p.getImitationText() != null && !p.getImitationText().isBlank()) {
+            try {
+                var sim = imitationService.similarityCheck(p.getImitationText(), contentMd);
+                v.setSimilarityScore((Double) sim.get("score"));
+                v.setSimilarityReport((String) sim.get("report"));
+            } catch (Exception ex) {
+                log.warn("相似度自检失败 project={} label={}: {}", p.getId(), label, ex.getMessage());
+            }
+        }
         v.setCreatedAt(LocalDateTime.now());
         return v;
+    }
+
+    /**
+     * 仿写 user prompt(09-09-article-imitation R3):原文全文 + 结构大纲 + 字数目标。
+     * 不注入车型知识库(仿写跳过 RAG)。
+     */
+    private String buildImitationPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
+        String base = """
+                目标字数：%s
+
+                原文分析（结构骨架/核心观点,仿写时保留其组织）：
+                - 结构大纲：%s
+                - 核心观点：%s
+
+                请基于下方参考原文完整仿写公众号文章正文（Markdown），严格遵循指定风格。
+                保留原文的观点组织与信息脉络，但用全新语言表达；不得照搬原句；不得出现任何图片。
+
+                【参考原文】
+                %s
+                """.formatted(
+                p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
+                nv(b.getOutline()), nv(b.getCoreViewpoints()),
+                p.getImitationText() == null ? "" : p.getImitationText());
+        return base;
+    }
+
+    /** 剔除 Markdown 图片 ![..](..) 与 HTML <img>(含可能残留的图注/占位行)。 */
+    static String stripImages(String md) {
+        if (md == null) return "";
+        String s = md.replaceAll("(?s)!\\[[^\\]]*\\]\\([^)]*\\)", "");
+        s = s.replaceAll("(?s)<img[^>]*/?>", "");
+        // 残留的「配图」「图注」占位行整行剔除(仅限以这些词开头的独立行,避免误伤正文)
+        s = s.replaceAll("(?m)^\\s*(>\\s*)*(配图|图片|图注|示意图|图片来源)[::：].*$\\n?", "");
+        return s;
     }
 
     private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b, CarRagService.RagResult rag) {

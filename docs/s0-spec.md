@@ -115,21 +115,26 @@ POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 AD
 | created_by | String | — | ✅ | 审计字段 |
 | created_at / updated_at | Datetime | — | ✅ | 审计字段 |
 | remark | String(500) | 选填 | — | 备注 |
+| gen_source | String(20) | ✅（仿写单选） | — | 文章仿写(§14)：TOPIC(默认)/IMITATION；仅仿写时随 create 提交 |
+| imitation_text | TEXT | 仿写必填 | — | 参考原文全文（仅 IMITATION 非空，≤20000 字） |
+| imitation_analysis | TEXT | — | — | 原文分析结果 JSON `{genre,structure,sentenceFeatures}`（展示冗余存储） |
 
 ### 3.3 接口契约
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
 | GET | `/api/projects` | 三角色 | `page,size,topic,status,orderBy,orderDir` | `{rows[],total,page,size}` |
-| GET | `/api/projects/{id}` | 三角色 | — | `{project}`（S1/S1b 起含 current_brief_id / current_version_id / last_*_error） |
-| POST | `/api/projects` | ADMIN/EDITOR | §3.2 表单 JSON | `{id}` |
+| GET | `/api/projects/{id}` | 三角色 | — | `{project}`（S1/S1b 起含 current_brief_id / current_version_id / last_*_error；§14 起含 gen_source/imitation_text/imitation_analysis） |
+| POST | `/api/projects` | ADMIN/EDITOR | §3.2 表单 JSON（仿写增 `genSource`/`imitationText`；IMITATION 时原文必填非空，否则 `R.fail(400)`；非法 genSource 400；TOPIC 行为与现状一致） | `{id}` |
 | PUT | `/api/projects/{id}` | ADMIN/EDITOR | 表单 JSON | `{ok:true}` |
 | DELETE | `/api/projects/{ids}` | ADMIN | — | `{ok:true}` |
 | POST | `/api/projects/{id}/generate/brief` | ADMIN/EDITOR | — | **2026-09-09 起封死**：恒 `R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify)")`（存量 FAST 项目产物可读，重新生成走深度） |
 | GET | `/api/projects/{id}/brief` | 三角色 | — | `{brief}`（无则 `data:null`） |
-| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **2026-09-09 起封死**：恒 `R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)")`；多风格由前端 StepVersions 逐风格调 `/deep/generate`（`{briefId, stylePrompt=风格画像}`）实现，每风格一版 |
-| GET | `/api/projects/{id}/versions` | 三角色 | — | `{versions[]}`（全量，按 id 升序） |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **2026-09-09 起封死(主题创作)**：恒 `R.fail(410, ...)`；**仿写项目例外(§14)**：genSource=IMITATION 时本接口复用为仿写生成（每风格一版，产出含 similarity_score/similarity_report） |
+| GET | `/api/projects/{id}/versions` | 三角色 | — | `{versions[]}`（全量，按 id 升序；仿写版含 similarity_score/similarity_report） |
 | PUT | `/api/projects/{id}/current-version` | ADMIN/EDITOR | `?versionId=` | `{ok:true}` |
+| POST | `/api/projects/{id}/imitation/analyze` | ADMIN/EDITOR | — | `ArticleBriefEntity`（gen_mode=IMITATION，含 styleRecommendations；409=状态冲突；失败回 DRAFT 写 last_brief_error；契约见 §14） |
+| GET | `/api/projects/{id}/imitation` | 三角色 | — | `{briefId,titleCandidates,coreViewpoints,outline,styleRecommendations,analysis}`（无则 `data:null`；契约见 §14） |
 | GET | `/api/settings` | ADMIN, EDITOR | — | `{id, kbEnabled, webSearchEnabled, updatedBy, updatedAt}`（单行;首访自动初始化;契约见 §6b-s） |
 | PUT | `/api/settings` | **仅 ADMIN** | `{kbEnabled?, webSearchEnabled?}`（null 不改） | 同 GET（写后刷缓存;契约见 §6b-s） |
 | GET | `/api/styles` | 三角色 | `?enabledOnly=` | `{styles[]}` |
@@ -646,3 +651,61 @@ PublishService.publish
 - [x] AC5 快速模式回归：项目21（FAST brief id=19 + version id=17/18）全通过，深度/快速互不影响
 - [x] AC6 `mvn test-compile surefire:test` 44 全绿；`npx vite build` 绿（48s）
 - [ ] AC7 研究过程可视化 UI 真机走查（计划→表单→进度→手册→生成）→ **留用户浏览器验收**
+
+---
+
+### 14. 文章仿写模块（09-09-article-imitation，正式规格，2026-09-09）
+
+> 项目级新模式 `genSource=IMITATION`：粘贴参考原文 → AI 分析+风格推荐 → 选风格仿写（去图）→ 相似度自检 → 预览/发布（全链路与主题创作合流）。
+> 设计原则同 §13 深度模式先例——**模式字段驱动，项目状态机（§4）不动**；仿写跳过 RAG（ragStatus=NO_KNOWLEDGE）。
+
+#### 数据模型（schema.sql 幂等 ADD COLUMN，回滚仅需代码回退）
+
+- `sparkora_article_project` 增列：`gen_source VARCHAR(20) NOT NULL DEFAULT 'TOPIC'`（TOPIC/IMITATION）、`imitation_text TEXT`（参考原文全文，仅 IMITATION 非空）、`imitation_analysis TEXT`（分析结果 JSON `{genre,structure,sentenceFeatures}`）。
+- `sparkora_article_brief` 增列：`style_recommendations TEXT`（JSON `[{styleId,name,reason,matchScore}]`，仅 gen_mode=IMITATION brief 使用）。
+- `sparkora_article_version` 增列：`similarity_score DOUBLE PRECISION`（0~1）、`similarity_report TEXT`（JSON `{maxRunLength,maxRunText?,repeatedRuns:[{text,length}],thresholds}`）。
+
+#### 流程与状态机
+
+```
+创建(genSource=IMITATION, 粘贴原文≤20000字) → DRAFT
+  → POST /imitation/analyze → GENERATING_BRIEF → READY   (brief.gen_mode=IMITATION: 原文分析+风格推荐)
+  → StepVersions 选风格(推荐高亮/一键采用) → GENERATING_VERSIONS → VERSIONS_READY (仿写 prompt+去图+相似度自检)
+  → 预览/发布（与主题创作完全复用，§10/§11/§12）
+```
+- 状态守护与原子抢占仿 BriefService：仅 DRAFT/READY 放行、生成中未过期拒绝（409）、陈旧超 10 分钟自愈；失败回 DRAFT 写 `last_brief_error`。
+
+#### 仿写生成（R3）
+
+- 复用 `POST /generate/versions`（主题创作已封死为 410，**仿写项目例外**，`VersionService.generate` 内 genSource 分支）。
+- 仿写 prompt：style.toneGuidance + 仿写铁律（保留观点组织/严禁连续 10 字以上照搬原句/不得保留原文任何图片）+ 原文全文 + 结构大纲 + 字数目标。
+- 双保险去图：prompt 约束 + 生成后正则清洗（`VersionService.stripImages`：Markdown `![..](..)`、HTML `<img>`、「配图/图注/示意图/图片来源:」占位行全剔除）。
+- 仿写跳过 RAG：不检索车型库（任意题材原文与车型库强行匹配会注入无关数据约束），version.rag_status=NO_KNOWLEDGE。
+- 相似度自检（`ImitationService.similarityCheck`，纯本地 0 次 LLM）：规范化（去 Markdown/HTML/标点/空白，小写化）→ 字符 5-gram 重合率 `|仿写 n-gram ∩ 原文 n-gram| / |仿写 n-gram|`（防照搬视角）→ 最长公共连续片段（朴素 DP）→ 连续 ≥10 字重复片段列表（贪心扩展去重，≤10 条单条截 120 字）。阈值常量：`SIM_WARN=0.40 / SIM_HIGH=0.60 / RUN_WARN=13`（ImitationService，实验性调参不进 .env）。仅警示不阻断、不自动改写。
+
+#### 接口契约（全部 `R<T>` + 方法级 `@PreAuthorize`）
+
+| 方法 | 路径 | 权限 | 请求 | 响应 |
+|---|---|---|---|---|
+| POST | `/api/projects` | ADMIN/EDITOR | `genSource`(缺省 TOPIC)/`imitationText`(IMITATION 必填非空) | `{id}`；IMITATION 缺原文 `R.fail(400)`；仿写项目不关联车型（跳过 AI 自动匹配） |
+| POST | `/api/projects/{id}/imitation/analyze` | ADMIN/EDITOR | — | `ArticleBriefEntity`（gen_mode=IMITATION；一次 AI 调用产出原文分析落 outline/coreViewpoints/titleCandidates + 风格推荐 ≤3 个附理由落 style_recommendations，只保留库内 styleId 防御截断）；非仿写项目 400；状态冲突 409；失败回 DRAFT 写 last_brief_error |
+| GET | `/api/projects/{id}/imitation` | 三角色 | — | `{briefId, titleCandidates, coreViewpoints, outline, styleRecommendations, analysis:{genre,structure,sentenceFeatures}}`（无则 `data:null`） |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | 仿写模式复用：每风格一版（含 similarity_score/similarity_report）；状态机同 §4 |
+
+#### 前端
+
+- `ProjectEdit.vue`：区块 00「创作方式」radio-button（主题创作默认/文章仿写）；仿写分支：topic 语义改「任务名」、原文 textarea 必填 ≤20000 字带字数统计、隐藏深度研究提示；「创建并分析原文」创建后跳详情页带 `?gen=imitation` 并直发 analyze（失败页面内重试）；切回主题创作清空原文。
+- `StepBrief.vue`：仿写模式（project.genSource 判定）标题改「原文分析」；独立视图（分析中 skeleton/引导语含 lastBriefError/分析结果卡题材·结构·句式 + 风格推荐卡 ≤3 个附匹配度%与理由，点「采用」带 `?adoptStyle=` 跳版本步并自动预选）；「重新分析」仅 READY；空推荐时引导去风格库不阻断。
+- `StepVersions.vue`：仿写分支——原文摘要折叠卡、推荐风格「推荐」角标（styleRecommendations）、生成走 `generateVersions`（非深度逐风格）、版本卡相似度行（`(score*100).toFixed(1)%` + 阈值色 ≥0.60 红「与原文过度相似，建议修改」/0.40~0.60 黄/<0.40 绿 + 重复片段明细可折叠含 maxRunLength≥13 提示）。
+- `constants/project.js` **零改动**（状态机不动）。
+
+#### 验收清单
+
+- [ ] AC1 创建仿写项目成功/缺原文 400/TOPIC 回归一致
+- [ ] AC2 分析后 READY、brief 含分析与推荐；失败回 DRAFT；生成中重触发 409
+- [ ] AC3 仿写多版生成、全文无图片（正则验证）
+- [ ] AC4 版本列表相似度数值+阈值色+重复片段明细；数值本地可复现
+- [ ] AC5 仿写版本设当前→预览→发布链路一致
+- [ ] AC6 viewer 调 analyze/generate 403；三角色可读 imitation
+- [ ] AC7 空风格库：推荐空数组，前端引导提示，不阻断
+- [x] AC8 `mvn -q -DskipTests compile` 与 `npm run build` 通过（2026-09-09 check 复验 ✓）

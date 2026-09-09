@@ -33,11 +33,12 @@ public class ArticleBriefEntity {
     private String ragStatus;      // S6.1:知识库检索状态 OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE
     private String ragCitations;   // R3:知识库引用明细 JSON [{source,modelName,chunkType,score,chunkText}]
     // ===== S9 深度生成模式(gen_mode=DEEP 时使用;快速模式全空) =====
-    private String genMode;            // FAST/DEEP
+    private String genMode;            // FAST/DEEP/IMITATION(文章仿写分析)
     private String clarifyQuestions;   // JSON [{q,type,options[],required}]
     private String clarifyAnswers;     // JSON [{q,a}] 锁定需求
     private String researchPlan;       // JSON {keyQuestions[],dataNeeds[],hypotheses[],toolHints[]}
     private String researchNotes;      // JSON [{agentId,question,status,facts[],gaps[]}] 逐子代理状态
     private String factSheet;          // JSON {entries[{key,value,source,confidence}],gaps[],warnings[]}
+    private String styleRecommendations; // 文章仿写:风格推荐 JSON [{styleId,name,reason,matchScore}](仅 IMITATION brief 使用)
     private LocalDateTime createdAt;
 }

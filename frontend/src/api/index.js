@@ -41,7 +41,11 @@ export const projectApi = {
   generateDeep: (id, briefId, stylePrompt = '') =>
     http.post(`/projects/${id}/deep/generate`, { briefId, stylePrompt }, { timeout: 300000 }),
   // S9 深度模式:基于事实手册生成简报(自动生成失败后的手动重试;约十几秒,放宽超时)
-  generateDeepBrief: (id, briefId) => http.post(`/projects/${id}/deep/brief`, { briefId }, { timeout: 120000 })
+  generateDeepBrief: (id, briefId) => http.post(`/projects/${id}/deep/brief`, { briefId }, { timeout: 120000 }),
+  // 文章仿写(09-09-article-imitation):分析原文+风格推荐(一次 AI 调用,约 10~30s,放宽超时)
+  analyzeImitation: (id) => http.post(`/projects/${id}/imitation/analyze`, null, { timeout: 120000 }),
+  // 文章仿写:取分析+风格推荐(无则 data=null)
+  getImitation: (id) => http.get(`/projects/${id}/imitation`)
 }
 
 export const styleApi = {

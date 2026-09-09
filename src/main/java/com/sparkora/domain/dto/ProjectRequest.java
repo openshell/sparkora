@@ -35,6 +35,14 @@ public class ProjectRequest {
     @Size(max = 200)
     private String selectedTitle;
 
+    // ===== 文章仿写(09-09-article-imitation) =====
+    /** 创作方式:TOPIC(默认,主题创作)/IMITATION(文章仿写);仅仿写时非空提交。 */
+    private String genSource;
+
+    /** 参考原文全文(IMITATION 模式必填;≤20000 字,业务校验在控制器)。 */
+    @Size(max = 20000, message = "参考原文不能超过 20000 字")
+    private String imitationText;
+
     @Size(max = 500)
     private String remark;
 }

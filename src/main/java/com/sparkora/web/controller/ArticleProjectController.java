@@ -14,6 +14,7 @@ import com.sparkora.security.CurrentUser;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.service.ArticleProjectCarService;
 import com.sparkora.service.BriefService;
+import com.sparkora.service.ImitationService;
 import com.sparkora.service.NotReadyException;
 import com.sparkora.service.VersionService;
 import jakarta.validation.Valid;
@@ -38,12 +39,14 @@ public class ArticleProjectController {
     private final com.sparkora.service.ImageService imageService;
     private final com.sparkora.service.PreviewService previewService;
     private final com.sparkora.service.PublishService publishService;
+    private final ImitationService imitationService;
 
     public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
                                     ArticleProjectCarService carService, CarModelMatcherService matcherService,
                                     com.sparkora.service.ImageService imageService,
                                     com.sparkora.service.PreviewService previewService,
-                                    com.sparkora.service.PublishService publishService) {
+                                    com.sparkora.service.PublishService publishService,
+                                    ImitationService imitationService) {
         this.mapper = mapper;
         this.briefService = briefService;
         this.versionService = versionService;
@@ -52,6 +55,7 @@ public class ArticleProjectController {
         this.imageService = imageService;
         this.previewService = previewService;
         this.publishService = publishService;
+        this.imitationService = imitationService;
     }
 
     @GetMapping
@@ -90,6 +94,15 @@ public class ArticleProjectController {
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Long> create(@Valid @RequestBody ProjectRequest req) {
+        // 文章仿写(09-09-article-imitation):genSource 缺省按主题创作;IMITATION 时原文必填非空
+        String genSource = req.getGenSource() == null || req.getGenSource().isBlank() ? "TOPIC" : req.getGenSource();
+        if (!"TOPIC".equals(genSource) && !"IMITATION".equals(genSource)) {
+            return R.fail(400, "创作方式仅支持 TOPIC(主题创作)或 IMITATION(文章仿写)");
+        }
+        if ("IMITATION".equals(genSource)
+                && (req.getImitationText() == null || req.getImitationText().isBlank())) {
+            return R.fail(400, "文章仿写必须粘贴参考原文");
+        }
         CurrentUser cu = SecurityUtil.require();
         ArticleProjectEntity e = new ArticleProjectEntity();
         e.setTopic(req.getTopic());
@@ -100,6 +113,8 @@ public class ArticleProjectController {
         e.setExtraInfo(req.getExtraInfo());
         e.setSelectedTitle(req.getSelectedTitle());
         e.setRemark(req.getRemark());
+        e.setGenSource(genSource);
+        e.setImitationText("IMITATION".equals(genSource) ? req.getImitationText() : null);
         e.setStatus("DRAFT");
         e.setCreatedBy(cu.getUsername());
         e.setDeleted(0);
@@ -108,12 +123,15 @@ public class ArticleProjectController {
         mapper.insert(e);
 
         // S6 多车型:用户已选则直接写入;未选则 AI 自动识别是否应关联车型并回填
+        // 仿写模式不关联车型(任意题材原文与车型库强行匹配会注入无关数据约束)
         List<Long> modelIds = req.getCarModelIds();
-        if (modelIds == null || modelIds.isEmpty()) {
-            CarModelMatcherService.MatchResult m = matcherService.match(req.getTopic(), req.getKeywords());
-            if (m.related()) modelIds = m.modelIds();
+        if (!"IMITATION".equals(genSource)) {
+            if (modelIds == null || modelIds.isEmpty()) {
+                CarModelMatcherService.MatchResult m = matcherService.match(req.getTopic(), req.getKeywords());
+                if (m.related()) modelIds = m.modelIds();
+            }
+            carService.replace(e.getId(), modelIds);
         }
-        carService.replace(e.getId(), modelIds);
         return R.ok(e.getId());
     }
 
@@ -168,19 +186,64 @@ public class ArticleProjectController {
         return R.ok(briefService.currentBrief(id));
     }
 
+    // ==================== 文章仿写（09-09-article-imitation，字段级契约见 spec §14）====================
+
+    /**
+     * 分析原文 + 风格推荐(ADMIN/EDITOR)。同步调用,前端 loading 等待(AI 耗时较长,前端单独放宽超时)。
+     * 状态机 DRAFT/READY→GENERATING_BRIEF→READY;失败回 DRAFT 写 lastBriefError;生成中重触发 409。
+     */
+    @PostMapping("/{id}/imitation/analyze")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<ArticleBriefEntity> analyzeImitation(@PathVariable Long id) {
+        try {
+            return R.ok(imitationService.analyze(id));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (IllegalStateException ex) {
+            return R.fail(409, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "原文分析失败: " + ex.getMessage());
+        }
+    }
+
+    /** 取仿写分析+风格推荐(三角色可读;无则 data=null)。 */
+    @GetMapping("/{id}/imitation")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<java.util.Map<String, Object>> imitationAnalysis(@PathVariable Long id) {
+        return R.ok(imitationService.currentAnalysis(id));
+    }
+
     // ==================== 文章版本（S1b）====================
 
     /**
-     * 生成多版本正文（基于当前 brief + 用户选择的风络）。body: {"styleIds":[1,2]}（风格库 id 列表）。
+     * 生成多版本正文（基于当前 brief + 用户选择的风格）。body: {"styleIds":[1,2]}（风格库 id 列表）。
      * 每选一个风格生成一版。同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
-     * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速版本生成入口封死,
-     * 深度版本生成走 POST /api/deep/{id}/generate(单风格单版,复用 writerService)。
+     * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目封死(深度版本走 POST /api/deep/{id}/generate);
+     * 文章仿写(09-09-article-imitation §14)例外:genSource=IMITATION 时本接口复用为仿写生成
+     * (多风格一次生成,产出仿写正文+相似度自检,状态机同 §4)。
      */
     @PostMapping("/{id}/generate/versions")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<List<ArticleVersionEntity>> generateVersions(@PathVariable Long id,
                                                           @RequestBody java.util.Map<String, java.util.List<Long>> body) {
-        return R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)");
+        // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目恒 410(深度单版走 /deep/generate);
+        // 文章仿写(09-09-article-imitation §14)例外放行:复用本接口多风格一次生成(仿写 prompt+去图+相似度自检)。
+        ArticleProjectEntity p = mapper.selectById(id);
+        if (p == null) return R.fail(404, "项目不存在");
+        if (!"IMITATION".equals(p.getGenSource())) {
+            return R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)");
+        }
+        try {
+            return R.ok(versionService.generate(id, body.get("styleIds")));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (IllegalStateException ex) {
+            return R.fail(409, ex.getMessage());
+        } catch (NotReadyException ex) {
+            return R.fail(409, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "仿写生成失败: " + ex.getMessage());
+        }
     }
 
     /** 列出项目全部版本。 */

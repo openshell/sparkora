@@ -2,7 +2,7 @@
   <el-card class="step-card" shadow="never">
     <template #header>
       <span class="card-head">
-        <span class="step-title serif">Step 1 · 生成创作简报</span>
+        <span class="step-title serif">{{ isImitation ? 'Step 1 · 原文分析' : 'Step 1 · 生成创作简报' }}</span>
         <span v-if="brief" class="meta">模型 {{ brief.aiModel }} · {{ brief.tokenUsage }} tokens</span>
         <!-- S6.1:知识库检索状态(随 brief 落库,刷新/重进可见) -->
         <span v-if="brief && brief.ragStatus" class="meta rag-meta">
@@ -11,6 +11,88 @@
       </span>
     </template>
 
+    <!-- 文章仿写模式(09-09-article-imitation):独立视图(分析中/分析结果+风格推荐/引导语) -->
+    <template v-if="isImitation">
+      <!-- ① 分析中 -->
+      <div v-if="generatingBrief" class="generating">
+        <el-skeleton :rows="6" animated />
+        <p class="gen-tip">
+          <el-icon class="spin"><Loading /></el-icon>
+          AI 正在分析原文（题材 / 结构 / 句式）并从风格库推荐匹配风格，通常需要 10~30 秒，请勿关闭页面…
+        </p>
+      </div>
+
+      <!-- ② 无分析:引导语(含上次失败原因) -->
+      <div v-else-if="!imitation" class="muted intro">
+        <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
+                  :title="`上次分析失败：${project.lastBriefError}`" class="brief-alert" />
+        <div class="intro-hero">
+          <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
+          <div class="intro-title serif">分析原文，推荐风格，一键仿写</div>
+          <p>AI 将分析参考原文的题材、结构骨架与句式特征，并从风格库推荐最适合仿写这篇的 ≤3 个风格。</p>
+          <div class="gen-mode-row">
+            <el-button type="primary" :loading="imitationBusy" @click="onAnalyze" size="large">
+              <el-icon class="btn-icon"><DataAnalysis /></el-icon>分析原文
+            </el-button>
+          </div>
+          <p v-if="!styles.length" class="form-tip">风格库暂无启用风格：仍可分析原文，但无法获得风格推荐；可先去「风格库」提炼风格再回来。</p>
+        </div>
+      </div>
+
+      <!-- ③ 分析结果:原文分析卡片 + 风格推荐卡 -->
+      <div v-else class="brief">
+        <el-alert v-if="project && project.lastBriefError" type="warning" :closable="false" show-icon
+                  :title="`上次重新分析失败，以下为当前分析：${project.lastBriefError}`" class="brief-alert" />
+        <section class="brief-sec">
+          <div class="brief-label"><el-icon><DataAnalysis /></el-icon>原文分析</div>
+          <div class="brief-grid">
+            <section class="brief-sec panel">
+              <div class="brief-label"><el-icon><CollectionTag /></el-icon>题材</div>
+              <div class="brief-text">{{ imitation.analysis?.genre || '(未产出)' }}</div>
+            </section>
+            <section class="brief-sec panel">
+              <div class="brief-label"><el-icon><Tickets /></el-icon>结构骨架</div>
+              <div class="brief-text">{{ imitation.analysis?.structure || '(未产出)' }}</div>
+            </section>
+            <section class="brief-sec panel">
+              <div class="brief-label"><el-icon><Lightning /></el-icon>句式特征</div>
+              <div class="brief-text">{{ imitation.analysis?.sentenceFeatures || '(未产出)' }}</div>
+            </section>
+          </div>
+        </section>
+
+        <section class="brief-sec">
+          <div class="brief-label"><el-icon><User /></el-icon>风格推荐
+            <span class="label-hint">按匹配度排序，点「采用」带入版本生成</span>
+          </div>
+          <div v-if="!imitation.recommendations.length" class="rec-empty">
+            <el-alert type="info" :closable="false" show-icon
+                      title="风格库暂无可用推荐"
+                      description="风格库为空或没有启用风格，请先到「风格库」页从样文提炼风格，再回来重新分析。" />
+          </div>
+          <div v-else class="rec-list">
+            <div v-for="(r, i) in imitation.recommendations" :key="r.styleId" class="rec-item">
+              <div class="rec-head">
+                <span class="rec-name serif">{{ r.name }}</span>
+                <el-tag size="small" effect="plain" round>匹配度 {{ Math.round((r.matchScore || 0) * 100) }}%</el-tag>
+              </div>
+              <div class="rec-reason">{{ r.reason }}</div>
+              <el-button size="small" type="primary" plain class="rec-adopt" @click="adoptRecommendation(r)">采用该风格 → 进入版本生成</el-button>
+            </div>
+          </div>
+        </section>
+
+        <div class="brief-actions">
+          <el-button v-if="canRegenerateBrief" :loading="imitationBusy" @click="onAnalyze">重新分析</el-button>
+          <el-button v-if="canGoVersions" type="success" @click="gotoVersions">
+            {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
+          </el-button>
+        </div>
+      </div>
+    </template>
+
+    <!-- 主题创作模式:既有简报视图(原样保留) -->
+    <template v-else>
     <!-- 单一互斥状态机:错误 > 生成中 > 有简报 > 引导语,同一时刻只渲染一个主区 -->
     <!-- ① 简报加载失败(网络抖动/后端重启窗口):可见化 + 重试 -->
     <div v-if="briefError && !generatingBrief" class="state-error">
@@ -136,6 +218,7 @@
         </el-button>
       </div>
     </div>
+    </template>
   </el-card>
 </template>
 
@@ -184,6 +267,37 @@ const onPickTitle = async (t) => {
 
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingBrief = computed(() => isGeneratingBrief(props.project?.status))
+
+// ==================== 文章仿写(09-09-article-imitation) ====================
+const isImitation = computed(() => props.project?.genSource === 'IMITATION')
+const imitation = computed(() => props.project ? store.imitation(route.params.id) : null)
+const imitationBusy = ref(false)
+const styles = computed(() => store.styles(route.params.id))
+// 采用推荐:直接带 styleIds 跳版本页(StepVersions 会按 query 预选)
+const adoptRecommendation = (r) => {
+  router.push({ name: 'project-versions', params: { id: route.params.id }, query: { adoptStyle: String(r.styleId) } })
+}
+const onAnalyze = async () => {
+  imitationBusy.value = true
+  try {
+    const res = await projectApi.analyzeImitation(route.params.id)
+    if (res.code !== 0) throw new Error(res.msg)
+    ElMessage.success('分析完成')
+    await store.ensureImitation(route.params.id, { force: true })
+    await store.ensureProject(route.params.id, { force: true })
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e.message || '原文分析失败')
+    if (route.params.id) await store.ensureProject(route.params.id, { force: true })
+  } finally { imitationBusy.value = false }
+}
+onMounted(() => {
+  if (props.project?.genSource === 'IMITATION' && route.params.id) {
+    store.ensureImitation(route.params.id)
+    // 空风格库引导提示的数据源:样式库可能只在版本步装载过,这里兜底拉一次(有缓存直出)
+    store.ensureStyles(route.params.id)
+  }
+})
+watch(() => props.project, (p) => { if (p?.genSource === 'IMITATION' && route.params.id) store.ensureImitation(route.params.id) })
 
 // 已生成过版本时,按钮文案改为「查看版本」
 const hasVersions = computed(() => props.project?.status === 'VERSIONS_READY' || props.project?.status === 'GENERATING_VERSIONS')
@@ -245,6 +359,11 @@ const deepFactSheet = ref(null)
 // 路由意图参数 ?gen=DEEP|deep(创建页/仅存草稿的续接意图):直接展开深度面板,随后清掉 query 防刷新残留
 if (route.query.gen === 'DEEP' || route.query.gen === 'deep') {
   deepMode.value = true
+  router.replace({ query: { ...route.query, gen: undefined } })
+}
+// 文章仿写意图参数 ?gen=imitation(创建页「创建并分析原文」):仅清理 query,
+// 分析请求由 ProjectEdit 在创建后直发;详情页以 project.status(GENERATING_BRIEF)为事实源展示进度
+else if (route.query.gen === 'imitation') {
   router.replace({ query: { ...route.query, gen: undefined } })
 }
 
@@ -423,11 +542,19 @@ const onBackFast = () => { deepMode.value = false; deepStage.value = 'NONE' }  /
 .risk-tag { flex-shrink: 0; margin-top: 2px; }
 .risk-claim { font-size: 14px; line-height: 1.6; }
 .risk-sug { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.rec-empty { margin-bottom: 8px; }
+.rec-list { display: flex; flex-direction: column; gap: 10px; }
+.rec-item { background: var(--el-fill-color-light); border-radius: var(--radius-sm); padding: 12px 14px; }
+.rec-head { display: flex; align-items: center; gap: 8px; }
+.rec-name { font-weight: 700; font-size: 15px; color: var(--ink); }
+.rec-reason { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 6px 0 10px; }
+.rec-adopt { }
 .brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 
 @media (max-width: 768px) {
   .brief-grid { grid-template-columns: 1fr; }
   .title-tag { width: 100%; }
   .brief-actions .el-button { flex: 1; }
+  .rec-adopt { width: 100%; }
 }
 </style>

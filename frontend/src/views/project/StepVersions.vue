@@ -15,7 +15,7 @@
       <el-skeleton :rows="8" animated />
       <p class="gen-tip">
         <el-icon class="spin"><Loading /></el-icon>
-        AI 正在按所选风格逐版生成正文（共 {{ estVersions }} 版，约 {{ estMinutes }} 分钟），请勿关闭页面…
+        AI 正在按所选风格逐版生成正文（共 {{ estVersions }} 版，约 {{ estMinutes }} 分钟）{{ isImitation ? '，生成后自动自检与原文相似度' : '' }}，请勿关闭页面…
       </p>
     </div>
 
@@ -30,14 +30,22 @@
 
       <!-- 风格选择区:首次生成 / 追加生成共用 -->
       <div v-else-if="!versions.length || appending" class="style-pick">
+        <!-- 仿写:原文摘要卡(可折叠) -->
+        <el-collapse v-if="isImitation" class="imitation-src">
+          <el-collapse-item title="参考原文摘要（点开查看全文）">
+            <div class="src-text">{{ project?.imitationText }}</div>
+          </el-collapse-item>
+        </el-collapse>
         <div class="pick-hero">
           <div class="pick-icon"><el-icon :size="26"><MagicStick /></el-icon></div>
           <div class="pick-text">
-            <div class="pick-title serif">{{ versions.length ? '追加生成更多风格' : '选择风格，生成多版正文' }}</div>
+            <div class="pick-title serif">{{ versions.length ? '追加生成更多风格' : (isImitation ? '选择风格，仿写生成多版正文' : '选择风格，生成多版正文') }}</div>
             <p class="muted">
               {{ versions.length
                 ? '再选择风格，将在现有版本基础上追加生成（不会清空已有版本）。'
-                : '从风格库选择 1~N 个风格，每个选中的风格生成一版正文用于对比。' }}
+                : (isImitation
+                  ? '从风格库选择 1~N 个风格仿写，每版一种风格；带「推荐」角标的风格是 AI 按原文匹配的。'
+                  : '从风格库选择 1~N 个风格，每个选中的风格生成一版正文用于对比。') }}
             </p>
           </div>
         </div>
@@ -49,6 +57,7 @@
         </div>
         <el-checkbox-group v-else v-model="selectedStyleIds" class="style-list">
           <el-checkbox v-for="s in styleOptions" :key="s.id" :label="s.id" border class="style-cb">
+            <el-tag v-if="recommendedIds.includes(s.id)" size="small" type="warning" effect="plain" round class="rec-tag">推荐</el-tag>
             <span class="style-name">{{ s.name }}</span>
             <span class="style-desc">{{ s.description }}</span>
           </el-checkbox>
@@ -92,6 +101,21 @@
               <el-tag v-if="citationCount(v)" size="small" type="success" effect="plain" round
                       @click="toggleCites(v.id)">引用 {{ citationCount(v) }}</el-tag>
               <span class="version-meta">{{ v.wordCount }}字 · {{ v.aiModel }}</span>
+            </div>
+            <!-- 仿写:相似度行(阈值色 + 重复片段明细,可折叠;仅警示不阻断) -->
+            <div v-if="isImitation && v.similarityScore != null" class="sim-row" :class="simClass(v.similarityScore)">
+              <span class="sim-score">与原文相似度 {{ (v.similarityScore * 100).toFixed(1) }}%</span>
+              <span class="sim-hint">{{ simHint(v.similarityScore) }}</span>
+              <el-button v-if="simRuns(v).length" size="small" text type="primary" class="sim-toggle" @click="toggleSim(v.id)">
+                重复片段({{ simRuns(v).length }})
+              </el-button>
+            </div>
+            <div v-if="isImitation && simOpen[v.id] && simRuns(v).length" class="sim-detail">
+              <div v-for="(r, i) in simRuns(v)" :key="i" class="sim-run">
+                <span class="sim-run-len">{{ r.length }} 字</span>
+                <span class="sim-run-text">「{{ r.text }}」</span>
+              </div>
+              <div v-if="simMaxRun(v) >= 13" class="sim-run max">最长连续片段 {{ simMaxRun(v) }} 字(≥13 字,过度贴近)</div>
             </div>
             <div v-if="citesOpen[v.id]" class="version-cites">
               <CitationList :citations="v.ragCitations" :rag-status="v.ragStatus" />
@@ -172,6 +196,25 @@ const citationCount = (v) => {
 }
 const toggleCites = (id) => { citesOpen[id] = !citesOpen[id] }
 
+// ==================== 文章仿写(09-09-article-imitation) ====================
+const isImitation = computed(() => props.project?.genSource === 'IMITATION')
+const imitationData = computed(() => props.project ? store.imitation(route.params.id) : null)
+// 推荐风格 id(推荐角标;brief.styleRecommendations 中的 styleId)
+const recommendedIds = computed(() => (imitationData.value?.recommendations || []).map(r => Number(r.styleId)))
+// 相似度展开状态(按版本 id;默认收起)
+const simOpen = reactive({})
+const toggleSim = (id) => { simOpen[id] = !simOpen[id] }
+// 阈值色映射:≥0.60 红 / 0.40~0.60 黄 / <0.40 绿(与后端 ImitationService 常量一致)
+const simClass = (score) => (score >= 0.6 ? 'sim-high' : score >= 0.4 ? 'sim-warn' : 'sim-ok')
+const simHint = (score) => score >= 0.6 ? '与原文过度相似，建议修改' : score >= 0.4 ? '存在较明显的字面重合，建议检查' : '与原文区分度良好'
+// similarity_report JSON 解析(重复片段明细)
+const parseReport = (v) => {
+  if (!v?.similarityReport) return null
+  try { return JSON.parse(v.similarityReport) } catch { return null }
+}
+const simRuns = (v) => parseReport(v)?.repeatedRuns || []
+const simMaxRun = (v) => parseReport(v)?.maxRunLength || 0
+
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingVersions = computed(() => isGeneratingVersions(props.project?.status))
 
@@ -205,6 +248,21 @@ const loadStyles = () => store.ensureStyles(route.params.id, { force: true })
 const doGenerate = async (styleIds) => {
   submitting.value = true
   try {
+    // 仿写模式(09-09-article-imitation):复用 POST /generate/versions(多版一次生成,
+    // VersionService IMITATION 分支产出仿写正文+相似度自检),不走深度单版接口
+    if (isImitation.value) {
+      const res = await projectApi.generateVersions(route.params.id, styleIds)
+      if (res.code === 0) {
+        ElMessage.success(`已生成 ${res.data?.length || 0} 版，默认选中第一版，可重新设定`)
+        await loadVersions()
+        await store.ensureProject(route.params.id, { force: true })
+        gotoPreview()
+      } else {
+        ElMessage.error(res.msg || '仿写生成失败')
+        await store.ensureProject(route.params.id, { force: true })
+      }
+      return
+    }
     // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速多版本接口已封死,
     // 深度版本生成逐风格调用 /deep/generate(单风格单版;stylePrompt=风格画像 toneGuidance)
     const entry = store._entryOf(route.params.id)
@@ -276,8 +334,22 @@ const gotoPreview = () => {
 
 // 挂载即装载版本列表与风格库;project 详情由布局层异步加载,挂载时可能尚未就位——
 // watch 兜底等它到位后立即补拉(刷新直进页面时必经此路径)
-onMounted(() => { store.ensureVersions(route.params.id); store.ensureStyles(route.params.id) })
-watch(() => props.project, (p) => { if (p) { loadVersions(); loadStyles() } })
+onMounted(() => {
+  store.ensureVersions(route.params.id); store.ensureStyles(route.params.id)
+  // 仿写:装载分析+推荐(推荐角标数据源)
+  if (props.project?.genSource === 'IMITATION' || !store.imitation(route.params.id)) store.ensureImitation(route.params.id)
+  // ?adoptStyle= 由简报页「采用推荐」带入:自动预选该风格并清掉 query 防刷新残留
+  if (route.query.adoptStyle) {
+    const adoptId = Number(route.query.adoptStyle)
+    if (!Number.isNaN(adoptId)) selectedStyleIds.value = [adoptId]
+    router.replace({ query: { ...route.query, adoptStyle: undefined } })
+  }
+})
+watch(() => props.project, (p) => {
+  if (!p) return
+  loadVersions(); loadStyles()
+  if (p.genSource === 'IMITATION') store.ensureImitation(route.params.id)
+})
 </script>
 
 <style scoped>
@@ -366,6 +438,24 @@ watch(() => props.project, (p) => { if (p) { loadVersions(); loadStyles() } })
 .version-cites { margin: 10px 0; padding: 10px 12px; background: var(--el-fill-color-light, #f7f7f7); border-radius: 8px; }
 .next-row { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
 .next-row .el-button:last-child { margin-left: auto; }
+
+/* 仿写:原文摘要卡 + 推荐角标 + 相似度行 */
+.imitation-src { margin-bottom: 14px; }
+.imitation-src :deep(.el-collapse-item__header) { font-size: 13px; color: var(--muted); }
+.src-text { font-size: 13px; line-height: 1.8; color: var(--muted); white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+.rec-tag { margin-right: 4px; }
+.sim-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+.sim-row.sim-ok { background: color-mix(in srgb, var(--el-color-success) 10%, transparent); color: var(--el-color-success); }
+.sim-row.sim-warn { background: color-mix(in srgb, var(--el-color-warning) 12%, transparent); color: var(--el-color-warning); }
+.sim-row.sim-high { background: color-mix(in srgb, var(--el-color-danger) 12%, transparent); color: var(--el-color-danger); }
+.sim-score { font-weight: 700; }
+.sim-hint { font-size: 12px; }
+.sim-toggle { margin-left: auto; }
+.sim-detail { margin: 4px 0 8px; padding: 8px 12px; background: var(--el-fill-color-light); border-radius: 6px; }
+.sim-run { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
+.sim-run-len { flex-shrink: 0; color: var(--faint); font-weight: 700; }
+.sim-run-text { color: var(--muted); word-break: break-all; }
+.sim-run.max { color: var(--el-color-danger); }
 
 @media (max-width: 768px) {
   .version-grid, .version-grid.compare { grid-template-columns: 1fr; }
