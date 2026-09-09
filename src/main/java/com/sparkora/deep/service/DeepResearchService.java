@@ -46,6 +46,8 @@ public class DeepResearchService {
     private final com.sparkora.car.service.CarModelMatcherService matcherService;
     /** 项目详情(锚点兜底识别/主题语料) */
     private final com.sparkora.mapper.ArticleProjectMapper projectMapper;
+    /** 系统检索设置开关(09-09-brief-gen-redesign R3):门控子代理工具装配 */
+    private final com.sparkora.service.SettingService settingService;
     // 自注入代理,确保 @Async 生效(run 内 this.runAsync 不会走代理)
     @Autowired
     @Lazy
@@ -57,7 +59,8 @@ public class DeepResearchService {
                                com.sparkora.service.BriefService briefService,
                                com.sparkora.service.ArticleProjectCarService carService,
                                com.sparkora.car.service.CarModelMatcherService matcherService,
-                               com.sparkora.mapper.ArticleProjectMapper projectMapper) {
+                               com.sparkora.mapper.ArticleProjectMapper projectMapper,
+                               com.sparkora.service.SettingService settingService) {
         this.briefMapper = briefMapper;
         this.subAgent = subAgent;
         this.factSheet = factSheet;
@@ -67,6 +70,7 @@ public class DeepResearchService {
         this.carService = carService;
         this.matcherService = matcherService;
         this.projectMapper = projectMapper;
+        this.settingService = settingService;
     }
 
     /**
@@ -145,7 +149,7 @@ public class DeepResearchService {
             for (int i = 0; i < n; i++) {
                 final int idx = i;
                 String q = questions.get(i);
-                List<String> tools = idx < toolHints.size() ? parseTools(toolHints.get(idx)) : List.of("KB");
+                List<String> tools = applySettingGates(idx < toolHints.size() ? parseTools(toolHints.get(idx)) : List.of("KB"));
                 futures.add(pool.submit(() -> subAgent.research(q, tools, webQuotaPerAgent, anchors, topic)));
             }
             int doneCount = 0;
@@ -235,6 +239,19 @@ public class DeepResearchService {
         } catch (Exception e) {
             return List.of("KB");
         }
+    }
+
+    /**
+     * 设置开关门控(09-09-brief-gen-redesign R3):运行时设置优先于研究计划的工具提示。
+     * - kbEnabled=false → 剔除 KB(外部搜索优先,知识库停用期间不装配 KB 工具);
+     * - webSearchEnabled=false → 剔除 WEB;
+     * - 双关(全空) → 返回空列表,SubAgentRunner 无资料工具,prompt 由研究阶段注入「未检索任何外部资料」要求。
+     */
+    private List<String> applySettingGates(List<String> tools) {
+        List<String> out = new ArrayList<>(tools);
+        if (!settingService.isKbEnabled()) out.remove("KB");
+        if (!settingService.isWebSearchEnabled()) out.remove("WEB");
+        return out;
     }
 
     /** R1 锚点车型解析:项目关联车型为准;为空时主题识别兜底(与 create 建项同一 matcher,失败不阻断研究)。 */

@@ -205,19 +205,33 @@ const loadStyles = () => store.ensureStyles(route.params.id, { force: true })
 const doGenerate = async (styleIds) => {
   submitting.value = true
   try {
-    const res = await projectApi.generateVersions(route.params.id, styleIds)
-    if (res.code === 0) {
-      // 以服务器全量列表为准(本次返回仅含新增,追加时直接拼会漏失败重试的历史)
-      await loadVersions()
-      lastStyleIds.value = [...styleIds]
-      ElMessage.success(`已生成 ${res.data?.length || 0} 版，默认选中本次第一版，可重新设定`)
-    } else ElMessage.error(res.msg || '生成失败')
-    await store.ensureProject(route.params.id, { force: true })
-    // 生成成功(VERSIONS_READY)后自动进入下一步:预览(配图已并入预览)
-    if (res.code === 0) gotoPreview()
-  } catch (e) {
-    ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
-    await store.ensureProject(route.params.id, { force: true })
+    // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速多版本接口已封死,
+    // 深度版本生成逐风格调用 /deep/generate(单风格单版;stylePrompt=风格画像 toneGuidance)
+    const entry = store._entryOf(route.params.id)
+    const briefId = entry?.brief?.id
+    if (!briefId) { ElMessage.error('未找到当前简报,请先完成深度研究'); submitting.value = false; return }
+    const allStyles = entry?.styles || []
+    let ok = 0
+    for (const styleId of styleIds) {
+      const style = allStyles.find(s => s.id === styleId)
+      try {
+        const res = await projectApi.generateDeep(route.params.id, briefId, style?.toneGuidance || '')
+        if (res.code === 0) ok++
+        else ElMessage.error(res.msg || `风格「${style?.name || styleId}」生成失败`)
+      } catch (e) {
+        ElMessage.error(`风格「${style?.name || styleId}」生成失败:` + (e.response?.data?.msg || e.message || '网络异常或超时'))
+      }
+    }
+    // 以服务器全量列表为准(本次返回仅含新增,追加时直接拼会漏失败重试的历史)
+    await loadVersions()
+    lastStyleIds.value = [...styleIds]
+    if (ok) {
+      ElMessage.success(`已生成 ${ok} 版，默认选中最新一版，可重新设定`)
+      await store.ensureProject(route.params.id, { force: true })
+      gotoPreview()
+    } else {
+      await store.ensureProject(route.params.id, { force: true })
+    }
   } finally { submitting.value = false }
 }
 const onGenerate = () => {

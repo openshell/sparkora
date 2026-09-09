@@ -38,7 +38,8 @@ export const projectApi = {
   // S9 深度模式:锁定答案并立即开跑多代理研究(前端轮询 status 展示进度)
   runDeep: (id, briefId) => http.post(`/projects/${id}/deep/run`, { briefId }),
   // S9 深度模式:基于事实手册生成深度正文
-  generateDeep: (id, briefId) => http.post(`/projects/${id}/deep/generate`, { briefId }),
+  generateDeep: (id, briefId, stylePrompt = '') =>
+    http.post(`/projects/${id}/deep/generate`, { briefId, stylePrompt }, { timeout: 300000 }),
   // S9 深度模式:基于事实手册生成简报(自动生成失败后的手动重试;约十几秒,放宽超时)
   generateDeepBrief: (id, briefId) => http.post(`/projects/${id}/deep/brief`, { briefId }, { timeout: 120000 })
 }
@@ -112,4 +113,11 @@ export const imageApi = {
     http.put(`/projects/${id}/versions/${versionId}/content`, { contentMd }),
   // 预览参数清单(主题/高亮/开关默认值,读后端 .env 配置)
   previewOptions: () => http.get('/images/preview-options')
+}
+
+// 系统检索设置(09-09-brief-gen-redesign R1):页面控制内部知识库/外部搜索启用;
+// 读 ADMIN/EDITOR,写仅 ADMIN
+export const settingApi = {
+  get: () => http.get('/settings'),
+  update: (payload) => http.put('/settings', payload)
 }

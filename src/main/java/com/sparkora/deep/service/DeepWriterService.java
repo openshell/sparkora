@@ -34,13 +34,17 @@ public class DeepWriterService {
     private final ObjectMapper json;
     private final ArticleBriefMapper briefMapper;
     private final ArticleVersionMapper versionMapper;
+    /** 系统检索设置(09-09-brief-gen-redesign R3):知识库停用时 rag_status=DISABLED */
+    private final com.sparkora.service.SettingService settingService;
 
     public DeepWriterService(AiClient aiClient, ObjectMapper json,
-                             ArticleBriefMapper briefMapper, ArticleVersionMapper versionMapper) {
+                             ArticleBriefMapper briefMapper, ArticleVersionMapper versionMapper,
+                             com.sparkora.service.SettingService settingService) {
         this.aiClient = aiClient;
         this.json = json;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
+        this.settingService = settingService;
     }
 
     /**
@@ -100,7 +104,9 @@ public class DeepWriterService {
         var v = new com.sparkora.domain.entity.ArticleVersionEntity();
         v.setProjectId(projectId);
         v.setBriefId(briefId);
-        v.setRagStatus("OK");
+        // 检索状态(09-09-brief-gen-redesign R3):知识库停用(全局设置)时标 DISABLED,不与 NO_KNOWLEDGE 混淆;
+        // 启用时深度写作阶段的本地检索语义维持 OK(fact_sheet 即引用来源)
+        v.setRagStatus(settingService.isKbEnabled() ? "OK" : "DISABLED");
         v.setFactRisks(factRisks);
         v.setAiModel(cr.model());
         v.setTokenUsage(cr.totalTokens());

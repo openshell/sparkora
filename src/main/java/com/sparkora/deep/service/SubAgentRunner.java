@@ -55,12 +55,15 @@ public class SubAgentRunner {
      */
     public Note research(String question, List<String> toolsAllowed, int webQuota, List<Long> anchors, String topic) {
         List<SearchTool.SearchHit> hits = new ArrayList<>();
-        // 1) 本地 KB(必用,锚点加权):复合语料 = 主题(含车型名) + 研究问题
-        String kbQuery = compositeQuery(topic, question);
-        try {
-            hits.addAll(kbTool.search(kbQuery, 8, anchors));
-        } catch (Exception e) {
-            log.warn("KB 工具调用失败 question={}: {}", question, e.getMessage());
+        // 1) 本地 KB(锚点加权,受设置门控):复合语料 = 主题(含车型名) + 研究问题
+        //    09-09-brief-gen-redesign R3:toolsAllowed 不含 KB(全局设置停用)时不装配 KB 工具
+        if (toolsAllowed.contains("KB")) {
+            String kbQuery = compositeQuery(topic, question);
+            try {
+                hits.addAll(kbTool.search(kbQuery, 8, anchors));
+            } catch (Exception e) {
+                log.warn("KB 工具调用失败 question={}: {}", question, e.getMessage());
+            }
         }
         boolean kbHit = hits.stream().anyMatch(h -> "KB".equals(h.type()));
         // 2) WEB(SEARXNG→Tavily 降级;额度受控):gap 驱动——KB 已命中车型域权威块时不再全问题重搜,
@@ -83,13 +86,19 @@ public class SubAgentRunner {
         }
         // 3) LLM 汇总为结构化笔记(容错:非法 JSON 重试 1 次;仍失败走原始条目降级)
         try {
+            // 09-09-brief-gen-redesign R3:双关(KB/WEB 均被全局设置停用)时明确告知无外部资料,
+            // 要求 gaps 标注,不臆造
+            boolean noExternalSources = toolsAllowed.isEmpty();
             String system = """
                     你是研究子代理。基于给定检索结果回答研究问题,产出标准化研究笔记。
                     只输出 JSON:
                     {"facts":[{"claim":"事实条目","value":"数值(如无可省略)","source":{"type":"KB|WEB","url":"","modelName":"","docId":0},"confidence":0.9}],
                      "gaps":["未能从检索结果回答的部分"]}
                     规则:数值必须直接来自检索结果原文,禁止推算;KB 来源置信 0.9,单一 WEB 源 0.6;检索不支持的表述不写。
-                    """;
+                    """ + (noExternalSources ? """
+                    本次未启用任何外部资料检索(知识库与外部搜索均被系统设置停用):不得编造事实,全部要点写入 gaps,
+                    并在 gaps 中注明「未检索任何外部资料,数据未核实」。
+                    """ : "");
             StringBuilder ctx = new StringBuilder("研究问题:").append(question).append("\n检索结果:\n");
             for (SearchTool.SearchHit h : hits) {
                 ctx.append("- [").append(h.type()).append("] ");

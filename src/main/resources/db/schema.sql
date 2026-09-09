@@ -380,3 +380,18 @@ ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS gen_model VARCHAR(100)
 ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS gen_size VARCHAR(20);
 CREATE INDEX IF NOT EXISTS idx_image_asset_hash ON sparkora_image_asset(content_hash);
 CREATE INDEX IF NOT EXISTS idx_image_asset_source ON sparkora_image_asset(source);
+
+-- ============================================================================
+-- 简报生成重设计(09-09-brief-gen-redesign):系统级检索设置,单行表。
+-- 页面控制内部知识库/外部搜索的启用;运行时读取(SettingService 内存缓存),
+-- 非 .env 部署级配置。kb 默认停用(用户决策:知识库存疑,暂停引用),
+-- web_search 默认启用(外部搜索优先)。幂等建表。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sparkora_setting (
+    id                 BIGSERIAL PRIMARY KEY,
+    kb_enabled         BOOLEAN      NOT NULL DEFAULT FALSE,   -- 内部知识库启用(默认停用)
+    web_search_enabled BOOLEAN      NOT NULL DEFAULT TRUE,   -- 外部搜索启用
+    updated_by         BIGINT,                                -- 最近修改人用户 id
+    updated_at         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted            SMALLINT     NOT NULL DEFAULT 0       -- 逻辑删除(全局配置惯例:SMALLINT)
+);

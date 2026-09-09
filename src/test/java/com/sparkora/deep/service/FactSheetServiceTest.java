@@ -35,13 +35,17 @@ class FactSheetServiceTest {
     }
 
     @Test
-    void 同claim两源_交叉置信085_无警告() throws Exception {
+    void 同claim两源_KB胜出_R2冲突裁决() throws Exception {
+        // R2 冲突裁决(2026-09-06):同 claim 含 KB+WEB 时 KB 胜出(置信取 KB 0.9),
+        // WEB 降为 alternatives 并警告「以知识库为准」——取代旧的交叉置信 0.85 规则
         String notes = "["
                 + "{\"agentId\":1,\"question\":\"q\",\"status\":\"DONE\",\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"海狮08EV 239,900\\\",\\\"source\\\":{\\\"type\\\":\\\"KB\\\"},\\\"confidence\\\":0.9}],\\\"gaps\\\":[]}\",\"webCount\":0},"
                 + "{\"agentId\":2,\"question\":\"q\",\"status\":\"DONE\",\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"海狮08EV 239,900\\\",\\\"source\\\":{\\\"type\\\":\\\"WEB\\\",\\\"url\\\":\\\"https://a\\\"},\\\"confidence\\\":0.6}],\\\"gaps\\\":[]}\",\"webCount\":1}]";
         String sheet = svc.merge(notes);
-        assertTrue(sheet.contains("0.85"));
-        assertTrue(!sheet.contains("待核实"));
+        assertTrue(sheet.contains("0.9"), "KB 置信胜出");
+        assertTrue(sheet.contains("https://a"), "WEB 降为 alternatives 佐证");
+        assertTrue(sheet.contains("以知识库为准"), "冲突警告");
+        assertTrue(!sheet.contains("待核实"), "KB 在场不标待核实");
     }
 
     @Test
@@ -56,7 +60,7 @@ class FactSheetServiceTest {
 
     @Test
     void 数值回查_手册外数值_被标() throws Exception {
-        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null);
+        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null);
         String sheet = "{\"entries\":[{\"key\":\"海狮08EV起售价\",\"value\":\"239900\",\"confidence\":0.9}]}";
         String content = "海狮08EV 起售价 239,900 元,续航 610km,竞品卖 258000。";
         var unknown = w.verifyNumbers(content, sheet);
@@ -67,7 +71,7 @@ class FactSheetServiceTest {
 
     @Test
     void 数值回查_手册内数值_不标() throws Exception {
-        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null);
+        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null);
         String sheet = "{\"entries\":[{\"key\":\"起售价\",\"value\":\"239900\",\"confidence\":0.9}]}";
         var unknown = w.verifyNumbers("起售价 239,900 元", sheet);
         assertTrue(unknown.isEmpty(), () -> "手册内数值不应被标: " + unknown);

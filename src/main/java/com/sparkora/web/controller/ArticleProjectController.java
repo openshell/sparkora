@@ -150,22 +150,13 @@ public class ArticleProjectController {
     /**
      * 生成 brief（S1：接真实 AI）。同步调用，前端 loading 等待。
      * 状态机 DRAFT→GENERATING_BRIEF→READY；失败回 DRAFT 并写 lastBriefError（可在 project 详情查看）。
+     * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速模式入口封死,
+     * 所有生成必走深度流程(POST /api/deep/{id}/clarify);存量 FAST 项目产物可读,重新生成走深度。
      */
     @PostMapping("/{id}/generate/brief")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<ArticleBriefEntity> generateBrief(@PathVariable Long id) {
-        ArticleProjectEntity e = mapper.selectById(id);
-        if (e == null) return R.fail(404, "项目不存在");
-        try {
-            ArticleBriefEntity b = briefService.generate(id);
-            return R.ok(b);
-        } catch (IllegalStateException ex) {
-            // 状态冲突(并发生成中)→ 409;状态已由 service 原样保留,前端恢复生成中视图
-            return R.fail(409, ex.getMessage());
-        } catch (Exception ex) {
-            // 状态已由 service 回滚为 DRAFT；这里返回错误信息供前端展示
-            return R.fail(500, ex.getMessage());
-        }
+        return R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify)");
     }
 
     /**
@@ -182,22 +173,14 @@ public class ArticleProjectController {
     /**
      * 生成多版本正文（基于当前 brief + 用户选择的风络）。body: {"styleIds":[1,2]}（风格库 id 列表）。
      * 每选一个风格生成一版。同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
+     * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速版本生成入口封死,
+     * 深度版本生成走 POST /api/deep/{id}/generate(单风格单版,复用 writerService)。
      */
     @PostMapping("/{id}/generate/versions")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<List<ArticleVersionEntity>> generateVersions(@PathVariable Long id,
                                                           @RequestBody java.util.Map<String, java.util.List<Long>> body) {
-        try {
-            return R.ok(versionService.generate(id, body.get("styleIds")));
-        } catch (NotReadyException ex) {
-            // 前置状态不满足(未生成 brief 等)→ 400 客户端错误
-            return R.fail(400, ex.getMessage());
-        } catch (IllegalStateException ex) {
-            // 状态冲突(并发生成中)→ 409
-            return R.fail(409, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, ex.getMessage());
-        }
+        return R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)");
     }
 
     /** 列出项目全部版本。 */

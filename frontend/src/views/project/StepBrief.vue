@@ -29,11 +29,11 @@
       </p>
     </div>
 
-    <!-- ③ 无简报:引导语(含上次失败原因,若后端记录过);深度模式入口(S9) -->
+    <!-- ③ 无简报:引导语(含上次失败原因,若后端记录过);2026-09-09 模式收敛:唯一生成路径为深度流程 -->
     <div v-else-if="!brief" class="muted intro">
       <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
                 :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
-      <!-- 深度模式分支:模式选择 → 计划/澄清表单/进度面板/手册 -->
+      <!-- 深度流程:计划/澄清表单/进度面板/手册(唯一生成入口) -->
       <template v-if="deepStage !== 'NONE' || deepMode">
         <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
         <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
@@ -41,28 +41,24 @@
         <ResearchProgress v-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'" :brief-id="deepBriefId" @done="onResearchDone" />
         <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
         <div class="deep-actions">
-          <el-button v-if="deepStage === 'NONE' && !deepMode" @click="deepMode = true">深度模式(先研究再写)</el-button>
           <el-button v-if="deepMode && deepStage === 'NONE'" type="primary" :loading="deepBusy" @click="onDeepClarify">生成研究计划</el-button>
           <!-- 研究完成:自动简报已在后台生成;若失败(lastBriefError)可手动重试,也可跳过简报直接写正文 -->
           <el-button v-if="deepStage === 'RESEARCH_DONE' && project && (project.lastBriefError || project.status === 'DRAFT')"
                      type="warning" :loading="deepBusy" @click="onDeepBriefRetry">重新生成简报</el-button>
           <el-button v-if="deepStage === 'RESEARCH_DONE'" :loading="deepBusy" @click="onDeepGenerate">跳过简报,直接生成正文 →</el-button>
-          <el-button v-if="deepStage !== 'NONE'" text @click="onBackFast">返回快速模式</el-button>
         </div>
       </template>
       <template v-else>
       <div class="intro-hero">
         <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
         <div class="intro-title serif">让 AI 先想清楚，再动笔</div>
-        <p>由 AI 生成标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入多版本生成。</p>
+        <p>AI 先生成研究计划并向你反问补充信息，多代理并行研究后产出标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入版本生成。</p>
         <div class="gen-mode-row">
-          <el-button type="primary" :loading="submitting" @click="onGenerateBrief" size="large">
-            <el-icon class="btn-icon"><MagicStick /></el-icon>生成简报
-          </el-button>
-          <el-button size="large" @click="deepMode = true">
-            <el-icon class="btn-icon"><DataAnalysis /></el-icon>深度模式(多代理研究)
+          <el-button type="primary" :loading="deepBusy" @click="deepMode = true" size="large">
+            <el-icon class="btn-icon"><DataAnalysis /></el-icon>开始深度研究
           </el-button>
         </div>
+        <p class="form-tip">生成流程已升级为深度模式：先研究后写作，资料来源按系统设置（内部知识库/外部搜索）启用。</p>
       </div>
       </template>
     </div>
@@ -132,8 +128,8 @@
       </section>
 
       <div class="brief-actions">
-        <!-- 重新生成只在 READY(简报就绪且版本未生成)时可见:版本已生成后再触发会把状态机拉回 READY -->
-        <el-button v-if="canRegenerateBrief" :loading="submitting" @click="onGenerateBrief">重新生成</el-button>
+        <!-- 重新生成(2026-09-09 模式收敛):走深度流程重新研究,不再调快速生成接口 -->
+        <el-button v-if="canRegenerateBrief" @click="onRegenerateDeep">重新研究生成</el-button>
         <!-- 进入下一步:仅当简报就绪且版本未生成时显示;版本已生成后自动跳转,不再重复提交 -->
         <el-button v-if="canGoVersions" type="success" @click="gotoVersions">
           {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
@@ -210,15 +206,15 @@ const citationsHint = (b) => {
   let sheetN = 0
   if (sheet) { try { sheetN = (JSON.parse(sheet).entries || []).length } catch { sheetN = 0 } }
   if (localN + sheetN) return `本次生成引用了 ${localN + sheetN} 条知识来源`
-  return { OK: '本次生成未注入知识块', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用' }[b?.ragStatus] || ''
+  return { OK: '本次生成未注入知识块', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用', DISABLED: '知识库已停用(全局设置),本次未检索本地知识库' }[b?.ragStatus] || ''
 }
 
-// S6.1 知识库检索状态文案与标签色
+// S6.1 知识库检索状态文案与标签色;09-09-brief-gen-redesign 增 DISABLED(知识库停用,灰色,不与 NO_KNOWLEDGE 混淆)
 const ragLabel = (st) => ({
-  OK: '已引用', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用',
+  OK: '已引用', LOW_CONFIDENCE: '低置信已抛弃', FAILED: '检索失败·已降级', NO_KNOWLEDGE: '未引用', DISABLED: '知识库已停用(全局设置)',
 }[st] || st)
 const ragTagType = (st) => ({
-  OK: 'success', LOW_CONFIDENCE: 'warning', FAILED: 'danger', NO_KNOWLEDGE: 'info',
+  OK: 'success', LOW_CONFIDENCE: 'warning', FAILED: 'danger', NO_KNOWLEDGE: 'info', DISABLED: 'info',
 }[st] || 'info')
 
 // 重试入口:store 层做并发去重,失败信息落在 store.briefError
@@ -229,24 +225,11 @@ const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 onMounted(() => store.ensureBrief(route.params.id))
 watch(() => props.project, (p) => { if (p) loadBrief() })
 
-const onGenerateBrief = async () => {
-  submitting.value = true
-  try {
-    const res = await projectApi.generateBrief(route.params.id)
-    if (res.code === 0) {
-      // 同步接口直接返回刚生成的简报,写入 store 而不再发一次请求
-      store._entryOf(route.params.id).brief = parseBrief(res.data)
-      ElMessage.success('简报已生成')
-    } else {
-      ElMessage.error(res.msg || '生成失败')
-    }
-    // 成功/失败都要让布局层拿到最新 status(生成中/回退),供轮询与按钮态使用
-    await store.ensureProject(route.params.id, { force: true })
-    // 生成成功后停留在简报页展示简报,由用户点「进入多版本生成」再进版本页(不再自动跳转)
-  } catch (e) {
-    // 失败已由后端回写 lastBriefError 并回退状态,提示交给 alert 与拦截器
-    await store.ensureProject(route.params.id, { force: true })
-  } finally { submitting.value = false }
+// 重新研究生成(2026-09-09 模式收敛):FAST 接口已封死,重新生成走深度流程(重新出研究计划)
+const onRegenerateDeep = () => {
+  deepStage.value = 'NONE'
+  deepMode.value = true
+  ElMessage.info('生成流程已升级为深度模式,请重新确认研究计划')
 }
 
 // ==================== S9 深度模式 ====================
@@ -259,8 +242,8 @@ const deepQuestions = ref([])
 const deepAnswers = ref([])
 const deepFactSheet = ref(null)
 
-// 路由意图参数 ?gen=DEEP(创建页/仅存草稿的续接意图):直接展开深度面板,随后清掉 query 防刷新残留
-if (route.query.gen === 'DEEP') {
+// 路由意图参数 ?gen=DEEP|deep(创建页/仅存草稿的续接意图):直接展开深度面板,随后清掉 query 防刷新残留
+if (route.query.gen === 'DEEP' || route.query.gen === 'deep') {
   deepMode.value = true
   router.replace({ query: { ...route.query, gen: undefined } })
 }
@@ -360,7 +343,7 @@ const onDeepGenerate = async () => {
   finally { deepBusy.value = false }
 }
 
-const onBackFast = () => { deepMode.value = false; deepStage.value = 'NONE' }
+const onBackFast = () => { deepMode.value = false; deepStage.value = 'NONE' }  // 已无快速模式;保留防外部引用,等效重置
 </script>
 
 <style scoped>

@@ -55,7 +55,7 @@ npm run build                     # 产线构建(已验证)
 ## Notes
 
 - Reasonix 配置:`reasonix.toml`(permissions/sandbox 预授权)、`.reasonix/skills/`(sparkora-dev 联调、sparkora-spec-check 规格核对)、`.reasonix/settings.json` + `.reasonix/hooks/secret-guard.sh`(PostToolUse 检测 .env 密钥误入代码)。项目记忆即本文件(AGENTS.md)。
-- (待补充)
+- **Reasonix 会话身份(重要,每次会话开始先做)**:Reasonix 无 SessionStart hook,不会注入 `TRELLIS_CONTEXT_ID`。会话开始执行任何 `task.py start/current` 前必须先 `export TRELLIS_CONTEXT_ID="reasonix-$(date +%s)"`,否则进入 degraded mode(活跃任务指针写不进 `.trellis/.runtime/sessions/`),`task.py current --source` 返回空,trellis-implement/trellis-check 子代理按协议解析不到任务会**无提示挂起**(2026-09-09 实测两次)。已诊断并准备上游 PR(mindfold-ai/trellis):①reasonix agents 模板 allowed-tools 用了 OpenCode 工具名;②工作流技能缺此变量的指导;③派发协议缺 degraded 兜底。上游修复合并并 `trellis update` 升级后,本条目可删。
 <!-- TRELLIS:START -->
 # Trellis Instructions
 

@@ -51,9 +51,11 @@ GET   /api/projects/{id}       详情                  权限 ADMIN/EDITOR/VIEWE
 POST  /api/projects            新建                  权限 ADMIN/EDITOR
 PUT   /api/projects/{id}       编辑                  权限 ADMIN/EDITOR
 DELETE /api/projects/{ids}     删除                  权限 ADMIN
-POST  /api/projects/{id}/generate/brief    简报生成（S1 起真实 AI）  权限 ADMIN/EDITOR
+POST  /api/projects/{id}/generate/brief    简报生成（已封死:410 引导深度模式,2026-09-09）  权限 ADMIN/EDITOR
 GET   /api/projects/{id}/brief             取当前简报           权限 ADMIN/EDITOR/VIEWER
-POST  /api/projects/{id}/generate/versions 多版本生成           权限 ADMIN/EDITOR
+POST  /api/projects/{id}/generate/versions 多版本生成（已封死:410 引导深度模式,2026-09-09） 权限 ADMIN/EDITOR
+GET   /api/settings                        系统检索设置（读）    权限 ADMIN/EDITOR
+PUT   /api/settings                        系统检索设置（写）    权限 ADMIN
 GET   /api/projects/{id}/versions          版本列表             权限 ADMIN/EDITOR/VIEWER
 PUT   /api/projects/{id}/current-version   设定当前版本         权限 ADMIN/EDITOR
 GET   /api/images              图库列表               权限 ADMIN/EDITOR/VIEWER
@@ -123,11 +125,13 @@ POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 AD
 | POST | `/api/projects` | ADMIN/EDITOR | §3.2 表单 JSON | `{id}` |
 | PUT | `/api/projects/{id}` | ADMIN/EDITOR | 表单 JSON | `{ok:true}` |
 | DELETE | `/api/projects/{ids}` | ADMIN | — | `{ok:true}` |
-| POST | `/api/projects/{id}/generate/brief` | ADMIN/EDITOR | — | `{brief}`；失败 `R.fail(500)`；生成中重触发 `R.fail(409)`（HTTP 均为 200，前端必须检查 `code`） |
+| POST | `/api/projects/{id}/generate/brief` | ADMIN/EDITOR | — | **2026-09-09 起封死**：恒 `R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify)")`（存量 FAST 项目产物可读，重新生成走深度） |
 | GET | `/api/projects/{id}/brief` | 三角色 | — | `{brief}`（无则 `data:null`） |
-| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | `{versions[]}`（仅本次新增，部分失败跳过并在 last_version_error 记录）；brief 未就绪 `R.fail(400)`；生成中重触发 `R.fail(409)` |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **2026-09-09 起封死**：恒 `R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)")`；多风格由前端 StepVersions 逐风格调 `/deep/generate`（`{briefId, stylePrompt=风格画像}`）实现，每风格一版 |
 | GET | `/api/projects/{id}/versions` | 三角色 | — | `{versions[]}`（全量，按 id 升序） |
 | PUT | `/api/projects/{id}/current-version` | ADMIN/EDITOR | `?versionId=` | `{ok:true}` |
+| GET | `/api/settings` | ADMIN, EDITOR | — | `{id, kbEnabled, webSearchEnabled, updatedBy, updatedAt}`（单行;首访自动初始化;契约见 §6b-s） |
+| PUT | `/api/settings` | **仅 ADMIN** | `{kbEnabled?, webSearchEnabled?}`（null 不改） | 同 GET（写后刷缓存;契约见 §6b-s） |
 | GET | `/api/styles` | 三角色 | `?enabledOnly=` | `{styles[]}` |
 | POST | `/api/styles/extract` | ADMIN/EDITOR | `{name, sourceText}` | `{style}` |
 
@@ -174,7 +178,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - 表单 = §3.2 中「表单」列字段，字段级校验：`topic` 必填、长度限制。
 - 操作：保存（DRAFT）或「创建并生成 Brief →」（DRAFT→GENERATING_BRIEF→READY，S0 只落库）。
 - 校验错误逐字段 `el-form` 提示，后端 `@Validated` 兜底。
-- **思考深度（S9 增补，2026-09-05）**：创建表单含「思考深度」单选（`genDepth: FAST|DEEP`，默认 FAST，前端专用字段不随 create 提交）。FAST=创建后直发 `/generate/brief`；DEEP=创建后直发 `/deep/clarify`（研究计划+反问），两者均 120s 超时并发起，**立即跳详情页**，生成过程由详情页按 `project.status` 轮询展示（不再在创建页等待 1~2 分钟）。跳转携带意图参数 `?gen=FAST|DEEP`（仅存草稿也带，DEEP 时 StepBrief 展开深度面板），StepBrief 读取后即清除。
+- **思考深度（2026-09-09 模式收敛修订,09-09-brief-gen-redesign R2）**：创建表单**不再含模式单选**——快速模式（FAST）已下线，所有生成必走深度流程。创建成功后直发 `/deep/clarify`（研究计划+反问，120s 超时），**立即跳详情页**，生成过程由详情页按 `project.status` 轮询展示。跳转携带意图参数 `?gen=deep`（仅存草稿也带，StepBrief 展开深度面板），读取后即清除。FAST 生成接口 `/generate/brief`、`/generate/versions` 保留路由但返回 `R.fail(410, "生成流程已升级为深度模式...")`（封死不删，存量 FAST 项目产物可读，重新生成走深度）。
 
 ---
 
@@ -198,13 +202,15 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 | `LOW_CONFIDENCE` | 有命中但最高相似度 < 整体门槛，**全部抛弃** | 不注入；提示 AI 不得臆造参数、factRisks 标注(建议 high) | 「知识库 · 低置信已抛弃」(橙)；版本卡片加「参数未经知识库核实」 |
 | `FAILED` | 检索异常（embedding 服务等），**降级继续** | 不注入；要求 factRisks 标注数据缺失(建议 high)，不得臆造参数 | 「知识库 · 检索失败·已降级」(红)；版本卡片同上 |
 | `NO_KNOWLEDGE` | 无车型关联对象或逐块过滤后无命中 | 不注入、不提示（与 S6 现状一致） | 「知识库 · 未引用」(灰) |
+| `DISABLED` | **系统设置停用知识库（09-09-brief-gen-redesign，2026-09-09 增补）**：设置页 `kbEnabled=false` 时本地检索不发起 | 不注入任何本地知识块；外部搜索按 `webSearchEnabled` 独立启用（优先外部资料）；双关时 prompt 明确要求标注「未检索任何外部资料,数据未核实」 | 「知识库 · 知识库已停用(全局设置)」(灰)；不得与 NO_KNOWLEDGE 混淆 |
 
 - `FAILED` 优先级高于其余状态：多车型检索时任一车型异常即标 `FAILED`（其余车型照常尝试）。
 - 抛弃/失败**不得与「无命中」混淆**：`LOW_CONFIDENCE`/`FAILED` 必须显式落库，前端据此提示。
+- `DISABLED` 是**主动停用**语义（设置页可随时切回），与失败/低置信的被动降级不同；仅深度链路产生（快速模式已下线，见 §7 修订）。
 
 **字段级**：`sparkora_article_brief.rag_status`、`sparkora_article_version.rag_status` — `VARCHAR(20)`，可空（历史行为数据为 NULL，前端不展示）；GET brief/versions 响应自然携带该字段，无独立接口。
 
-**知识引用明细（R3，2026-09-05 增补）**：`sparkora_article_brief.rag_citations`、`sparkora_article_version.rag_citations` — `TEXT`（JSON 数组 `[{source:"CAR|KB", modelName, chunkType, score, chunkText}]`），检索 OK 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 ragStatus 显示降级文案。**WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 fact_sheet，行为不变。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
+**知识引用明细（R3，2026-09-05 增补）**：`sparkora_article_brief.rag_citations`、`sparkora_article_version.rag_citations` — `TEXT`（JSON 数组 `[{source:"CAR|KB", modelName, chunkType, score, chunkText}]`），检索 OK 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 ragStatus 显示降级文案。**WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 fact_sheet，行为不变（**2026-09-09 注:快速模式已下线,本句仅存量语义**）。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
 
 **检索门槛**（粗调值，**待按真实 query 分数分布校准**；`REJECT` 须 ≥ `MIN`）：
 
@@ -217,6 +223,38 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 | `AI_RAG_ANCHOR_BOOST` | `1.15` | 统一检索锚点车型块分数加权系数（§6c S8） |
 
 **诚实边界**：相似度衡量**相关性**而非事实正确性——知识库本身存错的数据会以高相似度被当作权威注入；防错依赖入库源头（比亚迪同步 + 人工清洗），检索门槛不承诺拦截知识库错误数据。
+
+### 6b-s. 系统检索设置（09-09-brief-gen-redesign，2026-09-09）
+
+**语义**：页面控制生成链路的资料检索来源——内部知识库与外部搜索两个独立开关，运行时读取（`SettingService` 单行表 + 内存缓存，写后刷缓存），**非 .env 部署级配置**。设置变更仅影响之后的生成，已生成产物不追溯。
+
+**存储**（schema.sql 幂等单行表，固定 id=1，首次读取自动初始化默认行）：
+
+| 列 | 类型/默认 | 语义 |
+|---|---|---|
+| `kb_enabled` | `BOOLEAN NOT NULL DEFAULT FALSE` | 内部知识库（CAR 车型域 + KB 通用域）启用；**默认停用**（知识库数据质量治理中，停用期间优先外部搜索资料） |
+| `web_search_enabled` | `BOOLEAN NOT NULL DEFAULT TRUE` | 外部搜索（SEARXNG→Tavily 降级链）启用 |
+| `updated_by` / `updated_at` / `deleted` | `BIGINT` / `TIMESTAMP NOT NULL DEFAULT now()` / `BOOLEAN NOT NULL DEFAULT FALSE` | 审计（手工赋值）/逻辑删除惯例 |
+
+**API 契约**（全部 `R<T>`；路径前缀 `/api`）：
+
+| 接口 | 方法 | 角色 | 请求/响应 |
+|---|---|---|---|
+| `/settings` | GET | ADMIN, EDITOR | `data: {id, kbEnabled, webSearchEnabled, updatedBy, updatedAt, deleted}`（首次访问自动插默认行） |
+| `/settings` | PUT | **仅 ADMIN** | `@Valid {kbEnabled?, webSearchEnabled?}`（null 不改）；响应同 GET（写后刷缓存） |
+
+**生效点**（深度链路，快速模式已下线）：
+
+| 开关 | 生效行为 |
+|---|---|
+| `kbEnabled=false` | `DeepResearchService.applySettingGates` 剔除 KB 工具（子代理不装配本地检索）；产物 `rag_status=DISABLED`；锚点车型仅保留写作偏好语义，不触发本地检索 |
+| `webSearchEnabled=false` | 剔除 WEB 工具（SEARXNG/Tavily 不调用） |
+| 双关 | 子代理无资料工具，LLM prompt 注入「未检索任何外部资料,不得编造,数据未核实」；生成继续不阻断（沿用不硬阻断决策），factRisks/gaps 标注 |
+| 两者全开 | 维持 S9 现状：KB 优先（R2 冲突裁决 KB>WEB），WEB 单源 0.4 进 warnings |
+
+**前端**：`/settings` 路由（TopBar「设置」，EDITOR 及以上可见）；双 `el-switch` + 说明文案 + 双关警示；写入口仅 ADMIN（`user.isAdmin` 隐藏保存按钮，后端 `@PreAuthorize` 兜底）。
+
+**与 `.env` 的关系**：`AI_RAG_KB_ENABLED`（§6c，部署级）仅在本地统一检索通道内继续生效（`kbEnabled=true` 时）；深度链路的工具装配以设置页为准。`DEEP_SEARCH_WEB_ENABLED` 同理仅作 SEARXNG/Tavily 的部署级可用性控制。
 
 **检索策略升级（S6.2，2026-09-03；修复海狮08 文章价格/续航错误暴露的检索精度缺陷）**：
 
@@ -277,7 +315,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 | 项 | 行为 |
 |---|---|
 | 统一检索 | `searchTopKUnified(queryVec, limit)`：车型域与 KB 域 **UNION ALL 同向量空间全库检索**，按余弦分排序；返回行带 source(CAR/KB)/modelId/chunkType/modelName。「项目关联车型」**不再是检索门禁**——未关联车型也全库检索（修复文章18 类误伤：数据在库却因未关联查不到） |
-| 锚点加权 | 项目关联车型降为**写作锚点**：CAR 块 modelId∈anchor → score × `AI_RAG_ANCHOR_BOOST`(默认 1.15，上限 1.0 截断)重排；前端项目编辑页改「写作锚点车型」文案 |
+| 锚点加权 | 项目关联车型降为**写作锚点**：CAR 块 modelId∈anchor → score × `AI_RAG_ANCHOR_BOOST`(默认 1.15，上限 1.0 截断)重排；~~前端项目编辑页改「写作锚点车型」文案~~（**2026-09-09:创建页车型选择入口已移除**——创作不与车型绑定,知识库停用期间该字段无生效点;后端关联逻辑与锚点加权保留,存量项目不受影响;新项目无 anchor 即全库无加权,dec-dd4ba6e1c6bfb7e7） |
 | 配额 | 核心块(PARAM_GROUP/MODEL_INFO)优先、RIGHTS/FEATURE ≤1/3、KB_CHUNK 独立配额 `AI_RAG_KB_TOPK`；`AI_RAG_KB_ENABLED=false` 时 KB 块在配额层排除（等价 S6 行为，检索仍跑） |
 | 来源标注 | 行内前缀「【车型数据：名称】」/「【通用知识：标题】」；首行「知识来源：…」按命中构成生成 |
 | 子查询 | S6.2 参数级子查询保留，子查询同走统一检索 |
@@ -532,7 +570,7 @@ PublishService.publish
 
 #### 数据模型（schema.sql 幂等，已同步 entity）
 
-- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`、`rag_citations TEXT`（R3 知识引用明细）。
+- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`（2026-09-09 模式收敛:新 brief 恒为 DEEP,FAST 默认值仅存量语义;存量行不迁移）、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`、`rag_citations TEXT`（R3 知识引用明细）。
 - `sparkora_article_version` 增列：`fact_risks TEXT`（数值回查结果，JSON 数组 `[{claim,riskLevel,suggestion}]`）、`rag_citations TEXT`（R3 知识引用明细）。
 
 #### 接口契约（全部 `R<T>` 包装；方法级 `@PreAuthorize`；前缀 `/api/projects/{projectId}/deep`）
@@ -585,7 +623,7 @@ PublishService.publish
 - **「其他(自行填写)」（R2，2026-09-05）**：`ClarifyForm.vue` 对 single/multi 题渲染「其他(自行填写)」入口——single 选中后切文本框（提交取文本框内容），multi 勾选后文本并入答案（「、」拼接）；锁定回显时不在 options 中的答案自动归「其他」并回填。
 - `DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）。
 - **研究完成 → 自动生成简报（2026-09-05 修复）**：`DeepResearchService.runAsync` 落 fact_sheet 后自动调 `BriefService.generateFromFactSheet`（LLM 一次，以事实手册为唯一事实来源 + 锁定需求 → 简报五字段落同一条 DEEP brief 行，`currentBriefId` 指向该行，状态机 GENERATING_BRIEF→READY）；失败不回滚研究产物（回 DRAFT + lastBriefError，深度面板可手动重试 `/deep/brief`，也可「跳过简报直接生成正文」）。修复「确定研究计划/研究完成后没有简报页面」的结构性缺陷。
-- StepBrief.vue：模式切换（FAST/DEEP）→ deepStage 流转 NONE→CLARIFYING→CLARIFIED→RESEARCHING→RESEARCH_DONE → 生成；onMounted 断点恢复；`onBackFast` 退回快速模式。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（constants/project.js 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。
+- StepBrief.vue（2026-09-09 模式收敛修订）：**无 FAST/DEEP 模式切换**——唯一生成路径为深度流程 → deepStage 流转 NONE→CLARIFYING→CLARIFIED→RESEARCHING→RESEARCH_DONE → 生成；onMounted 断点恢复（`?gen=deep|DEEP` 均展开深度面板）；「重新生成」改为引导重新确认研究计划（`onRegenerateDeep`，FAST 接口已封死）。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（constants/project.js 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。ragStatus 展示增 `DISABLED`（知识库已停用·全局设置，灰，§6b）。
 - 移动端：单列纵排、抽屉全屏、触控 ≥44px。
 
 #### 配置（.env.example 已同步）
