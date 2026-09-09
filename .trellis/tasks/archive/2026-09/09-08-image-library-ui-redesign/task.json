@@ -3,7 +3,7 @@
   "name": "image-library-ui-redesign",
   "title": "图库页 UI/UX 重设计：布局信息层级与交互效率",
   "description": "重设计图库独立页:卡片瘦身悬停层收纳元数据、工具条两段式重排、连续大图预览、筛选状态 chip、批量多选删除、密度切换、懒加载与空态引导;纯前端改动零后端依赖",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "openshell_vm",
   "assignee": "openshell_vm",
   "createdAt": "2026-09-08",
-  "completedAt": null,
+  "completedAt": "2026-09-09",
   "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
@@ -22,5 +22,7 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "commit": "eb43b1c"
+  }
 }
