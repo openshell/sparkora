@@ -1,0 +1,5 @@
+{"file": "docs/s0-spec.md", "reason": "权威规格:§6b/6c 检索契约、§7 深度模式、状态机与字段级契约均需按本任务修订,实现前必读"}
+{"file": ".trellis/tasks/09-09-brief-gen-redesign/prd.md", "reason": "本任务 PRD:需求 R1~R5、约束与验收标准 AC1~AC7"}
+{"file": ".trellis/tasks/09-09-brief-gen-redesign/design.md", "reason": "技术设计:设置表结构、API 契约、DISABLED 状态、FAST 收敛策略与回滚形态"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "任务横跨 DB/后端/前端三层,新增设置项与状态枚举,跨层数据流需按指南核对"}
+{"file": ".trellis/tasks/09-03-rag-mandatory-gate/prd.md", "reason": "被 supersede 的必查门禁任务:保留其降级可见语义,开关关闭时行为对齐"}

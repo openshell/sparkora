@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/09-09-brief-gen-redesign/prd.md", "reason": "检查基准:AC1~AC7 验收标准与约束"}
+{"file": ".trellis/tasks/09-09-brief-gen-redesign/design.md", "reason": "检查基准:契约与边界(封死不删、DISABLED 语义、并发写取舍)"}
+{"file": "docs/s0-spec.md", "reason": "检查规格三处同步是否完成:§6b/6c/§7 修订、设置 API 契约、sparkora_setting 表结构"}
