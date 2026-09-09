@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查实现是否符合后端质量与禁用模式基线"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 409/500/400 错误语义与状态回退是否正确"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 schema.sql 幂等写法与 entity/mapper 同步"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查创建→分析→生成→展示四层数据流与字段贯通"}

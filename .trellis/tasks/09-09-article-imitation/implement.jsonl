@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码质量与禁用模式基线，仿写服务/控制器实现需遵循"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新增 ImitationService、DTO 扩展、控制器接口需符合模块组织约定"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema.sql 幂等加列与 entity 同步规范"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "状态冲突 409/失败回退/last_*_error 错误语义沿用"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本功能横跨 DB/服务/控制器/前端四层，需按层边界检查数据流"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 VersionService/BriefService 状态守护与 StyleService 先例，避免重复实现"}
