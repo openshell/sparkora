@@ -1,0 +1,2 @@
+{"file": "frontend/src/views/ImageLibrary.vue", "reason": "重设计主体:当前图库页全部结构(工具条/网格/卡片/AI抽屉/参考图弹窗),改动核心"}
+{"file": "docs/s0-spec.md", "reason": "spec §10 图库页职责契约,UI 改动后需同步页面职责描述"}
