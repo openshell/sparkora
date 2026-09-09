@@ -51,3 +51,26 @@
 - 交付:GET /api/projects 白名单排序参数 + ProjectList 搜索/筛选/排序/批量删除 + spec §3.3 同步,commit 0db6e53(分支 feat/project-list-enhance)。
 - 检查发现并修复:批量删除后空页回退条件 rows.length<=0 永不触发,改为按 total-count 算最大页。
 - 平台问题:use_capability 派发 trellis-implement/trellis-check 子代理三次被"回合打断"连带取消(静默 11min/8min/96s 后 turn interrupt,error: context canceled);子代理零产出。已降级内联实施与检查。待反馈 Reasonix:run_skill 无进度回显/启动慢,建议透传子代理进度。
+
+
+## Session 2: S11 简报生成重设计:检索设置页+取消快速模式+知识库可暂停
+<!-- trellis-session: v=2 fp=a14065cce37bfb09 -->
+
+**Date**: 2026-09-09
+**Task**: S11 简报生成重设计:检索设置页+取消快速模式+知识库可暂停
+**Branch**: `main`
+
+### Summary
+
+实现检索设置页(sparkora_setting 双开关,知识库默认停用/外部搜索默认启用,写仅 ADMIN);深度链路 applySettingGates 门控工具装配,rag_status 增 DISABLED;FAST 两生成入口封死(410),创建页移除模式单选与锚点车型入口,唯一生成路径为深度流程;多版本改逐风格调 deep/generate。全量 44 测试绿,联调实测 AC1~AC7 通过(项目30/31 非车型主题全链路)。诊断 Reasonix subagent 派发挂起(TRELLIS_CONTEXT_ID 断链+平台管道问题),已固化 AGENTS.md 缓解并给官方 PR 提示词。归档 09-09-brief-gen-redesign 与被 supersede 的 09-03-rag-mandatory-gate。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54a4dbb` | feat(S11): 简报生成重设计——检索设置页+取消快速模式+知识库可暂停 |
+| `b870f5f` | chore(task): 新增 09-09-brief-gen-redesign 任务工件(prd/design/implement) |
+
+### Status
+
+[OK] **Completed**
