@@ -205,7 +205,8 @@ public class VersionService {
         v.setTitle(title.isBlank() ? p.getTopic() : title);
         v.setContentMd(contentMd);
         v.setVersionLabel(label);
-        v.setStyleTag(style.getName());
+        // 09-10-style-library-enhance:风格名手填最长 64 字,版本表 style_tag 列宽仅 VARCHAR(20),超长截断防写库报错阻断生成
+        v.setStyleTag(style.getName() != null && style.getName().length() > 20 ? style.getName().substring(0, 20) : style.getName());
         v.setAiModel(cr.model());
         v.setTokenUsage(cr.totalTokens());
         v.setRagStatus(rag.status().name());
