@@ -78,7 +78,8 @@ public class ClarifyService {
         }
         try {
             AiClient.ChatResult cr = aiClient.chatJson(system, user.toString(), 2048);
-            JsonNode node = json.readTree(cr.content());
+            // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
+            JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
             Map<String, Object> plan = new LinkedHashMap<>();
             plan.put("keyQuestions", toArray(node.path("keyQuestions")));
             plan.put("dataNeeds", toArray(node.path("dataNeeds")));

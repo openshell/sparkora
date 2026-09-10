@@ -77,7 +77,8 @@ public class StyleService {
                     """,
                     "（用户指定的风格名，可空）：" + (name == null ? "" : name) + "\n\n样文：\n" + sample,
                     1024);
-            var node = json.readTree(cr.content());
+            // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
+            var node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
             StyleProfileEntity e = new StyleProfileEntity();
             String n = node.path("name").asText("");
             String chosen = !n.isBlank() ? n

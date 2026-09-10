@@ -91,7 +91,7 @@ public class BriefService {
                     buildSystemPrompt(),
                     buildUserPrompt(p, rag),
                     2048);
-            BriefDto dto = json.readValue(cr.content(), BriefDto.class);
+            BriefDto dto = json.readValue(AiClient.sanitizeAiJson(cr.content()), BriefDto.class);
 
             // 4) 写 brief 行 + 置 READY（短事务）
             ArticleBriefEntity b = new ArticleBriefEntity();
@@ -176,7 +176,7 @@ public class BriefService {
                     buildDeepBriefSystemPrompt(),
                     buildDeepBriefUserPrompt(p, b),
                     2048);
-            BriefDto dto = json.readValue(cr.content(), BriefDto.class);
+            BriefDto dto = json.readValue(AiClient.sanitizeAiJson(cr.content()), BriefDto.class);
 
             // 落同一条 DEEP brief 行（gen_mode 保持 DEEP，研究产物不覆盖）
             b.setTitleCandidates(json.writeValueAsString(dto.getTitleCandidates()));

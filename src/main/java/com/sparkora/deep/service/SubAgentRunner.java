@@ -127,14 +127,16 @@ public class SubAgentRunner {
 
     private String chat(String system, String user) throws Exception {
         AiClient.ChatResult cr = aiClient.chatJson(system, user, 2048);
+        // 容错清洗后再校验:裸控制字符/代码围栏属可修复错误,不应触发重试(重试浪费一次 AI 调用)
+        String clean = AiClient.sanitizeAiJson(cr.content());
         try {
-            json.readTree(cr.content());
-            return cr.content();
+            json.readTree(clean);
+            return clean;
         } catch (Exception retry) {
             AiClient.ChatResult cr2 = aiClient.chatJson(system,
                     user + "\n注意:上次输出不是合法 JSON,请只输出一个 JSON 对象。", 2048);
-            json.readTree(cr2.content());
-            return cr2.content();
+            json.readTree(AiClient.sanitizeAiJson(cr2.content()));
+            return AiClient.sanitizeAiJson(cr2.content());
         }
     }
 

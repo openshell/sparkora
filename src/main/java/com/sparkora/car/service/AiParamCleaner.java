@@ -39,7 +39,8 @@ public class AiParamCleaner {
                     buildSystemPrompt(),
                     "参数名：" + paramName + "\n原始值：" + rawValue,
                     1024);
-            JsonNode node = json.readTree(cr.content());
+            // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
+            JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
             // S6b 空值防线:AI 返回 value 空/全空白视为清洗失败(体检发现 4 行「无值清成空串」错误输出),
             // 返回 null 走 FALLBACK 兜底,避免空串污染 car_param_clean
             String aiValue = node.path("value").asText("");

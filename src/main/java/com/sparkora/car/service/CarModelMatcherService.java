@@ -72,7 +72,8 @@ public class CarModelMatcherService {
 
         try {
             AiClient.ChatResult cr = aiClient.chatJson(sys, user, 1024);
-            JsonNode node = json.readTree(cr.content());
+            // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
+            JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
             boolean related = node.path("related").asBoolean(false);
             String reason = node.path("reason").asText("");
             List<Long> ids = new ArrayList<>();
