@@ -170,6 +170,12 @@ public class VersionService {
         boolean imitation = "IMITATION".equals(p.getGenSource());
         // 09-10-style-library-enhance:风格强化句(仿写/主题两分支统一,在 toneGuidance 拼接点后一次插入)
         String styleEnforce = "\n\n以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
+        // 2026-09-10:排版铁律(三处正文生成点统一)——此前仅「用 Markdown」靠模型自觉,
+        // 部分模型/风格组合会输出整段长文无小标题无加粗,公众号可读性差
+        String layoutRules = "\n\n排版铁律(公众号正文可读性,必须遵守):"
+                + "\n- 全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;"
+                + "\n- 关键数据、核心结论用 **加粗** 突出,每节至少一处;"
+                + "\n- 单段不超过 5 行,长段拆分。";
         String sys;
         String user;
         if (imitation) {
@@ -180,12 +186,15 @@ public class VersionService {
                     + "\n1. 保留原文的观点组织与信息脉络,但必须用全新的语言重新表达;"
                     + "\n2. 严禁连续 10 字以上照搬原句;"
                     + "\n3. 不得保留原文任何图片链接、图注、配图说明,正文不得出现任何图片占位或「配图」字样。"
+                    + "\n4. 保留原文的分节层次:原文有小标题则仿写文对应位置也用「## 小标题」重新拟写,原文加粗处同样用加粗表达。"
+                    + layoutRules
                     + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
                     + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
             user = buildImitationPrompt(p, brief);
         } else {
             sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
                     + styleEnforce
+                    + layoutRules
                     + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
                     + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
             user = buildUserPrompt(p, brief, rag);

@@ -84,6 +84,8 @@ public class DeepWriterService {
                 1. 正文中出现的所有具体数值(价格/尺寸/续航/百分比等)必须逐字出自下方事实手册,禁止改写/换算/推算。
                 2. 手册未覆盖的参数,用定性表述,不得给出具体数值。
                 3. 结构清晰,用 Markdown;长度按用户需求。
+                排版铁律(公众号正文可读性,必须遵守):全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;
+                关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
                 """;
         // 09-10-style-library-enhance:风格指令从 user prompt 迁入 system prompt(与仿写链路统一注入位置)
         if (stylePrompt != null && !stylePrompt.isBlank()) {
