@@ -48,7 +48,21 @@ build/
 .cache/
 coverage/
 
-# ===== Reasonix 本地运行时记录(技能/hooks/配置属项目资产,正常提交;tasks 为本机会话记录) =====
+# ===== AI 工具环境(与业务无关,本地保留)=====
+# opencode 环境配置 + Trellis 生成的平台文件(agents/commands/lib/plugins/skills)
+opencode.json
+.opencode/
+# Trellis 模板哈希(trellis update 自动维护的本地状态)
+.trellis/.template-hashes.json
+# AI 项目记忆/会话工作区(非业务资产)
+AGENTS.md
+# Reasonix 历史配置(已停用,AGENTS.md 迁移说明见历史;本地保留)
+reasonix.toml
+.reasonix/
+# Trellis 开发者工作区(journal 为个人记录)
+.trellis/workspace/
+
+# ===== Reasonix 本地运行时记录(已随整体忽略 .reasonix/,此行冗余保留)=====
 .reasonix/tasks/
 
 # S3b 配图本地存储(运行时数据)
