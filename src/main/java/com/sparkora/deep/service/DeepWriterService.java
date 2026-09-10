@@ -56,10 +56,13 @@ public class DeepWriterService {
     /** 版本标签序列(与 VersionService.LABELS 同口径:A/B/C…按项目内已有版本数续编) */
     private static final String LABELS = "ABCDEFGHIJ";
 
+    /** 09-10-style-library-enhance:风格强化句(与 VersionService.generateOne 同款文案,要求特征充分体现) */
+    private static final String STYLE_ENFORCE = "以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
+
     /**
      * ⑤ 深度写作并落版本(⑥ 回查结果进 factRisks)。
      * @param briefId  含 fact_sheet 的 brief
-     * @param styleId  风格 id(风格画像由调用方注入或此处简化为主题直写)
+     * @param stylePrompt 风格画像 toneGuidance(调用方传入;深度链路 09-10-style-library-enhance 起由 DeepController 按 styleId 回查后注入)
      * @param styleName 风格名(落版本 style_tag;空回退「深度」;09-10-versions-page-fix 新增)
      * @return 落库的版本 id
      */
@@ -82,12 +85,13 @@ public class DeepWriterService {
                 2. 手册未覆盖的参数,用定性表述,不得给出具体数值。
                 3. 结构清晰,用 Markdown;长度按用户需求。
                 """;
+        // 09-10-style-library-enhance:风格指令从 user prompt 迁入 system prompt(与仿写链路统一注入位置)
+        if (stylePrompt != null && !stylePrompt.isBlank()) {
+            system = system + "\n文风要求:\n" + stylePrompt + "\n" + STYLE_ENFORCE;
+        }
         StringBuilder user = new StringBuilder("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:\n").append(b.getClarifyAnswers()).append('\n');
-        }
-        if (stylePrompt != null && !stylePrompt.isBlank()) {
-            user.append("风格要求:\n").append(stylePrompt).append('\n');
         }
         user.append("主题与大纲参考 brief(标题候选/核心观点/大纲),直接写正文 Markdown。");
         AiClient.ChatResult cr = aiClient.chat(system, user.toString(), 4096);
@@ -125,7 +129,9 @@ public class DeepWriterService {
         // 与多版本链路(VersionService.generateOne)对齐补齐,消除版本页 undefined/null 与字数统计为空
         v.setTitle(extractH1(projectId, content));
         v.setVersionLabel(nextLabel(projectId));
-        v.setStyleTag(styleName == null || styleName.isBlank() ? "深度" : styleName);
+        // style_tag 列 VARCHAR(20),超长截断防御(PG 超长 insert 直接报错会阻断整次生成)
+        String tag = styleName == null || styleName.isBlank() ? "深度" : styleName;
+        v.setStyleTag(tag.length() > 20 ? tag.substring(0, 20) : tag);
         v.setWordCount(content.length());
         v.setCreatedAt(LocalDateTime.now());
         versionMapper.insert(v);

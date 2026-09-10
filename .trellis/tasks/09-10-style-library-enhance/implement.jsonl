@@ -1,0 +1,3 @@
+{"file": "docs/s0-spec.md", "reason": "spec 锚点:§3.3 L140-141 提炼契约(新增 preview 需同步)、§13 L588 深度生成契约(styleId 改造)、§14 L657-711 仿写风格注入与 AC7"}
+{"file": ".trellis/tasks/09-10-style-library-enhance/design.md", "reason": "实现蓝图:后端 draft/preview 拆分、DeepController styleId 回查、前端两步式对话框"}
+{"file": ".trellis/spec/guides/index.md", "reason": "改 prompt 内嵌字符串与 API 参数前先搜索既有值(Pre-Modification Rule)"}

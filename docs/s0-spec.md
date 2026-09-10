@@ -139,6 +139,7 @@ POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 AD
 | PUT | `/api/settings` | **仅 ADMIN** | `{kbEnabled?, webSearchEnabled?}`（null 不改） | 同 GET（写后刷缓存;契约见 §6b-s） |
 | GET | `/api/styles` | 三角色 | `?enabledOnly=` | `{styles[]}` |
 | POST | `/api/styles/extract` | ADMIN/EDITOR | `{name, sourceText}` | `{style}` |
+| POST | `/api/styles/extract/preview` | ADMIN/EDITOR | `{name?, sourceText}` | `R<StyleProfileEntity>`（AI 提炼**不入库**,id=null;两步式提炼预览,人工修改后入库走 POST /api/styles;09-10-style-library-enhance） |
 
 > `orderBy` 白名单:`updatedAt`(默认)/`createdAt`;`orderDir`:`desc`(默认)/`asc`;非法值静默回退默认。其余参数语义不变。
 
@@ -585,7 +586,7 @@ PublishService.publish
 | POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | `{briefId, researchPlan, questions}`；新建 brief(gen_mode=DEEP) |
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
 | POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, done}`（同步阻塞；前端轮询 status） |
-| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, stylePrompt?, styleName?}` | `{versionId}`（版本 fact_risks 落库；09-10-versions-page-fix：落版本补齐 title/version_label/style_tag/word_count，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
+| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, styleId?}`（09-10-style-library-enhance:styleId 优先,后端回查风格表取 toneGuidance/name 注入 system prompt;查无 → 400「风格不存在或已删除」;旧 `stylePrompt`/`styleName` 保留兼容,deprecated） | `{versionId}`（版本 fact_risks 落库；09-10-versions-page-fix：落版本补齐 title/version_label/style_tag/word_count，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
 | POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突） |
 | GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
 
@@ -678,7 +679,7 @@ PublishService.publish
 #### 仿写生成（R3）
 
 - 复用 `POST /generate/versions`（主题创作已封死为 410，**仿写项目例外**，`VersionService.generate` 内 genSource 分支）。
-- 仿写 prompt：style.toneGuidance + 仿写铁律（保留观点组织/严禁连续 10 字以上照搬原句/不得保留原文任何图片）+ 原文全文 + 结构大纲 + 字数目标。
+- 仿写 prompt：style.toneGuidance + 仿写铁律（保留观点组织/严禁连续 10 字以上照搬原句/不得保留原文任何图片）+ 原文全文 + 结构大纲 + 字数目标。system 内 toneGuidance 后附统一强化句「以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。」(09-10-style-library-enhance,主题/深度链路同款)。
 - 双保险去图：prompt 约束 + 生成后正则清洗（`VersionService.stripImages`：Markdown `![..](..)`、HTML `<img>`、「配图/图注/示意图/图片来源:」占位行全剔除）。
 - 仿写跳过 RAG：不检索车型库（任意题材原文与车型库强行匹配会注入无关数据约束），version.rag_status=NO_KNOWLEDGE。
 - 相似度自检（`ImitationService.similarityCheck`，纯本地 0 次 LLM）：规范化（去 Markdown/HTML/标点/空白，小写化）→ 字符 5-gram 重合率 `|仿写 n-gram ∩ 原文 n-gram| / |仿写 n-gram|`（防照搬视角）→ 最长公共连续片段（朴素 DP）→ 连续 ≥10 字重复片段列表（贪心扩展去重，≤10 条单条截 120 字）。阈值常量：`SIM_WARN=0.40 / SIM_HIGH=0.60 / RUN_WARN=13`（ImitationService，实验性调参不进 .env）。仅警示不阻断、不自动改写。

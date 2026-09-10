@@ -37,9 +37,9 @@ export const projectApi = {
     http.post(`/projects/${id}/deep/clarify-answer`, { briefId, answers }),
   // S9 深度模式:锁定答案并立即开跑多代理研究(前端轮询 status 展示进度)
   runDeep: (id, briefId) => http.post(`/projects/${id}/deep/run`, { briefId }),
-  // S9 深度模式:基于事实手册生成深度正文(styleName 落版本 style_tag;09-10-versions-page-fix)
-  generateDeep: (id, briefId, stylePrompt = '', styleName = '') =>
-    http.post(`/projects/${id}/deep/generate`, { briefId, stylePrompt, styleName }, { timeout: 300000 }),
+  // S9 深度模式:基于事实手册生成深度正文(styleId 由后端回查风格表注入 system prompt,09-10-style-library-enhance)
+  generateDeep: (id, briefId, styleId = null) =>
+    http.post(`/projects/${id}/deep/generate`, { briefId, styleId }, { timeout: 300000 }),
   // S9 深度模式:基于事实手册生成简报(自动生成失败后的手动重试;约十几秒,放宽超时)
   generateDeepBrief: (id, briefId) => http.post(`/projects/${id}/deep/brief`, { briefId }, { timeout: 120000 }),
   // 文章仿写(09-09-article-imitation):分析原文+风格推荐(一次 AI 调用,约 10~30s,放宽超时)
@@ -55,7 +55,10 @@ export const styleApi = {
   update: (id, data) => http.put(`/styles/${id}`, data),
   remove: (id) => http.delete(`/styles/${id}`),
   // 提炼入库：body={name, sourceText}，AI 耗时放宽超时
-  extract: (name, sourceText) => http.post('/styles/extract', { name, sourceText }, { timeout: 120000 })
+  extract: (name, sourceText) => http.post('/styles/extract', { name, sourceText }, { timeout: 120000 }),
+  // 两步式提炼预览：AI 提炼不入库(id=null)，回填表单人工修改后再走 create；超时同 extract
+  extractPreview: (name, sourceText) =>
+    http.post('/styles/extract/preview', { name, sourceText }, { timeout: 120000 })
 }
 
 export const carApi = {

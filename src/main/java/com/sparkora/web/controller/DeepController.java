@@ -37,6 +37,8 @@ public class DeepController {
     private final ArticleProjectMapper projectMapper;
     /** 深度简报生成(手动重试 /deep/brief) */
     private final com.sparkora.service.BriefService briefService;
+    /** 风格表回查(09-10-style-library-enhance:/deep/generate 支持按 styleId 后端回查风格,不再由前端传 toneGuidance) */
+    private final com.sparkora.mapper.StyleProfileMapper styleMapper;
     private final com.sparkora.deep.tool.SearxngSearchTool searxngTool;
     private final com.sparkora.deep.tool.TavilySearchTool tavilyTool;
     private final com.sparkora.config.DeepProperties deepProps;
@@ -45,6 +47,7 @@ public class DeepController {
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
                           ArticleProjectMapper projectMapper,
                           com.sparkora.service.BriefService briefService,
+                          com.sparkora.mapper.StyleProfileMapper styleMapper,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
                           com.sparkora.config.DeepProperties deepProps) {
@@ -54,6 +57,7 @@ public class DeepController {
         this.briefMapper = briefMapper;
         this.projectMapper = projectMapper;
         this.briefService = briefService;
+        this.styleMapper = styleMapper;
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
         this.deepProps = deepProps;
@@ -117,15 +121,30 @@ public class DeepController {
         }
     }
 
-    /** ⑤⑥ 深度写作+数值回查。body: {briefId, stylePrompt?, styleName?}。 */
+    /**
+     * ⑤⑥ 深度写作+数值回查。
+     * body: {briefId, styleId?}(09-10-style-library-enhance 新参数,优先;旧 stylePrompt/styleName 兼容保留,deprecated)
+     */
     @PostMapping("/generate")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> generate(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
         try {
             Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
-            String stylePrompt = body.get("stylePrompt") == null ? "" : String.valueOf(body.get("stylePrompt"));
-            // 09-10-versions-page-fix:风格名随 body 传入,落版本 style_tag(空回退「深度」)
-            String styleName = body.get("styleName") == null ? "" : String.valueOf(body.get("styleName"));
+            String stylePrompt;
+            String styleName;
+            Object styleIdRaw = body.get("styleId");
+            if (styleIdRaw != null && !String.valueOf(styleIdRaw).isBlank()) {
+                // 新参 styleId 优先:后端回查风格表(用户显式选了风格,查无不静默降级),忽略旧参数
+                com.sparkora.domain.entity.StyleProfileEntity style = styleMapper.selectById(Long.valueOf(String.valueOf(styleIdRaw)));
+                if (style == null) return R.fail(400, "风格不存在或已删除");
+                stylePrompt = style.getToneGuidance();
+                styleName = style.getName();
+            } else {
+                // deprecated:兼容旧前端(直接传风格画像字符串)
+                stylePrompt = body.get("stylePrompt") == null ? "" : String.valueOf(body.get("stylePrompt"));
+                // 09-10-versions-page-fix:风格名随 body 传入,落版本 style_tag(空回退「深度」)
+                styleName = body.get("styleName") == null ? "" : String.valueOf(body.get("styleName"));
+            }
             Long versionId = writerService.write(projectId, briefId, stylePrompt, styleName);
             // 09-10-versions-page-fix:对齐多版本链路(VersionService.generate 成功分支)语义——
             // 成功后推进状态机(仅 READY/DRAFT → VERSIONS_READY,PUBLISHED_DRAFT 追加不回退),

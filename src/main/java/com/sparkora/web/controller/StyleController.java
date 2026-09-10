@@ -59,4 +59,20 @@ public class StyleController {
             return R.fail(500, ex.getMessage());
         }
     }
+
+    /**
+     * 两步式提炼:AI 提炼仅预览不入库(id=null),人工检查修改后走 POST /api/styles 入库。
+     * body: {name?, sourceText}
+     */
+    @PostMapping("/extract/preview")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<StyleProfileEntity> extractPreview(@RequestBody Map<String, String> body) {
+        try {
+            return R.ok(service.draft(body.get("sourceText"), body.get("name")));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
+        }
+    }
 }

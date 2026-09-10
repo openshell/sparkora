@@ -7,8 +7,11 @@
           <span class="page-kicker">Style Library</span>
           <h2>风格库</h2>
         </div>
-        <div class="actions">
-          <el-button v-if="user.isEditorOrAbove" type="primary" @click="openExtract">
+        <div class="actions" v-if="user.isEditorOrAbove">
+          <el-button type="primary" @click="openCreate(false)">
+            <el-icon class="btn-icon"><Plus /></el-icon>新增风格
+          </el-button>
+          <el-button @click="openCreate(true)">
             <el-icon class="btn-icon"><MagicStick /></el-icon>从样文提炼
           </el-button>
         </div>
@@ -25,7 +28,7 @@
       </div>
 
       <div v-else-if="!rows.length" class="empty">
-        <el-empty description="风格库为空。点击右上「从样文提炼」，粘贴一篇代表性文章，AI 会提炼风格画像入库。" />
+        <el-empty description="风格库为空。点击右上「新增风格」手填，或「从样文提炼」粘贴一篇代表性文章由 AI 预填。" />
       </div>
 
       <div v-else class="style-grid">
@@ -44,19 +47,36 @@
       </div>
     </div>
 
-    <!-- 提炼对话框 -->
-    <el-dialog v-model="extractDlg" title="从样文提炼风格" width="90%" style="max-width:720px">
-      <el-form label-position="top">
-        <el-form-item label="风格名（可选，留空由 AI 拟）">
-          <el-input v-model="extractName" maxlength="64" placeholder="如：硬核技术深度" />
+    <!-- 新增/提炼统一对话框(两步式:提炼预填不入库,人工修改后保存入库) -->
+    <el-dialog v-model="createDlg" title="新增风格" width="90%" style="max-width:720px">
+      <el-form ref="createFormRef" :model="form" :rules="rules" label-position="top">
+        <el-form-item label="风格名" prop="name">
+          <el-input v-model="form.name" maxlength="64" placeholder="如：硬核技术深度" />
         </el-form-item>
-        <el-form-item label="样文（粘贴整篇文章）">
-          <el-input v-model="extractText" type="textarea" :rows="12" placeholder="粘贴一篇能代表该风格的公众号文章全文…" />
+        <el-form-item label="描述">
+          <el-input v-model="form.description" maxlength="500" placeholder="一句话描述这种风格的特点(20-40字)" />
         </el-form-item>
+        <el-form-item label="语气指令（toneGuidance，给生成模型用）">
+          <el-input v-model="form.toneGuidance" type="textarea" :rows="4" placeholder="语气/句式/结构/用词偏好,可直接作为 system prompt 片段" />
+        </el-form-item>
+        <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
+
+        <!-- 提炼区(可折叠):粘贴样文 AI 提炼预填,不入库 -->
+        <el-collapse v-model="extractOpen" class="extract-collapse">
+          <el-collapse-item name="extract" title="从样文提炼（可选：AI 提炼预填表单）">
+            <el-form-item label="风格名（可选，留空由 AI 拟）">
+              <el-input v-model="extractName" maxlength="64" placeholder="留空由 AI 拟名" />
+            </el-form-item>
+            <el-form-item label="样文（粘贴整篇文章）">
+              <el-input v-model="extractText" type="textarea" :rows="12" placeholder="粘贴一篇能代表该风格的公众号文章全文…" />
+            </el-form-item>
+            <el-button type="primary" plain :loading="extracting" @click="onExtractPreview">AI 提炼预填</el-button>
+          </el-collapse-item>
+        </el-collapse>
       </el-form>
       <template #footer>
-        <el-button @click="extractDlg = false">取消</el-button>
-        <el-button type="primary" :loading="extracting" @click="onExtract">提炼入库</el-button>
+        <el-button @click="createDlg = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="onCreate">保存</el-button>
       </template>
     </el-dialog>
 
@@ -84,16 +104,26 @@ import { styleApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import TopBar from '../layouts/TopBar.vue'
-import { MagicStick, WarningFilled } from '@element-plus/icons-vue'
+import { MagicStick, Plus, WarningFilled } from '@element-plus/icons-vue'
 
 const user = useUserStore()
 const rows = ref([])
 const loading = ref(false)
 const error = ref('')
-const extractDlg = ref(false)
+const createDlg = ref(false)
+const createFormRef = ref(null)
+// 新增表单(name/description/toneGuidance/enabled + 提炼暂存 sourceExcerpt)
+const form = ref({ name: '', description: '', toneGuidance: '', enabled: true })
+const rules = {
+  name: [{ required: true, message: '风格名必填', trigger: 'blur' }]
+}
+// 提炼区状态:折叠面板(默认收起,「从样文提炼」入口自动展开)+ 样文输入
+const extractOpen = ref([])
 const extractName = ref('')
 const extractText = ref('')
 const extracting = ref(false)
+// AI 提炼返回的 sourceExcerpt 暂存(非表单输入项,保存时随 create 提交;纯手工新增为空)
+const pendingSourceExcerpt = ref('')
 const editDlg = ref(false)
 const editing = ref(null)
 const saving = ref(false)
@@ -105,16 +135,44 @@ const load = async () => {
   catch (e) { error.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试' }
   finally { loading.value = false }
 }
-const openExtract = () => { extractName.value = ''; extractText.value = ''; extractDlg.value = true }
-const onExtract = async () => {
+// 统一新增入口:fromExtract=true(「从样文提炼」)自动展开提炼区
+const openCreate = (fromExtract) => {
+  form.value = { name: '', description: '', toneGuidance: '', enabled: true }
+  extractName.value = ''
+  extractText.value = ''
+  pendingSourceExcerpt.value = ''
+  extractOpen.value = fromExtract ? ['extract'] : []
+  createDlg.value = true
+}
+// 两步式提炼:仅预览不入库,结果回填表单,人工修改后保存
+const onExtractPreview = async () => {
   if (!extractText.value.trim()) { ElMessage.warning('请粘贴样文'); return }
   extracting.value = true
   try {
-    const res = await styleApi.extract(extractName.value, extractText.value)
-    if (res.code === 0) { ElMessage.success('已提炼入库'); extractDlg.value = false; await load() }
-    else ElMessage.error(res.msg || '提炼失败')
-  } catch (e) { ElMessage.error('提炼失败：' + (e.message || e)) }
-  finally { extracting.value = false }
+    const res = await styleApi.extractPreview(extractName.value, extractText.value)
+    if (res.code === 0 && res.data) {
+      form.value.name = res.data.name || form.value.name
+      form.value.description = res.data.description || form.value.description
+      form.value.toneGuidance = res.data.toneGuidance || form.value.toneGuidance
+      pendingSourceExcerpt.value = res.data.sourceExcerpt || ''
+      ElMessage.success('已提炼,请检查修改后保存')
+    } else {
+      ElMessage.error(res.msg || '提炼失败')
+    }
+  } catch (e) {
+    ElMessage.error('提炼失败：' + (e.response?.data?.msg || e.message || e))
+  } finally { extracting.value = false }
+}
+const onCreate = async () => {
+  try { await createFormRef.value?.validate() } catch { return }
+  saving.value = true
+  try {
+    const body = { ...form.value, sourceExcerpt: pendingSourceExcerpt.value || '' }
+    const res = await styleApi.create(body)
+    if (res.code === 0) { ElMessage.success('已保存'); createDlg.value = false; await load() }
+    else ElMessage.error(res.msg || '保存失败')
+  } catch (e) { ElMessage.error('保存失败：' + (e.message || e)) }
+  finally { saving.value = false }
 }
 const openEdit = (s) => { editing.value = { ...s }; editDlg.value = true }
 const onSave = async () => {
@@ -143,5 +201,6 @@ onMounted(load)
 .s-desc { color: var(--muted); font-size: 12px; margin-bottom: 10px; line-height: 1.6; }
 .s-guide { font-size: 13px; line-height: 1.7; background: var(--el-fill-color-light); padding: 10px; border-radius: var(--radius-sm); flex: 1; }
 .s-actions { margin-top: 10px; text-align: right; }
+.extract-collapse { margin-bottom: 14px; border-top: 1px solid var(--el-border-color-lighter); }
 @media (max-width: 768px) { .style-grid { grid-template-columns: 1fr; } }
 </style>

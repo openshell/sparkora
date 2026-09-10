@@ -276,7 +276,7 @@ const doGenerate = async (styleIds) => {
       return
     }
     // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速多版本接口已封死,
-    // 深度版本生成逐风格调用 /deep/generate(单风格单版;stylePrompt=风格画像 toneGuidance)
+    // 深度版本生成逐风格调用 /deep/generate(单风格单版;后端按 styleId 回查风格表,09-10-style-library-enhance)
     const entry = store._entryOf(route.params.id)
     const briefId = entry?.brief?.id
     if (!briefId) { ElMessage.error('未找到当前简报,请先完成深度研究'); submitting.value = false; return }
@@ -286,8 +286,8 @@ const doGenerate = async (styleIds) => {
     for (const styleId of styleIds) {
       const style = allStyles.find(s => s.id === styleId)
       try {
-        // 09-10-versions-page-fix:styleName 传给后端落版本 style_tag,消除版本页 undefined/null
-        const res = await projectApi.generateDeep(route.params.id, briefId, style?.toneGuidance || '', style?.name || '')
+        // 09-10-style-library-enhance:改传 styleId,后端回查风格表取 toneGuidance/name(style_tag 同步落库)
+        const res = await projectApi.generateDeep(route.params.id, briefId, styleId)
         if (res.code === 0) okIds.push(styleId)
         else { failedNames.push(style?.name || String(styleId)); ElMessage.error(res.msg || `风格「${style?.name || styleId}」生成失败`) }
       } catch (e) {

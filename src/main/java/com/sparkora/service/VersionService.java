@@ -168,11 +168,14 @@ public class VersionService {
                                               StyleProfileEntity style, String label,
                                               CarRagService.RagResult rag) throws Exception {
         boolean imitation = "IMITATION".equals(p.getGenSource());
+        // 09-10-style-library-enhance:风格强化句(仿写/主题两分支统一,在 toneGuidance 拼接点后一次插入)
+        String styleEnforce = "\n\n以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
         String sys;
         String user;
         if (imitation) {
             // 文章仿写(09-09-article-imitation):风格指令 + 仿写铁律(保留观点组织/禁照搬/去图)
             sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
+                    + styleEnforce
                     + "\n\n你是文章仿写专家。基于【参考原文】以指定风格重新表达,铁律:"
                     + "\n1. 保留原文的观点组织与信息脉络,但必须用全新的语言重新表达;"
                     + "\n2. 严禁连续 10 字以上照搬原句;"
@@ -182,6 +185,7 @@ public class VersionService {
             user = buildImitationPrompt(p, brief);
         } else {
             sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
+                    + styleEnforce
                     + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
                     + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
             user = buildUserPrompt(p, brief, rag);

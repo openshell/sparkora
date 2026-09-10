@@ -13,9 +13,9 @@ import java.time.LocalDateTime;
 /**
  * 风格库服务：CRUD + 从用户提供的样文提炼风格画像入库。
  *
- * 提炼（extract）：把用户样文喂给 AI，输出 {name, toneGuidance, description}。
- *  toneGuidance 是「给正文生成模型用的语气/结构指令」，后续 VersionService 生成版本时作为 system prompt 片段。
- *  不做交互式风格提炼 UI（按用户决定，前期由素材直接入库）。
+ * 提炼拆两段（09-10-style-library-enhance）：draft 仅 AI 提炼不入库（预览用），
+ *  extract = draft + createdAt + insert（契约保持不变）。
+ *  toneGuidance 是「给正文生成模型用的语气/结构指令」，生成版本时作为 system prompt 片段。
  */
 @Slf4j
 @Service
@@ -57,11 +57,11 @@ public class StyleService {
     public void delete(Long id) { mapper.deleteById(id); }
 
     /**
-     * 从样文提炼风格画像并入库。
+     * 从样文提炼风格画像(AI 提炼,不入库;09-10-style-library-enhance 拆两段:预览用 draft,人工确认后走 create 入库)。
      * @param sourceText 用户提供的整篇样文
      * @param name 用户起的风络名（可空，由 AI 拟后用户再改）
      */
-    public StyleProfileEntity extract(String sourceText, String name) {
+    public StyleProfileEntity draft(String sourceText, String name) {
         if (sourceText == null || sourceText.isBlank()) throw new IllegalArgumentException("样文不能为空");
         String sample = sourceText.length() > 4000 ? sourceText.substring(0, 4000) : sourceText;
         try {
@@ -87,11 +87,17 @@ public class StyleService {
             e.setToneGuidance(node.path("toneGuidance").asText(""));
             e.setSourceExcerpt(sourceText.length() > 2000 ? sourceText.substring(0, 2000) : sourceText);
             e.setEnabled(true);
-            e.setCreatedAt(LocalDateTime.now());
-            mapper.insert(e);
             return e;
         } catch (Exception e) {
             throw new AiException("风格提炼失败: " + e.getMessage(), e);
         }
+    }
+
+    /** 从样文提炼风格画像并入库(契约不变:AI 提炼 + createdAt + insert)。 */
+    public StyleProfileEntity extract(String sourceText, String name) {
+        StyleProfileEntity e = draft(sourceText, name);
+        e.setCreatedAt(LocalDateTime.now());
+        mapper.insert(e);
+        return e;
     }
 }
