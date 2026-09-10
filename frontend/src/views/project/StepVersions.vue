@@ -362,7 +362,7 @@ onMounted(() => {
   store.ensureVersions(route.params.id); store.ensureStyles(route.params.id)
   // 仿写:装载分析+推荐(推荐角标数据源);仅仿写项目发请求,不以「store 无数据」为条件
   if (props.project?.genSource === 'IMITATION') store.ensureImitation(route.params.id)
-  // ?adoptStyle= 由简报页「采用推荐」带入:自动预选该风格并清掉 query 防刷新残留
+  // ?adoptStyle= 为历史意图参数(简报页「采用」入口已移除),此处仅兼容清理防刷新残留
   if (route.query.adoptStyle) {
     const adoptId = Number(route.query.adoptStyle)
     if (!Number.isNaN(adoptId)) selectedStyleIds.value = [adoptId]

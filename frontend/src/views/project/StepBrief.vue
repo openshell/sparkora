@@ -63,7 +63,7 @@
 
         <section class="brief-sec">
           <div class="brief-label"><el-icon><User /></el-icon>风格推荐
-            <span class="label-hint">按匹配度排序，点「采用」带入版本生成</span>
+            <span class="label-hint">按匹配度排序，推荐风格在版本生成页高亮标注</span>
           </div>
           <div v-if="!imitation.recommendations.length" class="rec-empty">
             <el-alert type="info" :closable="false" show-icon
@@ -77,7 +77,6 @@
                 <el-tag size="small" effect="plain" round>匹配度 {{ Math.round((r.matchScore || 0) * 100) }}%</el-tag>
               </div>
               <div class="rec-reason">{{ r.reason }}</div>
-              <el-button size="small" type="primary" plain class="rec-adopt" @click="adoptRecommendation(r)">采用该风格 → 进入版本生成</el-button>
             </div>
           </div>
         </section>
@@ -271,10 +270,6 @@ const isImitation = computed(() => props.project?.genSource === 'IMITATION')
 const imitation = computed(() => props.project ? store.imitation(route.params.id) : null)
 const imitationBusy = ref(false)
 const styles = computed(() => store.styles(route.params.id))
-// 采用推荐:直接带 styleIds 跳版本页(StepVersions 会按 query 预选)
-const adoptRecommendation = (r) => {
-  router.push({ name: 'project-versions', params: { id: route.params.id }, query: { adoptStyle: String(r.styleId) } })
-}
 const onAnalyze = async () => {
   imitationBusy.value = true
   try {
@@ -595,13 +590,11 @@ const onDeepGenerate = async () => {
 .rec-head { display: flex; align-items: center; gap: 8px; }
 .rec-name { font-weight: 700; font-size: 15px; color: var(--ink); }
 .rec-reason { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 6px 0 10px; }
-.rec-adopt { }
 .brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 
 @media (max-width: 768px) {
   .brief-grid { grid-template-columns: 1fr; }
   .title-tag { width: 100%; }
   .brief-actions .el-button { flex: 1; }
-  .rec-adopt { width: 100%; }
 }
 </style>
