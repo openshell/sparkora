@@ -116,7 +116,8 @@ public class ImitationService {
                     + (styleCtx.isEmpty() ? "(风格库暂无启用风格,recommendations 返回空数组)" : styleCtx);
 
             AiClient.ChatResult cr = aiClient.chatJson(system, user, 2048);
-            JsonNode node = json.readTree(cr.content());
+            // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(同 VersionService)
+            JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
 
             // 落 brief:分析结果复用 outline/coreViewpoints/titleCandidates(语义:结构骨架/核心观点/标题候选)
             ArticleBriefEntity b = new ArticleBriefEntity();

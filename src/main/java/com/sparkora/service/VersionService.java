@@ -191,7 +191,8 @@ public class VersionService {
             user = buildUserPrompt(p, brief, rag);
         }
         AiClient.ChatResult cr = aiClient.chatJson(sys, user, 4096);
-        var node = json.readTree(cr.content());
+        // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(模型偶发违反 json_object 约束,见 AiClient.sanitizeAiJson)
+        var node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
         String title = node.path("title").asText("");
         String contentMd = node.path("contentMd").asText("");
         if (contentMd.isBlank()) throw new AiException("contentMd 为空（可能 max_tokens 不足被截断）", null);

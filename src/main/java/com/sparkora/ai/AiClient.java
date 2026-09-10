@@ -49,6 +49,41 @@ public class AiClient {
     public record ChatResult(String content, String model, int totalTokens) {}
 
     /**
+     * AI 输出 JSON 容错清洗(2026-09-10):模型偶发违反 response_format=json_object 约束,
+     * 在字符串值内输出裸换行/制表等控制字符,Jackson 严格模式直接报
+     * "Illegal unquoted character (CTRL-CHAR, code 10)" 导致整版生成失败。
+     * 处理:①剥 markdown 代码围栏;②把 JSON 字符串字面量内部的裸控制字符转义成 unicode 转义
+     * (逐字符扫描,只在引号内的普通字符上生效,不会破坏已有的合法转义序列)。
+     * 供所有「AI 产物 JSON 解析点」统一调用(VersionService/ImitationService 等)。
+     */
+    public static String sanitizeAiJson(String raw) {
+        if (raw == null) return "{}";
+        String s = raw.trim();
+        // 剥 ```json ... ``` / ``` ... ``` 围栏(模型偶发无视"不要包代码块围栏")
+        if (s.startsWith("```")) {
+            int firstNl = s.indexOf('\n');
+            int lastFence = s.lastIndexOf("```");
+            if (firstNl >= 0 && lastFence > firstNl) s = s.substring(firstNl + 1, lastFence);
+            else s = s.substring(firstNl >= 0 ? firstNl + 1 : 3);
+            s = s.trim();
+        }
+        StringBuilder out = new StringBuilder(s.length() + 16);
+        boolean inStr = false, esc = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (esc) { out.append(c); esc = false; continue; }   // 已是合法转义,原样带过
+            if (c == '\\' && inStr) { out.append(c); esc = true; continue; }
+            if (c == '"') { inStr = !inStr; out.append(c); continue; }
+            if (inStr && c < 0x20) {   // 字符串值内的裸控制字符 → 转义
+                out.append(String.format("\\u%04x", (int) c));
+                continue;
+            }
+            out.append(c);
+        }
+        return out.toString();
+    }
+
+    /**
      * 调用 chat/completions，要求模型以 JSON 对象回应。
      * @param systemPrompt 系统指令
      * @param userPrompt   用户输入
