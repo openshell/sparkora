@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "控制器错误映射惯例"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema.sql 幂等回填段约束(禁 DO $$)"}
