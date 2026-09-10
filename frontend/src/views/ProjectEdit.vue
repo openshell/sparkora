@@ -176,7 +176,9 @@ const onSave = async () => {
   try {
     const id = await doSave()
     ElMessage.success('已保存为草稿')
-    router.push(`/projects/${id}?gen=deep`)
+    // 跳转按模式分流:仿写项目不带 gen=deep(深度意图与仿写无关,避免详情页误发 GET /deep/status);
+    // 主题创作保持深度意图,详情页展开深度面板
+    router.push(isImitation.value ? `/projects/${id}` : `/projects/${id}?gen=deep`)
   } finally { saving.value = false }
 }
 

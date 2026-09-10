@@ -218,8 +218,10 @@ const simMaxRun = (v) => parseReport(v)?.maxRunLength || 0
 // 生成中状态:以 project.status 为唯一事实源,刷新/切页返回均能恢复视图
 const generatingVersions = computed(() => isGeneratingVersions(props.project?.status))
 
-// 生成进度提示(按风格数粗估:每版约 1 分钟,总时长 = 版数 × 1 分钟;追加模式同样按本次所选风格数估)
-const estVersions = computed(() => selectedStyleIds.value.length || 1)
+// 生成进度提示(按风格数粗估:每版约 1 分钟,总时长 = 版数 × 1 分钟;追加模式同样按本次所选风格数估;
+// 预选兜底推荐风格,避免生成成功清空 selectedStyleIds 后重进页面显示陈旧数字)
+const estVersions = computed(() =>
+  selectedStyleIds.value.length || recommendedIds.value.length || 1)
 const estMinutes = computed(() => Math.max(1, estVersions.value))
 
 const currentVersionLabel = computed(() => {
@@ -253,10 +255,12 @@ const doGenerate = async (styleIds) => {
     if (isImitation.value) {
       const res = await projectApi.generateVersions(route.params.id, styleIds)
       if (res.code === 0) {
-        ElMessage.success(`已生成 ${res.data?.length || 0} 版，默认选中第一版，可重新设定`)
+        // AC4:留在本页展示版本对比与相似度自检,不自动跳预览
+        ElMessage.success(`已生成 ${res.data?.length || 0} 版,请查看相似度自检结果`)
         await loadVersions()
         await store.ensureProject(route.params.id, { force: true })
-        gotoPreview()
+        selectedStyleIds.value = []
+        lastStyleIds.value = [...styleIds]   // 记录本次风格,供追加面板预选
       } else {
         ElMessage.error(res.msg || '仿写生成失败')
         await store.ensureProject(route.params.id, { force: true })
@@ -269,26 +273,34 @@ const doGenerate = async (styleIds) => {
     const briefId = entry?.brief?.id
     if (!briefId) { ElMessage.error('未找到当前简报,请先完成深度研究'); submitting.value = false; return }
     const allStyles = entry?.styles || []
-    let ok = 0
+    const okIds = []      // 生成成功的风格 id
+    const failedNames = []   // 失败风格名(汇总提示)
     for (const styleId of styleIds) {
       const style = allStyles.find(s => s.id === styleId)
       try {
         const res = await projectApi.generateDeep(route.params.id, briefId, style?.toneGuidance || '')
-        if (res.code === 0) ok++
-        else ElMessage.error(res.msg || `风格「${style?.name || styleId}」生成失败`)
+        if (res.code === 0) okIds.push(styleId)
+        else { failedNames.push(style?.name || String(styleId)); ElMessage.error(res.msg || `风格「${style?.name || styleId}」生成失败`) }
       } catch (e) {
+        failedNames.push(style?.name || String(styleId))
         ElMessage.error(`风格「${style?.name || styleId}」生成失败:` + (e.response?.data?.msg || e.message || '网络异常或超时'))
       }
     }
     // 以服务器全量列表为准(本次返回仅含新增,追加时直接拼会漏失败重试的历史)
-    await loadVersions()
-    lastStyleIds.value = [...styleIds]
-    if (ok) {
-      ElMessage.success(`已生成 ${ok} 版，默认选中最新一版，可重新设定`)
+    if (okIds.length) await loadVersions()
+    lastStyleIds.value = okIds.length ? [...okIds] : [...styleIds]
+    if (okIds.length) {
       await store.ensureProject(route.params.id, { force: true })
-      gotoPreview()
+      selectedStyleIds.value = []
+      // 统一留在版本页(规格 12:删除 gotoPreview 自动跳转,用户经步骤条自行去预览)
+      if (failedNames.length) ElMessage.success(`成功 ${okIds.length} 版,失败 ${failedNames.length} 个风格:${failedNames.join('、')}`)
+      else ElMessage.success(`已生成 ${okIds.length} 版,默认选中最新一版,可重新设定`)
+      // 部分失败:失败风格预选进追加面板,便于一键重试(把失败 ids 赋给 selectedStyleIds)
+      if (failedNames.length) openAppendWith([...styleIds.filter(id => !okIds.includes(id))])
     } else {
       await store.ensureProject(route.params.id, { force: true })
+      // 全部失败:同样把失败风格(=本次全部)预选进追加面板,便于重试
+      openAppendWith([...styleIds])
     }
   } finally { submitting.value = false }
 }
@@ -297,10 +309,11 @@ const onGenerate = () => {
   doGenerate(selectedStyleIds.value)
 }
 
-// 追加生成:预选上次风格,微调后生成;不清空已有版本
-const openAppend = () => {
+// 追加生成:预选指定风格(缺省为上次实际用于生成的风格),微调后生成;不清空已有版本
+const openAppend = () => openAppendWith([...lastStyleIds.value])
+const openAppendWith = (ids) => {
   appending.value = true
-  selectedStyleIds.value = [...lastStyleIds.value]
+  selectedStyleIds.value = ids
 }
 watch(appending, (on) => { if (on) compareIds.value = [] })
 
@@ -327,17 +340,13 @@ const saveTitle = async (v) => {
     ElMessage.error('保存失败：' + (e.response?.data?.msg || e.message || '网络异常'))
   } finally { savingTitle.value = false }
 }
-const gotoPreview = () => {
-  // 下一步:VERSIONS_READY 及之后一律进预览(配图已并入预览步骤)
-  router.push({ name: 'project-preview', params: { id: route.params.id } })
-}
 
-// 挂载即装载版本列表与风格库;project 详情由布局层异步加载,挂载时可能尚未就位——
-// watch 兜底等它到位后立即补拉(刷新直进页面时必经此路径)
+// 挂载即装载版本列表与风格库;仿写分析仅仿写项目装载(主题创作项目不发 GET /imitation);
+// project 详情由布局层异步加载,挂载时可能尚未就位——watch 兜底(见下)
 onMounted(() => {
   store.ensureVersions(route.params.id); store.ensureStyles(route.params.id)
-  // 仿写:装载分析+推荐(推荐角标数据源)
-  if (props.project?.genSource === 'IMITATION' || !store.imitation(route.params.id)) store.ensureImitation(route.params.id)
+  // 仿写:装载分析+推荐(推荐角标数据源);仅仿写项目发请求,不以「store 无数据」为条件
+  if (props.project?.genSource === 'IMITATION') store.ensureImitation(route.params.id)
   // ?adoptStyle= 由简报页「采用推荐」带入:自动预选该风格并清掉 query 防刷新残留
   if (route.query.adoptStyle) {
     const adoptId = Number(route.query.adoptStyle)
@@ -345,10 +354,19 @@ onMounted(() => {
     router.replace({ query: { ...route.query, adoptStyle: undefined } })
   }
 })
+// 数据兜底(规格 10):project 首次就位时,若仿写项目则补装载分析(挂载时 props 可能尚未就位);
+// 状态迁移驱动:仅 GENERATING_VERSIONS → VERSIONS_READY 翻转且版本列表为空时 force 兜底
+// (store.startPolling 翻转回调已覆盖主路径;styles 不跟随 project 变化重拉)
+let projectSeen = false
 watch(() => props.project, (p) => {
-  if (!p) return
-  loadVersions(); loadStyles()
+  if (!p || projectSeen) return
+  projectSeen = true
   if (p.genSource === 'IMITATION') store.ensureImitation(route.params.id)
+})
+watch(() => props.project?.status, (after, before) => {
+  if (before === 'GENERATING_VERSIONS' && after === 'VERSIONS_READY' && !store.versions(route.params.id).length) {
+    loadVersions()
+  }
 })
 </script>
 

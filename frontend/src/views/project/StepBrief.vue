@@ -84,9 +84,9 @@
 
         <div class="brief-actions">
           <el-button v-if="canRegenerateBrief" :loading="imitationBusy" @click="onAnalyze">重新分析</el-button>
-          <el-button v-if="canGoVersions" type="success" @click="gotoVersions">
-            {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
-          </el-button>
+          <!-- 下一步按状态给出唯一动作:READY 进入版本生成;版本已生成(含已发布)查看版本 -->
+          <el-button v-if="canGoVersions" type="success" @click="gotoVersions">进入多版本生成 →</el-button>
+          <el-button v-else-if="canViewVersions" type="success" @click="gotoVersions">查看版本 →</el-button>
         </div>
       </div>
     </template>
@@ -212,10 +212,9 @@
       <div class="brief-actions">
         <!-- 重新生成(2026-09-09 模式收敛):走深度流程重新研究,不再调快速生成接口 -->
         <el-button v-if="canRegenerateBrief" @click="onRegenerateDeep">重新研究生成</el-button>
-        <!-- 进入下一步:仅当简报就绪且版本未生成时显示;版本已生成后自动跳转,不再重复提交 -->
-        <el-button v-if="canGoVersions" type="success" @click="gotoVersions">
-          {{ hasVersions ? '查看版本 →' : '进入多版本生成 →' }}
-        </el-button>
+        <!-- 下一步按状态给出唯一动作:READY 进入版本生成;版本已生成(含已发布)查看版本 -->
+        <el-button v-if="canGoVersions" type="success" @click="gotoVersions">进入多版本生成 →</el-button>
+        <el-button v-else-if="canViewVersions" type="success" @click="gotoVersions">查看版本 →</el-button>
       </div>
     </div>
     </template>
@@ -245,7 +244,6 @@ const route = useRoute()
 const router = useRouter()
 const brief = computed(() => props.project ? store.brief(route.params.id) : null)
 const briefError = computed(() => props.project ? store.briefError(route.params.id) : '')
-const submitting = ref(false)   // 本轮会话内主动点击的 loading(按钮态)
 
 // S6:简报阶段选定的标题(来自 project.selectedTitle,点选后写回后端)
 const selectedTitle = computed(() => props.project?.selectedTitle || '')
@@ -283,6 +281,8 @@ const onAnalyze = async () => {
     const res = await projectApi.analyzeImitation(route.params.id)
     if (res.code !== 0) throw new Error(res.msg)
     ElMessage.success('分析完成')
+    // 同步 API,无轮询翻转:必须手动刷分析结果与项目详情各一次(状态已翻转 READY,
+    // 简报由状态迁移 watch 的兜底回调覆盖,这里不重复 loadBrief)
     await store.ensureImitation(route.params.id, { force: true })
     await store.ensureProject(route.params.id, { force: true })
   } catch (e) {
@@ -299,14 +299,14 @@ onMounted(() => {
 })
 watch(() => props.project, (p) => { if (p?.genSource === 'IMITATION' && route.params.id) store.ensureImitation(route.params.id) })
 
-// 已生成过版本时,按钮文案改为「查看版本」
-const hasVersions = computed(() => props.project?.status === 'VERSIONS_READY' || props.project?.status === 'GENERATING_VERSIONS')
-
 // 重新生成简报只在 READY 可见:VERSIONS_READY 及之后状态已触发下一步,再生成会把状态机拉回 READY
 const canRegenerateBrief = computed(() => props.project?.status === 'READY')
 
-// 进入版本按钮:仅简报就绪(READY)且版本未生成时显示;版本已生成后自动跳转,重进本页不再显示
+// 进入版本按钮:仅简报就绪(READY)且版本未生成时显示
 const canGoVersions = computed(() => props.project?.status === 'READY')
+// 查看版本按钮:版本已生成或之后的状态(含已发布草稿箱),简报页提供回看入口
+const canViewVersions = computed(() => props.project?.status === 'VERSIONS_READY'
+  || props.project?.status === 'PUBLISHED_DRAFT')
 
 const gotoVersions = () => router.push({ name: 'project-versions', params: { id: route.params.id } })
 
@@ -335,9 +335,27 @@ const ragTagType = (st) => ({
 const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 
 // 挂载即装载简报;project 详情由布局层异步加载,挂载时可能尚未就位——
-// watch 兜底等它到位后立即补拉(刷新直进页面时必经此路径)
-onMounted(() => store.ensureBrief(route.params.id))
-watch(() => props.project, (p) => { if (p) loadBrief() })
+// watch 兜底:project 首次到位时补拉一次(刷新直进页面时必经此路径);
+// 生成期间轮询只刷 project 详情,不再 force 重拉 brief(状态翻转回调已覆盖,降噪避免 4~5s 一次的冗余请求)
+onMounted(() => {
+  store.ensureBrief(route.params.id)
+  // 挂载时 project 已就位(热缓存/布局已加载完):立即做深度断点探测(isImitation 判定可靠);
+  // 未就位则由下方 watch 首次到位时探测——直接在 onMounted 探测会因 isImitation 恒 false 误发 /deep/status
+  if (props.project) { projectSeen = true; probeDeepStatus() }
+})
+let projectSeen = false   // project 是否已首次就位(首次到位补拉一次)
+watch(() => props.project, (p) => {
+  if (!p || projectSeen) return
+  projectSeen = true
+  loadBrief()
+  // 深度断点探测延后到 project 就位:isImitation 依赖 props.project,挂载瞬间(冷缓存)恒 false,
+  // 此时无法区分仿写/主题创作,须等就位后再判定(见 probeDeepStatus 注释)
+  probeDeepStatus()
+})
+// 状态迁移驱动:仅 GENERATING_BRIEF → READY 翻转时 force 重拉简报(store.startPolling 翻转回调同款语义,此处兜底组件级恢复)
+watch(() => props.project?.status, (after, before) => {
+  if (before === 'GENERATING_BRIEF' && after === 'READY') loadBrief()
+})
 
 // 重新研究生成(2026-09-09 模式收敛):FAST 接口已封死,重新生成走深度流程(重新出研究计划)
 const onRegenerateDeep = () => {
@@ -356,10 +374,15 @@ const deepQuestions = ref([])
 const deepAnswers = ref([])
 const deepFactSheet = ref(null)
 
-// 路由意图参数 ?gen=DEEP|deep(创建页/仅存草稿的续接意图):直接展开深度面板,随后清掉 query 防刷新残留
-if (route.query.gen === 'DEEP' || route.query.gen === 'deep') {
-  deepMode.value = true
+// 路由意图参数消费(规格 3:gen query 收敛):
+// ?gen=deep|DEEP / ?gen=imitation 仅做 query 清理(与 project 无关,顶层执行安全);
+// deepMode/genDeepIntent 置位延后到 project 就位后的 probeDeepStatus——isImitation 依赖
+// props.project(冷缓存挂载时恒 false),顶层置位会把仿写项目误判为主题创作(误展开深度面板+误发探测)
+let genDeepIntent = false   // 本次进入是否带深度意图(驱动直发竞态重查,见 probeDeepStatus)
+const hasDeepIntent = route.query.gen === 'DEEP' || route.query.gen === 'deep'
+if (hasDeepIntent) {
   router.replace({ query: { ...route.query, gen: undefined } })
+  // 仿写项目忽略 deep 意图:不展开深度面板,也不发 /deep/status(判定在 project 就位后)
 }
 // 文章仿写意图参数 ?gen=imitation(创建页「创建并分析原文」):仅清理 query,
 // 分析请求由 ProjectEdit 在创建后直发;详情页以 project.status(GENERATING_BRIEF)为事实源展示进度
@@ -367,21 +390,47 @@ else if (route.query.gen === 'imitation') {
   router.replace({ query: { ...route.query, gen: undefined } })
 }
 
-// 项目已有进行中的深度 brief → 恢复状态(断点续跑)
-onMounted(async () => {
+/**
+ * 深度断点状态恢复(仅非仿写项目,规格 2):
+ * 从 /deep/status 恢复 CLARIFYING/RESEARCHING/RESEARCH_DONE 等断点;仿写项目一律不发该请求。
+ * 调用时机:project 首次就位后(onMounted 热缓存路径 / watch 兜底路径),此时 isImitation 判定可靠。
+ * 直发竞态重查(规格 5,仅 gen=deep 意图进入时):创建页 startDeep(clarify 约 10~30s)尚未落库时
+ * 首查返回 NONE——做有界重查,最多 3 次、间隔 2s,任一次返回 DEEP 即恢复;
+ * 超限停在引导语(用户可手动点「生成研究计划」)。普通进入仅首查,不多发。
+ */
+const probeDeepStatus = async () => {
+  if (isImitation.value) return   // 仿写项目不探测深度状态(project 已就位,判定可靠)
+  if (hasDeepIntent) { deepMode.value = true; genDeepIntent = true }
   try {
-    const res = await http.get(`/projects/${route.params.id}/deep/status`)
-    const d = res.data || {}
-    if (d.genMode === 'DEEP') {
-      deepBriefId.value = d.briefId
-      deepStage.value = d.stage || 'NONE'
-      deepPlan.value = d.researchPlan ? (typeof d.researchPlan === 'string' ? JSON.parse(d.researchPlan) : d.researchPlan) : null
-      deepQuestions.value = d.questions ? (typeof d.questions === 'string' ? JSON.parse(d.questions) : d.questions) : []
-      deepAnswers.value = d.answers ? (typeof d.answers === 'string' ? JSON.parse(d.answers) : d.answers) : []
-      deepFactSheet.value = d.factSheet || null
+    let d = (await http.get(`/projects/${route.params.id}/deep/status`)).data || {}
+    if (!genDeepIntent) {
+      // 普通进入:首查即恢复,不做重查
+      if (d.genMode === 'DEEP') applyDeepStatus(d)
+      return
     }
+    // 直发竞态场景:项目状态推进到下游(简报已就绪等)则无需恢复,否则 NONE 时有界重查
+    const downstream = () => ['READY', 'GENERATING_VERSIONS', 'VERSIONS_READY', 'PUBLISHED_DRAFT']
+      .includes(props.project?.status)
+    let probe = 0
+    while (d.genMode !== 'DEEP' && probe < 3 && !downstream()) {
+      probe++
+      await new Promise(r => setTimeout(r, 2000))
+      d = (await http.get(`/projects/${route.params.id}/deep/status`)).data || {}
+    }
+    if (d.genMode === 'DEEP') applyDeepStatus(d)
+    // 超限仍 NONE:停在引导语,深度面板保留「生成研究计划」按钮供手动重试
   } catch { /* 深度接口异常不影响快速模式 */ }
-})
+}
+
+/** 把 /deep/status 返回写入深度面板状态(断点续跑) */
+const applyDeepStatus = (d) => {
+  deepBriefId.value = d.briefId
+  deepStage.value = d.stage || 'NONE'
+  deepPlan.value = d.researchPlan ? (typeof d.researchPlan === 'string' ? JSON.parse(d.researchPlan) : d.researchPlan) : null
+  deepQuestions.value = d.questions ? (typeof d.questions === 'string' ? JSON.parse(d.questions) : d.questions) : []
+  deepAnswers.value = d.answers ? (typeof d.answers === 'string' ? JSON.parse(d.answers) : d.answers) : []
+  deepFactSheet.value = d.factSheet || null
+}
 
 const onDeepClarify = async () => {
   deepBusy.value = true
@@ -461,8 +510,6 @@ const onDeepGenerate = async () => {
   } catch (e) { ElMessage.error(e?.response?.data?.msg || '深度写作失败') }
   finally { deepBusy.value = false }
 }
-
-const onBackFast = () => { deepMode.value = false; deepStage.value = 'NONE' }  // 已无快速模式;保留防外部引用,等效重置
 </script>
 
 <style scoped>
