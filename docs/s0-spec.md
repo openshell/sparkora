@@ -169,7 +169,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发返回 409）。
 - **READY**：简报就绪（`current_brief_id` 指向最新简报；S0 语义「记录创建成功」已由 S1 取代）。
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发返回 409）。
-- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。深度单版生成（`/deep/generate`）同样推进 READY→VERSIONS_READY（2026-09-10 修复：落版本后由 DeepController 成功分支推状态 + 首版设 current）。**存量数据自愈（09-10-versions-page-fix）**：schema.sql 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，current_version_id 为空时设首版（幂等，与 R3 字段回填同段）。
 - **PUBLISHED_DRAFT**（S5 新增,终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱,拿到 media_id）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿,刷新 publish_media_id/published_at/publish_theme;发布失败状态原样保留并写 `last_publish_error`(成功后清空);`publish` 仅在 VERSIONS_READY/PUBLISHED_DRAFT 可调用,否则 `R.fail(400)`(错误经状态校验文案提示,如「尚未生成正文版本,无法预览」)。
 - 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 isPublishable/isPublished）。**S6 起 `statusMeta` 对历史残留 `IMAGES_READY` 归一为 `VERSIONS_READY`**（兼容旧数据，避免历史项目无法预览/发布）。
 - **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
@@ -585,7 +585,7 @@ PublishService.publish
 | POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | `{briefId, researchPlan, questions}`；新建 brief(gen_mode=DEEP) |
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
 | POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, done}`（同步阻塞；前端轮询 status） |
-| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, stylePrompt?}` | `{versionId}`（版本 fact_risks 落库） |
+| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, stylePrompt?, styleName?}` | `{versionId}`（版本 fact_risks 落库；09-10-versions-page-fix：落版本补齐 title/version_label/style_tag/word_count，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
 | POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突） |
 | GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
 

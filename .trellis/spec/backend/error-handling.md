@@ -85,3 +85,13 @@ try {
 **Fix**: 翻转回调按模式补拉：`if (after === 'READY') { ensureBrief(...); 仿写时 ensureImitation(...) }`。
 
 **Prevention**: 新增 store 数据域时，同步检查 `ensure*` 三处触发：组件 onMounted/watch 兜底、`startPolling` 状态翻转、动作成功后的 force 重取。
+
+### Common Mistake: 新生成链路漏推状态机与漏填展示字段
+
+**Symptom**: 新增的生成链路（如深度单版 `/deep/generate`）落库成功后，前端仍卡上一步：步骤导航锁定、无「下一步」按钮；版本卡片字段渲染 `undefined·undefined`、字数统计空白。
+
+**Cause**: 生成链路只写了产物表，没对齐既有链路（VersionService.generate）的完整语义：① 不推进项目状态机（停在 READY，`maxReachableStepOf` 锁死下游步骤）；② 不设 `current_version_id`；③ 漏填展示字段（version_label/style_tag/word_count/title）。FAST 封死、新模式成唯一主路径后，历史「补充链路」的缺陷必现。
+
+**Fix**: 双保险——① 生成成功分支对齐既有链路语义（状态白名单推进 READY/DRAFT→VERSIONS_READY + `currentVersionId==null` 才设默认当前，追加不覆盖用户已选）；② 展示字段全部落库（title=正文首 H1 回退 topic / label 按版本数续编 / styleTag 传风格名回退兜底 / word_count=length）；③ 前端模板层对 null 字段兜底（`v.styleTag || '深度'`）+ schema.sql 幂等回填存量 NULL 行（**含同根因的项目状态自愈**）。
+
+**Prevention**: 新增任何「落库产物」的链路时，对照既有主链路逐字段核对：状态机推进点、current 指向、展示字段清单；「只写产物不改状态」的旧先例不是放行理由——一旦旧路径被封死（模式收敛），新路径就是主路径，缺陷即必现。

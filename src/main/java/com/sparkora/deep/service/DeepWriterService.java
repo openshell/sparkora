@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.car.service.CarRagService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
+import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
+import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,26 +36,34 @@ public class DeepWriterService {
     private final ObjectMapper json;
     private final ArticleBriefMapper briefMapper;
     private final ArticleVersionMapper versionMapper;
+    /** 项目 mapper(09-10-versions-page-fix:title 回退 project.topic 需取项目) */
+    private final ArticleProjectMapper projectMapper;
     /** 系统检索设置(09-09-brief-gen-redesign R3):知识库停用时 rag_status=DISABLED */
     private final com.sparkora.service.SettingService settingService;
 
     public DeepWriterService(AiClient aiClient, ObjectMapper json,
                              ArticleBriefMapper briefMapper, ArticleVersionMapper versionMapper,
+                             ArticleProjectMapper projectMapper,
                              com.sparkora.service.SettingService settingService) {
         this.aiClient = aiClient;
         this.json = json;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
+        this.projectMapper = projectMapper;
         this.settingService = settingService;
     }
+
+    /** 版本标签序列(与 VersionService.LABELS 同口径:A/B/C…按项目内已有版本数续编) */
+    private static final String LABELS = "ABCDEFGHIJ";
 
     /**
      * ⑤ 深度写作并落版本(⑥ 回查结果进 factRisks)。
      * @param briefId  含 fact_sheet 的 brief
      * @param styleId  风格 id(风格画像由调用方注入或此处简化为主题直写)
+     * @param styleName 风格名(落版本 style_tag;空回退「深度」;09-10-versions-page-fix 新增)
      * @return 落库的版本 id
      */
-    public Long write(Long projectId, Long briefId, String stylePrompt) throws Exception {
+    public Long write(Long projectId, Long briefId, String stylePrompt, String styleName) throws Exception {
         ArticleBriefEntity b = briefMapper.selectById(briefId);
         if (b == null) throw new IllegalArgumentException("brief 不存在");
         JsonNode sheet = json.readTree(b.getFactSheet() == null ? "{}" : b.getFactSheet());
@@ -111,9 +121,56 @@ public class DeepWriterService {
         v.setAiModel(cr.model());
         v.setTokenUsage(cr.totalTokens());
         v.setContentMd(content);
+        // 09-10-versions-page-fix:深度链路此前漏填 title/version_label/style_tag/word_count,
+        // 与多版本链路(VersionService.generateOne)对齐补齐,消除版本页 undefined/null 与字数统计为空
+        v.setTitle(extractH1(projectId, content));
+        v.setVersionLabel(nextLabel(projectId));
+        v.setStyleTag(styleName == null || styleName.isBlank() ? "深度" : styleName);
+        v.setWordCount(content.length());
         v.setCreatedAt(LocalDateTime.now());
         versionMapper.insert(v);
         return v.getId();
+    }
+
+    /**
+     * 09-10-versions-page-fix:抽取 AI 正文首个 Markdown H1 作为版本 title。
+     * 正则多行首匹配「# 标题」;缺失/空白回退 project.topic(project 查询判空防御)。
+     */
+    private String extractH1(Long projectId, String contentMd) {
+        String topic = null;
+        try {
+            ArticleProjectEntity p = projectMapper.selectById(projectId);
+            topic = p != null ? p.getTopic() : null;
+        } catch (Exception e) {
+            log.warn("取项目 title 回退源失败 projectId={}: {}", projectId, e.getMessage());
+        }
+        if (contentMd != null) {
+            var m = Pattern.compile("(?m)^#\\s+(.+)$").matcher(contentMd);
+            if (m.find()) {
+                String h1 = m.group(1).trim();
+                if (!h1.isBlank()) {
+                    // title 列 VARCHAR(200),防御性截断(仿写链路 title 同列)
+                    return h1.length() > 200 ? h1.substring(0, 200) : h1;
+                }
+            }
+        }
+        return topic;
+    }
+
+    /**
+     * 09-10-versions-page-fix:按项目内已有版本数取下一版本标签(A/B/C…,同 VersionService 编号口径);
+     * 超出 LABELS 长度回退 'A'。project 查询异常时不阻断生成,回退 'A'。
+     */
+    private String nextLabel(Long projectId) {
+        int idx;
+        try {
+            idx = Math.toIntExact(versionMapper.selectCount(new QueryWrapper<ArticleVersionEntity>()
+                    .eq("project_id", projectId)));
+        } catch (Exception e) {
+            log.warn("统计项目版本数失败 projectId={}: {}", projectId, e.getMessage());
+            idx = 0;
+        }
+        return idx < LABELS.length() ? String.valueOf(LABELS.charAt(idx)) : "A";
     }
 
     /** 抽取正文数值并比对手册(收录=出现在手册文本任一处:值/claim/sources 串)。 */

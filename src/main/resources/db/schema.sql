@@ -407,3 +407,34 @@ ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS imitation_analysis
 ALTER TABLE sparkora_article_brief   ADD COLUMN IF NOT EXISTS style_recommendations TEXT;              -- 风格推荐 JSON [{styleId,name,reason,matchScore}]
 ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS similarity_score   DOUBLE PRECISION;     -- 与原文 5-gram 重合率 0~1(仅仿写版有值)
 ALTER TABLE sparkora_article_version ADD COLUMN IF NOT EXISTS similarity_report  TEXT;                 -- 自检明细 JSON {maxRunLength,repeatedRuns:[{text,length}]}
+
+-- ============================================================================
+-- 09-10-versions-page-fix:深度链路历史版本回填 version_label/style_tag/word_count/title
+-- 深度链路(DeepWriterService)自 S9 起漏填这 4 字段,存量行全 NULL。
+-- 全部单条幂等语句(只处理 NULL/空行,重复执行无副作用);不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+UPDATE sparkora_article_version SET style_tag = '深度' WHERE style_tag IS NULL;
+UPDATE sparkora_article_version SET word_count = length(content_md) WHERE word_count IS NULL AND content_md IS NOT NULL;
+-- title:首行为「# 标题」时剥掉 Markdown 前缀(与代码 extractH1 语义一致),首行非 H1 时原样回退 topic
+UPDATE sparkora_article_version v SET title = left(coalesce(nullif(regexp_replace(split_part(v.content_md, E'\n', 1), '^#\s+', ''), ''), p.topic), 200)
+  FROM sparkora_article_project p
+ WHERE v.project_id = p.id AND coalesce(v.title, '') = '';
+-- version_label:仅补 NULL 行,按项目内创建序(row_number)映射 A/B/C…(同 VersionService 编号口径);超 8 个回退 'A'
+UPDATE sparkora_article_version v SET version_label = sub.lbl
+ FROM (
+   SELECT id, CASE rn WHEN 1 THEN 'A' WHEN 2 THEN 'B' WHEN 3 THEN 'C' WHEN 4 THEN 'D'
+            WHEN 5 THEN 'E' WHEN 6 THEN 'F' WHEN 7 THEN 'G' WHEN 8 THEN 'H' ELSE 'A' END AS lbl
+   FROM (SELECT id, row_number() OVER (PARTITION BY project_id ORDER BY id) AS rn
+         FROM sparkora_article_version WHERE version_label IS NULL) t
+ ) sub
+ WHERE v.id = sub.id;
+-- 项目状态回填:历史深度生成不推状态机,存量「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY,
+-- current_version_id 为空时默认指向首版(同 VersionService「默认选第一版」语义);幂等(执行后无 READY/DRAFT-with-versions 行)。
+UPDATE sparkora_article_project p
+   SET status = 'VERSIONS_READY',
+       current_version_id = COALESCE(p.current_version_id,
+                                     (SELECT min(v.id) FROM sparkora_article_version v WHERE v.project_id = p.id)),
+       updated_at = CURRENT_TIMESTAMP
+ WHERE p.deleted = 0
+   AND p.status IN ('READY', 'DRAFT')
+   AND EXISTS (SELECT 1 FROM sparkora_article_version v WHERE v.project_id = p.id);

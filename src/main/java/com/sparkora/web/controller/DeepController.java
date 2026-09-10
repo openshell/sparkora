@@ -6,11 +6,14 @@ import com.sparkora.deep.service.ClarifyService;
 import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
+import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
+import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.security.SecurityUtil;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -30,6 +33,8 @@ public class DeepController {
     private final DeepResearchService researchService;
     private final DeepWriterService writerService;
     private final ArticleBriefMapper briefMapper;
+    /** 项目 mapper(09-10-versions-page-fix:深度生成成功后推进状态机 + 首版设 current) */
+    private final ArticleProjectMapper projectMapper;
     /** 深度简报生成(手动重试 /deep/brief) */
     private final com.sparkora.service.BriefService briefService;
     private final com.sparkora.deep.tool.SearxngSearchTool searxngTool;
@@ -38,6 +43,7 @@ public class DeepController {
 
     public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
+                          ArticleProjectMapper projectMapper,
                           com.sparkora.service.BriefService briefService,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
@@ -46,6 +52,7 @@ public class DeepController {
         this.researchService = researchService;
         this.writerService = writerService;
         this.briefMapper = briefMapper;
+        this.projectMapper = projectMapper;
         this.briefService = briefService;
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
@@ -110,14 +117,26 @@ public class DeepController {
         }
     }
 
-    /** ⑤⑥ 深度写作+数值回查。body: {briefId, stylePrompt?}。 */
+    /** ⑤⑥ 深度写作+数值回查。body: {briefId, stylePrompt?, styleName?}。 */
     @PostMapping("/generate")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> generate(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
         try {
             Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
             String stylePrompt = body.get("stylePrompt") == null ? "" : String.valueOf(body.get("stylePrompt"));
-            Long versionId = writerService.write(projectId, briefId, stylePrompt);
+            // 09-10-versions-page-fix:风格名随 body 传入,落版本 style_tag(空回退「深度」)
+            String styleName = body.get("styleName") == null ? "" : String.valueOf(body.get("styleName"));
+            Long versionId = writerService.write(projectId, briefId, stylePrompt, styleName);
+            // 09-10-versions-page-fix:对齐多版本链路(VersionService.generate 成功分支)语义——
+            // 成功后推进状态机(仅 READY/DRAFT → VERSIONS_READY,PUBLISHED_DRAFT 追加不回退),
+            // 首版设默认当前,追加生成不覆盖用户已选的 current。
+            ArticleProjectEntity p = projectMapper.selectById(projectId);
+            if (p != null) {
+                if (p.getCurrentVersionId() == null) p.setCurrentVersionId(versionId);
+                if ("READY".equals(p.getStatus()) || "DRAFT".equals(p.getStatus())) p.setStatus("VERSIONS_READY");
+                p.setUpdatedAt(LocalDateTime.now());
+                projectMapper.updateById(p);
+            }
             return R.ok(Map.of("versionId", versionId));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());

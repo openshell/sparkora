@@ -78,12 +78,14 @@
             <button v-for="v in versions" :key="v.id" type="button" class="s-chip"
                     :class="{ active: v.id === project?.currentVersionId, picked: compareIds.includes(v.id) }"
                     @click="onChipClick(v)">
-              <span class="chip-label">{{ v.versionLabel }}</span>{{ v.styleTag }} · {{ v.wordCount }}字
+              <!-- 09-10-versions-page-fix:label/styleTag/wordCount 空(存量深度版本为 NULL)时兜底,不渲染 undefined/null -->
+              <span class="chip-label">{{ v.versionLabel || '—' }}</span>{{ v.styleTag || '深度' }} · {{ v.wordCount || '—' }}字
             </button>
           </div>
           <el-select v-model="compareIds" multiple collapse-tags collapse-tags-tooltip
                      placeholder="选 2 版对比" size="small" class="compare-select">
-            <el-option v-for="v in versions" :key="v.id" :label="`${v.versionLabel}·${v.styleTag}`" :value="v.id" />
+            <!-- 09-10-versions-page-fix:label/styleTag 空值兜底 -->
+            <el-option v-for="v in versions" :key="v.id" :label="`${v.versionLabel || '—'}·${v.styleTag || '深度'}`" :value="v.id" />
           </el-select>
         </div>
         <p v-if="compareIds.length === 1" class="compare-hint">再勾选 1 版即可并排对比</p>
@@ -92,15 +94,16 @@
           <div v-for="v in displayedVersions" :key="v.id" class="version-card"
                :class="{ active: v.id === project?.currentVersionId }">
             <div class="version-head">
-              <el-tag size="small" effect="dark" round class="v-label">{{ v.versionLabel }}</el-tag>
-              <el-tag size="small" type="info" effect="plain" round>{{ v.styleTag }}</el-tag>
+              <el-tag size="small" effect="dark" round class="v-label">{{ v.versionLabel || '—' }}</el-tag>
+              <el-tag size="small" type="info" effect="plain" round>{{ v.styleTag || '深度' }}</el-tag>
               <!-- S6.1:本版生成时的知识库检索状态(FAILED/LOW_CONFIDENCE 时提示参数未经知识库核实) -->
               <el-tag v-if="v.ragStatus === 'FAILED' || v.ragStatus === 'LOW_CONFIDENCE'"
                       size="small" type="warning" effect="plain" round>参数未经知识库核实</el-tag>
               <!-- R3:知识库引用明细(本版检索注入的命中块) -->
               <el-tag v-if="citationCount(v)" size="small" type="success" effect="plain" round
                       @click="toggleCites(v.id)">引用 {{ citationCount(v) }}</el-tag>
-              <span class="version-meta">{{ v.wordCount }}字 · {{ v.aiModel }}</span>
+              <!-- 09-10-versions-page-fix:wordCount 空值兜底 -->
+              <span class="version-meta">{{ v.wordCount || '—' }}字 · {{ v.aiModel }}</span>
             </div>
             <!-- 仿写:相似度行(阈值色 + 重复片段明细,可折叠;仅警示不阻断) -->
             <div v-if="isImitation && v.similarityScore != null" class="sim-row" :class="simClass(v.similarityScore)">
@@ -145,6 +148,10 @@
         <div class="next-row">
           <!-- 再生成其他风格只在 VERSIONS_READY 可见:发布后属增量编辑,再触发会把状态机拉回 VERSIONS_READY -->
           <el-button v-if="project?.status === 'VERSIONS_READY'" :loading="submitting" @click="openAppend">再生成其他风格</el-button>
+          <!-- 09-10-versions-page-fix:「进入预览」——后端已推 VERSIONS_READY(深度生成成功即推进),
+               此按钮兜底服务存量 READY-with-versions 项目(历史深度生成未推状态机)与防御 -->
+          <el-button v-if="project?.status === 'VERSIONS_READY' || (versions.length && project?.status === 'READY')"
+                     type="success" @click="goPreview">进入预览 →</el-button>
         </div>
       </div>
     </template>
@@ -224,9 +231,10 @@ const estVersions = computed(() =>
   selectedStyleIds.value.length || recommendedIds.value.length || 1)
 const estMinutes = computed(() => Math.max(1, estVersions.value))
 
+// 头部「当前:」meta(09-10-versions-page-fix:label/styleTag 空值兜底,不再渲染 undefined/null)
 const currentVersionLabel = computed(() => {
   const cur = versions.value.find(v => v.id === props.project?.currentVersionId)
-  return cur ? `${cur.versionLabel}·${cur.styleTag}` : '未选'
+  return cur ? `${cur.versionLabel || '—'}·${cur.styleTag || '深度'}` : '未选'
 })
 
 // 对比模式(勾选 >=2)只显示选中版本并排全高;平时显示全部版本
@@ -278,7 +286,8 @@ const doGenerate = async (styleIds) => {
     for (const styleId of styleIds) {
       const style = allStyles.find(s => s.id === styleId)
       try {
-        const res = await projectApi.generateDeep(route.params.id, briefId, style?.toneGuidance || '')
+        // 09-10-versions-page-fix:styleName 传给后端落版本 style_tag,消除版本页 undefined/null
+        const res = await projectApi.generateDeep(route.params.id, briefId, style?.toneGuidance || '', style?.name || '')
         if (res.code === 0) okIds.push(styleId)
         else { failedNames.push(style?.name || String(styleId)); ElMessage.error(res.msg || `风格「${style?.name || styleId}」生成失败`) }
       } catch (e) {
@@ -307,6 +316,12 @@ const doGenerate = async (styleIds) => {
 const onGenerate = () => {
   if (!selectedStyleIds.value.length) { ElMessage.warning('请至少选择一个风格'); return }
   doGenerate(selectedStyleIds.value)
+}
+
+// 09-10-versions-page-fix:手动进入预览(规格 12 删除了 gotoPreview 自动跳转,用户经步骤条/此按钮自行去预览;
+// 兜底存量 READY-with-versions 项目——历史深度生成未推状态机,版本已有但步骤导航锁在 READY)
+const goPreview = () => {
+  router.push({ name: 'project-preview', params: { id: route.params.id } })
 }
 
 // 追加生成:预选指定风格(缺省为上次实际用于生成的风格),微调后生成;不清空已有版本
