@@ -46,7 +46,11 @@ public class WenyanThemeCatalog {
             new ThemeMeta("phycat", "phycat", "builtin", "#3eaf7c", false)
     );
 
-    /** 社区主题(id 规范 custom:&lt;slug&gt;,中文显示名与色点取自原前端 wenyanThemes.js)。 */
+    /**
+     * 社区主题(id 规范 custom:&lt;slug&gt;,中文显示名与色点取自原前端 wenyanThemes.js)。
+     * 维护提醒:社区 CSS 禁止引用外链图片——发布时 wenyan-server 会下载渲染 HTML 中引用的所有图片,
+     * 任一外链失效即整次发布失败(先例:quanzhanlan 的 imgkr 图标,见 docs/wenyan.md)。
+     */
     private static final List<ThemeMeta> COMMUNITY = List.of(
             new ThemeMeta("custom:chazi", "姹紫", "community", "#773098", false),
             new ThemeMeta("custom:mohei", "墨黑", "community", "#5c5c5c", false),

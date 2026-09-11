@@ -545,6 +545,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - `pic.caiqz.cn` 仅有 http（https 证书未配）：预览从 localhost 拉不成问题；公众号内显示的是微信端上传后的 URL，不受影响。后续可加 https。
 - wenyan-server 2.0.11 鉴权中间件对错误 key 挂起（不返回 401）：客户端超时不宜过长，且建议 server 升级。
 - theme 清单由后端 `WenyanThemeCatalog` 权威固定（15 个，见 §11），不依赖 server 端注册：主题只在本机 CLI 渲染阶段应用，wenyan-server 只收渲染后的 HTML，不感知主题。`.env WENYAN_THEME_NAMES` 已废弃。
+- **社区主题 CSS 禁止外链图片（09-11-quanzhanlan-broken-image）**：发布时 wenyan-server 会下载渲染 HTML 中引用的所有图片，任一外链失效即整次发布失败（报错「下载图片失败 URL」）。新增/维护社区主题必须自检 `grep -nE "url\(https?://" src/main/resources/wenyan-themes/*.css frontend/src/assets/wenyan-themes/*.css` 为空；历史事故：全栈蓝 `quanzhanlan.css` 曾引用失效图壳图标（`imgkr.cn-bj.ufileos.com`，HTTP 400）致发布失败，已移除。详见 `docs/wenyan.md`。
 
 ### 12. 公众号草稿发布模块（S5，正式规格）
 

@@ -85,7 +85,16 @@ classpath 资源打包进 jar 后 `getFile()` 不可用,故 `WenyanThemeCatalog.
 1. 把 CSS 放到 `frontend/src/assets/wenyan-themes/<slug>.css` 与 `src/main/resources/wenyan-themes/<slug>.css`(**两份一致**)。
 2. 前端 `frontend/src/utils/wenyanThemes.js`:`import ...?raw` + `CUSTOM_THEMES`(渲染兜底)+ `CSS_STORE` 登记。
 3. 后端 `WenyanThemeCatalog.COMMUNITY` 增加 `custom:<slug>`(中文名/色点)。
-4. 校验 `diff -r` 两份目录为空,跑 `mvn -q -DskipTests compile` 与 `cd frontend && npm run build`。
+4. **检查 CSS 不得含任何外链图片**(`grep -nE "url\(https?://" <slug>.css` 应为空)——见下方警告。
+5. 校验 `diff -r` 两份目录为空,跑 `mvn -q -DskipTests compile` 与 `cd frontend && npm run build`。
+
+> **Warning: 社区主题 CSS 禁止引用外链图片**(09-11-quanzhanlan-broken-image 教训)。
+>
+> 发布链路会把渲染后 HTML 里引用的所有图片下载后转存到微信,任一图片下载失败即**整次发布失败**(报错「下载图片失败 URL: ...」)。社区主题 CSS 的 `background-image: url(...)`、`content: url(...)` 等会随渲染进入 HTML,一旦外链图床失效(如 `imgkr.cn-bj.ufileos.com` 已 HTTP 400)该主题就再也发不出去。
+>
+> - 新增主题前必查:`grep -nE "url\(https?://" src/main/resources/wenyan-themes/*.css frontend/src/assets/wenyan-themes/*.css`(应为空)。
+> - 装饰性图标优先用 `linear-gradient`/纯 CSS 绘制,或内联 `data:` URI;确需图片则必须自托管到可控图床并长期可用。
+> - 历史事故:全栈蓝 `quanzhanlan.css` 的 `#wenyan h2::before` 曾引用失效图壳图标,导致该主题发布持续失败,修复方式为直接移除该 `background-image` 行。
 
 > 社区主题 CSS 若含 `:root { --sans-serif-font ... }` 等变量,浏览器预览时 `applyPreviewTheme` 只把 `#wenyan` 重写为 `.wenyan-preview`,`:root` 变量会成为全局(影响有限,仅字体变量);CLI 侧原生支持。当前 7 个社区主题均含 `:root`,经确认不影响应用样式。
 
