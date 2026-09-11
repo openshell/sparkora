@@ -176,35 +176,40 @@ const onSave = async () => {
   try {
     const id = await doSave()
     ElMessage.success('已保存为草稿')
-    // 跳转按模式分流:仿写项目不带 gen=deep(深度意图与仿写无关,避免详情页误发 GET /deep/status);
-    // 主题创作保持深度意图,详情页展开深度面板
-    router.push(isImitation.value ? `/projects/${id}` : `/projects/${id}?gen=deep`)
+    // 跳转按模式分流:仿写与主题创作均不带深度意图参数;主题创作进入详情页后
+    // 由 StepBrief 单次拉 /deep/status 恢复状态(09-11 去 ?gen=deep 路径意图)
+    router.push(`/projects/${id}`)
   } finally { saving.value = false }
 }
 
 // 创建并生成:主按钮只负责「创建 + 发起深度研究计划」,立即进详情页;
 // 生成过程由详情页按 project.status 展示(布局层 4s 轮询,简报页以 GENERATING_BRIEF 状态为事实源)。
 // 2026-09-09 模式收敛:唯一生成路径为深度流程(startDeep),快速模式入口已下线。
-// 仿写模式:创建后跳详情页并直接发起「分析原文」(失败也在详情页可见重试)。
+// 09-11 clarify 异步化(毫秒级返回):先 await startDeep 再导航,消除「导航早于落库」竞态;
+// 详情页据 brief 侧 PLANNING 态展示「研究计划生成中」并自轮询。
+// 仿写模式:保持原交互(创建后跳详情页并直接发起「分析原文」,失败也在详情页可见重试)。
 const onSaveAndGenerate = async () => {
   await formRef.value.validate()
   loading.value = true
   const imitation = isImitation.value
   try {
     const id = await doSave()
-    router.push(imitation ? `/projects/${id}?gen=imitation` : `/projects/${id}?gen=deep`)
-    try {
-      if (imitation) {
+    if (imitation) {
+      router.push(`/projects/${id}?gen=imitation`)
+      try {
         await projectApi.analyzeImitation(id)
         ElMessage.success('原文分析完成，请在简报页查看分析与风格推荐')
-      } else {
-        // 深度流程:发起研究计划+反问(brief 落库 gen_mode=DEEP,StepBrief onMounted 会恢复 CLARIFYING 态)
-        // 失败也不必回退页面:详情页深度面板仍可手动点「生成研究计划」重试
-        await projectApi.startDeep(id, form.topic.trim(), form.extraInfo || '')
-        ElMessage.success('研究计划已生成，请在简报页确认反问信息')
+      } catch (e) {
+        // 发起失败:已跳详情页,状态/lastBriefError 可见,由用户在页面内重试
       }
-    } catch (e) {
-      // 发起失败:已跳详情页,状态/lastBriefError 可见,由用户在页面内重试
+    } else {
+      // 主题创作:先落 PLANNING 占位(毫秒级)再导航,详情页据 /deep/status 恢复进度态
+      try {
+        await projectApi.startDeep(id, form.topic.trim(), form.extraInfo || '')
+      } catch (e) {
+        // 发起失败(如并发冲突):项目已建,详情页据 lastBriefError 展示并允许重试
+      }
+      router.push(`/projects/${id}`)
     }
   } catch (e) {
     // 仅创建本身失败(网络异常):留在此页;表单校验失败由 rules 提示,不重复弹窗

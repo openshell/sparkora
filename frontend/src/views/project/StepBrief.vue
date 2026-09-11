@@ -90,11 +90,10 @@
       </div>
     </template>
 
-    <!-- 主题创作模式:既有简报视图(原样保留) -->
+    <!-- 主题创作模式:单一 deepStage 状态机驱动(09-11 收敛:同一状态恒渲染同一 UI,与进入路径无关) -->
     <template v-else>
-    <!-- 单一互斥状态机:错误 > 生成中 > 有简报 > 引导语,同一时刻只渲染一个主区 -->
     <!-- ① 简报加载失败(网络抖动/后端重启窗口):可见化 + 重试 -->
-    <div v-if="briefError && !generatingBrief" class="state-error">
+    <div v-if="briefError && !generatingBrief && !brief" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
       <div class="state-title">简报加载失败</div>
       <div class="state-msg">{{ briefError }}</div>
@@ -110,42 +109,8 @@
       </p>
     </div>
 
-    <!-- ③ 无简报:引导语(含上次失败原因,若后端记录过);2026-09-09 模式收敛:唯一生成路径为深度流程 -->
-    <div v-else-if="!brief" class="muted intro">
-      <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
-                :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
-      <!-- 深度流程:计划/澄清表单/进度面板/手册(唯一生成入口) -->
-      <template v-if="deepStage !== 'NONE' || deepMode">
-        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
-        <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
-        <ClarifyForm v-else-if="deepStage === 'CLARIFIED'" :questions="deepQuestions" :locked="true" :answers="deepAnswers" />
-        <ResearchProgress v-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'" :brief-id="deepBriefId" @done="onResearchDone" />
-        <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
-        <div class="deep-actions">
-          <el-button v-if="deepMode && deepStage === 'NONE'" type="primary" :loading="deepBusy" @click="onDeepClarify">生成研究计划</el-button>
-          <!-- 研究完成:自动简报已在后台生成;若失败(lastBriefError)可手动重试,也可跳过简报直接写正文 -->
-          <el-button v-if="deepStage === 'RESEARCH_DONE' && project && (project.lastBriefError || project.status === 'DRAFT')"
-                     type="warning" :loading="deepBusy" @click="onDeepBriefRetry">重新生成简报</el-button>
-          <el-button v-if="deepStage === 'RESEARCH_DONE'" :loading="deepBusy" @click="onDeepGenerate">跳过简报,直接生成正文 →</el-button>
-        </div>
-      </template>
-      <template v-else>
-      <div class="intro-hero">
-        <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
-        <div class="intro-title serif">让 AI 先想清楚，再动笔</div>
-        <p>AI 先生成研究计划并向你反问补充信息，多代理并行研究后产出标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入版本生成。</p>
-        <div class="gen-mode-row">
-          <el-button type="primary" :loading="deepBusy" @click="deepMode = true" size="large">
-            <el-icon class="btn-icon"><DataAnalysis /></el-icon>开始深度研究
-          </el-button>
-        </div>
-        <p class="form-tip">生成流程已升级为深度模式：先研究后写作，资料来源按系统设置（内部知识库/外部搜索）启用。</p>
-      </div>
-      </template>
-    </div>
-
-    <!-- ④ 简报正文(有数据必渲染;上次失败提示以轻量条幅叠加在内容上方) -->
-    <div v-else class="brief">
+    <!-- ③ 简报正文(有数据且深度流程未活跃必渲染;上次失败提示以轻量条幅叠加在内容上方) -->
+    <div v-else-if="brief && !deepActive" class="brief">
       <el-alert v-if="project && project.lastBriefError" type="warning" :closable="false" show-icon
                 :title="`上次重新生成失败，以下为当前简报：${project.lastBriefError}`" class="brief-alert" />
 
@@ -216,17 +181,65 @@
         <el-button v-else-if="canViewVersions" type="success" @click="gotoVersions">查看版本 →</el-button>
       </div>
     </div>
+
+    <!-- ④ 无简报区间(或重启流程中):唯一 deepStage 状态机,同一状态恒渲染同一 UI -->
+    <div v-else class="muted intro">
+      <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
+                :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
+
+      <!-- 计划生成中:clarify 异步占位态,自轮询 /deep/status 直至 questions 就绪 -->
+      <div v-if="deepStage === 'PLANNING'" class="generating">
+        <el-skeleton :rows="5" animated />
+        <p class="gen-tip">
+          <el-icon class="spin"><Loading /></el-icon>
+          研究计划生成中（AI 正在拆解研究问题与澄清问题），通常需要 10~30 秒，完成后将自动展开澄清表单…
+        </p>
+      </div>
+
+      <!-- 澄清表单(可填 / 已锁定回显) -->
+      <template v-else-if="deepStage === 'CLARIFYING' || deepStage === 'CLARIFIED'">
+        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
+        <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
+        <ClarifyForm v-else :questions="deepQuestions" :locked="true" :answers="deepAnswers" />
+      </template>
+
+      <!-- 研究中 / 研究完成:进度面板 + 事实手册 -->
+      <template v-else-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'">
+        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
+        <ResearchProgress :brief-id="deepBriefId" @done="onResearchDone" />
+        <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
+        <div class="deep-actions">
+          <!-- 研究完成:自动简报已在后台生成;若失败(lastBriefError)可手动重试,也可跳过简报直接写正文 -->
+          <el-button v-if="deepStage === 'RESEARCH_DONE' && project && (project.lastBriefError || project.status === 'DRAFT')"
+                     type="warning" :loading="deepBusy" @click="onDeepBriefRetry">重新生成简报</el-button>
+          <el-button v-if="deepStage === 'RESEARCH_DONE'" :loading="deepBusy" @click="onDeepGenerate">跳过简报,直接生成正文 →</el-button>
+        </div>
+      </template>
+
+      <!-- 引导页(唯一主操作「开始深度研究」;失败原因由上方 alert 展示,点击即重试) -->
+      <div v-else class="intro-hero">
+        <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
+        <div class="intro-title serif">让 AI 先想清楚，再动笔</div>
+        <p>AI 先生成研究计划并向你反问补充信息，多代理并行研究后产出标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入版本生成。</p>
+        <div class="gen-mode-row">
+          <el-button type="primary" :loading="deepBusy" @click="startDeep" size="large">
+            <el-icon class="btn-icon"><DataAnalysis /></el-icon>{{ project && project.lastBriefError ? '重试生成研究计划' : '开始深度研究' }}
+          </el-button>
+        </div>
+        <p class="form-tip">生成流程为深度模式：先研究后写作，资料来源按系统设置（内部知识库/外部搜索）启用。</p>
+      </div>
+    </div>
     </template>
   </el-card>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingBrief } from '../../constants/project'
-import { useProjectDetailStore, parseBrief } from '../../store/project-detail'
+import { useProjectDetailStore } from '../../store/project-detail'
 import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled, Check, DataAnalysis } from '@element-plus/icons-vue'
 import DeepPlanCard from './deep/DeepPlanCard.vue'
 import ClarifyForm from './deep/ClarifyForm.vue'
@@ -329,93 +342,36 @@ const ragTagType = (st) => ({
 // 重试入口:store 层做并发去重,失败信息落在 store.briefError
 const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 
-// 挂载即装载简报;project 详情由布局层异步加载,挂载时可能尚未就位——
-// watch 兜底:project 首次到位时补拉一次(刷新直进页面时必经此路径);
-// 生成期间轮询只刷 project 详情,不再 force 重拉 brief(状态翻转回调已覆盖,降噪避免 4~5s 一次的冗余请求)
-onMounted(() => {
-  store.ensureBrief(route.params.id)
-  // 挂载时 project 已就位(热缓存/布局已加载完):立即做深度断点探测(isImitation 判定可靠);
-  // 未就位则由下方 watch 首次到位时探测——直接在 onMounted 探测会因 isImitation 恒 false 误发 /deep/status
-  if (props.project) { projectSeen = true; probeDeepStatus() }
-})
-let projectSeen = false   // project 是否已首次就位(首次到位补拉一次)
-watch(() => props.project, (p) => {
-  if (!p || projectSeen) return
-  projectSeen = true
-  loadBrief()
-  // 深度断点探测延后到 project 就位:isImitation 依赖 props.project,挂载瞬间(冷缓存)恒 false,
-  // 此时无法区分仿写/主题创作,须等就位后再判定(见 probeDeepStatus 注释)
-  probeDeepStatus()
-})
-// 状态迁移驱动:仅 GENERATING_BRIEF → READY 翻转时 force 重拉简报(store.startPolling 翻转回调同款语义,此处兜底组件级恢复)
-watch(() => props.project?.status, (after, before) => {
-  if (before === 'GENERATING_BRIEF' && after === 'READY') loadBrief()
-})
-
-// 重新研究生成(2026-09-09 模式收敛):FAST 接口已封死,重新生成走深度流程(重新出研究计划)
-const onRegenerateDeep = () => {
-  deepStage.value = 'NONE'
-  deepMode.value = true
-  ElMessage.info('生成流程已升级为深度模式,请重新确认研究计划')
-}
-
-// ==================== S9 深度模式 ====================
-const deepMode = ref(false)          // 用户点了「深度模式」入口
+// ==================== S9 深度模式(09-11 单一 deepStage 状态机) ====================
 const deepBusy = ref(false)
 const deepBriefId = ref(null)
-const deepStage = ref('NONE')        // NONE/CLARIFYING/CLARIFIED/RESEARCHING/RESEARCH_DONE
+const deepStage = ref('NONE')        // NONE/PLANNING/CLARIFYING/CLARIFIED/RESEARCHING/RESEARCH_DONE
 const deepPlan = ref(null)
 const deepQuestions = ref([])
 const deepAnswers = ref([])
 const deepFactSheet = ref(null)
-
-// 路由意图参数消费(规格 3:gen query 收敛):
-// ?gen=deep|DEEP / ?gen=imitation 仅做 query 清理(与 project 无关,顶层执行安全);
-// deepMode/genDeepIntent 置位延后到 project 就位后的 probeDeepStatus——isImitation 依赖
-// props.project(冷缓存挂载时恒 false),顶层置位会把仿写项目误判为主题创作(误展开深度面板+误发探测)
-let genDeepIntent = false   // 本次进入是否带深度意图(驱动直发竞态重查,见 probeDeepStatus)
-const hasDeepIntent = route.query.gen === 'DEEP' || route.query.gen === 'deep'
-if (hasDeepIntent) {
-  router.replace({ query: { ...route.query, gen: undefined } })
-  // 仿写项目忽略 deep 意图:不展开深度面板,也不发 /deep/status(判定在 project 就位后)
-}
-// 文章仿写意图参数 ?gen=imitation(创建页「创建并分析原文」):仅清理 query,
-// 分析请求由 ProjectEdit 在创建后直发;详情页以 project.status(GENERATING_BRIEF)为事实源展示进度
-else if (route.query.gen === 'imitation') {
+// 文章仿写意图参数 ?gen=imitation(创建页「创建并分析原文」):仅清理 query(仿写交互不变);
+// 分析请求由 ProjectEdit 在创建后直发,详情页以 project.status(GENERATING_BRIEF)为事实源展示进度
+if (route.query.gen === 'imitation') {
   router.replace({ query: { ...route.query, gen: undefined } })
 }
+// 「重新研究生成」:旧 brief 仍在 currentBriefId 上,重启期间须跳过「简报正文」分支优先走深度流程;
+// 记下重启前的 currentBriefId,新简报落库(currentBriefId 变化)后退出重启态
+const restarting = ref(false)
+let restartingFromBriefId = null
+let planningTimer = null             // PLANNING 自轮询定时器
 
-/**
- * 深度断点状态恢复(仅非仿写项目,规格 2):
- * 从 /deep/status 恢复 CLARIFYING/RESEARCHING/RESEARCH_DONE 等断点;仿写项目一律不发该请求。
- * 调用时机:project 首次就位后(onMounted 热缓存路径 / watch 兜底路径),此时 isImitation 判定可靠。
- * 直发竞态重查(规格 5,仅 gen=deep 意图进入时):创建页 startDeep(clarify 约 10~30s)尚未落库时
- * 首查返回 NONE——做有界重查,最多 3 次、间隔 2s,任一次返回 DEEP 即恢复;
- * 超限停在引导语(用户可手动点「生成研究计划」)。普通进入仅首查,不多发。
- */
-const probeDeepStatus = async () => {
-  if (isImitation.value) return   // 仿写项目不探测深度状态(project 已就位,判定可靠)
-  if (hasDeepIntent) { deepMode.value = true; genDeepIntent = true }
-  try {
-    let d = (await http.get(`/projects/${route.params.id}/deep/status`)).data || {}
-    if (!genDeepIntent) {
-      // 普通进入:首查即恢复,不做重查
-      if (d.genMode === 'DEEP') applyDeepStatus(d)
-      return
-    }
-    // 直发竞态场景:项目状态推进到下游(简报已就绪等)则无需恢复,否则 NONE 时有界重查
-    const downstream = () => ['READY', 'GENERATING_VERSIONS', 'VERSIONS_READY', 'PUBLISHED_DRAFT']
-      .includes(props.project?.status)
-    let probe = 0
-    while (d.genMode !== 'DEEP' && probe < 3 && !downstream()) {
-      probe++
-      await new Promise(r => setTimeout(r, 2000))
-      d = (await http.get(`/projects/${route.params.id}/deep/status`)).data || {}
-    }
-    if (d.genMode === 'DEEP') applyDeepStatus(d)
-    // 超限仍 NONE:停在引导语,深度面板保留「生成研究计划」按钮供手动重试
-  } catch { /* 深度接口异常不影响快速模式 */ }
-}
+// 深度流程是否活跃(决定「有旧简报」时渲染简报正文还是深度流程):
+// PLANNING/CLARIFYING/CLARIFIED/RESEARCHING 恒活跃;RESEARCH_DONE 仅在没有简报时活跃(等待重试简报);
+// restarting 期间恒活跃(新简报尚未落库,优先展示重启流程)
+const deepActive = computed(() => {
+  if (restarting.value) return true
+  const s = deepStage.value
+  if (s === 'PLANNING' || s === 'CLARIFYING' || s === 'CLARIFIED' || s === 'RESEARCHING') return true
+  return s === 'RESEARCH_DONE' && !brief.value
+})
+
+const stopPlanningPoll = () => { if (planningTimer) { clearInterval(planningTimer); planningTimer = null } }
 
 /** 把 /deep/status 返回写入深度面板状态(断点续跑) */
 const applyDeepStatus = (d) => {
@@ -427,19 +383,109 @@ const applyDeepStatus = (d) => {
   deepFactSheet.value = d.factSheet || null
 }
 
-const onDeepClarify = async () => {
+/**
+ * PLANNING 轮询:每 2.5s 拉 /deep/status,离开 PLANNING 即停并应用;回 NONE 视为失败,回引导态。
+ * 必须带本次启动的 briefId 查询:失败时占位行被删除,若不带 briefId 会回退到旧 DEEP 简报,
+ * 误判为 CLARIFYING 而永远检测不到失败(旧简报存在时的重启场景)。
+ */
+const startPlanningPoll = (briefId) => {
+  stopPlanningPoll()
+  planningTimer = setInterval(async () => {
+    try {
+      const bid = briefId ?? deepBriefId.value
+      const url = bid != null
+        ? `/projects/${route.params.id}/deep/status?briefId=${bid}`
+        : `/projects/${route.params.id}/deep/status`
+      const d = (await http.get(url)).data || {}
+      if (d.stage === 'PLANNING') { applyDeepStatus(d); return }
+      stopPlanningPoll()
+      if (d.genMode === 'DEEP' && d.stage && d.stage !== 'NONE') {
+        applyDeepStatus(d)
+        // 计划已就绪:刷新 project 以清掉成功后已被后端清空的 lastBriefError(避免旧错误横幅残留)
+        await store.ensureProject(route.params.id, { force: true })
+      } else {
+        // 占位行已被删除(计划生成失败):退出重启态回引导态,lastBriefError 由 project 展示
+        restarting.value = false
+        deepStage.value = 'NONE'
+        await store.ensureProject(route.params.id, { force: true })
+      }
+    } catch { /* 轮询失败静默,下次再试 */ }
+  }, 2500)
+}
+
+/**
+ * 深度断点状态恢复(仅非仿写项目):project 就位后单次拉 /deep/status,
+ * 恢复 PLANNING/CLARIFYING/CLARIFIED/RESEARCHING/RESEARCH_DONE;PLANNING 时续起轮询。
+ * 不再依赖 ?gen=deep 路径意图与 6s 有界重查——PLANNING 态由后端持久化,可跨退出重进恢复。
+ */
+const syncDeepStatus = async () => {
+  if (isImitation.value) return   // 仿写项目不发深度接口
+  try {
+    const d = (await http.get(`/projects/${route.params.id}/deep/status`)).data || {}
+    if (d.genMode !== 'DEEP' || !d.stage || d.stage === 'NONE') {
+      deepStage.value = 'NONE'
+      stopPlanningPoll()
+      return
+    }
+    applyDeepStatus(d)
+    if (d.stage === 'PLANNING') startPlanningPoll(d.briefId)
+    else stopPlanningPoll()
+  } catch { /* 深度接口异常不影响引导页 */ }
+}
+
+/** 唯一主操作:启动深度研究(POST /deep/clarify 毫秒级返回,立即进 PLANNING 进度态并自轮询) */
+const startDeep = async () => {
   deepBusy.value = true
+  // 乐观置 PLANNING:立即给出进度反馈(避免重启时旧面板闪烁);失败再按后端真实状态回填
+  deepPlan.value = null
+  deepQuestions.value = []
+  deepAnswers.value = []
+  deepFactSheet.value = null
+  deepStage.value = 'PLANNING'
   try {
     const res = await http.post(`/projects/${route.params.id}/deep/clarify`,
       { topic: props.project?.topic || props.project?.name, extraInfo: props.project?.extraInfo || '' })
     if (res.code !== 0) throw new Error(res.msg)
     deepBriefId.value = res.data.briefId
-    deepPlan.value = res.data.researchPlan ? JSON.parse(res.data.researchPlan) : null
-    deepQuestions.value = res.data.questions ? JSON.parse(res.data.questions) : []
-    deepStage.value = 'CLARIFYING'
-  } catch (e) { ElMessage.error(e?.response?.data?.msg || e.message || '研究计划生成失败') }
-  finally { deepBusy.value = false }
+    startPlanningPoll(res.data.briefId)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e.message || '研究计划启动失败')
+    // 启动失败(如并发冲突):退出重启态,并按后端真实状态回填(可能已在 PLANNING)
+    restarting.value = false
+    await syncDeepStatus()
+  } finally { deepBusy.value = false }
 }
+
+// 挂载即装载简报;project 详情由布局层异步加载,挂载时可能尚未就位——
+// watch 兜底:project 首次到位时补拉一次并同步深度状态(刷新直进页面时必经此路径)
+onMounted(() => {
+  store.ensureBrief(route.params.id)
+  if (props.project) { projectSeen = true; syncDeepStatus() }
+})
+let projectSeen = false   // project 是否已首次就位(首次到位补拉一次)
+watch(() => props.project, (p) => {
+  if (!p || projectSeen) return
+  projectSeen = true
+  loadBrief()
+  syncDeepStatus()
+})
+// 状态迁移驱动:仅 GENERATING_BRIEF → READY 翻转时 force 重拉简报(store.startPolling 翻转回调同款语义,此处兜底组件级恢复)
+watch(() => props.project?.status, (after, before) => {
+  if (before === 'GENERATING_BRIEF' && after === 'READY') loadBrief()
+})
+
+// 重新研究生成(2026-09-09 模式收敛):FAST 接口已封死,直接启动深度流程(不再回引导页两步点击)
+const onRegenerateDeep = () => {
+  restarting.value = true
+  restartingFromBriefId = props.project?.currentBriefId ?? null
+  startDeep()
+}
+// 新简报落库(currentBriefId 指向新 brief)后退出重启态,恢复正常简报展示
+watch(() => props.project?.currentBriefId, (v) => {
+  if (restarting.value && v != null && v !== restartingFromBriefId) restarting.value = false
+})
+
+onUnmounted(stopPlanningPoll)
 
 const onClarifySubmit = async (answers) => {
   deepBusy.value = true
