@@ -140,3 +140,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: C1 车型库数据基座加固
+<!-- trellis-session: v=2 fp=30dfd6dd1660281e -->
+
+**Date**: 2026-09-12
+**Task**: C1 车型库数据基座加固
+**Branch**: `main`
+
+### Summary
+
+完成父任务下 C1 子任务：intro_images 语义统一(派生 introImageUrls)、删除车型向量兜底清理、KB 向量索引 IVFFLAT→HNSW、手动+定时增量同步(SCHEDULED)。实测车型同步/七牛转存公网200/索引切换/编译构建全通过。更新 backend spec 记录索引幂等切换与物理向量表级联清理约定。父任务余 C2 新闻域/C3 知识中心/C4 问答待做。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `db4fa02` | feat(S6): 车型库数据基座加固——intro_images 语义统一、删除向量兜底清理、KB 索引统一 HNSW、手动+定时增量同步 |
+| `924b4bc` | docs(spec): 记录 pgvector 索引幂等切换与物理向量表级联清理约定 |
+
+### Status
+
+[OK] **Completed**
