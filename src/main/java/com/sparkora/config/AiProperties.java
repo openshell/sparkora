@@ -35,6 +35,9 @@ public class AiProperties {
     /** 统一检索锚点加权系数(S8):锚点车型(source=CAR 且 modelId∈anchor)块分数 × 该系数重排;默认 1.15。 */
     private double ragAnchorBoost = 1.15;
 
+    /** 官方新闻域(NEWS)生成检索:单次注入新闻块数上限(C2;默认 4,与车型/KB 配额独立互不挤占;0=关闭 NEWS 注入)。 */
+    private int ragNewsTopk = 4;
+
     /** 解析图片模型轮询列表：优先 imageModels，为空回退 imageModel。 */
     public List<String> imageModelList() {
         String raw = (imageModels != null && !imageModels.isBlank()) ? imageModels : imageModel;

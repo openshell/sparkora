@@ -75,6 +75,12 @@
             <artifactId>dotenv-java</artifactId>
             <version>3.0.0</version>
         </dependency>
+        <!-- HTML 解析(新闻详情页 SSR 正文抽取,C2 新闻知识域) -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.18.1</version>
+        </dependency>
         <!-- 工具 -->
         <dependency>
             <groupId>org.projectlombok</groupId>

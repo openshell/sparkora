@@ -53,6 +53,9 @@ class CarRagServiceTest {
         public int deleteByDocId(Long docId) { return 0; }
 
         @Override
+        public int deleteByModelId(Long modelId) { return 0; }
+
+        @Override
         public List<Map<String, Object>> searchTopK(Long modelId, String queryVec, int limit) {
             RuntimeException e = byThrow.get(modelId);
             if (e != null) throw e;
@@ -373,5 +376,79 @@ class CarRagServiceTest {
         assertTrue(s2.contains("前电机最大功率（kW）→200"));
         assertTrue(!s2.contains("iTAC"), "「无」类布尔值不入摘要");
         assertTrue(!s2.contains("车漆颜色"), "「可选装」不入摘要");
+    }
+
+    // ==================== C2 新闻域(NEWS) ====================
+
+    @Test
+    void C2_新闻块命中_来源标注官方新闻_三域来源行() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200", 0.9),
+                urow("KB", null, "充电功率常识", "KB_CHUNK", "知识：充电功率常识（充电）\n7kW 家充为交流慢充。", 0.8),
+                urow("NEWS", null, "比亚迪发布新车型", "NEWS_BODY", "新闻：比亚迪发布新车型（2026-09-01）\n官方新闻正文。", 0.7));
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult r = svc.retrieveForGeneration("比亚迪 新车型", 8, List.of(1L));
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("知识来源：车型数据 + 通用知识库 + 官方新闻"),
+                () -> "三域来源行: " + r.context());
+        assertTrue(r.context().contains("【官方新闻：比亚迪发布新车型】"));
+        assertTrue(r.citations().stream().anyMatch(c -> "NEWS".equals(c.source())), "NEWS 块应进 citations");
+    }
+
+    @Test
+    void C2_仅新闻命中_来源行为官方新闻() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("NEWS", null, "官方新闻标题", "NEWS_BODY", "新闻：官方新闻标题（2026-09-01）\n正文", 0.8));
+        CarRagService svc = newService(mapper);
+        CarRagService.RagResult r = svc.retrieveForGeneration("新闻查询", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertEquals("知识来源：官方新闻", r.context().split("\n---\n")[0]);
+        assertTrue(r.context().contains("【官方新闻：官方新闻标题】"));
+    }
+
+    @Test
+    void C2_新闻配额为0_不注入NEWS_其他域不受影响() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08EV", "MODEL_INFO", "车型：海狮08EV\n价格区间：239,900", 0.9),
+                urow("NEWS", null, "不应注入", "NEWS_BODY", "新闻：不应注入（2026-09-01）\n正文", 0.85));
+        AiProperties props = new AiProperties();
+        props.setRagNewsTopk(0);
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08", 8, List.of(1L));
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("海狮08EV"));
+        assertTrue(!r.context().contains("不应注入"), "ragNewsTopk=0 时 NEWS 不注入");
+    }
+
+    @Test
+    void C2_NEWS不受KB开关控制_KB关闭仍注入新闻() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urow("KB", null, "不应出现", "KB_CHUNK", "知识：不应出现（通用）\n内容", 0.9),
+                urow("NEWS", null, "官方新闻", "NEWS_BODY", "新闻：官方新闻（2026-09-01）\n正文", 0.85));
+        AiProperties props = new AiProperties();
+        props.setRagKbEnabled(false);   // KB 关闭;NEWS 独立配额,不受其控制
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(!r.context().contains("不应出现"), "KB 关闭后 KB 块被排除");
+        assertTrue(r.context().contains("【官方新闻：官方新闻】"), "NEWS 不受 ragKbEnabled 控制");
+        assertEquals("知识来源：官方新闻", r.context().split("\n---\n")[0]);
+    }
+
+    @Test
+    void C2_新闻不参与锚点加权_分数不变() {
+        FakeMapper mapper = new FakeMapper();
+        // 新闻块 modelId=null,即便 anchor 非空也不得加权
+        mapper.unifiedRows = List.of(
+                urow("NEWS", null, "官方新闻", "NEWS_BODY", "新闻：官方新闻（2026-09-01）\n正文", 0.60));
+        AiProperties props = new AiProperties();
+        props.setRagAnchorBoost(2.0);
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of(1L));
+        assertEquals(0.60, r.maxScore(), 1e-9, "NEWS 不参与锚点加权,分数不得被放大");
     }
 }

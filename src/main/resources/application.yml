@@ -53,6 +53,7 @@ sparkora:
     rag-kb-topk: ${AI_RAG_KB_TOPK:4}            # S7:通用知识库生成检索注入块数上限(与车型域配额独立)
     rag-kb-enabled: ${AI_RAG_KB_ENABLED:true}   # S7:通用知识库总开关(false 回退 S6.2 纯车型域)
     rag-anchor-boost: ${AI_RAG_ANCHOR_BOOST:1.15} # S8:锚点车型块分数加权系数(统一检索重排)
+    rag-news-topk: ${AI_RAG_NEWS_TOPK:4}        # C2:官方新闻域生成检索注入块数上限(与车型/KB 配额独立;0=关闭 NEWS 注入)
   deep:                                  # S9 深度生成模式
     search-web-enabled: ${SEARCH_WEB_ENABLED:true}   # 研究子代理外部搜索总开关
     tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)
@@ -93,6 +94,14 @@ sparkora:
     hmac-secret-key: ${CAR_HMAC_SECRET_KEY:fcb8f0ddg5c92g45b7g9d33g04cc55d3be3b}
     sync-enabled: ${CAR_SYNC_ENABLED:false}
     sync-cron: ${CAR_SYNC_CRON:0 0 3 * * ?}
+  news:
+    # C2:新闻知识域(比亚迪官方 CMS 列表 + www.byd.com 详情页 SSR HTML 抽取)
+    list-url: ${NEWS_LIST_URL:https://cms-api.byd.com/es/search}
+    detail-base-url: ${NEWS_DETAIL_BASE_URL:https://www.byd.com}
+    timeout-ms: ${NEWS_TIMEOUT_MS:30000}
+    page-size: ${NEWS_PAGE_SIZE:12}
+    sync-enabled: ${NEWS_SYNC_ENABLED:false}
+    sync-cron: ${NEWS_SYNC_CRON:0 30 3 * * ?}
   qiniu:
     enabled: ${QINIU_ENABLED:true}
     access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK

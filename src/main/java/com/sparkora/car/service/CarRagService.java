@@ -200,7 +200,8 @@ public class CarRagService {
      *   2) 锚点加权:CAR 块 modelId∈anchorModelIds → score × AI_RAG_ANCHOR_BOOST(重排,非过滤);
      *   3) 配额:PARAM_GROUP/MODEL_INFO 优先,RIGHTS/FEATURE ≤1/3,KB_CHUNK 独立配额 ragKbTopk;
      *      AI_RAG_KB_ENABLED=false 时 KB 块在配额层排除(等价 S6 行为);
-     *   4) 行内来源标注:【车型数据:名称】/【通用知识:标题】,首行「知识来源:…」按命中构成。
+     *      C2 起 NEWS 块独立配额 ragNewsTopk(不受 ragKbEnabled 控制,0=关闭 NEWS 注入);
+     *   4) 行内来源标注:【车型数据:名称】/【通用知识:标题】/【官方新闻:标题】,首行「知识来源:…」按命中构成。
      *
      * 状态判定(S6.1 语义不变):
      *   无命中 → NO_KNOWLEDGE;命中但最高分 < rejectScore → LOW_CONFIDENCE(全抛弃);
@@ -221,9 +222,13 @@ public class CarRagService {
                 : anchorModelIds.stream().filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
         List<UnifiedHit> merged = new ArrayList<>();
         boolean anyFailure = false;
+        // C2:新闻域块数远大于车型/KB(167 篇≈1300+ 块)。候选窗口由 searchTopKUnified 按域隔离
+        // (CAR+KB 合并窗口 / NEWS 独立窗口),故此处过采样沿用 C2 前口径 max(topK*4,32) 即可——
+        // 保持 CAR/KB 候选集与行为不变,NEWS 不挤占(详见 CarDocEmbeddingMapper.searchTopKUnified 注释)。
+        int oversample = Math.max(topK * 4, 32);
         try {
-            // 主查询(统一全库;过采样,配额/加权后再截)
-            List<UnifiedHit> primary = retrieveUnified(query, Math.max(topK * 4, 32));
+            // 主查询(统一全库;按域隔离候选窗口,配额/加权后再截)
+            List<UnifiedHit> primary = retrieveUnified(query, oversample);
             merged.addAll(primary);
             // 参数级子查询(S6.2):同走统一检索,chunkText 去重补命中
             java.util.Set<String> seen = new java.util.HashSet<>();
@@ -267,15 +272,19 @@ public class CarRagService {
                     anchors, rawHit, maxScore, rejectScore, query);
             return new RagResult(RagStatus.LOW_CONFIDENCE, "", rawHit, maxScore);
         }
-        // 统一配额选择:核心(PARAM_GROUP/MODEL_INFO)优先 + 权益类 ≤1/3 + KB 独立配额
+        // 统一配额选择:核心(PARAM_GROUP/MODEL_INFO)优先 + 权益类 ≤1/3 + KB/新闻独立配额
         List<UnifiedHit> coreCandidates = new ArrayList<>();
         List<UnifiedHit> softCandidates = new ArrayList<>();
         List<UnifiedHit> kbCandidates = new ArrayList<>();
+        List<UnifiedHit> newsCandidates = new ArrayList<>();
+        int newsQuota = Math.max(0, aiProps.getRagNewsTopk());
         for (UnifiedHit h : boosted) {
             if (h.score() < minScore) continue;
             if (isHeaderChunk(h.toTyped())) continue;
             if ("KB".equals(h.source())) {
                 if (kbEnabled) coreCandidates.add(h);   // KB 块并入核心候选池,配额阶段独立截取
+            } else if ("NEWS".equals(h.source())) {
+                if (newsQuota > 0) newsCandidates.add(h);   // C2 新闻域独立配额,不受 ragKbEnabled 控制
             } else if ("RIGHTS".equals(h.chunkType()) || "FEATURE".equals(h.chunkType())) {
                 softCandidates.add(h);
             } else {
@@ -284,24 +293,31 @@ public class CarRagService {
         }
         coreCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
         softCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
-        // 核心块配额:carTopK 给车型核心块(锚点车型数×topK,至少 topK),KB 独立配额不挤占
+        newsCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
+        // 核心块配额:carTopK 给车型核心块(锚点车型数×topK,至少 topK),KB/新闻独立配额不挤占
         int carQuota = Math.max(topK, topK * Math.max(1, anchors.size()));
         List<UnifiedHit> carSelected = coreCandidates.stream()
-                .filter(h -> !"KB".equals(h.source())).toList();
+                .filter(h -> !"KB".equals(h.source()) && !"NEWS".equals(h.source())).toList();
         int kbQuota = kbEnabled ? aiProps.getRagKbTopk() : 0;
         List<UnifiedHit> kbSelected = coreCandidates.stream()
                 .filter(h -> "KB".equals(h.source())).limit(kbQuota).toList();
+        List<UnifiedHit> newsSelected = newsCandidates.stream().limit(newsQuota).toList();
         int softCap = Math.max(1, carQuota / 3);
         List<UnifiedHit> softSelected = softCandidates.stream().limit(Math.min(softCap, Math.max(0, carQuota - carSelected.size()))).toList();
         List<UnifiedHit> selected = new ArrayList<>(carSelected);
         selected.addAll(softSelected);
         selected.addAll(kbSelected);
+        selected.addAll(newsSelected);
         selected.sort((a, b) -> Double.compare(b.score(), a.score()));
-        // 来源构成
+        // 来源构成(C2:三域组合)
         boolean hasCar = selected.stream().anyMatch(h -> "CAR".equals(h.source()));
         boolean hasKb = selected.stream().anyMatch(h -> "KB".equals(h.source()));
-        String sourceLine = hasCar && hasKb ? "知识来源：车型数据 + 通用知识库"
-                : (hasKb ? "知识来源：通用知识库" : "知识来源：车型数据");
+        boolean hasNews = selected.stream().anyMatch(h -> "NEWS".equals(h.source()));
+        List<String> sourceParts = new ArrayList<>();
+        if (hasCar) sourceParts.add("车型数据");
+        if (hasKb) sourceParts.add("通用知识库");
+        if (hasNews) sourceParts.add("官方新闻");
+        String sourceLine = "知识来源：" + (sourceParts.isEmpty() ? "车型数据" : String.join(" + ", sourceParts));
         StringBuilder sb = new StringBuilder();
         StringBuilder covered = new StringBuilder();
         sb.append(sourceLine).append("\n---\n");
@@ -309,14 +325,17 @@ public class CarRagService {
             if ("KB".equals(h.source())) {
                 sb.append("【通用知识：").append(h.modelName() == null ? "" : h.modelName()).append("】")
                   .append(h.chunkText()).append("\n---\n");
+            } else if ("NEWS".equals(h.source())) {
+                sb.append("【官方新闻：").append(h.modelName() == null ? "" : h.modelName()).append("】")
+                  .append(h.chunkText()).append("\n---\n");
             } else {
                 sb.append("【车型数据：").append(h.modelName() == null ? "" : h.modelName()).append("】")
                   .append(h.chunkText()).append("\n---\n");
                 covered.append(extractParamSummary(h.chunkText()));
             }
         }
-        log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={}) maxScore={}",
-                anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(), maxScore);
+        log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={} news={}) maxScore={}",
+                anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(), newsSelected.size(), maxScore);
         // R3 知识引用明细(RagResult 附带,与注入 context 同源):仅 OK 时非空;截断防超列。
 
         java.util.List<Citation> cites = new ArrayList<>(Math.min(selected.size(), CITE_MAX));

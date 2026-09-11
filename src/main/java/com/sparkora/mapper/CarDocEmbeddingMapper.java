@@ -53,12 +53,20 @@ public interface CarDocEmbeddingMapper {
     List<Map<String, Object>> countByModel();
 
     /**
-     * 统一检索(S8 去门禁):车型域与 KB 域同向量空间 UNION ALL 全库检索,按余弦分排序。
-     * 返回行:source(CAR/KB)/docId/modelId(可空)/chunkType/chunkText/score/modelName(车型名或知识标题)。
-     * 仅含有效块(car_doc.deleted=0;kb_doc.deleted=0 且 enabled)。
+     * 统一检索(S8 去门禁):车型域、KB 域与新闻域(C2)同向量空间检索,按余弦分排序。
+     * 返回行:source(CAR/KB/NEWS)/docId/modelId(可空)/chunkType/chunkText/score/modelName(车型名/知识标题/新闻标题)。
+     * 仅含有效块(car_doc.deleted=0;kb_doc.deleted=0 且 enabled;news_doc.deleted=0 且 news.deleted=0)。
+     * NEWS 段 modelId 为 NULL(新闻与车型不关联;锚点加权仅对 CAR 生效)。
+     *
+     * 候选窗口按域隔离(C2 关键):CAR+KB 合并取 top-#{limit}(与 C2 前**完全一致**,保证既有
+     * 车型/KB 命中与配额行为不变);NEWS 单独取 top-#{limit}。若三者共用一个全局 LIMIT,
+     * 新闻块(≈1300+)会因同向量空间高相似而占满整个窗口,把 CAR/KB 完全挤出候选
+     * (实测 BYD 新闻类 query CAR 命中数从 32 掉到 0),下游独立配额随即失效。
+     * 调用方传入的 limit 需 >= 各域配额(默认 topK*4 且至少 32,远大于 ragKbTopk/ragNewsTopk)。
      */
     @Select("SELECT * FROM ( " +
-            "SELECT 'CAR' AS \"source\", e.doc_id AS \"docId\", d.model_id AS \"modelId\", " +
+            // ① 车型 + KB:合并取 top-K(C2 前语义原样保留)
+            "(SELECT 'CAR' AS \"source\", e.doc_id AS \"docId\", d.model_id AS \"modelId\", " +
             "       d.chunk_type AS \"chunkType\", d.chunk_text AS \"chunkText\", " +
             "       1 - (e.embedding <=> #{queryVec}::vector) AS \"score\", m.name AS \"modelName\" " +
             "FROM sparkora_car_doc_embedding e " +
@@ -71,7 +79,17 @@ public interface CarDocEmbeddingMapper {
             "FROM sparkora_kb_chunk_embedding e " +
             "JOIN sparkora_kb_chunk c ON c.id = e.chunk_id " +
             "JOIN sparkora_kb_doc d2 ON d2.id = c.doc_id AND d2.deleted = 0 AND d2.enabled = TRUE " +
-            ") u ORDER BY \"score\" DESC LIMIT #{limit}")
+            "ORDER BY \"score\" DESC LIMIT #{limit}) " +
+            // ② 新闻域:独立候选窗口,不与 CAR/KB 争抢全局 LIMIT
+            "UNION ALL " +
+            "(SELECT 'NEWS' AS \"source\", e.doc_id AS \"docId\", NULL AS \"modelId\", " +
+            "       d.chunk_type AS \"chunkType\", d.chunk_text AS \"chunkText\", " +
+            "       1 - (e.embedding <=> #{queryVec}::vector) AS \"score\", n.title AS \"modelName\" " +
+            "FROM sparkora_news_doc_embedding e " +
+            "JOIN sparkora_news_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
+            "JOIN sparkora_news n ON n.id = d.news_id AND n.deleted = 0 " +
+            "ORDER BY \"score\" DESC LIMIT #{limit}) " +
+            ") u ORDER BY \"score\" DESC")
     List<Map<String, Object>> searchTopKUnified(@Param("queryVec") String queryVec,
                                                 @Param("limit") int limit);
 }

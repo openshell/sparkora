@@ -465,3 +465,78 @@ ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_theme     
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_highlight  VARCHAR(64);
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_mac_style  BOOLEAN;
 ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_footnote   BOOLEAN;
+
+-- ============================================================================
+-- S11:新闻知识域(C2 新闻数据接入与独立知识域)。
+-- 比亚迪官方新闻(列表 /es/search + 详情页 SSR HTML)→ 清洗入库 → 切块向量化,
+-- 作为与车型(CAR)/通用知识(KB)并列的第三知识域 NEWS,接入统一检索。
+-- 注意:news_id 语义分两级——sparkora_news.news_id 是官方字符串 id(业务唯一键),
+--       sparkora_news_doc.news_id 是内部 BIGINT 外键;实体 NewsEntity.newsId(String) vs NewsDocEntity.newsId(Long)。
+-- 全部单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+
+-- 新闻主表(官方新闻元数据 + 抽取正文)
+CREATE TABLE IF NOT EXISTS sparkora_news (
+    id              BIGSERIAL PRIMARY KEY,
+    news_id         VARCHAR(200) NOT NULL UNIQUE,  -- 官方字符串 id,如 /page/byd-cn/news-2026/detail634
+    title           VARCHAR(500) NOT NULL,         -- 新闻标题
+    url             VARCHAR(500),                  -- 官方相对路径,如 /cn/detail634
+    image_url       VARCHAR(500),                  -- 封面(相对或绝对,不下载)
+    publish_date    TIMESTAMP,                     -- 官方 date 解析(失败置空)
+    tags            TEXT,                          -- JSON 数组(官方 tags)
+    tag_names       TEXT,                          -- JSON 数组(官方 tagNames,展示用)
+    content         TEXT,                          -- 抽取正文纯文本(图片型新闻可能为空)
+    source          VARCHAR(50)  DEFAULT 'byd-news',
+    sync_status     VARCHAR(20)  NOT NULL DEFAULT 'SUCCESS', -- SUCCESS/FAILED(单条抽取失败)
+    last_sync_at    TIMESTAMP,
+    last_sync_error VARCHAR(1000),
+    created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted         SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_news_publish ON sparkora_news(publish_date);
+CREATE INDEX IF NOT EXISTS idx_news_status ON sparkora_news(sync_status);
+
+-- 新闻切块表(检索单元;首行带新闻标题锚点)
+CREATE TABLE IF NOT EXISTS sparkora_news_doc (
+    id          BIGSERIAL PRIMARY KEY,
+    news_id     BIGINT       NOT NULL REFERENCES sparkora_news(id),  -- 内部 id(FK)
+    seq         INT          NOT NULL,                               -- 块序号(同新闻内连续)
+    chunk_type  VARCHAR(20)  NOT NULL DEFAULT 'NEWS_BODY',           -- NEWS_BODY(空正文兜底块 NEWS_TITLE)
+    chunk_text  TEXT         NOT NULL,                               -- 首行固定「新闻：<title>（<publishDate>）」
+    token_count INTEGER,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_news_doc_news ON sparkora_news_doc(news_id);
+
+-- 新闻向量表(pgvector 1024 维,与车型/KB 同向量空间;HNSW cosine)
+CREATE TABLE IF NOT EXISTS sparkora_news_doc_embedding (
+    id          BIGSERIAL PRIMARY KEY,
+    doc_id      BIGINT NOT NULL REFERENCES sparkora_news_doc(id),
+    news_id     BIGINT NOT NULL REFERENCES sparkora_news(id),
+    embedding   VECTOR(1024),
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_news_doc_emb_news ON sparkora_news_doc_embedding(news_id);
+CREATE INDEX IF NOT EXISTS idx_news_doc_emb_vec ON sparkora_news_doc_embedding
+    USING hnsw (embedding vector_cosine_ops);
+
+-- 新闻同步任务表(复用车型任务表字段范式)
+CREATE TABLE IF NOT EXISTS sparkora_news_sync_job (
+    id           BIGSERIAL PRIMARY KEY,
+    job_type     VARCHAR(20)  NOT NULL,              -- FULL / INCREMENT / SCHEDULED / RETRY
+    status       VARCHAR(20)  NOT NULL DEFAULT 'RUNNING', -- RUNNING/SUCCESS/PARTIAL/FAILED
+    total        INTEGER      DEFAULT 0,
+    success      INTEGER      DEFAULT 0,
+    failed       INTEGER      DEFAULT 0,
+    failed_items TEXT,                               -- JSON:[{newsId,title,error}]
+    started_at   TIMESTAMP,
+    finished_at  TIMESTAMP,
+    error_msg    VARCHAR(1000),
+    created_by   VARCHAR(64)  NOT NULL,
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted      SMALLINT     NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_news_sync_job_created ON sparkora_news_sync_job(created_at);
