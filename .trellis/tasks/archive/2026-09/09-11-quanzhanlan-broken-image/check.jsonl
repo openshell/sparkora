@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/09-11-quanzhanlan-broken-image/prd.md", "reason": "逐条核对 AC1~AC6：两份 CSS 无 imgkr/ufileos、diff 为空、渲染 EXIT=0 且无该 URL、其余样式不变、双构建、发布复测"}
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "核对物化 CSS 是否也需同步（运行时 data/tmp 物化产物）与渲染链路"}
