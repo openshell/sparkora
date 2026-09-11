@@ -31,6 +31,24 @@ if (claimed == 0) throw new IllegalStateException("状态冲突");
 
 ---
 
+## Async Claim / 幂等占位（09-11 先例：ClarifyService）
+
+异步生成（202 语义）的「同步落占位 + 后台生成」范式，并发/自愈用**部分唯一索引**做数据库级兜底：
+
+```sql
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS plan_status VARCHAR(20); -- DEEP: PLANNING/READY
+CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
+    ON sparkora_article_brief(project_id) WHERE plan_status = 'PLANNING';
+```
+
+- 同步 `start()`：清理超 10min 的陈旧占位（进程死亡自愈）→ insert 占位（`plan_status='PLANNING'`）→ 撞索引捕 `DuplicateKeyException` 转 `IllegalStateException`（接口 409）。
+- 部分唯一索引只约束 PLANNING 态，历史/完成行（null/READY）不冲突，可安全对存量库执行。
+- 占位表用物理 `deleteById` 清理（若实体带 `@TableLogic` 逻辑删除，`delete` 只会置 deleted，占位仍可能被查询命中——brief 表无 `@TableLogic`，不受影响）。
+
+> **Warning**: 占位行失败时若被删除，任何「按项目取最新行」的查询都会回退到更早的旧行，导致轮询误判状态。轮询必须用**本次启动返回的 briefId 精确定位**，不能只按 projectId 取最新（见 error-handling.md「轮询可删除占位」）。
+
+---
+
 ## Migrations
 
 - 全部写进 `schema.sql`（幂等写法，启动自动执行），不引入独立迁移工具。

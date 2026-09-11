@@ -86,6 +86,26 @@ try {
 
 **Prevention**: 新增 store 数据域时，同步检查 `ensure*` 三处触发：组件 onMounted/watch 兜底、`startPolling` 状态翻转、动作成功后的 force 重取。
 
+### Common Mistake: 轮询可删除的占位行时按「最新行」查询
+
+**Symptom**: 异步任务（如 clarify 研究计划）失败后占位行被删除，前端轮询 `/deep/status` 却拿到**更早的旧行**（旧 READY/CLARIFYING），误判为「已完成/进行中」，永远检测不到失败（AC「失败可见可重试」不可达）。
+
+**Cause**: `/deep/status?briefId` 缺省时按 `project_id + gen_mode=DEEP ORDER BY id DESC LIMIT 1` 取最新行；占位行一旦删除，最新行回退到历史行。
+
+**Fix**: 轮询必须携带**本次启动返回的 briefId** 精确定位（`/deep/status?briefId=<本次占位id>`）；后端按 id 查不到时返回 `stage=NONE`，前端据此回引导态。
+
+**Prevention**: 任何「落占位 → 异步生成 → 失败删占位」的链路，前端轮询一律带占位 id；后端 status 对「按 id 查无」返回 NONE 而非回退最新。
+
+### Common Mistake: 异步生成成功后未清空 last_*_error
+
+**Symptom**: 失败后重试成功，页面仍显示红色「上次生成失败」横幅。
+
+**Cause**: 成功分支只写了产物与状态，未清空 `project.last_brief_error`（BriefService 成功分支会清空）。
+
+**Fix**: 成功分支 `fresh = projectMapper.selectById(...)` 重取 + 判 null，清空 `lastBriefError`（截断/失败回退同理见 §5）。
+
+**Prevention**: 新增异步生成链路时，成功分支对齐 BriefService：写产物 + 推进状态 + 清 last_*_error 三件事齐全。
+
 ### Common Mistake: 新生成链路漏推状态机与漏填展示字段
 
 **Symptom**: 新增的生成链路（如深度单版 `/deep/generate`）落库成功后，前端仍卡上一步：步骤导航锁定、无「下一步」按钮；版本卡片字段渲染 `undefined·undefined`、字数统计空白。
