@@ -111,6 +111,24 @@ int deleteByModelId(@Param("modelId") Long modelId);
 
 - 外键列（如 `model_id`/`news_id`）直接 `WHERE` 即可，无需 JOIN 逻辑删除表。
 
+### 多域统一检索：候选窗口必须按域隔离
+
+统一检索（`sparkora_car_doc_embedding` + `sparkora_kb_chunk_embedding` + `sparkora_news_doc_embedding` 同向量空间）**不能用一个全局 `LIMIT` 包住所有 UNION 段**（09-11 先例 C2：新闻 1339 块 vs 车型 380 块，语义邻近时新闻占满窗口，实测 BYD 类 query 的 CAR 候选从 32 掉到 0，下游「各域独立配额」拿到空候选直接失效）。
+
+正确做法：**每个来源域各自子查询取 top-#{limit}，外层仅合并排序、不再截断**：
+
+```sql
+SELECT * FROM (
+    (SELECT ... FROM car/kb ... ORDER BY score DESC LIMIT #{limit})
+    UNION ALL
+    (SELECT ... FROM news  ... ORDER BY score DESC LIMIT #{limit})
+) u ORDER BY score DESC
+```
+
+- C2 前只有 CAR/KB 时，`(CAR∪KB) LIMIT` 与旧全局 `LIMIT` 语义等价——**演进时把既有域合并保留原语义，新域单独开窗口**，避免回归。
+- 调用方传入的 `limit` 必须 ≥ 各域配额（默认 `topK*4` 且至少 32，远大于 `ragKbTopk`/`ragNewsTopk`）。
+- 不要在服务层用「加大 limit」来补偿多域争抢——候选窗口隔离才是根因修复，加大 limit 会静默扩大下游注入集。
+
 ---
 
 ## Naming Conventions
