@@ -67,6 +67,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
 
 > **Warning**: 占位行失败时若被删除，任何「按项目取最新行」的查询都会回退到更早的旧行，导致轮询误判状态。轮询必须用**本次启动返回的 briefId 精确定位**，不能只按 projectId 取最新（见 error-handling.md「轮询可删除占位」）。
 
+### 定时任务防重叠需带陈旧自愈（09-11 先例：CarSyncScheduler）
+
+`@Scheduled` 消费任务表（如 `sparkora_car_sync_job`）时，用 `hasRunning()`（`status=RUNNING` 计数）防重叠。**但进程在任务中途死亡会残留 RUNNING 行**，无超时自愈则定时任务被永久跳过。
+
+- 个人项目/低频场景可先接受该风险（手动路径不受影响），但需在 spec/设计显式记录为已知限制。
+- 完整做法参照 `BriefService` 的 `STALE_GENERATING_MS`：`hasRunning()` 应排除 `updated_at` 超阈值（如 10 分钟）的陈旧 RUNNING 行。
+- `job_type` 区分来源（`SELECTED` / `RETRY` / `SCHEDULED`），定时触发 `created_by` 走 `SecurityUtil.current()==null → "system"`。
+
 ---
 
 ## Migrations
@@ -74,6 +82,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
 - 全部写进 `schema.sql`（幂等写法，启动自动执行），不引入独立迁移工具。
 - 注意：**不能用 `DO $$` 块**——Spring ScriptUtils 不支持 dollar-quote（会把块按 `;` 截断）；列搬数用「补列 → UPDATE 搬数据 → DROP 旧列」三条单语句实现。
 - 表结构变更三处同步：`schema.sql`（幂等）+ 对应 entity/mapper + `docs/s0-spec.md` 字段级表格。
+
+### 索引幂等切换（改索引类型/名字，不每次启动重建）
+
+`schema.sql` 每次启动都执行，改索引时若用裸 `CREATE INDEX` 会反复重建。切换索引类型时用「DROP 旧名 + CREATE 新名」并靠改名保证幂等（09-11 先例：KB 向量索引 IVFFLAT → HNSW）：
+
+```sql
+-- 首次启动:删旧 IVFFLAT,建 HNSW;后续启动:DROP 旧名 no-op + 新名已存在跳过
+DROP INDEX IF EXISTS idx_kb_chunk_emb_vec;
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec_hnsw ON sparkora_kb_chunk_embedding
+    USING hnsw (embedding vector_cosine_ops);
+```
+
+- **不要**复用旧索引名（`CREATE INDEX IF NOT EXISTS 旧名` 会因已存在而跳过，改不到新类型）；**换新名**才能让旧类型真正被替换。
+- 向量索引统一 HNSW `vector_cosine_ops`（车型域 `idx_car_doc_emb_vec`、KB 域 `idx_kb_chunk_emb_vec_hnsw`）。
+
+### 逻辑删除实体 + 物理向量表：级联清理
+
+`*_embedding` 表（`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding`）**无 `deleted` 列**，是物理表。删除带 `@TableLogic` 的实体时：
+
+- 逻辑删除的 doc 通过检索 SQL 的 `JOIN ... AND d.deleted = 0` 过滤，不会命中。
+- 但**物理行会残留**：`docMapper.selectList(eq model_id)` 受 `@TableLogic` 过滤，只能删到 `deleted=0` 的 doc，历史已逻辑删除的 doc 的 embedding 漏清。故删除实体时需**按外键一条 SQL 兜底物理清**（09-11 先例 `CarDocEmbeddingMapper.deleteByModelId`）：
+
+```java
+@Delete("DELETE FROM sparkora_car_doc_embedding WHERE model_id = #{modelId}")
+int deleteByModelId(@Param("modelId") Long modelId);
+```
+
+- 外键列（如 `model_id`/`news_id`）直接 `WHERE` 即可，无需 JOIN 逻辑删除表。
 
 ---
 
