@@ -186,3 +186,40 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: C3 知识中心浏览页
+<!-- trellis-session: v=2 fp=37ea36543d09a515 -->
+
+**Date**: 2026-09-12
+**Task**: C3 知识中心浏览页
+**Branch**: `main`
+
+### Summary
+
+新增 /knowledge 知识中心(车型/新闻双 Tab)，补 newsApi/kbApi 封装，规范前端 API 分层；check AC1-AC5 全通过
+
+### Main Changes
+
+- 新增 KnowledgeCenter + Car/NewsKnowledgePanel 两面板
+- api/index.js 增 newsApi/kbApi；KbLibrary 由直调 http 改 kbApi
+- 新增 .trellis/spec/frontend/index.md 前端规范层；spec §16
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5cf4902` | feat(C3): 知识中心浏览页——车型/新闻双 Tab、newsApi/kbApi 封装、/knowledge 路由 |
+| `38fb0ee` | docs(spec): 知识中心规格 §16 + 前端规范层(API 分层/页面骨架/R<T> 拆包/Tab 懒挂载) |
+
+### Testing
+
+- [OK] npm run build exit 0；AC1-AC5 全 PASS
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 继续 C4 多轮对话式知识问答
