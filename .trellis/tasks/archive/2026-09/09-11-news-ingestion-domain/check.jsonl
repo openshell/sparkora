@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对新增 4 表幂等 DDL、HNSW 索引、逻辑删除+向量清理是否符合约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对 NewsController 的 R<T>/错误码映射"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对采集→入库→向量→统一检索→REST 全链路字段/契约一致"}
+{"file": ".trellis/tasks/09-11-knowledge-base-data-foundation/design.md", "reason": "核对是否遵守父任务共享契约（NEWS 来源标注/配额/锚点不参与）"}
+{"file": ".trellis/tasks/09-11-news-ingestion-domain/prd.md", "reason": "逐条核对 AC1~AC6"}
+{"file": ".trellis/tasks/09-11-news-ingestion-domain/implement.md", "reason": "核对实现清单与验证要点是否全部完成"}
