@@ -449,3 +449,16 @@ UPDATE sparkora_article_project p
 ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS plan_status VARCHAR(20); -- DEEP: PLANNING/READY;其余 null
 CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
     ON sparkora_article_brief(project_id) WHERE plan_status = 'PLANNING';
+
+-- ============================================================================
+-- S5+：预览到发布衔接(09-11-preview-publish-bridge)。
+-- author/source_url:发布 frontmatter 四字段中手填的两项(项目级落库,刷新/重发不丢);
+-- preview_theme/highlight/mac_style/footnote:预览页当前样式,跨会话保持,发布页据此初始化。
+-- 全部单条幂等语句;旧库补列后为 NULL,前端回退全局默认,行为与现状一致。
+-- ============================================================================
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS author             VARCHAR(100);
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS source_url         VARCHAR(500);
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_theme      VARCHAR(64);
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_highlight  VARCHAR(64);
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_mac_style  BOOLEAN;
+ALTER TABLE sparkora_article_project ADD COLUMN IF NOT EXISTS preview_footnote   BOOLEAN;

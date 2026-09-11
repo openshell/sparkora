@@ -56,6 +56,15 @@
           </el-tooltip>
         </div>
         <span class="ctrl-divider" aria-hidden="true"></span>
+        <div class="ctrl-group">
+          <span class="field-label">宽度</span>
+          <el-radio-group v-model="previewWidth" size="small" class="width-toggle">
+            <el-radio-button value="phone">手机</el-radio-button>
+            <el-radio-button value="tablet">平板</el-radio-button>
+            <el-radio-button value="full">全宽</el-radio-button>
+          </el-radio-group>
+        </div>
+        <span class="ctrl-divider" aria-hidden="true"></span>
         <el-button size="small" @click="imgDrawer = true">
           <el-icon style="margin-right: 4px"><Picture /></el-icon>
           配图 {{ insertedCount }}/{{ snapshotImages.length }}
@@ -108,7 +117,7 @@
           </div>
           <!-- 主题/渲染进度条(150ms 细条) -->
           <div class="theme-progress" :class="{ active: rendering || themeLoading }" aria-hidden="true"></div>
-          <div class="phone">
+          <div class="phone" :class="`w-${previewWidth}`">
             <div class="phone-device">
               <div class="phone-status">
                 <span class="status-time">9:41</span>
@@ -256,8 +265,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
+import { useProjectDetailStore } from '../../store/project-detail'
 import { renderMarkdownHtml, applyPreviewTheme, buildWechatHtml, sanitizeWenyanHtml } from '../../utils/wenyanRender'
-import { CUSTOM_THEMES } from '../../utils/wenyanThemes'
 import MarkdownEditor from '../../components/MarkdownEditor.vue'
 import { ElMessage } from 'element-plus'
 import { DocumentCopy, Loading, WarningFilled, Check, Picture, Plus } from '@element-plus/icons-vue'
@@ -273,13 +282,13 @@ const props = defineProps({ project: Object })
 const route = useRoute()
 const router = useRouter()
 const projectId = computed(() => route.params.id)
+const store = useProjectDetailStore()
 
 const loaded = ref(false)
 const loadError = ref('')
 const editorReady = ref(false)
 const editorRef = ref(null)
 const versionId = ref(null)
-const versionTitle = ref('')
 const originalMd = ref('')
 const contentMd = ref('')
 const imgSnapshot = ref(null)   // 配图快照:{images[],coverImageId,bodyImageIds[]}——与 StepPublish 同一接口
@@ -295,6 +304,7 @@ const theme = ref('default')
 const highlight = ref('solarized-light')
 const macStyle = ref(true)
 const footnote = ref(true)
+const previewWidth = ref('phone') // 预览宽度档位:phone | tablet | full(仅视觉)
 const previewBody = ref(null)
 const copying = ref(false)
 
@@ -369,7 +379,6 @@ const draftKey = computed(() => `sparkora-preview-draft-${projectId.value}`)
 // ==== 配图快照口径(与 StepPublish 同一接口数据;S10 起 images=当前版本引用图集合) ====
 const snapshotImages = computed(() => imgSnapshot.value?.images || [])
 const coverImageId = computed(() => imgSnapshot.value?.coverImageId ?? null)
-const coverImage = computed(() => imgSnapshot.value?.coverImage ?? null)
 
 /** 正文已引用的本地 URL 集合:面板「已插入」状态与后端组装去重口径一致(含 URL 即视为已插入)。
  *  S10 起基于「当前版本引用图集合」计算(全量图库已分页化,未引用图不可能出现在正文——插入动作即产生引用)。 */
@@ -383,15 +392,6 @@ const insertedCount = computed(() => insertedUrls.value.size)
 const imgUrl = (img) => img?.thumbUrl || img?.url || ''   // S10:网格缩略图(imageView2/webp)
 const originUrl = (img) => img?.url || ''                 // 插入正文/大图预览用原图 URL
 
-/** frontmatter(title + cover,闭合 ---)+ 正文;插图落点完全由正文 markdown 引用决定(不自动追加文末)。 */
-const buildFullMd = () => {
-  const title = versionTitle.value || '无标题'
-  let out = `---\ntitle: ${title}\n`
-  if (coverImage.value) out += `cover: ${coverImage.value.url}\n`
-  out += `---\n\n`
-  return out + (contentMd.value || '')
-}
-
 // ==== 主题色点(原版 ThemePreview 下拉的语义:一眼看出主题气质) ====
 const THEME_COLORS = {
   default: '#1a73e8',    // 经典蓝
@@ -403,18 +403,14 @@ const THEME_COLORS = {
   purple: '#8e44ad',
   phycat: '#3eaf7c'
 }
-// 自定义主题色点(id 是 custom:<key> 取 key 段)由 wenyanThemes.CUSTOM_THEMES 提供
-const CUSTOM_COLOR_MAP = Object.fromEntries(CUSTOM_THEMES.map(t => [t.id, t.color]))
-const themeColor = (t) => THEME_COLORS[t] || CUSTOM_COLOR_MAP[t] || '#8a8f98'
+const themeColor = (t) => THEME_COLORS[t] || '#8a8f98'
 const BRIGHT_DOTS = new Set(['maize', 'rainbow'])
 const themeIsBright = (t) => BRIGHT_DOTS.has(t)
-/** 主题显示名:custom:chazi → 姹紫;内置原样。 */
-const themeLabel = (t) => {
-  const c = CUSTOM_THEMES.find(x => x.id === t)
-  return c ? c.name : t
-}
-// 全量主题清单 = 后端配置下发(内置)+ 社区主题库
-const allThemeOptions = computed(() => [...(themeOptions.value || []), ...CUSTOM_THEMES.map(t => t.id)])
+/** 主题显示名:内置主题原样展示。 */
+const themeLabel = (t) => t
+// 全量主题清单 = 后端配置下发(WENYAN_THEME_NAMES 白名单):只保留可发布主题,
+// 社区自定义主题(custom:*) wenyan CLI 不支持渲染,无法发布,故不进入选择器(09-11-preview-publish-bridge)
+const allThemeOptions = computed(() => themeOptions.value || [])
 
 // ==== 渲染:正文 400ms 防抖走纯渲染;首次/出错时同样入口 ====
 let renderTimer = null
@@ -428,7 +424,7 @@ const renderMarkdown = async () => {
   const seq = ++renderSeq
   rendering.value = true
   try {
-    const raw = await renderMarkdownHtml(buildFullMd())
+    const raw = await renderMarkdownHtml(contentMd.value || '')
     if (seq !== renderSeq) return // 过期结果丢弃
     html.value = sanitizeWenyanHtml(raw)
     renderError.value = ''
@@ -439,10 +435,11 @@ const renderMarkdown = async () => {
   }
 }
 
-/** 主题/高亮/mac 变更:只替换共享 style 标签(原版机制,不重渲染)。 */
+/** 主题/高亮/mac 变更:只替换共享 style 标签(原版机制,不重渲染);并落库项目级样式(防抖)。 */
 const themeLoading = ref(false)
 const onPreviewStyleChange = async () => {
   themeLoading.value = true
+  scheduleSavePreviewStyle()
   try {
     await applyPreviewTheme({ theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value })
   } catch (e) {
@@ -452,8 +449,45 @@ const onPreviewStyleChange = async () => {
   }
 }
 
-/** footnote 变化影响 DOM 结构(脚注区),需要重渲染。 */
-const onWechatRebuild = () => { scheduleRender() }
+/** footnote 变化影响 DOM 结构(脚注区),需要重渲染;并落库。 */
+const onWechatRebuild = () => { scheduleRender(); scheduleSavePreviewStyle() }
+
+// ==== 预览样式落库(项目级,跨会话保持):防抖 400ms,失败仅 warn 不阻塞预览 ====
+let previewStyleTimer = null
+let previewStyleDirty = false
+const scheduleSavePreviewStyle = () => {
+  previewStyleDirty = true
+  clearTimeout(previewStyleTimer)
+  previewStyleTimer = setTimeout(savePreviewStyle, 400)
+}
+/** 立即落库待保存的样式(去发布前调用,避免 400ms 防抖窗口内跳转导致 AC2 主题丢失)。 */
+const flushSavePreviewStyle = () => {
+  if (!previewStyleDirty) return Promise.resolve()
+  clearTimeout(previewStyleTimer)
+  previewStyleTimer = null
+  return savePreviewStyle()
+}
+const savePreviewStyle = async () => {
+  previewStyleDirty = false
+  previewStyleTimer = null
+  const patch = { theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value }
+  try {
+    const res = await projectApi.savePreviewStyle(projectId.value, patch)
+    if (res.code !== 0) {
+      previewStyleDirty = true // 失败保留待存标记:下次防抖/flush 重试,避免样式静默丢失(AC2)
+      console.warn('[sparkora] 预览样式保存失败:', res.msg)
+      return
+    }
+    // 就地回写 store 缓存,避免子步骤切换时项目缓存陈旧导致样式回退
+    store.patchProject(projectId.value, {
+      previewTheme: patch.theme, previewHighlight: patch.highlight,
+      previewMacStyle: patch.macStyle, previewFootnote: patch.footnote
+    })
+  } catch (e) {
+    previewStyleDirty = true // 同上:网络异常也保留待存标记,跳发布前 flush 仍会重试
+    console.warn('[sparkora] 预览样式保存失败:', e?.message || e)
+  }
+}
 
 /** 编辑器正文变更(v-model 更新 contentMd 后):防抖重渲染预览。手动插图/粘贴图/打字均走此入口。 */
 const onEdit = () => {
@@ -511,7 +545,6 @@ const loadContent = async () => {
     const v = (vr.data || []).find(x => x.id === vid)
     if (!v) throw new Error('当前版本不存在')
     versionId.value = vid
-    versionTitle.value = v.title || ''
     // 草稿优先(localStorage,防渲染崩溃/误关丢稿),但提供放弃草稿路径
     const draft = localStorage.getItem(draftKey.value)
     originalMd.value = v.contentMd || ''
@@ -550,23 +583,25 @@ const saveContent = async () => {
     saveState.value = 'clean'
     localStorage.removeItem(draftKey.value)
     ElMessage.success('正文已保存')
+    return true
   } catch (e) {
     saveState.value = 'error'
     ElMessage.error(e?.response?.data?.msg || e?.message || '保存失败')
+    return false
   } finally { saving.value = false }
 }
 
-/** 复制排版:buildWechatHtml 内联输出(与发布同参),富文本进剪贴板。 */
+/** 复制排版:buildWechatHtml 内联输出(与发布同参),富文本进剪贴板。输入纯正文(不含 frontmatter)。 */
 const copyRich = async () => {
   copying.value = true
   try {
-    const inline = await buildWechatHtml(buildFullMd(), {
+    const inline = await buildWechatHtml(contentMd.value || '', {
       theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value
     })
     if (navigator.clipboard && window.ClipboardItem) {
       await navigator.clipboard.write([new ClipboardItem({
         'text/html': new Blob([inline], { type: 'text/html' }),
-        'text/plain': new Blob([props.project?.title || '', inline], { type: 'text/plain' })
+        'text/plain': new Blob([props.project?.topic || '', inline], { type: 'text/plain' })
       })])
       ElMessage.success('已复制排版,去公众号编辑器粘贴即可')
       return
@@ -577,8 +612,15 @@ const copyRich = async () => {
   } finally { copying.value = false }
 }
 
-/** 跳发布步(S5 衔接:预览确认排版后直接去发布)。 */
-const goPublish = () => {
+/** 跳发布步(S5 衔接):正文有未保存修改时先自动保存,成功才跳转;失败停留预览页。 */
+const goPublish = async () => {
+  if (saving.value) return
+  if (dirty.value) {
+    const ok = await saveContent()
+    if (!ok) return
+  }
+  // 样式防抖窗口内直接跳转会把「刚选的主题」丢掉(AC2);跳转前立即落库
+  await flushSavePreviewStyle()
   router.push({ name: 'project-publish', params: { id: projectId.value } })
 }
 
@@ -653,26 +695,55 @@ watch(dirty, (d) => {
   else saveState.value = 'clean'
 })
 
+// 项目级样式优先(09-11-preview-publish-bridge,跨会话保持);缺失字段回退后端全局默认。
+// 项目对象可能晚于组件挂载到位,故在 options 到位与 project 变化时各应用一次。
+const styleDefaults = ref(null)  // preview-options 下发的全局默认(作为 preview* 缺失字段的回退)
+let styleApplied = false         // 是否已用「带项目级样式」的值初始化过(避免后续覆盖用户手改)
+const applyEffectiveStyle = () => {
+  const d = styleDefaults.value
+  if (!d) return false
+  const p = props.project || {}
+  theme.value = p.previewTheme || d.theme
+  highlight.value = p.previewHighlight || d.highlight
+  macStyle.value = p.previewMacStyle ?? d.macStyle
+  footnote.value = p.previewFootnote ?? d.footnote
+  return true
+}
+
 onMounted(async () => {
   try {
     const res = await imageApi.previewOptions()
     if (res.code === 0) {
       themeOptions.value = res.data?.themes || ['default']
       highlightOptions.value = res.data?.highlights || ['solarized-light']
-      theme.value = res.data?.defaultTheme || 'default'
-      highlight.value = res.data?.highlight || 'solarized-light'
-      macStyle.value = res.data?.macStyle ?? true
-      footnote.value = res.data?.footnote ?? true
+      styleDefaults.value = {
+        theme: res.data?.defaultTheme || 'default',
+        highlight: res.data?.highlight || 'solarized-light',
+        macStyle: res.data?.macStyle ?? true,
+        footnote: res.data?.footnote ?? true
+      }
+      // 项目已到位:应用「项目级样式 + 全局默认」并标记;否则先用全局默认,留给 watch 在项目到位时覆盖
+      applyEffectiveStyle()
+      if (props.project) styleApplied = true
     }
   } catch (e) { /* 兜底默认值 */ }
   if (previewable.value) loadContent()
+})
+
+// 项目详情晚到:项目级样式到位后重新应用并即时生效(仅首次,避免覆盖用户后续手改)
+watch(() => props.project, (p) => {
+  if (styleApplied || !p || !styleDefaults.value) return
+  applyEffectiveStyle()
+  styleApplied = true
+  applyPreviewTheme({ theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value })
+    .catch((e) => { renderError.value = '主题加载失败: ' + (e?.message || e) })
 })
 
 watch(previewable, (ok) => { if (ok && !loaded.value && !loadError.value) loadContent() })
 // S10:抽屉/参考图弹窗首次打开时拉图库分页(后续打开仅在空态时重拉,避免打断滚动位置)
 watch(imgDrawer, (open) => { if (open && !libraryImages.value.length) reloadLibrary() })
 watch(refDialog, (open) => { if (open && !libraryImages.value.length) reloadLibrary() })
-onBeforeUnmount(() => { clearTimeout(renderTimer) })
+onBeforeUnmount(() => { clearTimeout(renderTimer); flushSavePreviewStyle() })
 </script>
 
 <style scoped>
@@ -741,9 +812,16 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
   padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: var(--el-fill-color-light);
+  /* 粘性工具栏:长文滚动时操作不丢失(停在顶栏下方) */
+  position: sticky; top: 68px; z-index: 20;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .04);
+  backdrop-filter: blur(6px);
 }
 .ctrl-group { display: inline-flex; align-items: center; gap: 8px; }
 .ctrl-divider { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+/* 宽度档位分段控件(仅预览视觉,不改渲染内容) */
+.width-toggle { flex: none; }
+.width-toggle :deep(.el-radio-button__inner) { padding: 6px 12px; }
 
 :deep(.theme-select .el-select__wrapper),
 :deep(.hl-select .el-select__wrapper) { height: 34px; border-radius: 8px; }
@@ -775,6 +853,11 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 
 /* ===== 手机拟真(参照 iPhone 外观;背景渐变模拟桌面环境) ===== */
 .phone { background: linear-gradient(160deg, #f0eee9 0%, #e7e3db 100%); padding: 20px 0; display: flex; justify-content: center; flex: 1; }
+/* 宽度档位:phone 430 / tablet 720 / full 100%(仅视觉容器宽度,不改渲染内容) */
+.phone.w-tablet .phone-device { width: 720px; max-width: 100%; }
+.phone.w-full .phone-device { width: 100%; max-width: 100%; border-radius: 14px; padding: 6px 10px 8px; }
+.phone.w-full .phone-status, .phone.w-full .phone-home { display: none; }
+.phone.w-full .wechat-body { border-radius: 10px; }
 .phone-device {
   width: 430px; max-width: 96%;
   background: #fff; border-radius: 28px; padding: 6px 10px 8px;
@@ -807,9 +890,13 @@ onBeforeUnmount(() => { clearTimeout(renderTimer) })
 
 @media (max-width: 900px) {
   .duo { grid-template-columns: 1fr; }
-  .phone-device { width: 100%; max-width: 430px; }
+  .phone-device,
+  .phone.w-tablet .phone-device,
+  .phone.w-full .phone-device { width: 100%; max-width: 430px; }
   .theme-select, .hl-select { width: 100%; flex: auto; }
   .ctrl-divider { display: none; }
+  .ctrl-bar { position: static; top: auto; box-shadow: none; }
+  .width-toggle { display: none; } /* 移动端容器已满宽,档位无意义 */
   /* 移动端配图抽屉全屏,网格两列 */
   .img-drawer { --el-drawer-size: 100% !important; }
   .img-pop-grid { grid-template-columns: repeat(2, 1fr); }

@@ -85,6 +85,10 @@ public class PublishService {
         gzh.put("content", html);
         String coverUrl = (String) rendered.get("coverUrl");
         if (coverUrl != null && !coverUrl.isBlank()) gzh.put("cover", coverUrl);
+        // author/source_url:发布页手填的项目级字段(09-11-preview-publish-bridge),非空才发送,
+        // 对齐 wenyan 官方 frontmatter(wrapper 映射微信 author / content_source_url)
+        if (p.getAuthor() != null && !p.getAuthor().isBlank()) gzh.put("author", p.getAuthor().trim());
+        if (p.getSourceUrl() != null && !p.getSourceUrl().isBlank()) gzh.put("source_url", p.getSourceUrl().trim());
 
         // 3) upload(json)→ publish(fileId) → media_id(同步链,TTL 10 分钟充裕)
         String gzhJson;

@@ -37,6 +37,22 @@ try {
 }
 ```
 
+### `@Valid` DTO 校验失败的统一映射（ApiExceptionHandler）
+
+`@Valid @RequestBody` 校验失败时 Spring 默认返回非 `R<T>` 的 400 body，违反「所有业务失败 HTTP 200 + `R.fail`」契约。`ApiExceptionHandler` 已统一兜底：
+
+```java
+@ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
+public R<Void> handleBind(BindException ex) {
+    String msg = ex.getBindingResult().getFieldErrors().stream()
+            .findFirst().map(f -> f.getDefaultMessage()).orElse("参数校验失败");
+    return R.fail(400, msg);
+}
+```
+
+- 新增带 `@Size`/`@NotBlank` 等约束的 DTO 时无需额外处理，错误信息取首个字段的中文 `message`。
+- `MethodArgumentNotValidException extends BindException`，一个 handler 覆盖两者，避免 ambiguous mapping。
+
 ### 状态机生成类服务（BriefService / ImitationService 同构）
 
 1. 前置检查：`IllegalArgumentException`（项目不存在/模式不符/缺素材）。

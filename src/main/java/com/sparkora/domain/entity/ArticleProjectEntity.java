@@ -39,6 +39,13 @@ public class ArticleProjectEntity {
     private String genSource;           // 创作来源:TOPIC(默认)/IMITATION
     private String imitationText;       // 参考原文全文(仅 IMITATION 非空)
     private String imitationAnalysis;   // 原文分析结果 JSON(展示冗余存储)
+    // ===== 预览到发布衔接(09-11-preview-publish-bridge):项目级持久化 =====
+    private String author;              // 发布 frontmatter author(手填,可空)
+    private String sourceUrl;           // 发布 frontmatter source_url(手填,可空)
+    private String previewTheme;        // 预览页当前主题(跨会话保持)
+    private String previewHighlight;    // 预览页当前高亮主题
+    private Boolean previewMacStyle;    // 预览页 Mac 代码块开关
+    private Boolean previewFootnote;    // 预览页链接转脚注开关
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

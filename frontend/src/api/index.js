@@ -45,7 +45,11 @@ export const projectApi = {
   // 文章仿写(09-09-article-imitation):分析原文+风格推荐(一次 AI 调用,约 10~30s,放宽超时)
   analyzeImitation: (id) => http.post(`/projects/${id}/imitation/analyze`, null, { timeout: 120000 }),
   // 文章仿写:取分析+风格推荐(无则 data=null)
-  getImitation: (id) => http.get(`/projects/${id}/imitation`)
+  getImitation: (id) => http.get(`/projects/${id}/imitation`),
+  // 09-11-preview-publish-bridge:保存预览页样式(主题/高亮/Mac/脚注,项目级);body={theme?,highlight?,macStyle?,footnote?}
+  savePreviewStyle: (id, data) => http.put(`/projects/${id}/preview-style`, data),
+  // 09-11-preview-publish-bridge:保存发布元信息(作者/原文地址,项目级);body={author?,sourceUrl?}
+  savePublishMeta: (id, data) => http.put(`/projects/${id}/publish-meta`, data)
 }
 
 export const styleApi = {

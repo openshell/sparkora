@@ -74,39 +74,41 @@
           </template>
         </div>
 
-        <!-- 参数表单(与预览页同形;默认值来自后端 .env 配置) -->
-        <div class="ctrl-bar">
+        <!-- 排版参数:只读回显预览页保存的值(不在此编辑;发布时原样传给 wenyan-server) -->
+        <div class="ctrl-bar style-readonly">
           <div class="ctrl-group">
             <span class="field-label">主题</span>
-            <el-select v-model="theme" class="theme-select" :disabled="!editorOrAbove || publishing">
-              <template #label>
-                <span class="theme-dot" :style="{ background: themeColor(theme) }" :class="{ 'is-bright': themeIsBright(theme) }"></span>
-                <span class="select-label-text">{{ themeLabel(theme) }}</span>
-              </template>
-              <el-option v-for="t in themeOptions" :key="t" :label="themeLabel(t)" :value="t">
-                <span class="theme-dot" :style="{ background: themeColor(t) }" :class="{ 'is-bright': themeIsBright(t) }"></span>
-                <span class="option-name">{{ themeLabel(t) }}</span>
-              </el-option>
-            </el-select>
+            <span class="ro-value">
+              <span class="theme-dot" :style="{ background: themeColor(theme) }" :class="{ 'is-bright': themeIsBright(theme) }"></span>
+              <span class="ro-text">{{ themeLabel(theme) }}</span>
+            </span>
             <span class="field-label">高亮</span>
-            <el-select v-model="highlight" class="hl-select" :disabled="!editorOrAbove || publishing">
-              <el-option v-for="h in highlightOptions" :key="h" :label="h" :value="h" />
-            </el-select>
+            <span class="ro-value"><span class="ro-text">{{ highlight }}</span></span>
           </div>
           <span class="ctrl-divider" aria-hidden="true"></span>
           <div class="ctrl-group">
-            <el-tooltip content="代码块顶部仿 Mac 红绿灯" placement="top" :show-after="300">
-              <span class="switch-item">
-                <el-switch v-model="macStyle" size="small" :disabled="!editorOrAbove || publishing" />
-                <span class="switch-label">Mac 代码块</span>
-              </span>
-            </el-tooltip>
-            <el-tooltip content="外链转为文末引用脚注" placement="top" :show-after="300">
-              <span class="switch-item">
-                <el-switch v-model="footnote" size="small" :disabled="!editorOrAbove || publishing" />
-                <span class="switch-label">链接转脚注</span>
-              </span>
-            </el-tooltip>
+            <span class="ro-value"><span class="ro-text">Mac 代码块</span>
+              <el-tag size="small" :type="macStyle ? 'success' : 'info'" effect="plain">{{ macStyle ? '开' : '关' }}</el-tag>
+            </span>
+            <span class="ro-value"><span class="ro-text">链接转脚注</span>
+              <el-tag size="small" :type="footnote ? 'success' : 'info'" effect="plain">{{ footnote ? '开' : '关' }}</el-tag>
+            </span>
+          </div>
+          <span class="flex-sp"></span>
+          <span class="ro-hint">排版参数在「预览」步骤设置</span>
+        </div>
+
+        <!-- 发布元信息(手填,项目级落库;留空不发送) -->
+        <div class="meta-bar">
+          <div class="meta-field">
+            <span class="field-label">作者</span>
+            <el-input v-model="author" maxlength="100" clearable placeholder="选填,写入公众号作者"
+                      :disabled="!editorOrAbove || publishing" @input="onMetaChange" />
+          </div>
+          <div class="meta-field">
+            <span class="field-label">原文地址</span>
+            <el-input v-model="sourceUrl" maxlength="500" clearable placeholder="选填,写入公众号原文链接"
+                      :disabled="!editorOrAbove || publishing" @input="onMetaChange" />
           </div>
         </div>
 
@@ -128,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
 import { useUserStore } from '../../store/user'
@@ -136,7 +138,6 @@ import { useProjectDetailStore } from '../../store/project-detail'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { WarningFilled, SuccessFilled } from '@element-plus/icons-vue'
 import { isPublishable } from '../../constants/project'
-import { CUSTOM_THEMES } from '../../utils/wenyanThemes'
 
 /**
  * Step 4 · 发布(S5):同源渲染(与 Step3 preview 完全同参)→ wenyan-server(公众号草稿箱)。
@@ -149,11 +150,15 @@ const projectId = computed(() => route.params.id)
 const userStore = useUserStore()
 const store = useProjectDetailStore()
 
-// 发布参数(与预览页同形;默认值取后端 .env 配置,与 preview-options 同源)
+// 发布参数(与预览页同形;默认值优先项目级 preview* 样式,回退 .env 配置)
 const theme = ref('default')
 const highlight = ref('solarized-light')
 const macStyle = ref(true)
 const footnote = ref(true)
+// 发布元信息(手填,项目级落库)
+const author = ref('')
+const sourceUrl = ref('')
+let metaDirty = false
 
 const optionsLoaded = ref(false)
 const optsLoadedOnce = ref(false)
@@ -170,7 +175,13 @@ const options = ref({
   publishMediaId: '',
   publishTheme: '',
   publishedAt: '',
-  lastPublishError: ''
+  lastPublishError: '',
+  previewTheme: '',
+  previewHighlight: null,
+  previewMacStyle: null,
+  previewFootnote: null,
+  author: '',
+  sourceUrl: ''
 })
 
 const publishable = computed(() => isPublishable(props.project?.status))
@@ -179,21 +190,15 @@ const editorOrAbove = computed(() => userStore.isEditorOrAbove)
 const publishError = computed(() => options.value.lastPublishError || props.project?.lastPublishError || '')
 const publishEnabled = computed(() => !!options.value.publishEnabled)
 
-// ==== 主题色点/显示名(与 StepPreview 同源,含社区自定义主题) ====
-const themeOptions = ref(['default'])
-const highlightOptions = ref(['solarized-light'])
+// ==== 主题色点/显示名(与 StepPreview 同源,仅内置可发布主题) ====
 const THEME_COLORS = {
   default: '#1a73e8', orangeheart: '#ef7060', rainbow: '#e91e63', lapis: '#4870ac',
   pie: '#2b2b2b', maize: '#ffb11b', purple: '#8e44ad', phycat: '#3eaf7c'
 }
-const CUSTOM_COLOR_MAP = Object.fromEntries(CUSTOM_THEMES.map(t => [t.id, t.color]))
-const themeColor = (t) => THEME_COLORS[t] || CUSTOM_COLOR_MAP[t] || '#8a8f98'
+const themeColor = (t) => THEME_COLORS[t] || '#8a8f98'
 const BRIGHT_DOTS = new Set(['maize', 'rainbow'])
 const themeIsBright = (t) => BRIGHT_DOTS.has(t)
-const themeLabel = (t) => {
-  const c = CUSTOM_THEMES.find(x => x.id === t)
-  return c ? c.name : (t || '')
-}
+const themeLabel = (t) => t || ''
 
 // ==== 摘要:标题/字数/封面/插图(与 Step3 同一接口,口径一致) ====
 const versionTitle = ref('')
@@ -237,12 +242,16 @@ const loadOptions = async () => {
     if (res.code !== 0) throw new Error(res.msg || '发布参数加载失败')
     const d = res.data || {}
     options.value = { ...options.value, ...d }
-    themeOptions.value = d.themes?.length ? d.themes : ['default']
-    highlightOptions.value = d.highlights?.length ? d.highlights : ['solarized-light']
-    theme.value = d.publishTheme || d.defaultTheme || 'default'
-    highlight.value = d.highlight || 'solarized-light'
-    macStyle.value = d.macStyle ?? true
-    footnote.value = d.footnote ?? true
+    // 排版参数只读回显:优先项目级预览样式(preview*),其次已发布主题(publishTheme),最后全局默认(09-11-preview-publish-bridge)
+    theme.value = d.previewTheme || d.publishTheme || d.defaultTheme || 'default'
+    highlight.value = d.previewHighlight || d.highlight || 'solarized-light'
+    macStyle.value = d.previewMacStyle ?? d.macStyle ?? true
+    footnote.value = d.previewFootnote ?? d.footnote ?? true
+    // 发布元信息:项目级落库值(可能为空),仅首次初始化,避免覆盖用户正在输入的内容
+    if (!metaDirty) {
+      author.value = d.author || ''
+      sourceUrl.value = d.sourceUrl || ''
+    }
     optionsLoaded.value = true
     optsLoadedOnce.value = true
   } catch (e) {
@@ -251,6 +260,42 @@ const loadOptions = async () => {
 }
 
 const shortTime = (t) => (t ? String(t).replace('T', ' ').slice(0, 16) : '')
+
+// ==== 发布元信息落库(项目级,防抖 400ms;失败仅 warn 不阻塞发布) ====
+let metaTimer = null
+let metaSeq = 0 // 编辑序号:识别「请求在途期间用户又改了」,避免旧响应清掉新的待存标记
+const onMetaChange = () => {
+  metaDirty = true
+  metaSeq += 1
+  clearTimeout(metaTimer)
+  metaTimer = setTimeout(saveMeta, 400)
+}
+/** 立即落库待保存的元信息(发布前/离开页面前调用,避免防抖窗口内丢失)。 */
+const flushSaveMeta = () => {
+  if (!metaDirty) return Promise.resolve(true)
+  clearTimeout(metaTimer)
+  metaTimer = null
+  return saveMeta()
+}
+const saveMeta = async () => {
+  const seq = metaSeq
+  try {
+    const res = await projectApi.savePublishMeta(projectId.value, {
+      author: author.value, sourceUrl: sourceUrl.value
+    })
+    if (res.code !== 0) { console.warn('[sparkora] 发布元信息保存失败:', res.msg); return false }
+    // 仅当本次请求发起后没有新编辑时才清 dirty;否则保留标记,等下一次防抖/flush 再存
+    if (seq === metaSeq) {
+      metaDirty = false
+      // 就地回写 store 缓存,避免子步骤切换时元信息回退
+      store.patchProject(projectId.value, { author: author.value || null, sourceUrl: sourceUrl.value || null })
+    }
+    return true
+  } catch (e) {
+    console.warn('[sparkora] 发布元信息保存失败:', e?.message || e)
+    return false
+  }
+}
 
 /** 发布前二次确认(发布属外部可见动作;重发亦确认)。 */
 const confirmPublish = () => {
@@ -266,6 +311,11 @@ const confirmPublish = () => {
 const doPublish = async () => {
   publishing.value = true
   try {
+    // 发布元信息有未落库修改则先保存,保证发布读到的 author/source_url 与表单一致
+    if (metaDirty) {
+      const ok = await flushSaveMeta()
+      if (!ok) { ElMessage.error('作者/原文地址保存失败,已中止发布'); return }
+    }
     const res = await projectApi.publish(projectId.value, {
       theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value
     })
@@ -301,6 +351,8 @@ onMounted(() => {
 watch(publishable, (ok) => {
   if (ok && !optionsLoaded.value) { loadOptions(); loadSummary() }
 })
+
+onBeforeUnmount(() => { flushSaveMeta() })
 </script>
 
 <style scoped>
@@ -346,7 +398,7 @@ watch(publishable, (ok) => {
 }
 .readonly-tip { font-size: 12px; color: var(--muted); margin-top: 6px; }
 
-/* 参数表单(与预览页同形) */
+/* 排版参数(只读回显,在预览步设置) */
 .ctrl-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
   padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -355,21 +407,31 @@ watch(publishable, (ok) => {
 .ctrl-group { display: inline-flex; align-items: center; gap: 8px; }
 .ctrl-divider { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
 .field-label { font-size: 13px; color: var(--muted); flex: none; white-space: nowrap; }
-.theme-select { width: 188px; flex: none; }
-.hl-select { width: 190px; flex: none; }
+.ro-value { display: inline-flex; align-items: center; gap: 6px; }
+.ro-text { font-size: 13px; color: var(--ink); white-space: nowrap; }
+.ro-hint { font-size: 12px; color: var(--faint); }
+.flex-sp { flex: 1; }
 .theme-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
 .theme-dot.is-bright { box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
-.option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.switch-item { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.switch-label { font-size: 13px; color: var(--muted); user-select: none; }
+
+/* 发布元信息(作者/原文地址,项目级落库) */
+.meta-bar {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  padding: 10px 12px; margin-bottom: 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--el-fill-color-light);
+}
+.meta-field { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 220px; }
+.meta-field .el-input { flex: 1; }
 
 /* 动作区 */
 .publish-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .pub-hint { font-size: 12px; color: var(--muted); }
 
 @media (max-width: 768px) {
-  .theme-select, .hl-select { width: 100%; flex: auto; }
   .ctrl-divider { display: none; }
+  .meta-field { flex: 1 1 100%; }
+  .meta-field .el-input :deep(.el-input__wrapper) { min-height: 44px; }
   .publish-actions :deep(.el-button) { min-height: 44px; } /* 触控目标 ≥44px */
   .summary { flex-wrap: wrap; }
 }

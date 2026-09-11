@@ -72,6 +72,8 @@ DELETE /api/styles/{id}        删除风格              权限 ADMIN
 POST  /api/styles/extract      样文提炼风格入库      权限 ADMIN/EDITOR
 GET   /api/projects/{id}/publish-options   发布参数与通道状态  权限 ADMIN/EDITOR/VIEWER
 POST  /api/projects/{id}/publish           发布公众号草稿箱    权限 ADMIN/EDITOR
+PUT   /api/projects/{id}/preview-style     保存预览页样式(项目级) 权限 ADMIN/EDITOR
+PUT   /api/projects/{id}/publish-meta      保存发布元信息(作者/原文地址) 权限 ADMIN/EDITOR
 ```
 
 - 角色：`ADMIN` / `EDITOR` / `VIEWER`。权限矩阵（S1/S2 实现并真机验证）：**读接口（GET）三角色放行（viewer 只读），写接口（POST/PUT）限 ADMIN/EDITOR，DELETE 仅 ADMIN**。
@@ -493,7 +495,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 - 图片正文/封面**全部为图床公网 URL**（不再走 `asset://fileId` 通道，fileId 10 分钟 TTL 复杂度归零）。
 - **S6 图库完全依赖图床，本地不留**：图片入库即直接转存图床（`ImageStorage.upload`），`storage_key` 非空；预览/发布组装时直接取 `storage_key` 拼公网 URL，**不再懒转存**。图床供应商抽象层 `ImageStorage`（当前实现七牛 `QiniuService`），切换供应商只需新增实现类 + 改配置。
-- **配图组装规则（2026-09-01 定稿，预览与发布同参）**：`buildMarkdown`/前端 `buildFullMd` 统一组装为 frontmatter(`title`+有封面时 `cover: <图URL>`，**含闭合 `---`**) + 正文；**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（图床公网 URL）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（预览与发布同规则，所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
+- **配图组装规则（2026-09-01 定稿；2026-09-11 修订 R3，预览到发布衔接）**：`buildMarkdown` 后端发布链路统一组装为 frontmatter(`title` + 有封面时 `cover: <图URL>` + 手填 `author`/`source_url`) + 正文；**预览页/复制排版只渲染纯正文**（`renderMarkdownHtml(contentMd)`），不再把 frontmatter 拼进前端 markdown（`@wenyan-md/core` 不解析/剥离 frontmatter，会导致 `<hr>`+`<h2>title:…</h2>` 残留）；frontmatter 组装职责完全移到后端发布链路。**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（图床公网 URL）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
 - **插图落点（2026-09-01 交互定稿）**：预览页工具栏「插图」面板按选定顺序列出已选插图，点击即以 markdown 图片语法插入编辑器光标处（左栏 md 可见可编辑，正文已引用的在面板内标绿 ✓）；正文里没引用的插图不会出现在文章中（不自动追加文末），口径在面板内明示。
 - 删除图：`ImageService.delete` 落库删除 + 图床对象（非阻塞，失败仅 warn）。
 - 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名白名单防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
@@ -507,6 +509,12 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | sparkora_article_project.publish_theme | VARCHAR(64) | 发布所用主题 |
 | sparkora_article_project.published_at | TIMESTAMP | 发布时间 |
 | sparkora_article_project.last_publish_error | VARCHAR(1000) | 最近一次发布失败原因 |
+| sparkora_article_project.author | VARCHAR(100) | S5+ 发布 frontmatter author（手填，可空） |
+| sparkora_article_project.source_url | VARCHAR(500) | S5+ 发布 frontmatter source_url（手填，可空） |
+| sparkora_article_project.preview_theme | VARCHAR(64) | S5+ 预览页当前主题（跨会话保持） |
+| sparkora_article_project.preview_highlight | VARCHAR(64) | S5+ 预览页当前高亮主题 |
+| sparkora_article_project.preview_mac_style | BOOLEAN | S5+ 预览页 Mac 代码块开关 |
+| sparkora_article_project.preview_footnote | BOOLEAN | S5+ 预览页链接转脚注开关 |
 
 ### 接口契约
 
@@ -514,6 +522,8 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 |---|---|---|---|---|
 | GET | `/api/images/preview-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote}`（读 `.env` WENYAN_* 配置，前端下拉同源） |
 | POST | `/api/projects/{id}/preview` | 三角色 | `?theme=&highlight=&macStyle=&footnote=`（query） | `{html, theme, highlight, macStyle, footnote, degraded, degradedReason?}`；业务失败 HTTP 200 + `R.fail`，未知主题 `R.fail(400)`（白名单防 CLI 参数注入）；前置未就绪 `R.fail(400)` |
+| PUT | `/api/projects/{id}/preview-style` | ADMIN/EDITOR | `{theme?, highlight?, macStyle?, footnote?}`（只更新非 null 字段） | `R<Void>`；项目不存在 `R.fail(404)`；主题/高亮非白名单 `R.fail(400)`（校验复用 `PreviewService` 白名单） |
+| PUT | `/api/projects/{id}/publish-meta` | ADMIN/EDITOR | `{author?, sourceUrl?}`（只更新请求中出现的字段，空串清空） | `R<Void>`；项目不存在 `R.fail(404)`；author>100/sourceUrl>500 `R.fail(400)` |
 
 - **依赖顺序**：项目状态 VERSIONS_READY 才可预览（`POST /preview` 校验，否则 `R.fail(400)`）；
 - 七牛配置开关 `QINIU_ENABLED`（AK/SK 兼容旧裸名 `${AK}` `${SK}` 回退）：关闭时 `preview` 直接 `R.fail("图床未配置…")`；已配置但上传失败 `R.fail(500,"图床上传失败: …")`。
@@ -525,6 +535,8 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤三）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；degraded=true 顶部黄条；移动端适配。
 - 四步流程 `maxReachableStepOf` 扩到 `index=3`（发布），发布步对 VERSIONS_READY/PUBLISHED_DRAFT 解锁。
 - 配图并入预览：工具栏「配图」面板提供图库插入 + AI 生图（文生图/图生图，产物进图库后插入正文）两种来源；封面走 frontmatter `cover` 元信息。
+- 预览到发布衔接（09-11-preview-publish-bridge）：预览页/复制排版只渲染**纯正文**（无 frontmatter 残留）；「去发布」时若正文 dirty 自动先保存再跳转（失败停留并提示）；预览主题/高亮/Mac/脚注变更防抖落库项目级（`PUT /preview-style`），刷新/跨会话保持；工具栏宽度档位 phone/tablet/full 仅作用于预览容器视觉；`ctrl-bar` 粘性 + 间距打磨。
+- **主题选择范围（09-11 修复）**：预览页主题下拉只列 `.env WENYAN_THEME_NAMES` 白名单（可发布的内置主题）。社区自定义主题 `custom:*` 不在下拉中——wenyan CLI 不识别（`主题不存在`）且后端白名单拒绝，本来就无法发布；先前误在预览页提供导致选择即 `R.fail(400)`、样式无法落库/回显。
 
 ### 已知限制与风险（登记)
 
@@ -543,24 +555,25 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 PublishService.publish
  → PreviewService.preview(同参同源:状态校验 + 取图床 URL + frontmatter + wenyan render)
  → 非 degraded 校验(降级 HTML 不进公众号)
- → gzhContent JSON { title(≤64,必填), content=渲染HTML, cover=封面图床URL? }   ← asset:// 不用,图片全为图床 http URL;cover 与预览 frontmatter 同源,缺失时 server 退化用正文首图当封面
+ → gzhContent JSON { title(≤64,必填), content=渲染HTML, cover=封面图床URL?, author?, source_url? }   ← asset:// 不用,图片全为图床 http URL;cover 与预览 frontmatter 同源,缺失时 server 退化用正文首图当封面;author/source_url 手填项目级字段,非空才发送(对齐 wenyan frontmatter→微信 author/content_source_url)
  → wenyan-server POST /upload (multipart file=.json) → fileId
  → wenyan-server POST /publish (JSON {fileId}) → {media_id}
  → 原子落库 status=PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error
 ```
 
 - 封面与正文 `<img src="http(s)…">` 由 server 端 fetch 后转传微信(七牛 http URL 可用);无封面时 gzhContent 不带 cover,草稿封面由 server 退化取正文首图(可能无封面图,不阻塞发布)。
+- 发布元信息（09-11-preview-publish-bridge）：`author`/`source_url` 由发布页手填、项目级落库（`preview-style`/`publish-meta` 端点），非空才进 gzhContent；留空不发送，行为与旧版一致。**风险登记**：远程 wenyan-server 2.0.11 是否透传 `author`/`source_url` 未实测（未知 JSON 键通常被忽略）；如实测被拒，降级为不发送这两键（保留落库与前端展示）。
 - 失败语义:任何一步失败 → `last_publish_error` 落库、状态原样保留、`R.fail(400|500, 中文原因)`;可重试整链。
 
 #### 接口契约(全部 `R<T>` 包装;HTTP 200)
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/projects/{id}/publish-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote, publishEnabled, publishConfigOk, publishDisabledReason?, wenyanServer, publishMediaId?, publishTheme?, publishedAt?, lastPublishError?}`(探针失败不阻塞页面) |
+| GET | `/api/projects/{id}/publish-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote, previewTheme?, previewHighlight?, previewMacStyle?, previewFootnote?, author?, sourceUrl?, publishEnabled, publishConfigOk, publishDisabledReason?, wenyanServer, publishMediaId?, publishTheme?, publishedAt?, lastPublishError?}`(探针失败不阻塞页面;preview* 为项目级预览样式,发布页优先据此初始化) |
 | POST | `/api/projects/{id}/publish` | ADMIN/EDITOR | `?theme=&highlight=&macStyle=&footnote=`(query,与 preview 同形) | 成功 `{mediaId, theme, publishedAt}`;前置不满足/渲染参数非法/通道未配置 `R.fail(400)`;链路失败 `R.fail(500)`;失败均回写 last_publish_error |
 
 - 配置:`WENYAN_MCP_SERVER_URL`(带 scheme)/`WENYAN_MCP_SERVER_API_KEY`/`WENYAN_MCP_PUBLISH_TIMEOUT_MS`(默认 30s);未配置时 publish-options 返回 publishEnabled=false + 中文原因,publish 返回 `R.fail(400)`。
-- 前端:`StepPublish.vue`(第 5 步子路由 `/projects/:id/publish`):摘要(标题/封面缩略/插图数)+ 参数表单(与预览同源)+ 发布确认弹层 + 成功态(mediaId/时间/重发)+ 失败黄条;viewer 只读;`maxReachableStepOf` 放开到 index=4,`StepPreview` 状态判断修正为 PUBLISHED_DRAFT 并加「去发布」衔接。
+- 前端:`StepPublish.vue`(第 5 步子路由 `/projects/:id/publish`):摘要(标题/封面缩略/插图数)+ **排版参数只读回显**(主题/高亮/Mac/脚注,值来自预览页落库的 `preview*`,不在此编辑;发布时原样传给 wenyan-server)+ 作者/原文地址手填(项目级落库)+ 发布确认弹层 + 成功态(mediaId/时间/重发)+ 失败黄条;viewer 只读;`maxReachableStepOf` 放开到 index=4,`StepPreview` 状态判断修正为 PUBLISHED_DRAFT 并加「去发布」衔接。
 
 #### 验收状态
 

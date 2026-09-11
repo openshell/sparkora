@@ -76,10 +76,11 @@ public class PreviewService {
         List<String> bodyUrls = new ArrayList<>();
         for (Long imageId : bodyIdListOf(v)) bodyUrls.add(imageService.publicUrl(imageId));
 
-        // 2) 组装 markdown:frontmatter(title/author/cover)+ 正文;
+        // 2) 组装 markdown:frontmatter(title/cover/author/source_url)+ 正文;
         //    正文里图片引用即为图床公网 URL;插图落点完全由正文 markdown 引用决定,
-        //    未引用的选定插图不自动追加(与预览页 buildFullMd 同规则,所见即所得)
-        String md = buildMarkdown(v.getTitle(), coverUrl, v.getContentMd(), bodyUrls);
+        //    未引用的选定插图不自动追加(与预览页纯正文渲染同规则,所见即所得)
+        String md = buildMarkdown(v.getTitle(), coverUrl, p.getAuthor(), p.getSourceUrl(),
+                v.getContentMd(), bodyUrls);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("theme", th);
@@ -112,15 +113,20 @@ public class PreviewService {
     }
 
     /**
-     * frontmatter(title/cover=图床 URL)+ 正文。
-     * 插图落点完全由正文 markdown 引用决定:未引用的选定插图不自动追加文末(与预览页 buildFullMd 同规则,所见即所得)。
+     * frontmatter(title/cover=图床 URL/author/source_url)+ 正文。
+     * author/source_url 为发布页手填的项目级字段(09-11-preview-publish-bridge),非空才写;
+     * CLI 会剥离 frontmatter 只渲染正文,故它们不改变 HTML,仅保持预览/发布 frontmatter 契约完整。
+     * 插图落点完全由正文 markdown 引用决定:未引用的选定插图不自动追加文末(所见即所得)。
      * 正文里的图片引用即为图床公网 URL(前端插入时直接用 img.url),无需再本地 URL 化。
      */
-    private String buildMarkdown(String title, String coverUrl, String contentMd, List<String> bodyImageUrls) {
+    private String buildMarkdown(String title, String coverUrl, String author, String sourceUrl,
+                                 String contentMd, List<String> bodyImageUrls) {
         StringBuilder sb = new StringBuilder();
         sb.append("---\n");
         sb.append("title: ").append(sanitizeFrontmatterValue(title == null || title.isBlank() ? "无标题" : title)).append('\n');
         if (coverUrl != null && !coverUrl.isBlank()) sb.append("cover: ").append(coverUrl).append('\n');
+        if (author != null && !author.isBlank()) sb.append("author: ").append(sanitizeFrontmatterValue(author)).append('\n');
+        if (sourceUrl != null && !sourceUrl.isBlank()) sb.append("source_url: ").append(sanitizeFrontmatterValue(sourceUrl)).append('\n');
         sb.append("---\n\n");
         String body = contentMd == null ? "" : contentMd.replace("<br>", "\n");
         sb.append(body).append('\n');
@@ -190,6 +196,18 @@ public class PreviewService {
         return allowed.stream().filter(t -> t.equalsIgnoreCase(highlight.trim()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("未知高亮主题: " + highlight + "（可选：" + allowed + "）"));
+    }
+
+    /** 校验并规范化主题名(供 preview-style 保存端点复用);null/空白返回 null(表示不改该项),非法抛 IllegalArgumentException。 */
+    public String requireTheme(String theme) {
+        if (theme == null || theme.isBlank()) return null;
+        return validTheme(theme);
+    }
+
+    /** 校验并规范化高亮主题(供 preview-style 保存端点复用);null/空白返回 null(表示不改该项),非法抛 IllegalArgumentException。 */
+    public String requireHighlight(String highlight) {
+        if (highlight == null || highlight.isBlank()) return null;
+        return validHighlight(highlight);
     }
 
     /**

@@ -67,7 +67,9 @@ export const PREVIEW_SELECTOR = '.wenyan-preview'
 
 /**
  * ① 纯 markdown→HTML(无主题,与原版 renderMarkdown 对齐)。
- * frontmatter(title/cover)由 core 处理;输入含图片公网 URL。
+ * 输入为纯正文(不含 frontmatter):预览/复制均不依赖 core 的 frontmatter 处理,
+ * frontmatter(title/cover/author/source_url)由发布链路由后端组装(09-11-preview-publish-bridge)。
+ * 正文含图片公网 URL。
  */
 export async function renderMarkdownHtml(markdown) {
   const inst = await getCore()

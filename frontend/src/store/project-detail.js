@@ -186,6 +186,14 @@ export const useProjectDetailStore = defineStore('projectDetail', {
       e.brief = null; e.versions = []; e.imitation = null
     },
 
+    /** 局部更新项目缓存的预览样式/发布元信息(09-11-preview-publish-bridge):
+     *  保存成功后就地回写,避免子步骤切换时缓存陈旧导致样式回退。 */
+    patchProject(id, patch) {
+      const e = this.map[String(id)]
+      if (!e || !e.project) return
+      Object.assign(e.project, patch)
+    },
+
     /** 登出/长期离开时调用:清空全部缓存与轮询 */
     resetAll() {
       this.stopPolling()

@@ -1,11 +1,14 @@
 package com.sparkora.web.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sparkora.car.service.CarModelMatcherService;
 import com.sparkora.common.R;
 import com.sparkora.domain.dto.PageResult;
+import com.sparkora.domain.dto.PreviewStyleRequest;
 import com.sparkora.domain.dto.ProjectRequest;
+import com.sparkora.domain.dto.PublishMetaRequest;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
@@ -347,6 +350,48 @@ public class ArticleProjectController {
         }
     }
 
+    // ==================== 预览到发布衔接(09-11-preview-publish-bridge)====================
+
+    /** 保存预览页样式(主题/高亮/Mac/脚注,项目级;ADMIN/EDITOR)。只更新非 null 字段。 */
+    @PutMapping("/{id}/preview-style")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> savePreviewStyle(@PathVariable Long id, @RequestBody PreviewStyleRequest req) {
+        ArticleProjectEntity e = mapper.selectById(id);
+        if (e == null) return R.fail(404, "项目不存在");
+        try {
+            String theme = previewService.requireTheme(req.getTheme());
+            String highlight = previewService.requireHighlight(req.getHighlight());
+            // 用 UpdateWrapper 显式 set 仅目标列:避免 updateById 全字段覆盖把并发写入(如生成中状态)回写旧值
+            UpdateWrapper<ArticleProjectEntity> uw = new UpdateWrapper<>();
+            uw.eq("id", id);
+            if (theme != null) uw.set("preview_theme", theme);
+            if (highlight != null) uw.set("preview_highlight", highlight);
+            if (req.getMacStyle() != null) uw.set("preview_mac_style", req.getMacStyle());
+            if (req.getFootnote() != null) uw.set("preview_footnote", req.getFootnote());
+            uw.set("updated_at", LocalDateTime.now());
+            mapper.update(null, uw);
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        }
+    }
+
+    /** 保存发布元信息(作者/原文地址,项目级;ADMIN/EDITOR)。只更新请求中出现的字段,允许空串清空。 */
+    @PutMapping("/{id}/publish-meta")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> savePublishMeta(@PathVariable Long id, @Valid @RequestBody PublishMetaRequest req) {
+        ArticleProjectEntity e = mapper.selectById(id);
+        if (e == null) return R.fail(404, "项目不存在");
+        // 用 UpdateWrapper 显式 set:空串需落 NULL 清空,updateById 的 NOT_NULL 策略会跳过 null 字段
+        UpdateWrapper<ArticleProjectEntity> uw = new UpdateWrapper<>();
+        uw.eq("id", id);
+        if (req.getAuthor() != null) uw.set("author", req.getAuthor().isBlank() ? null : req.getAuthor().trim());
+        if (req.getSourceUrl() != null) uw.set("source_url", req.getSourceUrl().isBlank() ? null : req.getSourceUrl().trim());
+        uw.set("updated_at", LocalDateTime.now());
+        mapper.update(null, uw);
+        return R.ok();
+    }
+
     // ==================== 预览（S4，方案 A:wenyan 同核渲染）====================
 
     /** 预览(三角色;主题等白名单校验在 service)。显式 @PreAuthorize 与既有矩阵对齐。 */
@@ -383,6 +428,13 @@ public class ArticleProjectController {
         m.put("highlight", previewService.defaultHighlight());
         m.put("macStyle", previewService.defaultMacStyle());
         m.put("footnote", previewService.defaultFootnote());
+        // 09-11-preview-publish-bridge:发布页据 preview* 初始化样式(优先于全局默认),据 author/sourceUrl 初始化手填项
+        m.put("previewTheme", p.getPreviewTheme());
+        m.put("previewHighlight", p.getPreviewHighlight());
+        m.put("previewMacStyle", p.getPreviewMacStyle());
+        m.put("previewFootnote", p.getPreviewFootnote());
+        m.put("author", p.getAuthor());
+        m.put("sourceUrl", p.getSourceUrl());
         // 发布通道就绪度:server 配置齐备与否 + 可达/鉴权探针(懒探测,失败不阻塞页面)
         boolean configOk = previewService.serverConfigured();
         boolean channelOk = configOk && previewService.serverVerify();

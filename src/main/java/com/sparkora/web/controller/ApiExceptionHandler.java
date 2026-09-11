@@ -2,6 +2,9 @@ package com.sparkora.web.controller;
 
 import com.sparkora.common.R;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.validation.BindException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -34,6 +37,13 @@ public class ApiExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public R<Void> unreadable(HttpMessageNotReadableException ex) {
         return R.fail(400, "请求体格式不正确");
+    }
+
+    /** @Valid DTO 校验失败(如 publish-meta 超长):取首条中文提示,统一 R.fail(400)。 */
+    @ExceptionHandler({MethodArgumentNotValidException.class, BindException.class})
+    public R<Void> validation(BindException ex) {
+        FieldError fe = ex.getBindingResult().getFieldError();
+        return R.fail(400, fe != null && fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "参数校验失败");
     }
 
     /** multipart 超限/损坏（upload 走的是 @RequestParam，容器层异常在此兜底）。 */

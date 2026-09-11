@@ -29,6 +29,26 @@ if (claimed == 0) throw new IllegalStateException("状态冲突");
 
 - 排序字段白名单：用户可控的 orderBy/orderDir 只允许映射到固定列名常量，**原始参数绝不透传 QueryWrapper**（SQL 注入面）。
 
+### 部分更新与字段置空（MyBatis-Plus 陷阱）
+
+`updateById(entity)` 走实体默认 `FieldStrategy.NOT_NULL`：**null 字段被跳过，无法把列清空**。需要「只改指定列」或「置空」时用 `UpdateWrapper` 显式 `.set(...)`：
+
+```java
+// 部分更新：只 set 本次请求出现的字段（null 不动），其余列不写回
+projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+        .eq("id", id)
+        .set(theme != null, "preview_theme", theme)
+        .set(macStyle != null, "preview_mac_style", macStyle)
+        .set("updated_at", LocalDateTime.now()));
+
+// 置空：set 无条件发出 `col = null`，绕过 NOT_NULL 策略（用户清空表单场景）
+.set("author", blankToNull(author))   // 空串 → null，真正清库
+```
+
+- `.set(boolean condition, column, value)` 的条件重载可做「非 null 才更新」；无条件 `.set(column, value)` 用于置空。
+- 反例：`updateById` 全实体写回还会覆盖并发请求刚改的其他列（读改写竞态），部分更新场景一律用 `UpdateWrapper`。
+- 先例：`ArticleProjectController` 的 `PUT /{id}/preview-style`、`PUT /{id}/publish-meta`。
+
 ---
 
 ## Async Claim / 幂等占位（09-11 先例：ClarifyService）
