@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-11-wenyan-themes/research/wenyan-theme-mechanism.md", "reason": "wenyan CLI 主题机制实测证据（--custom-theme 用法/限制、内置 8 主题、发布链路主题落点），实现 renderByCli 分支与目录的依据"}
+{"file": ".trellis/tasks/09-11-wenyan-themes/design.md", "reason": "主题目录/契约/前端改造/兼容性的完整技术设计，实现主依据"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "主题目录跨后端校验/接口下发/前端展示三层，需按跨层数据流核对契约一致性"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "前端 THEME_COLORS/CUSTOM_THEMES 与后端目录存在重复真值，需按复用原则收敛"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "未知主题校验失败必须沿用 R.fail(400) 中文错误映射惯例"}

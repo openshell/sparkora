@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-11-wenyan-themes/prd.md", "reason": "逐条核对 AC1~AC7（分组下拉、社区主题预览/发布/持久化、内置全量、未知主题拒绝、双构建、文档）"}
+{"file": ".trellis/tasks/09-11-wenyan-themes/design.md", "reason": "核对契约变更（themes string[]→object[]）、renderByCli 分支约束、CSS 物化路径与兼容性"}
+{"file": ".trellis/tasks/09-11-wenyan-themes/research/wenyan-theme-mechanism.md", "reason": "以实测证据核对 --custom-theme 不传 --theme、不支持 URL 等约束是否被正确实现"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验未知主题错误映射是否符合项目 R.fail 中文惯例"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "preview_theme 无 schema 变更，核对是否确实无需迁移及部分更新惯例"}
