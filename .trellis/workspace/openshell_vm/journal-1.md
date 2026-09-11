@@ -163,3 +163,26 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: C2 新闻数据接入与独立知识域
+<!-- trellis-session: v=2 fp=db2f57ad35db535b -->
+
+**Date**: 2026-09-12
+**Task**: C2 新闻数据接入与独立知识域
+**Branch**: `main`
+
+### Summary
+
+比亚迪官方新闻全量(167篇)抓取+正文抽取+向量化，作为第三知识域(NEWS)接入统一检索；修复多域检索候选窗口被新闻挤占的严重缺陷；新增 NewsController 6 路由与定时增量同步。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6fa6297` | feat(S11): 新闻数据接入与独立知识域——抓取/正文抽取/向量化/统一检索/NEWS REST |
+| `4c6f05a` | docs(spec): 记录多域统一检索候选窗口按域隔离约定 |
+
+### Status
+
+[OK] **Completed**
