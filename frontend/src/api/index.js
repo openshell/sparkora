@@ -86,6 +86,32 @@ export const carApi = {
   rag: (modelId, query, topK) => http.post('/car/rag', { modelId, query, topK }, { timeout: 120000 })
 }
 
+// C2/C3 新闻知识域：浏览（读三角色）；同步任务创建/重试（ADMIN/EDITOR）
+export const newsApi = {
+  // 分页列表：?page&size&keyword → R<PageResult<NewsEntity>>（rows/total/page/size，列表不含正文）
+  list: (params) => http.get('/news', { params }),
+  // 详情（含正文 content）
+  get: (id) => http.get(`/news/${id}`),
+  // 创建同步任务：body={jobType:"FULL"|"INCREMENT"}，返回 {jobId}
+  createJob: (jobType) => http.post('/news/sync/jobs', { jobType }),
+  // 查询同步任务进度
+  getJob: (id) => http.get(`/news/sync/jobs/${id}`),
+  // 同步任务历史
+  listJobs: () => http.get('/news/sync/jobs'),
+  // 重试任务失败项，返回新任务 {jobId}
+  retryJob: (id) => http.post(`/news/sync/jobs/${id}/retry`)
+}
+
+// S7 通用汽车知识库（KbLibrary 换封装用；行为与原先直调 http 完全一致）
+export const kbApi = {
+  list: () => http.get('/kb/docs'),
+  get: (id) => http.get(`/kb/docs/${id}`),
+  create: (data) => http.post('/kb/docs', data),
+  update: (id, data) => http.put(`/kb/docs/${id}`, data),
+  remove: (id) => http.delete(`/kb/docs/${id}`),
+  rebuild: (id) => http.post(`/kb/docs/${id}/rebuild`)
+}
+
 export const imageApi = {
   // 图库分页列表（S10）：?projectId=&source=&keyword=&page=&size=，total 供分页
   list: (params) => http.get('/images', { params: { page: 1, size: 24, ...(params || {}) } }),

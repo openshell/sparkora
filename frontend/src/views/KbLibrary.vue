@@ -74,7 +74,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, WarningFilled } from '@element-plus/icons-vue'
 import TopBar from '../layouts/TopBar.vue'
-import http from '../api/http'
+import { kbApi } from '../api'
 import { useUserStore } from '../store/user'
 
 const user = useUserStore()
@@ -97,7 +97,7 @@ const load = async () => {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await http.get('/kb/docs')
+    const { data } = await kbApi.list()
     rows.value = data.data || []
   } catch (e) {
     error.value = e?.response?.data?.msg || e.message
@@ -114,7 +114,7 @@ const openCreate = () => {
 
 const openEdit = (d) => {
   editingId.value = d.id
-  http.get(`/kb/docs/${d.id}`).then(({ data }) => {
+  kbApi.get(d.id).then(({ data }) => {
     const doc = data.data || {}
     form.value = { title: doc.title, domain: doc.domain, content: doc.content, enabled: doc.enabled !== false }
     editDlg.value = true
@@ -126,10 +126,10 @@ const onSave = async () => {
   saving.value = true
   try {
     if (editingId.value) {
-      await http.put(`/kb/docs/${editingId.value}`, form.value)
+      await kbApi.update(editingId.value, form.value)
       ElMessage.success('已更新并向量化')
     } else {
-      await http.post('/kb/docs', form.value)
+      await kbApi.create(form.value)
       ElMessage.success('已创建并向量化')
     }
     editDlg.value = false
@@ -144,7 +144,7 @@ const onSave = async () => {
 const onDel = (d) => {
   ElMessageBox.confirm(`删除「${d.title}」?其向量块将一并清除。`, '删除知识', { type: 'warning' })
     .then(async () => {
-      await http.delete(`/kb/docs/${d.id}`)
+      await kbApi.remove(d.id)
       ElMessage.success('已删除')
       await load()
     }).catch(() => {})
@@ -153,7 +153,7 @@ const onDel = (d) => {
 const onRebuild = async (d) => {
   rebushing.value = d.id
   try {
-    const { data } = await http.post(`/kb/docs/${d.id}/rebuild`)
+    const { data } = await kbApi.rebuild(d.id)
     const st = data.data || {}
     st.failed > 0
       ? ElMessage.warning(`重建完成:成功 ${st.success}/${st.total},失败 ${st.failed}(可重试)`)

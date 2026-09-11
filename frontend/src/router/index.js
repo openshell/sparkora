@@ -22,6 +22,7 @@ const routes = [
   { path: '/car', name: 'car', component: () => import('../views/CarLibrary.vue'), meta: { auth: true } },
   { path: '/car/sync', name: 'car-sync', component: () => import('../views/CarSync.vue'), meta: { auth: true } },
   { path: '/car/:id', name: 'car-detail', component: () => import('../views/CarDetail.vue'), meta: { auth: true } },
+  { path: '/knowledge', name: 'knowledge', component: () => import('../views/KnowledgeCenter.vue'), meta: { auth: true } },
   { path: '/kb', name: 'kb', component: () => import('../views/KbLibrary.vue'), meta: { auth: true } },
   { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { auth: true } }
 ]
