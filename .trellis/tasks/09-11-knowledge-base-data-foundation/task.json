@@ -1,0 +1,31 @@
+{
+  "id": "knowledge-base-data-foundation",
+  "name": "knowledge-base-data-foundation",
+  "title": "车型库/知识库数据基座 + RAG 问答",
+  "description": "重构车型库与知识库，构建扎实的数据基座：从比亚迪官方接口获取权威车型/新闻数据，经清洗标准化入库；车型图片转存飞牛；新闻接入；评估并构建 RAG 知识库，提供知识浏览页面与问答程序。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-09-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-11-car-foundation-hardening",
+    "09-11-news-ingestion-domain",
+    "09-11-knowledge-center-ui",
+    "09-11-qa-multiturn"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
