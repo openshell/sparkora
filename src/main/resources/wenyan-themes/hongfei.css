@@ -1,0 +1,192 @@
+:root {
+  --sans-serif-font: Roboto, Oxygen, Ubuntu, Cantarell, PingFangSC-light, PingFangTC-light, "Open Sans", "Helvetica Neue",
+      sans-serif;
+  --monospace-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "liberation mono", "courier new", ptima-Regular,
+      ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+#wenyan {
+  font-family: var(--sans-serif-font);
+  line-height: 1.75;
+}
+#wenyan * {
+  box-sizing: border-box;
+}
+#wenyan h1,
+#wenyan h2,
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6,
+#wenyan p,
+#wenyan pre {
+  margin: 1em 0;
+}
+#wenyan p {
+  margin: 10px 10px;
+  line-height: 1.75;
+  letter-spacing: 0.2em;
+  font-size: 14px;
+  word-spacing: 0.1em;
+}
+#wenyan p strong {
+  font-weight: border;
+  color: rgb(248, 57, 41);
+}
+#wenyan p em {
+  color: rgb(248, 57, 41);
+  letter-spacing: 0.3em;
+}
+#wenyan h1 {
+  border-bottom: 2px solid rgb(248, 57, 41);
+  font-size: 1.3em;
+}
+#wenyan h1 span {
+  display: inline-block;
+  font-weight: normal;
+  background: rgb(248, 57, 41);
+  color: #ffffff;
+  padding: 3px 10px 1px;
+  border-top-right-radius: 3px;
+  border-top-left-radius: 3px;
+  margin-right: 3px;
+}
+#wenyan h2 {
+  text-align: left;
+  margin: 20px 10px 0px 0px;
+}
+#wenyan h2 span {
+  font-family: STHeitiSC-Light;
+  font-size: 18px;
+  font-weight: bolder;
+  display: inline-block;
+  padding-left: 10px;
+  border-left: 5px solid rgb(248, 57, 41);
+}
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6 {
+  font-size: 1em;
+  font-weight: bold;
+}
+#wenyan ul,
+#wenyan ol {
+  font-size: 14px;
+}
+#wenyan li {
+  font-size: 13px;
+}
+#wenyan img {
+  max-width: 100%;
+  border-radius: 0px 0px 5px 5px;
+  display: block;
+  margin: 20px auto;
+  width: 85%;
+  height: 100%;
+  object-fit: contain;
+  box-shadow: #84a1a8 0px 10px 15px;
+}
+#wenyan table {
+  display: table;
+  text-align: left;
+  border-collapse: collapse;
+}
+#wenyan table td,
+#wenyan table th {
+  padding: 9px 12px;
+  line-height: 22px;
+  color: #222;
+  min-width: 60px;
+  border: 1px solid #d8d8d8;
+  vertical-align: middle;
+}
+#wenyan table th {
+  border: 1px solid #d8d8d8;
+  font-weight: bold;
+  background-color: #f0f0f0;
+}
+#wenyan table tr:nth-child(2n) {
+  background-color: #f8f8f8;
+}
+#wenyan blockquote {
+  font-style: normal;
+  border-left: none;
+  padding: 10px;
+  position: relative;
+  line-height: 1.8;
+  border-radius: 0px 0px 10px 10px;
+  color: #feeeed;
+  background: #000;
+  box-shadow: #84a1a8 0px 10px 15px;
+}
+#wenyan blockquote {
+  color: #feeeed;
+  font-size: 13px;
+}
+#wenyan blockquote::before {
+  content: "“";
+  display: inline;
+  color: #fff;
+  font-size: 4em;
+  font-family: Arial, serif;
+  line-height: 1em;
+  font-weight: 700;
+}
+#wenyan p code,
+#wenyan li code {
+  font-size: 14px;
+  word-wrap: break-word;
+  padding: 4px 6px;
+  border-radius: 4px;
+  margin: 0 2px;
+  background-color: rgba(27, 31, 35, 0.05);
+  word-break: break-all;
+  font-family: var(--monospace-font);
+  color: rgb(271, 93, 108);
+  padding: 4px 6px;
+}
+#wenyan pre {
+  border-radius: 5px;
+  line-height: 2;
+  margin: 1em 0.5em;
+  padding: 1em;
+}
+#wenyan pre code {
+  font-family: var(--monospace-font);
+  display: block;
+  overflow-x: auto;
+  margin: 0;
+  padding: 0;
+}
+#wenyan hr {
+  height: 1px;
+  padding: 0;
+  border: none;
+  border-top: medium solidid #333;
+  text-align: center;
+  background-image: linear-gradient(to right, rgba(248, 57, 41, 0), rgba(248, 57, 41, 0.75), rgba(248, 57, 41, 0));
+}
+#wenyan a {
+  text-decoration: none;
+  word-wrap: break-word;
+  color: rgb(248, 57, 41);
+  border-bottom: 1px solid #ff3502;
+}
+#wenyan .footnote {
+  color: rgb(248, 57, 41);
+}
+#wenyan #footnotes p {
+  display: flex;
+  margin: 0;
+  font-size: 0.9em;
+}
+#wenyan .footnote-num {
+  display: inline;
+  width: 10%;
+}
+#wenyan .footnote-txt {
+  display: inline;
+  width: 90%;
+  word-wrap: break-word;
+  word-break: break-all;
+}

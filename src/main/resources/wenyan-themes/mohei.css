@@ -1,0 +1,127 @@
+:root {
+  --sans-serif-font: Roboto, Oxygen, Ubuntu, Cantarell, PingFangSC-light, PingFangTC-light, "Open Sans", "Helvetica Neue",
+      sans-serif;
+  --monospace-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "liberation mono", "courier new", ptima-Regular,
+      ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+#wenyan {
+  font-family: var(--sans-serif-font);
+  line-height: 1.75;
+}
+#wenyan * {
+  box-sizing: border-box;
+}
+#wenyan p {
+  font-size: 17px;
+  word-spacing: 3px;
+  letter-spacing: 1px;
+}
+#wenyan h2 {
+  background-color: #5c5c5c;
+  color: white;
+  padding: 0px 10px;
+  border-radius: 1px;
+  max-width: fit-content;
+}
+#wenyan img {
+  max-width: 100%;
+  width: 80%;
+  margin: 0 auto;
+  border-radius: 5px;
+}
+#wenyan table {
+  display: table;
+  text-align: left;
+  border-collapse: collapse;
+}
+#wenyan table td,
+#wenyan table th {
+  padding: 9px 12px;
+  line-height: 22px;
+  color: #222;
+  min-width: 60px;
+  border: 1px solid #d8d8d8;
+  vertical-align: middle;
+}
+#wenyan table th {
+  border: 1px solid #d8d8d8;
+  font-weight: bold;
+  background-color: #f0f0f0;
+}
+#wenyan table tr:nth-child(2n) {
+  background-color: #f8f8f8;
+}
+#wenyan blockquote {
+  margin: 0 0 1em;
+  display: block;
+  font-size: 0.9em;
+  overflow: auto;
+  border-left: 3px solid rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.05);
+  color: #6a737d;
+  padding-left: 20px;
+  padding-right: 10px;
+}
+#wenyan blockquote p {
+  margin: 10px 0px;
+  color: black;
+  line-height: 26px;
+}
+#wenyan p code {
+  word-wrap: break-word;
+  padding: 2px 4px;
+  border-radius: 4px;
+  margin: 0 2px;
+  color: #1e6bb8;
+  background-color: rgba(27, 31, 35, 0.05);
+  font-family:
+      Operator Mono,
+      Consolas,
+      Monaco,
+      Menlo,
+      monospace;
+  word-break: break-all;
+}
+#wenyan pre {
+  word-wrap: break-word !important;
+  margin: 10px 0;
+  display: block;
+  border: 1px solid #f0f0f0;
+  border-radius: 2px;
+  line-height: 20px;
+}
+#wenyan pre code {
+  display: block;
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px;
+  font-family: var(--monospace-font);
+}
+#wenyan hr {
+  border-top: 1px dashed #dddddd;
+}
+#wenyan a {
+  text-decoration: none;
+  color: #1e6bb8;
+  word-wrap: break-word;
+  font-weight: bold;
+  border-bottom: 1px solid #1e6bb8;
+}
+#wenyan .footnote {
+  color: #0069c2;
+}
+#wenyan #footnotes p {
+  display: flex;
+  margin: 0;
+  font-size: 0.9em;
+}
+#wenyan .footnote-num {
+  display: inline;
+  width: 10%;
+}
+#wenyan .footnote-txt {
+  display: inline;
+  width: 90%;
+  word-wrap: break-word;
+  word-break: break-all;
+}

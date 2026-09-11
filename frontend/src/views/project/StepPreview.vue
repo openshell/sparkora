@@ -27,13 +27,24 @@
               <span class="theme-dot" :style="{ background: themeColor(theme) }" :class="{ 'is-bright': themeIsBright(theme) }"></span>
               <span class="select-label-text">{{ themeLabel(theme) }}</span>
             </template>
-            <el-option v-for="t in allThemeOptions" :key="t" :label="themeLabel(t)" :value="t">
-              <span class="option-row">
-                <span class="theme-dot" :style="{ background: themeColor(t) }" :class="{ 'is-bright': themeIsBright(t) }"></span>
-                <span class="option-name">{{ themeLabel(t) }}</span>
-                <el-icon v-if="t === theme" class="option-check"><Check /></el-icon>
-              </span>
-            </el-option>
+            <el-option-group v-if="builtinThemes.length" label="内置主题">
+              <el-option v-for="t in builtinThemes" :key="t.id" :label="t.name" :value="t.id">
+                <span class="option-row">
+                  <span class="theme-dot" :style="{ background: t.color }" :class="{ 'is-bright': t.bright }"></span>
+                  <span class="option-name">{{ t.name }}</span>
+                  <el-icon v-if="t.id === theme" class="option-check"><Check /></el-icon>
+                </span>
+              </el-option>
+            </el-option-group>
+            <el-option-group v-if="communityThemes.length" label="社区主题">
+              <el-option v-for="t in communityThemes" :key="t.id" :label="t.name" :value="t.id">
+                <span class="option-row">
+                  <span class="theme-dot" :style="{ background: t.color }" :class="{ 'is-bright': t.bright }"></span>
+                  <span class="option-name">{{ t.name }}</span>
+                  <el-icon v-if="t.id === theme" class="option-check"><Check /></el-icon>
+                </span>
+              </el-option>
+            </el-option-group>
           </el-select>
           <span class="field-label">高亮</span>
           <el-select v-model="highlight" class="hl-select" @change="onPreviewStyleChange">
@@ -392,25 +403,16 @@ const insertedCount = computed(() => insertedUrls.value.size)
 const imgUrl = (img) => img?.thumbUrl || img?.url || ''   // S10:网格缩略图(imageView2/webp)
 const originUrl = (img) => img?.url || ''                 // 插入正文/大图预览用原图 URL
 
-// ==== 主题色点(原版 ThemePreview 下拉的语义:一眼看出主题气质) ====
-const THEME_COLORS = {
-  default: '#1a73e8',    // 经典蓝
-  orangeheart: '#ef7060',
-  rainbow: '#e91e63',
-  lapis: '#4870ac',
-  pie: '#2b2b2b',
-  maize: '#ffb11b',
-  purple: '#8e44ad',
-  phycat: '#3eaf7c'
-}
-const themeColor = (t) => THEME_COLORS[t] || '#8a8f98'
-const BRIGHT_DOTS = new Set(['maize', 'rainbow'])
-const themeIsBright = (t) => BRIGHT_DOTS.has(t)
-/** 主题显示名:内置主题原样展示。 */
-const themeLabel = (t) => t
-// 全量主题清单 = 后端配置下发(WENYAN_THEME_NAMES 白名单):只保留可发布主题,
-// 社区自定义主题(custom:*) wenyan CLI 不支持渲染,无法发布,故不进入选择器(09-11-preview-publish-bridge)
-const allThemeOptions = computed(() => themeOptions.value || [])
+// ==== 主题目录(后端下发:内置 + 社区,分组/名称/色点单一真值) ====
+/** 按 id 查目录项(未知返回 undefined)。 */
+const themeMeta = (t) => (themeOptions.value || []).find((x) => x.id === t)
+const themeColor = (t) => themeMeta(t)?.color || '#8a8f98'
+const themeIsBright = (t) => !!themeMeta(t)?.bright
+/** 主题显示名:内置主题为 id 原样,社区主题为中文名。 */
+const themeLabel = (t) => themeMeta(t)?.name || t || ''
+// 全量主题按 group 分组(内置主题 / 社区主题),供 el-option-group 渲染
+const builtinThemes = computed(() => (themeOptions.value || []).filter((t) => t.group !== 'community'))
+const communityThemes = computed(() => (themeOptions.value || []).filter((t) => t.group === 'community'))
 
 // ==== 渲染:正文 400ms 防抖走纯渲染;首次/出错时同样入口 ====
 let renderTimer = null
@@ -714,7 +716,7 @@ onMounted(async () => {
   try {
     const res = await imageApi.previewOptions()
     if (res.code === 0) {
-      themeOptions.value = res.data?.themes || ['default']
+      themeOptions.value = res.data?.themes || []
       highlightOptions.value = res.data?.highlights || ['solarized-light']
       styleDefaults.value = {
         theme: res.data?.defaultTheme || 'default',

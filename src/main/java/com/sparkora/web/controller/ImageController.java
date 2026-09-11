@@ -27,10 +27,13 @@ public class ImageController {
 
     private final ImageService service;
     private final com.sparkora.config.WenyanProperties wenyanProps;
+    private final com.sparkora.service.PreviewService previewService;
 
-    public ImageController(ImageService service, com.sparkora.config.WenyanProperties wenyanProps) {
+    public ImageController(ImageService service, com.sparkora.config.WenyanProperties wenyanProps,
+                           com.sparkora.service.PreviewService previewService) {
         this.service = service;
         this.wenyanProps = wenyanProps;
+        this.previewService = previewService;
     }
 
     /** 数字字段健壮解析：兼容 Number(Integer/Long/…) 与字符串形式（"4"/" 4"），空/非法返回 null 或抛 400。 */
@@ -139,12 +142,12 @@ public class ImageController {
         }
     }
 
-    /** 预览参数清单(S4):主题/高亮清单与开关默认值,读 .env(WENYAN_*),前端下拉同源。 */
+    /** 预览参数清单(S4):主题目录/高亮清单与开关默认值,前端下拉同源。 */
     @GetMapping("/preview-options")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
     public R<Map<String, Object>> previewOptions() {
         Map<String, Object> m = new java.util.HashMap<>();
-        m.put("themes", wenyanProps.themeNameList());
+        m.put("themes", previewService.themeOptions());
         m.put("highlights", java.util.List.of("solarized-light", "monokai", "github", "dracula"));
         m.put("defaultTheme", wenyanProps.getDefaultTheme());
         m.put("highlight", wenyanProps.getHighlight());

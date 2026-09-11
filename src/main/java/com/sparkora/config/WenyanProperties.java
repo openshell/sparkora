@@ -26,7 +26,12 @@ public class WenyanProperties {
     private String cliPath = "wenyan";
     /** 预览默认主题。 */
     private String defaultTheme = "default";
-    /** 可选主题清单(逗号分隔),预览页下拉读此配置;server 2.0.11 无主题查询接口。 */
+    /**
+     * @deprecated 09-11-wenyan-themes 起主题清单改由 {@link com.sparkora.service.WenyanThemeCatalog}
+     * 权威目录提供(含社区 custom:* 主题,.env 无法表达 CLI CSS 路径),本字段不再参与校验/下发。
+     * 保留仅为兼容旧 .env,配置与否不影响行为。
+     */
+    @Deprecated
     private String themeNames = "default";
     /** 代码高亮主题。 */
     private String highlight = "solarized-light";
@@ -48,6 +53,8 @@ public class WenyanProperties {
                 && serverApiKey != null && !serverApiKey.isBlank();
     }
 
+    /** @deprecated 见 {@link #themeNames};不再参与校验,新代码用 WenyanThemeCatalog。 */
+    @Deprecated
     public List<String> themeNameList() {
         return Arrays.stream((themeNames == null || themeNames.isBlank() ? defaultTheme : themeNames).split(","))
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();

@@ -70,6 +70,7 @@ sparkora:
     # S4 方案 A:预览用本机 CLI render(与 server 同核),发布(S5)走远程 server
     cli-path: ${WENYAN_CLI_PATH:wenyan}
     default-theme: ${WENYAN_DEFAULT_THEME:default}
+    # 已废弃(09-11-wenyan-themes):主题清单改由 WenyanThemeCatalog 权威目录固定,本项不再参与校验/下发
     theme-names: ${WENYAN_THEME_NAMES:default,lapis,orangeheart,phycat}
     highlight: ${WENYAN_HIGHLIGHT:solarized-light}
     mac-style: ${WENYAN_MAC_STYLE:true}

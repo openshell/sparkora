@@ -181,7 +181,8 @@ const options = ref({
   previewMacStyle: null,
   previewFootnote: null,
   author: '',
-  sourceUrl: ''
+  sourceUrl: '',
+  themes: []
 })
 
 const publishable = computed(() => isPublishable(props.project?.status))
@@ -190,15 +191,13 @@ const editorOrAbove = computed(() => userStore.isEditorOrAbove)
 const publishError = computed(() => options.value.lastPublishError || props.project?.lastPublishError || '')
 const publishEnabled = computed(() => !!options.value.publishEnabled)
 
-// ==== 主题色点/显示名(与 StepPreview 同源,仅内置可发布主题) ====
-const THEME_COLORS = {
-  default: '#1a73e8', orangeheart: '#ef7060', rainbow: '#e91e63', lapis: '#4870ac',
-  pie: '#2b2b2b', maize: '#ffb11b', purple: '#8e44ad', phycat: '#3eaf7c'
-}
-const themeColor = (t) => THEME_COLORS[t] || '#8a8f98'
-const BRIGHT_DOTS = new Set(['maize', 'rainbow'])
-const themeIsBright = (t) => BRIGHT_DOTS.has(t)
-const themeLabel = (t) => t || ''
+// ==== 主题目录(与 StepPreview 同源,来自 publish-options.themes 对象数组) ====
+/** 按 id 查目录项(未知返回 undefined)。 */
+const themeMeta = (t) => (options.value.themes || []).find((x) => x.id === t)
+const themeColor = (t) => themeMeta(t)?.color || '#8a8f98'
+const themeIsBright = (t) => !!themeMeta(t)?.bright
+/** 主题显示名:内置主题为 id 原样,社区主题为中文名。 */
+const themeLabel = (t) => themeMeta(t)?.name || t || ''
 
 // ==== 摘要:标题/字数/封面/插图(与 Step3 同一接口,口径一致) ====
 const versionTitle = ref('')

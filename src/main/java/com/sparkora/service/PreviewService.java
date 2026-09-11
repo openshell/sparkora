@@ -39,17 +39,19 @@ public class PreviewService {
     private final ImageProperties imageProps;
     private final WenyanProperties wenyanProps;
     private final WenyanServerService serverService;
+    private final WenyanThemeCatalog themeCatalog;
 
     public PreviewService(ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
                           ImageService imageService,
                           ImageProperties imageProps, WenyanProperties wenyanProps,
-                          WenyanServerService serverService) {
+                          WenyanServerService serverService, WenyanThemeCatalog themeCatalog) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.imageService = imageService;
         this.imageProps = imageProps;
         this.wenyanProps = wenyanProps;
         this.serverService = serverService;
+        this.themeCatalog = themeCatalog;
     }
 
     /**
@@ -133,20 +135,17 @@ public class PreviewService {
         return sb.toString();
     }
 
-    /** 主题名白名单校验(防 CLI 参数注入;清单来自 .env 的 WENYAN_THEME_NAMES)。 */
+    /** 主题校验(防 CLI 参数注入;清单来自 WenyanThemeCatalog 权威目录,含社区 custom:* 主题)。 */
     private String validTheme(String theme) {
         if (theme == null || theme.isBlank()) return wenyanProps.getDefaultTheme();
-        return wenyanProps.themeNameList().stream()
-                .filter(t -> t.equalsIgnoreCase(theme.trim()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("未知主题: " + theme + "（可选：" + wenyanProps.themeNameList() + "）"));
+        return themeCatalog.require(theme).id();
     }
 
     // ==================== 选项/配置透出(publish-options 与发布通道检查,S5) ====================
 
-    /** 可选主题清单(白名单同源)。 */
-    public java.util.List<String> themeOptions() {
-        return wenyanProps.themeNameList();
+    /** 可选主题目录(内置 + 社区,对象数组;前端下拉按 group 分组)。 */
+    public List<WenyanThemeCatalog.ThemeMeta> themeOptions() {
+        return themeCatalog.all();
     }
 
     /** 默认主题。 */
@@ -213,6 +212,11 @@ public class PreviewService {
     /**
      * 调本机 wenyan CLI render,返回 HTML(子进程输出异步排水防管道阻塞,超时/非零退出/空输出均抛错由上层降级)。
      * 临时 md 文件用 createTempMd() 落盘:系统 /tmp 在受限容器里可能只读。
+     *
+     * 主题分支(实测 wenyan 2.0.11):
+     *  - 内置主题:`--theme <id>`;
+     *  - 社区主题:`--custom-theme <本地CSS绝对路径>` 且**不传 --theme**(同传时 --theme 会覆盖 --custom-theme);
+     *    --custom-theme 不支持网络 URL,路径由 WenyanThemeCatalog 启动时物化。
      */
     private String renderByCli(String markdown, String theme, String highlight,
                                boolean macStyle, boolean footnote) {
@@ -221,9 +225,17 @@ public class PreviewService {
             tmp = createTempMd();
             Files.write(tmp, markdown.getBytes(StandardCharsets.UTF_8));
             List<String> cmd = new ArrayList<>(Arrays.asList(
-                    wenyanProps.getCliPath(), "render",
-                    "--theme", theme,
-                    "--highlight", highlight));
+                    wenyanProps.getCliPath(), "render"));
+            if (themeCatalog.isCommunity(theme)) {
+                // 社区主题:只传 --custom-theme,绝不传 --theme
+                cmd.add("--custom-theme");
+                cmd.add(themeCatalog.cssPath(theme));
+            } else {
+                cmd.add("--theme");
+                cmd.add(theme);
+            }
+            cmd.add("--highlight");
+            cmd.add(highlight);
             if (!macStyle) cmd.add("--no-mac-style");
             if (!footnote) cmd.add("--no-footnote");
             cmd.add("--file");

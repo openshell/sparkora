@@ -1,0 +1,222 @@
+:root {
+  --sans-serif-font: Roboto, Oxygen, Ubuntu, Cantarell, PingFangSC-light, PingFangTC-light, "Open Sans", "Helvetica Neue",
+      sans-serif;
+  --monospace-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "liberation mono", "courier new", ptima-Regular,
+      ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+#wenyan {
+  font-family: var(--sans-serif-font);
+  line-height: 1.75;
+}
+#wenyan * {
+  box-sizing: border-box;
+}
+#wenyan h1,
+#wenyan h2,
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6,
+#wenyan p,
+#wenyan pre {
+  margin: 1em 0;
+}
+#wenyan p {
+  margin: 0 0 20px;
+  padding: 0;
+  line-height: 1.8em;
+  color: #3a3a3a;
+}
+#wenyan h1 {
+  font-size: 2.1em;
+  line-height: 1.1em;
+  padding-top: 16px;
+  padding-bottom: 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #c99833;
+}
+#wenyan h1 span {
+  color: #515151;
+  font-weight: 700;
+}
+#wenyan h2 {
+  margin-bottom: 35px;
+}
+#wenyan h2 span {
+  display: inline-block;
+  font-weight: bold;
+  background: linear-gradient(#fff 60%, #ffb11b 40%);
+  color: #515151;
+  padding: 2px 13px 2px;
+  margin-right: 3px;
+  height: 50%;
+}
+#wenyan h3 {
+  line-height: 1.4;
+  padding-top: 10px;
+  margin: 10px 0 5px;
+}
+#wenyan h3 span {
+  color: #515151;
+  font-weight: 700;
+  font-size: 1em;
+  padding-left: 20px;
+  border-left: 3px solid #f9bf45;
+}
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6 {
+  font-size: 1em;
+  font-weight: bold;
+}
+#wenyan h2,
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6 {
+  line-height: 1.5em;
+  margin-top: 2.2em;
+  margin-bottom: 4px;
+}
+#wenyan ul,
+#wenyan ol {
+  padding-left: 1.2em;
+}
+#wenyan li {
+  margin-left: 1.2em;
+}
+#wenyan img {
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  width: 100%;
+  border-radius: 5px;
+  display: block;
+  margin-bottom: 15px;
+}
+#wenyan table {
+  display: table;
+  text-align: left;
+  border-collapse: collapse;
+}
+#wenyan table td,
+#wenyan table th {
+  padding: 9px 12px;
+  line-height: 22px;
+  color: #222;
+  min-width: 60px;
+  border: 1px solid #d8d8d8;
+  vertical-align: middle;
+}
+#wenyan table th {
+  border: 1px solid #d8d8d8;
+  font-weight: bold;
+  background-color: #f0f0f0;
+}
+#wenyan table tr:nth-child(2n) {
+  background-color: #f8f8f8;
+}
+#wenyan table tr th,
+#wenyan table tr td {
+  border: 1px solid #d8d8d8;
+  text-align: center;
+}
+#wenyan blockquote {
+  margin: 0 0 1em;
+}
+#wenyan blockquote {
+  display: block;
+  font-size: 0.9em;
+  overflow: auto;
+  border-left: 3px solid rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.05);
+  color: #6a737d;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  padding-left: 20px;
+  padding-right: 10px;
+  margin-bottom: 20px;
+  margin-top: 20px;
+}
+#wenyan blockquote p {
+  color: #595959;
+  margin: 0px;
+  color: black;
+  line-height: 26px;
+}
+#wenyan blockquote {
+  border-left-color: #ffb11b;
+  background: #fff5e3;
+}
+#wenyan blockquote p {
+  color: #595959;
+}
+#wenyan pre {
+  border-radius: 5px;
+  line-height: 2;
+  margin: 1em 0.5em;
+  padding: 1em;
+  background-color: #afb8c133;
+  background-color: #fff5e3;
+}
+#wenyan p code,
+#wenyan li code {
+  font-size: 14px;
+  word-wrap: break-word;
+  padding: 4px 6px;
+  border-radius: 4px;
+  margin: 0 2px;
+  color: #1e6bb8;
+  background-color: rgba(27, 31, 35, 0.05);
+  word-break: break-all;
+  font-family: var(--monospace-font);
+  color: #9b6e23;
+  background-color: #fff5e3;
+  padding: 3px;
+  margin: 3px;
+}
+#wenyan pre code {
+  font-family: var(--monospace-font);
+  display: block;
+  overflow-x: auto;
+  margin: 0;
+  padding: 0;
+}
+#wenyan hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin-top: 2em;
+  margin-bottom: 2em;
+}
+#wenyan a {
+  text-decoration: none;
+  word-wrap: break-word;
+  color: #0069c2;
+  border-bottom: 1px solid #0069c2;
+}
+#wenyan a {
+  border: none;
+  text-decoration: none;
+  color: #dda52d;
+}
+#wenyan .footnote {
+  color: #dda52d;
+  margin: 2px;
+  padding: 3px;
+}
+#wenyan #footnotes p {
+  display: flex;
+  margin: 0;
+  font-size: 0.9em;
+}
+#wenyan .footnote-num {
+  display: inline;
+  width: 10%;
+}
+#wenyan .footnote-txt {
+  display: inline;
+  width: 90%;
+  word-wrap: break-word;
+  word-break: break-all;
+}

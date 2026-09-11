@@ -1,0 +1,164 @@
+:root {
+  --sans-serif-font: Roboto, Oxygen, Ubuntu, Cantarell, PingFangSC-light, PingFangTC-light, "Open Sans", "Helvetica Neue",
+      sans-serif;
+  --monospace-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "liberation mono", "courier new", ptima-Regular,
+      ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+#wenyan {
+  font-family: var(--sans-serif-font);
+  line-height: 1.75;
+}
+#wenyan * {
+  box-sizing: border-box;
+}
+#wenyan h1,
+#wenyan h2,
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6,
+#wenyan p,
+#wenyan pre {
+  margin: 1em 0;
+}
+#wenyan p {
+  color: rgb(89, 89, 89);
+}
+#wenyan p strong {
+  color: rgb(71, 193, 168);
+}
+#wenyan p em {
+  color: rgb(71, 193, 168);
+}
+#wenyan h1 {
+  color: rgb(89, 89, 89);
+}
+#wenyan h2 {
+  border-bottom: 2px solid rgb(89, 89, 89);
+  margin-bottom: 30px;
+  color: rgb(89, 89, 89);
+}
+#wenyan h2 span {
+  font-size: 22px;
+  display: inline-block;
+  border-bottom: 2px solid rgb(89, 89, 89);
+}
+#wenyan h3,
+#wenyan h4,
+#wenyan h5,
+#wenyan h6 {
+  color: rgb(89, 89, 89);
+}
+#wenyan ul,
+#wenyan ol {
+  padding-left: 1.2em;
+}
+#wenyan li {
+  margin-left: 1.2em;
+}
+#wenyan img {
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  display: block;
+}
+#wenyan table {
+  display: table;
+  text-align: left;
+  border-collapse: collapse;
+}
+#wenyan table td,
+#wenyan table th {
+  padding: 9px 12px;
+  line-height: 22px;
+  color: #222;
+  min-width: 60px;
+  border: 1px solid #d8d8d8;
+  vertical-align: middle;
+}
+#wenyan table th {
+  border: 1px solid #d8d8d8;
+  font-weight: bold;
+  background-color: #2b2b2b;
+}
+#wenyan table tr:nth-child(2n) {
+  background-color: #f8f8f8;
+}
+#wenyan blockquote {
+  font-style: normal;
+  padding: 10px;
+  position: relative;
+  line-height: 1.8;
+  text-indent: 0;
+  border: none;
+  color: #888;
+  display: block;
+  font-size: 0.9em;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  margin-top: 20px;
+  margin-left: 0px;
+  margin-right: 0px;
+}
+#wenyan blockquote p {
+  margin: 0px;
+  color: black;
+  line-height: 26px;
+  display: inline;
+}
+#wenyan blockquote::before {
+  content: "“";
+  display: inline;
+  color: #555555;
+  font-size: 4em;
+  font-family: Arial, serif;
+  line-height: 1em;
+  font-weight: 700;
+}
+#wenyan p code {
+  font-family: var(--monospace-font);
+  color: rgb(71, 193, 168);
+}
+#wenyan pre {
+  line-height: 2;
+  margin: 1em 0.5em;
+  padding: 1em;
+}
+#wenyan pre code {
+  font-family: var(--monospace-font);
+  display: block;
+  overflow-x: auto;
+  margin: 0;
+  padding: 0;
+}
+#wenyan hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin-top: 2em;
+  margin-bottom: 2em;
+}
+#wenyan a {
+  text-decoration: none;
+  color: rgb(71, 193, 168);
+  border-bottom: 1px solid rgb(71, 193, 168);
+}
+#wenyan .footnote {
+  color: rgb(71, 193, 168);
+}
+#wenyan #footnotes p {
+  color: black;
+}
+#wenyan .footnote-num {
+  font-size: 14px;
+  display: inline;
+  width: 10%;
+}
+#wenyan .footnote-txt {
+  font-size: 14px;
+  display: inline;
+  width: 90%;
+  margin-left: 10px;
+  word-wrap: break-word;
+  word-break: break-all;
+}

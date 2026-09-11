@@ -498,7 +498,8 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - **配图组装规则（2026-09-01 定稿；2026-09-11 修订 R3，预览到发布衔接）**：`buildMarkdown` 后端发布链路统一组装为 frontmatter(`title` + 有封面时 `cover: <图URL>` + 手填 `author`/`source_url`) + 正文；**预览页/复制排版只渲染纯正文**（`renderMarkdownHtml(contentMd)`），不再把 frontmatter 拼进前端 markdown（`@wenyan-md/core` 不解析/剥离 frontmatter，会导致 `<hr>`+`<h2>title:…</h2>` 残留）；frontmatter 组装职责完全移到后端发布链路。**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（图床公网 URL）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
 - **插图落点（2026-09-01 交互定稿）**：预览页工具栏「插图」面板按选定顺序列出已选插图，点击即以 markdown 图片语法插入编辑器光标处（左栏 md 可见可编辑，正文已引用的在面板内标绿 ✓）；正文里没引用的插图不会出现在文章中（不自动追加文末），口径在面板内明示。
 - 删除图：`ImageService.delete` 落库删除 + 图床对象（非阻塞，失败仅 warn）。
-- 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名白名单防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
+- 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名按后端权威目录校验防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
+- **主题目录（09-11-wenyan-themes）**：权威清单由 `WenyanThemeCatalog` 固定，共 **15 个** = 8 个 wenyan 内置（`default/orangeheart/rainbow/lapis/pie/maize/purple/phycat`）+ 7 个 mdnice 社区主题（`custom:chazi 姹紫 / custom:mohei 墨黑 / custom:nenqin 嫩青 / custom:hongfei 红绯 / custom:lanqing 兰青 / custom:shanchui 山吹 / custom:quanzhanlan 全栈蓝`）。`.env WENYAN_THEME_NAMES` 已废弃，不再参与校验/下发。详见 `docs/wenyan.md`。
 
 ### 数据模型增量（幂等 ALTER）
 
@@ -520,9 +521,9 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/images/preview-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote}`（读 `.env` WENYAN_* 配置，前端下拉同源） |
-| POST | `/api/projects/{id}/preview` | 三角色 | `?theme=&highlight=&macStyle=&footnote=`（query） | `{html, theme, highlight, macStyle, footnote, degraded, degradedReason?}`；业务失败 HTTP 200 + `R.fail`，未知主题 `R.fail(400)`（白名单防 CLI 参数注入）；前置未就绪 `R.fail(400)` |
-| PUT | `/api/projects/{id}/preview-style` | ADMIN/EDITOR | `{theme?, highlight?, macStyle?, footnote?}`（只更新非 null 字段） | `R<Void>`；项目不存在 `R.fail(404)`；主题/高亮非白名单 `R.fail(400)`（校验复用 `PreviewService` 白名单） |
+| GET | `/api/images/preview-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote}`；`themes` 为**对象数组**（09-11-wenyan-themes）：`[{id, name, group, color, bright}]`，`group` 为 `builtin`/`community`，前端下拉按组呈现（内置主题 / 社区主题） |
+| POST | `/api/projects/{id}/preview` | 三角色 | `?theme=&highlight=&macStyle=&footnote=`（query） | `{html, theme, highlight, macStyle, footnote, degraded, degradedReason?}`；业务失败 HTTP 200 + `R.fail`，未知主题 `R.fail(400)`（按权威目录校验防 CLI 参数注入）；前置未就绪 `R.fail(400)` |
+| PUT | `/api/projects/{id}/preview-style` | ADMIN/EDITOR | `{theme?, highlight?, macStyle?, footnote?}`（只更新非 null 字段） | `R<Void>`；项目不存在 `R.fail(404)`；主题/高亮非目录内 `R.fail(400)`（校验复用 `PreviewService`/`WenyanThemeCatalog`） |
 | PUT | `/api/projects/{id}/publish-meta` | ADMIN/EDITOR | `{author?, sourceUrl?}`（只更新请求中出现的字段，空串清空） | `R<Void>`；项目不存在 `R.fail(404)`；author>100/sourceUrl>500 `R.fail(400)` |
 
 - **依赖顺序**：项目状态 VERSIONS_READY 才可预览（`POST /preview` 校验，否则 `R.fail(400)`）；
@@ -536,13 +537,14 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - 四步流程 `maxReachableStepOf` 扩到 `index=3`（发布），发布步对 VERSIONS_READY/PUBLISHED_DRAFT 解锁。
 - 配图并入预览：工具栏「配图」面板提供图库插入 + AI 生图（文生图/图生图，产物进图库后插入正文）两种来源；封面走 frontmatter `cover` 元信息。
 - 预览到发布衔接（09-11-preview-publish-bridge）：预览页/复制排版只渲染**纯正文**（无 frontmatter 残留）；「去发布」时若正文 dirty 自动先保存再跳转（失败停留并提示）；预览主题/高亮/Mac/脚注变更防抖落库项目级（`PUT /preview-style`），刷新/跨会话保持；工具栏宽度档位 phone/tablet/full 仅作用于预览容器视觉；`ctrl-bar` 粘性 + 间距打磨。
-- **主题选择范围（09-11 修复）**：预览页主题下拉只列 `.env WENYAN_THEME_NAMES` 白名单（可发布的内置主题）。社区自定义主题 `custom:*` 不在下拉中——wenyan CLI 不识别（`主题不存在`）且后端白名单拒绝，本来就无法发布；先前误在预览页提供导致选择即 `R.fail(400)`、样式无法落库/回显。
+- **主题选择范围（09-11-wenyan-themes）**：预览页主题下拉按「内置主题 / 社区主题」两组列出全部 15 个主题，社区主题显示中文名与色点；社区主题 `custom:*` 通过本机 CLI `--custom-theme <本地CSS绝对路径>` 渲染（CSS 随后端包内置），与内置主题一样可选、可预览、可发布。
+- **主题渲染分支（09-11-wenyan-themes）**：内置主题传 `--theme <id>`；社区主题传 `--custom-theme <abs css>` 且**不传 `--theme`**（同传时 `--theme` 覆盖 `--custom-theme`）；`--custom-theme` 不支持网络 URL。CSS 由 `WenyanThemeCatalog` 启动时从 classpath 物化到数据盘 `{IMAGE_STORAGE_DIR}/../tmp/wenyan-themes/`（jar 安全），物化失败该主题走降级链。
 
 ### 已知限制与风险（登记)
 
 - `pic.caiqz.cn` 仅有 http（https 证书未配）：预览从 localhost 拉不成问题；公众号内显示的是微信端上传后的 URL，不受影响。后续可加 https。
 - wenyan-server 2.0.11 鉴权中间件对错误 key 挂起（不返回 401）：客户端超时不宜过长，且建议 server 升级。
-- theme 清单仅能在 server 端注册(wenyan theme 命令)，server 2.0.11 未提供 HTTP 查询，清单以 `.env` WENYAN_THEME_NAMES 为准。
+- theme 清单由后端 `WenyanThemeCatalog` 权威固定（15 个，见 §11），不依赖 server 端注册：主题只在本机 CLI 渲染阶段应用，wenyan-server 只收渲染后的 HTML，不感知主题。`.env WENYAN_THEME_NAMES` 已废弃。
 
 ### 12. 公众号草稿发布模块（S5，正式规格）
 
@@ -569,7 +571,7 @@ PublishService.publish
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/projects/{id}/publish-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote, previewTheme?, previewHighlight?, previewMacStyle?, previewFootnote?, author?, sourceUrl?, publishEnabled, publishConfigOk, publishDisabledReason?, wenyanServer, publishMediaId?, publishTheme?, publishedAt?, lastPublishError?}`(探针失败不阻塞页面;preview* 为项目级预览样式,发布页优先据此初始化) |
+| GET | `/api/projects/{id}/publish-options` | 三角色 | — | `{themes[], highlights[], defaultTheme, highlight, macStyle, footnote, previewTheme?, previewHighlight?, previewMacStyle?, previewFootnote?, author?, sourceUrl?, publishEnabled, publishConfigOk, publishDisabledReason?, wenyanServer, publishMediaId?, publishTheme?, publishedAt?, lastPublishError?}`(探针失败不阻塞页面;preview* 为项目级预览样式,发布页优先据此初始化;`themes` 为对象数组 `[{id, name, group, color, bright}]`,与 §11 preview-options 同源) |
 | POST | `/api/projects/{id}/publish` | ADMIN/EDITOR | `?theme=&highlight=&macStyle=&footnote=`(query,与 preview 同形) | 成功 `{mediaId, theme, publishedAt}`;前置不满足/渲染参数非法/通道未配置 `R.fail(400)`;链路失败 `R.fail(500)`;失败均回写 last_publish_error |
 
 - 配置:`WENYAN_MCP_SERVER_URL`(带 scheme)/`WENYAN_MCP_SERVER_API_KEY`/`WENYAN_MCP_PUBLISH_TIMEOUT_MS`(默认 30s);未配置时 publish-options 返回 publishEnabled=false + 中文原因,publish 返回 `R.fail(400)`。
