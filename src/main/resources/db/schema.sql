@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS sparkora_car_model (
     vehicle_id      VARCHAR(32),                    -- 官网 vehicleId
     price_range     VARCHAR(100),                   -- "239,900 - 309,900"
     features        TEXT,                           -- JSON 数组,卖点
-    intro_images    TEXT,                           -- JSON 数组,图片 URL
+    intro_images    TEXT,                           -- JSON 数组,图库 image_asset.id 列表(兼容存量 URL 数组)
     detail_page     VARCHAR(200),                   -- 官网详情页路径
     car_rights      TEXT,                           -- JSON,购车权益
     source_url      VARCHAR(300),                   -- 来源官网 URL
@@ -305,7 +305,7 @@ CREATE INDEX IF NOT EXISTS idx_car_doc_emb_vec ON sparkora_car_doc_embedding
 -- 车型同步任务表(S6 重构:异步任务化,取消全量同步,仅手动指定车型同步)
 CREATE TABLE IF NOT EXISTS sparkora_car_sync_job (
     id           BIGSERIAL PRIMARY KEY,
-    job_type     VARCHAR(20)  NOT NULL,              -- SELECTED / RETRY
+    job_type     VARCHAR(20)  NOT NULL,              -- SELECTED / RETRY / SCHEDULED
     status       VARCHAR(20)  NOT NULL DEFAULT 'RUNNING', -- RUNNING/SUCCESS/PARTIAL/FAILED
     total        INTEGER      DEFAULT 0,
     success      INTEGER      DEFAULT 0,
@@ -365,8 +365,11 @@ CREATE TABLE IF NOT EXISTS sparkora_kb_chunk_embedding (
     embedding   vector(1024) NOT NULL,              -- Qwen3-Embedding-8B,与 car_doc_embedding 同维
     created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec ON sparkora_kb_chunk_embedding
-    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- C1:向量索引与车型域统一为 HNSW(cosine)。幂等且不每次启动重建:
+-- 先 DROP 旧 IVFFLAT 索引名(后续启动为 no-op),再按新名 CREATE IF NOT EXISTS。
+DROP INDEX IF EXISTS idx_kb_chunk_emb_vec;
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec_hnsw ON sparkora_kb_chunk_embedding
+    USING hnsw (embedding vector_cosine_ops);
 
 -- ============================================================================
 -- S10:图库系统性重构(检索组织/性能成本/AI 生成体验)

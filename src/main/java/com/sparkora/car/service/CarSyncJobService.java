@@ -149,6 +149,11 @@ public class CarSyncJobService {
         return jobMapper.selectList(new QueryWrapper<CarSyncJobEntity>().orderByDesc("id"));
     }
 
+    /** 是否存在运行中的同步任务(定时任务防重叠用)。 */
+    public boolean hasRunning() {
+        return jobMapper.selectCount(new QueryWrapper<CarSyncJobEntity>().eq("status", "RUNNING")) > 0;
+    }
+
     /** 重试失败项:从任务失败明细取 goodsId 列表,创建 RETRY 任务。 */
     public Long retry(Long jobId) {
         CarSyncJobEntity job = jobMapper.selectById(jobId);

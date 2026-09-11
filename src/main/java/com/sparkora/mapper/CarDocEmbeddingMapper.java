@@ -1,5 +1,6 @@
 package com.sparkora.mapper;
 
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -22,6 +23,10 @@ public interface CarDocEmbeddingMapper {
     /** 删除某文档块的全部向量(重算时先清)。 */
     @Insert("DELETE FROM sparkora_car_doc_embedding WHERE doc_id = #{docId}")
     int deleteByDocId(@Param("docId") Long docId);
+
+    /** 按车型物理清理全部向量(删除车型兜底:含历史逻辑删除但向量残留的块)。 */
+    @Delete("DELETE FROM sparkora_car_doc_embedding WHERE model_id = #{modelId}")
+    int deleteByModelId(@Param("modelId") Long modelId);
 
     /**
      * 余弦相似度检索 top-K。embedding 传查询向量字面量字符串。

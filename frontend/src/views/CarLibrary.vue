@@ -158,12 +158,10 @@ const filtered = computed(() => {
 
 const countBy = (s) => rows.value.filter(r => r.syncStatus === s).length
 
+// 后端 introImageUrls 已由图库 id 解析为公网 URL;不再把 introImages(id 列表)直接当 URL 用
 const thumbUrl = (row) => {
-  if (!row.introImages) return ''
-  try {
-    const arr = JSON.parse(row.introImages)
-    return Array.isArray(arr) && arr.length ? arr[0] : ''
-  } catch { return '' }
+  const urls = row.introImageUrls
+  return Array.isArray(urls) && urls.length ? urls[0] : ''
 }
 
 const progress = computed(() => {

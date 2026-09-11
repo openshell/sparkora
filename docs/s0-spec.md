@@ -303,7 +303,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 |---|---|---|
 | `sparkora_kb_doc` | id / title(≤200) / domain(默认「通用」) / content / enabled / created_by / 审计字段 / deleted | 手工知识条目;逻辑删 |
 | `sparkora_kb_chunk` | id / doc_id FK / seq / chunk_text / created_at | 检索块;chunk_text 首行固定「知识：<title>（<domain>）」 |
-| `sparkora_kb_chunk_embedding` | id / chunk_id FK / embedding vector(1024) / created_at | 向量;ivfflat cosine lists=100(与 car_doc_embedding 同参) |
+| `sparkora_kb_chunk_embedding` | id / chunk_id FK / embedding vector(1024) / created_at | 向量;**C1 起 HNSW cosine（`idx_kb_chunk_emb_vec_hnsw`，与车型域 `idx_car_doc_emb_vec` 统一；旧 IVFFLAT 索引已幂等 DROP）** |
 
 **服务与切块**：`com.sparkora.kb.service.KbDocService` — create/update/delete/list/get/rebuild；切块：空行分段、单段 ≤500 字符、超长按句读（。；；！？）切分合并、段内换行转空格；重建幂等（先物理清 chunk+embedding 再重嵌）；embedding 单块失败 warn+计数（EmbedStats total/success/failed），块缺失用 rebuild 补齐。
 
@@ -333,6 +333,17 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 **前端**：`/kb` 知识库页（列表卡片/新建编辑抽屉/删除确认/重建向量含失败提示；移动端单列），TopBar「知识库」入口。
 
 **配置**：`AI_RAG_KB_TOPK`(默认 4) / `AI_RAG_KB_ENABLED`(默认 true)，见 §9 配置表。
+
+### 6d. 车型库数据基座加固（C1，2026-09-11）
+
+| 项 | 契约 |
+|---|---|
+| `car_model.intro_images` | **语义 = 图库 `image_asset.id` 列表 JSON**（非 URL）；存量旧数据可能为 URL 数组，双读兼容 |
+| `introImageUrls` | 非持久化派生字段（`@TableField(exist=false)`）：`list()`/`detail()` 由 `introImages` 实时解析——数字 id → `ImageService.publicUrl`，`http` 开头原样保留，解析失败跳过；前端 `CarLibrary.vue` 缩略图取 `introImageUrls[0]` |
+| 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块，并按 `model_id` 物理清理 `sparkora_car_doc_embedding`（兜底历史逻辑删除残留）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
+| 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 定时 `@Scheduled`（`job_type=SCHEDULED`，以官网目录全量幂等刷新，运行中任务存在则跳过）；默认关闭 |
+| 配置 | `CAR_SYNC_ENABLED`（默认 false）/ `CAR_SYNC_CRON`（默认 `0 0 3 * * ?`） |
+| KB 索引 | `sparkora_kb_chunk_embedding` 由 IVFFLAT 统一为 HNSW cosine（§6c） |
 
 ---
 

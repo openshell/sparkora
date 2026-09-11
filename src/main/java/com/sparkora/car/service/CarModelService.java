@@ -98,7 +98,43 @@ public class CarModelService {
 
     /** 车型列表(按 id 倒序)。 */
     public List<CarModelEntity> list() {
-        return modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByDesc("id"));
+        List<CarModelEntity> list = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByDesc("id"));
+        for (CarModelEntity m : list) fillIntroImageUrls(m);
+        return list;
+    }
+
+    /**
+     * 填充车型介绍图公网 URL 派生字段(非持久化)。
+     * introImages 语义为图库 asset id 列表 JSON;兼容存量旧数据(URL 数组直接保留)。
+     * 单个元素解析失败/图片不存在时跳过,不阻断列表。
+     */
+    private void fillIntroImageUrls(CarModelEntity m) {
+        List<String> urls = new ArrayList<>();
+        String raw = m.getIntroImages();
+        if (raw != null && !raw.isBlank()) {
+            try {
+                JsonNode arr = json.readTree(raw);
+                if (arr.isArray()) {
+                    for (JsonNode node : arr) {
+                        String v = node.asText(null);
+                        if (v == null || v.isBlank()) continue;
+                        String t = v.trim();
+                        if (t.startsWith("http")) {
+                            urls.add(t);                       // 存量旧数据:URL 数组
+                            continue;
+                        }
+                        try {
+                            urls.add(imageService.publicUrl(Long.parseLong(t)));
+                        } catch (Exception ignore) {
+                            // 图片不存在/未转存/非数字,跳过该元素
+                        }
+                    }
+                }
+            } catch (Exception ignore) {
+                // introImages 非法 JSON,留空
+            }
+        }
+        m.setIntroImageUrls(urls);
     }
 
     /** 官网车型目录(供同步页手动选择)。返回 goodsListForSearch 原始 data 数组。 */
@@ -154,6 +190,7 @@ public class CarModelService {
     public CarModelDetailDto detail(Long id, Long versionId) {
         CarModelEntity m = modelMapper.selectById(id);
         if (m == null) throw new IllegalArgumentException("车型不存在");
+        fillIntroImageUrls(m);
         CarModelDetailDto dto = new CarModelDetailDto();
         dto.setModel(m);
         List<CarVersionEntity> versions = versionMapper.selectList(
@@ -183,7 +220,12 @@ public class CarModelService {
         return dto;
     }
 
-    /** 删除车型(逻辑删除;级联删除版本/分组/参数/文档块)。 */
+    /**
+     * 删除车型(逻辑删除;级联删除版本/分组/参数/文档块)。
+     * 向量兜底:deleteByModel 仅遍历未逻辑删除的 doc,历史已逻辑删除但向量残留的块按 model_id 一条 SQL 全清。
+     * 图库:intro_images 指向全局共享图库资产(project_id=null、source=byd、内容哈希去重),可能被其他车型/文章复用,
+     * 不随车型删除而删;删除车型行即解除引用。
+     */
     @Transactional
     public void delete(Long id) {
         CarModelEntity m = modelMapper.selectById(id);
@@ -193,6 +235,7 @@ public class CarModelService {
         groupMapper.delete(new QueryWrapper<CarParamGroupEntity>().eq("model_id", id));
         paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", id));
         docService.deleteByModel(id);
+        embStatsMapper.deleteByModelId(id);
     }
 
     /**
