@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 schema.sql 幂等性、索引 DDL 可重复执行、无 dollar-quote 块"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 R<T> 包装与错误映射、状态机回退是否与既有约定一致"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对 intro_images 存储语义→服务派生→前端展示跨层一致性"}
+{"file": ".trellis/tasks/09-11-car-foundation-hardening/prd.md", "reason": "逐条核对 AC1~AC6"}
+{"file": ".trellis/tasks/09-11-car-foundation-hardening/design.md", "reason": "核对实现与设计(索引名/兜底清理/定时器默认关闭)一致"}
