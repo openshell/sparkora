@@ -63,7 +63,7 @@ public class DeepController {
         this.deepProps = deepProps;
     }
 
-    /** ①② 研究计划+澄清问题。body: {extraInfo?}。 */
+    /** ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。body: {topic?, extraInfo?}。 */
     @PostMapping("/clarify")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> clarify(@PathVariable Long projectId,
@@ -71,19 +71,16 @@ public class DeepController {
         try {
             String topic = body == null ? null : (String) body.get("topic");
             String extraInfo = body == null ? null : (String) body.get("extraInfo");
-            if (topic == null || topic.isBlank()) {
-                // 主题从项目取:调用方保证项目存在(简化:由前端先传 topic,或查项目)
-                return R.fail(400, "缺少 topic");
-            }
-            ArticleBriefEntity b = clarifyService.clarify(projectId, topic, extraInfo);
-            briefMapper.insert(b);
+            ArticleBriefEntity b = clarifyService.start(projectId, topic, extraInfo);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("briefId", b.getId());
-            out.put("researchPlan", b.getResearchPlan());
-            out.put("questions", b.getClarifyQuestions());
+            out.put("stage", "PLANNING");
             return R.ok(out);
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            // 并发/陈旧冲突:同一项目已有 PLANNING 占位(部分唯一索引兜底)
+            return R.fail(409, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, "研究计划生成失败: " + e.getMessage());
         }
@@ -195,6 +192,7 @@ public class DeepController {
             out.put("briefId", b.getId());
             out.put("genMode", b.getGenMode());
             out.put("stage", stageOf(b));
+            out.put("planStatus", b.getPlanStatus());
             // 工具健康(设计 6.3):KB 恒可用;SEARXNG/TAVILY 取惰性状态(最近一次调用结果)
             Map<String, Boolean> toolHealth = new LinkedHashMap<>();
             toolHealth.put("KB", true);
@@ -213,6 +211,8 @@ public class DeepController {
     }
 
     private String stageOf(ArticleBriefEntity b) {
+        // 09-11:研究计划异步生成中(clarify 占位行)优先暴露,先于 questions 判定
+        if ("PLANNING".equals(b.getPlanStatus())) return "PLANNING";
         if (b.getFactSheet() != null && !b.getFactSheet().isBlank()) return "RESEARCH_DONE";
         if (b.getResearchNotes() != null && !b.getResearchNotes().isBlank()) return "RESEARCHING";
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) return "CLARIFIED";

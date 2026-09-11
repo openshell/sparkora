@@ -1,11 +1,18 @@
 package com.sparkora.deep.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
+import com.sparkora.mapper.ArticleBriefMapper;
+import com.sparkora.mapper.ArticleProjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -18,28 +25,132 @@ import java.util.Map;
  * 澄清阶段(S9 ①②):主代理解析主题 → 研究计划 + 一次性结构化澄清问题。
  * 产物全部落 brief(research_plan/clarify_questions);用户提交答案锁定 clarify_answers。
  * 只生成不调外部工具;LLM 调用 1 次(计划与问题一并产出)。
+ *
+ * 09-11 异步化(对齐 DeepResearchService.run/runAsync 范式):
+ *  - start() 同步毫秒级:清理陈旧 PLANNING → 落 PLANNING 占位行 → self.runAsync 后台生成 → 返回;
+ *  - runAsync() @Async 调 LLM,成功回写 plan/questions + plan_status=READY,失败删占位行 + 写 lastBriefError。
+ * 部分唯一索引 uq_brief_planning 保证同一项目同时至多一条 PLANNING,并发触发撞索引转 409。
  */
 @Slf4j
 @Service
 public class ClarifyService {
 
+    /** 生成中状态超过该时长视为陈旧(JVM 中途死亡/重启残留),允许重新触发以自愈。 */
+    private static final long STALE_GENERATING_MS = 10 * 60 * 1000L;
+
     private final AiClient aiClient;
     private final ObjectMapper json;
+    private final ArticleBriefMapper briefMapper;
+    private final ArticleProjectMapper projectMapper;
     /** 车型知识库名录(S9 修复):反问问题必须基于真实车库车型,而非模型凭主题猜测。 */
     private final com.sparkora.car.service.CarModelService carModelService;
+    // 自注入代理,确保 @Async 生效(start 内 this.runAsync 不会走代理)
+    @Autowired
+    @Lazy
+    private ClarifyService self;
 
     public ClarifyService(AiClient aiClient, ObjectMapper json,
+                          ArticleBriefMapper briefMapper, ArticleProjectMapper projectMapper,
                           com.sparkora.car.service.CarModelService carModelService) {
         this.aiClient = aiClient;
         this.json = json;
+        this.briefMapper = briefMapper;
+        this.projectMapper = projectMapper;
         this.carModelService = carModelService;
     }
 
     /**
-     * 生成研究计划与澄清问题(①理解 + ②澄清问题派生)。
-     * @return 落库后的 brief(id 供后续 run/generate 引用)
+     * 启动研究计划生成(同步毫秒级,202 语义):落 PLANNING 占位行后立即返回,后台 self.runAsync 生成。
+     * @return 占位 brief(id 供前端轮询 /deep/status 引用)
      */
-    public ArticleBriefEntity clarify(Long projectId, String topic, String extraInfo) {
+    public ArticleBriefEntity start(Long projectId, String topic, String extraInfo) {
+        ArticleProjectEntity p = projectMapper.selectById(projectId);
+        if (p == null) throw new IllegalArgumentException("项目不存在");
+        if (topic == null || topic.isBlank()) throw new IllegalArgumentException("缺少主题");
+
+        // 清理陈旧占位:进程中途死亡遗留的 PLANNING 行(超过阈值)删除,放行重新触发以自愈
+        briefMapper.delete(new QueryWrapper<ArticleBriefEntity>()
+                .eq("project_id", projectId)
+                .eq("plan_status", "PLANNING")
+                .lt("created_at", LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS))));
+
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setProjectId(projectId);
+        b.setGenMode("DEEP");
+        b.setPlanStatus("PLANNING");
+        b.setCreatedAt(LocalDateTime.now());
+        try {
+            briefMapper.insert(b);
+        } catch (DuplicateKeyException e) {
+            // 并发/双开触发撞部分唯一索引 uq_brief_planning:不产生重复行,转 409 语义
+            throw new IllegalStateException("该项目正在生成研究计划，请稍候", e);
+        }
+
+        // 后台异步生成(经自注入代理确保 @Async 生效)
+        self.runAsync(b.getId(), topic, extraInfo);
+        return b;
+    }
+
+    /**
+     * 异步生成研究计划与澄清问题(由 self 代理调用)。
+     * 成功回写 research_plan/clarify_questions/ai_model/token_usage + plan_status=READY;
+     * 失败删除占位行(保持「失败无残留」)并写 project.last_brief_error,状态保持 DRAFT。
+     */
+    @Async
+    public void runAsync(Long briefId, String topic, String extraInfo) {
+        try {
+            PlanResult r = generatePlan(topic, extraInfo);
+            ArticleBriefEntity b = briefMapper.selectById(briefId);
+            if (b == null) return;   // 占位行已被并发清理(如失败重试),丢弃结果
+            b.setResearchPlan(r.researchPlan());
+            b.setClarifyQuestions(r.questions());
+            b.setAiModel(r.model());
+            b.setTokenUsage(r.totalTokens());
+            b.setPlanStatus("READY");
+            briefMapper.updateById(b);
+            // 成功后清空 last_brief_error(与 BriefService 一致:失败原因成功后清空,避免重试成功后仍显示旧错误)
+            try {
+                ArticleProjectEntity fresh = projectMapper.selectById(b.getProjectId());
+                if (fresh != null && fresh.getLastBriefError() != null) {
+                    fresh.setLastBriefError(null);
+                    fresh.setUpdatedAt(LocalDateTime.now());
+                    projectMapper.updateById(fresh);
+                }
+            } catch (Exception pe) {
+                log.warn("清空 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());
+            }
+            log.info("研究计划生成完成 briefId={}", briefId);
+        } catch (Exception e) {
+            String reason = e.getMessage();
+            if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
+            log.warn("研究计划异步生成失败 briefId={}: {}", briefId, reason);
+            // 先取 projectId(删除占位行后 brief 不可再查),再删 PLANNING 占位行(失败无残留,/deep/status 自然回 NONE)
+            Long projectId = null;
+            try {
+                ArticleBriefEntity b = briefMapper.selectById(briefId);
+                if (b != null) {
+                    projectId = b.getProjectId();
+                    if ("PLANNING".equals(b.getPlanStatus())) briefMapper.deleteById(briefId);
+                }
+            } catch (Exception de) {
+                log.warn("清理研究计划占位行失败 briefId={}: {}", briefId, de.getMessage());
+            }
+            // 失败原因落项目(重取 + 判 null,防覆盖生成期间其他字段变更/项目被并发删除)
+            try {
+                ArticleProjectEntity fresh = projectId == null ? null : projectMapper.selectById(projectId);
+                if (fresh != null) {
+                    fresh.setLastBriefError(reason);
+                    fresh.setUpdatedAt(LocalDateTime.now());
+                    projectMapper.updateById(fresh);
+                }
+            } catch (Exception pe) {
+                log.warn("写入 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());
+            }
+        }
+    }
+
+    /** LLM 生成主体:返回研究计划与澄清问题(不落库),供异步 runAsync 调用。 */
+    private PlanResult generatePlan(String topic, String extraInfo) throws Exception {
         // 车库实际车型名录注入:让反问的车型/竞品选项来自真实车库(修复「大唐主题问不到大唐EV」)
         String catalog;
         try {
@@ -76,29 +187,21 @@ public class ClarifyService {
         if (extraInfo != null && !extraInfo.isBlank()) {
             user.append("用户补充:").append(extraInfo).append('\n');
         }
-        try {
-            AiClient.ChatResult cr = aiClient.chatJson(system, user.toString(), 2048);
-            // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
-            JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
-            Map<String, Object> plan = new LinkedHashMap<>();
-            plan.put("keyQuestions", toArray(node.path("keyQuestions")));
-            plan.put("dataNeeds", toArray(node.path("dataNeeds")));
-            plan.put("hypotheses", toArray(node.path("hypotheses")));
-            plan.put("toolHints", node.path("toolHints"));
-            String questions = node.path("questions").toString();
-            String normalized = normalizeQuestions(questions);
-
-            ArticleBriefEntity b = new ArticleBriefEntity();
-            b.setProjectId(projectId);
-            b.setGenMode("DEEP");
-            b.setResearchPlan(json.writeValueAsString(plan));
-            b.setClarifyQuestions(normalized);
-            b.setCreatedAt(LocalDateTime.now());
-            return b;
-        } catch (Exception e) {
-            throw new IllegalStateException("研究计划生成失败: " + e.getMessage(), e);
-        }
+        AiClient.ChatResult cr = aiClient.chatJson(system, user.toString(), 2048);
+        // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
+        JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("keyQuestions", toArray(node.path("keyQuestions")));
+        plan.put("dataNeeds", toArray(node.path("dataNeeds")));
+        plan.put("hypotheses", toArray(node.path("hypotheses")));
+        plan.put("toolHints", node.path("toolHints"));
+        String questions = node.path("questions").toString();
+        String normalized = normalizeQuestions(questions);
+        return new PlanResult(json.writeValueAsString(plan), normalized, cr.model(), cr.totalTokens());
     }
+
+    /** generatePlan 产物(计划 JSON / 归一化问题 JSON / 模型 / token)。 */
+    private record PlanResult(String researchPlan, String questions, String model, int totalTokens) {}
 
     /** 竞品信号词:命中即视为对比竞品类问题(确定性归一化,不依赖 LLM 遵守 prompt)。 */
     private static final String[] COMPETITOR_TERMS = {"对比", "竞品", "比较", "竞对", "竞争"};

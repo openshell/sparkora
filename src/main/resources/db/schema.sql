@@ -438,3 +438,14 @@ UPDATE sparkora_article_project p
  WHERE p.deleted = 0
    AND p.status IN ('READY', 'DRAFT')
    AND EXISTS (SELECT 1 FROM sparkora_article_version v WHERE v.project_id = p.id);
+
+-- ============================================================================
+-- 09-11-brief-gen-flow-refactor:深度研究计划(clarify)异步化。
+-- sparkora_article_brief 增 plan_status(DEEP: PLANNING/READY;其余 null),
+-- 作为「计划生成中」的可查询 brief 侧态;部分唯一索引保证同一项目同时至多一条 PLANNING,
+-- 是双击/双开触发的数据库级并发兜底(应用层撞索引转 409)。
+-- 全部单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+ALTER TABLE sparkora_article_brief ADD COLUMN IF NOT EXISTS plan_status VARCHAR(20); -- DEEP: PLANNING/READY;其余 null
+CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
+    ON sparkora_article_brief(project_id) WHERE plan_status = 'PLANNING';

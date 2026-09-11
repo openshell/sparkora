@@ -39,6 +39,7 @@ public class ArticleBriefEntity {
     private String researchPlan;       // JSON {keyQuestions[],dataNeeds[],hypotheses[],toolHints[]}
     private String researchNotes;      // JSON [{agentId,question,status,facts[],gaps[]}] 逐子代理状态
     private String factSheet;          // JSON {entries[{key,value,source,confidence}],gaps[],warnings[]}
+    private String planStatus;         // 09-11:研究计划异步生成态(DEEP: PLANNING/READY;其余 null)
     private String styleRecommendations; // 文章仿写:风格推荐 JSON [{styleId,name,reason,matchScore}](仅 IMITATION brief 使用)
     private LocalDateTime createdAt;
 }
