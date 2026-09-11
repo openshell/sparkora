@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 schema.sql 6 列是否幂等、entity 字段是否与列一一对应、spec 字段表是否同步"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对新端点错误映射与 R<T> 语义；核对发布失败 last_publish_error 回写未被破坏"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 frontmatter 字段从项目实体→preview/publish→前端表单的全链路一致性，以及 author/source_url 空值处理"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查主题白名单、样式持久化、frontmatter 组装是否重复实现；核对无复制粘贴的漂移"}
+{"file": ".trellis/spec/backend/index.md", "reason": "检查新增代码是否落在约定分层，未绕过 service/controller 边界"}

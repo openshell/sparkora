@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 6 列幂等 ALTER、schema.sql 是唯一迁移入口、表结构三处同步；实现阶段 A1/A2 必须遵循"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "新端点错误映射（IllegalArgumentException→400、404、R.fail 中文提示）与控制器惯例；实现阶段 A4"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务跨 schema/entity/DTO/controller/service/前端五层，且 frontmatter 数据格式在前后端间变化；实现前必读"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "主题白名单校验、frontmatter 组装、样式表单在三处重复；避免复制粘贴并统一口径"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层与目录约定索引；定位新 DTO/controller 改动落点"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新增 DTO 与控制器放置位置的目录约定"}
