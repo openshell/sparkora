@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-11-brief-gen-flow-refactor/prd.md", "reason": "需求与验收基线:根因证据(file:line)、R1-R6、AC1-AC8、D1/D2 决策、Out of Scope"}
+{"file": ".trellis/tasks/09-11-brief-gen-flow-refactor/design.md", "reason": "技术设计:plan_status 部分唯一索引、异步 clarify 两段式、/deep/status PLANNING 态、前端单一状态机与 restarting 分支"}
+{"file": ".trellis/tasks/09-11-brief-gen-flow-refactor/implement.md", "reason": "执行清单与顺序(A 后端/B 前端/C 联调/D 规格)、风险点、验收命令"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引:实施前必读,定位 database/error-handling 分册"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "幂等迁移(ADD COLUMN IF NOT EXISTS/禁 DO $$ 块)、原子抢占 UpdateWrapper 惯例、表结构三处同步"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "IllegalStateException→409 映射、生成类服务状态回退(fresh 重取+判 null)、状态翻转轮询漏刷新的历史教训"}
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层思维:brief 表→service→controller→前端 store→StepBrief 跨 5 层;code-reuse:复用 DeepResearchService 异步范式与 BriefService 抢占"}

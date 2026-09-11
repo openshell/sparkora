@@ -74,3 +74,47 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 简报生成流程重构:消除创建后竞态与冗余入口
+<!-- trellis-session: v=2 fp=3534e366a50d8c23 -->
+
+**Date**: 2026-09-11
+**Task**: 简报生成流程重构:消除创建后竞态与冗余入口
+**Branch**: `main`
+
+### Summary
+
+系统化修复主题创作简报生成:clarify 异步化(202)消除创建后「导航早于落库」竞态;brief 侧新增 plan_status(PLANNING/READY)+ 部分唯一索引 uq_brief_planning 做并发幂等;StepBrief 无简报区收敛为唯一 deepStage 状态机,删除 deepMode/6s 有界重探测/裸按钮/两步入口。子代理实现+检查,后端编译与前端构建均通过,check 修复 1 CRITICAL(PLANNING 轮询未带 briefId 导致失败误判)+1 WARNING(成功后未清 lastBriefError),并补规格同步。
+
+### Main Changes
+
+- ClarifyService: start() 同步落 PLANNING 占位+self.runAsync 异步生成;失败删占位行+写 lastBriefError
+- DeepController: /deep/clarify 返回 {briefId,stage:PLANNING} 202;stageOf 首判 PLANNING;status 增 planStatus;409 映射
+- ArticleBriefEntity/schema.sql: 新增 plan_status 列 + uq_brief_planning 部分唯一索引(幂等)
+- ProjectEdit: TOPIC 先 await startDeep 再导航,去 ?gen=deep;仿写分支不动
+- StepBrief: 单一 deepStage 状态机(NONE|PLANNING|CLARIFYING|CLARIFIED|RESEARCHING|RESEARCH_DONE);PLANNING 自轮询;restarting 标志
+- spec: backend database-guidelines 增异步占位幂等索引先例;error-handling 增「轮询可删除占位按最新行查询」与「成功后未清 last_*_error」两条 Common Mistake
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d87df28` | fix(deep): 研究计划(clarify)异步化——消除创建后竞态与重复落库 |
+| `b5fcc78` | fix(ui): 简报页无简报区收敛为单一状态机——消除裸按钮与两步入口 |
+| `dbdfc79` | docs(deep): 同步 clarify 异步化、PLANNING 态与 plan_status 规格 |
+| `74e2e1f` | docs(spec): 沉淀异步占位幂等索引与轮询/清错教训(clarify 先例) |
+
+### Testing
+
+- [OK] mvn -q -DskipTests compile 通过
+- [OK] npm run build 通过
+- [OK] 联调: AC1 clarify ~69ms 返回 PLANNING;AC3 重复触发 409 且 DB 仅 1 条 PLANNING;AC4 断点恢复;AC5 失败回引导态;陈旧占位自愈
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 如需浏览器端手测 AC2/AC6/AC7 可补;LLM provider 偶发空 content 为既有问题,不在本轮范围

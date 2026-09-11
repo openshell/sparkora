@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-11-brief-gen-flow-refactor/prd.md", "reason": "逐条核对 AC1-AC8 可观测结果;确认 R1-R6 与 D1/D2 边界未被越界实现"}
+{"file": ".trellis/tasks/09-11-brief-gen-flow-refactor/design.md", "reason": "核对后端契约(plan_status/PLANNING 态/clarify 响应)与前端状态机、restarting 分支是否与设计一致"}
+{"file": ".trellis/tasks/09-11-brief-gen-flow-refactor/implement.md", "reason": "核对实施清单完成度、风险点(R-b @Async 自注入生效、R-c restarting 优先级)是否验证"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 schema 变更幂等、部分唯一索引写法、三处同步(表/entity/spec)"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对错误映射矩阵(409 并发冲突)、失败回退 fresh 重取判 null、轮询翻转刷新产物"}
+{"file": ".trellis/spec/guides/index.md", "reason": "跨层数据流核对:新增 planStatus 字段是否贯穿 schema→entity→controller status→前端;常量/状态值改动是否搜全"}
