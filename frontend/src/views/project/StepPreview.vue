@@ -628,7 +628,9 @@ const goPublish = async () => {
 
 // ==== 配图面板:插入 / 设封面 / AI 生图 / 参考图 ====
 const insertBodyImage = (img) => {
-  editorRef.value?.insertMd?.(`\n![](${imgUrl(img)})\n`)
+  // 2026-09-11-quanzhanlan-broken-image:插入正文必须用原图 URL(originUrl),
+  // 不能用 thumbUrl(imageView2+format/webp 派生)——webp 微信素材接口不支持(40113 unsupported file type)
+  editorRef.value?.insertMd?.(`\n![](${originUrl(img)})\n`)
 }
 
 const onSetCover = async (imageId) => {

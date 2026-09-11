@@ -118,3 +118,25 @@
 ### Next Steps
 
 - 如需浏览器端手测 AC2/AC6/AC7 可补;LLM provider 偶发空 content 为既有问题,不在本轮范围
+
+
+## Session 4: 扩展 wenyan 主题库为 15 个并支持社区主题发布
+<!-- trellis-session: v=2 fp=0b7a0cf69c2dd757 -->
+
+**Date**: 2026-09-11
+**Task**: 扩展 wenyan 主题库为 15 个并支持社区主题发布
+**Branch**: `main`
+
+### Summary
+
+主题从 4 扩到 15（8 内置 + 7 mdnice 社区），预览/发布全打通。新增 WenyanThemeCatalog 权威目录 + jar 安全物化社区 CSS（随后端包内置）；PreviewService 渲染分支：内置 --theme、社区 --custom-theme <本地CSS>（不传 --theme）；preview-options/publish-options 的 themes 由 string[] 改对象数组 {id,name,group,color,bright}；前端预览页改分组下拉，发布页只读回显；新增 docs/wenyan.md，同步 s0-spec §11/§12，沉淀 external-cli-integration spec。AC1-AC7 全通过，双构建 EXIT=0。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ad8e67` | feat(S5): 主题库扩展为 15 个——启用全部内置并支持社区主题发布 |
+
+### Status
+
+[OK] **Completed**
