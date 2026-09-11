@@ -184,7 +184,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - 表单 = §3.2 中「表单」列字段，字段级校验：`topic` 必填、长度限制。
 - 操作：保存（DRAFT）或「创建并生成 Brief →」（DRAFT→GENERATING_BRIEF→READY，S0 只落库）。
 - 校验错误逐字段 `el-form` 提示，后端 `@Validated` 兜底。
-- **思考深度（2026-09-09 模式收敛修订,09-09-brief-gen-redesign R2）**：创建表单**不再含模式单选**——快速模式（FAST）已下线，所有生成必走深度流程。创建成功后直发 `/deep/clarify`（研究计划+反问，120s 超时），**立即跳详情页**，生成过程由详情页按 `project.status` 轮询展示。跳转携带意图参数 `?gen=deep`（仅存草稿也带，StepBrief 展开深度面板），读取后即清除。FAST 生成接口 `/generate/brief`、`/generate/versions` 保留路由但返回 `R.fail(410, "生成流程已升级为深度模式...")`（封死不删，存量 FAST 项目产物可读，重新生成走深度）。
+- **思考深度（2026-09-09 模式收敛修订,09-09-brief-gen-redesign R2;2026-09-11 clarify 异步化修订,09-11-brief-gen-flow-refactor）**：创建表单**不再含模式单选**——快速模式（FAST）已下线，所有生成必走深度流程。创建成功后**先 `await` 直发 `/deep/clarify`（202 异步语义，毫秒级落 PLANNING 占位行）再跳详情页**，消除「导航早于落库」竞态；跳转**不再携带 `?gen=deep` 路径意图参数**，详情页据 brief 侧 `plan_status=PLANNING` 展示「研究计划生成中」并自轮询 `/deep/status`，完成后自动展开澄清表单。失败写 `project.last_brief_error` 并回可重试引导态。FAST 生成接口 `/generate/brief`、`/generate/versions` 保留路由但返回 `R.fail(410, "生成流程已升级为深度模式...")`（封死不删，存量 FAST 项目产物可读，重新生成走深度）。
 
 ---
 
@@ -576,21 +576,21 @@ PublishService.publish
 
 #### 数据模型（schema.sql 幂等，已同步 entity）
 
-- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`（2026-09-09 模式收敛:新 brief 恒为 DEEP,FAST 默认值仅存量语义;存量行不迁移）、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`、`rag_citations TEXT`（R3 知识引用明细）。
+- `sparkora_article_brief` 增列：`gen_mode TEXT DEFAULT 'FAST'`（2026-09-09 模式收敛:新 brief 恒为 DEEP,FAST 默认值仅存量语义;存量行不迁移）、`clarify_questions TEXT`、`clarify_answers TEXT`、`research_plan TEXT`、`research_notes TEXT`、`fact_sheet TEXT`、`rag_citations TEXT`（R3 知识引用明细）、`plan_status VARCHAR(20)`（2026-09-11 clarify 异步化：DEEP 行 `PLANNING`=研究计划生成中 / `READY`=已就绪；FAST/IMITATION/存量行 null）。配部分唯一索引 `uq_brief_planning ON sparkora_article_brief(project_id) WHERE plan_status='PLANNING'`——同一项目同时至多一条 PLANNING，双击/双开触发的数据库级并发兜底（撞索引转 409）。
 - `sparkora_article_version` 增列：`fact_risks TEXT`（数值回查结果，JSON 数组 `[{claim,riskLevel,suggestion}]`）、`rag_citations TEXT`（R3 知识引用明细）。
 
 #### 接口契约（全部 `R<T>` 包装；方法级 `@PreAuthorize`；前缀 `/api/projects/{projectId}/deep`）
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | `{briefId, researchPlan, questions}`；新建 brief(gen_mode=DEEP) |
+| POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | **2026-09-11 异步化**：`{briefId, stage:"PLANNING"}`，毫秒级返回（不再携带计划内容）；同步落 PLANNING 占位 brief(gen_mode=DEEP)，后台 `@Async` 生成研究计划与澄清问题，成功回写 plan/questions + `plan_status=READY`；失败删除占位行 + 写 `project.last_brief_error`。并发/陈旧冲突 → `R.fail(409,...)` |
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
 | POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, done}`（同步阻塞；前端轮询 status） |
 | POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, styleId?}`（09-10-style-library-enhance:styleId 优先,后端回查风格表取 toneGuidance/name 注入 system prompt;查无 → 400「风格不存在或已删除」;旧 `stylePrompt`/`styleName` 保留兼容,deprecated） | `{versionId}`（版本 fact_risks 落库；09-10-versions-page-fix：落版本补齐 title/version_label/style_tag/word_count，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
 | POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突） |
-| GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
+| GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, planStatus, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
 
-- stage 判定（brief 层展示态）：`RESEARCH_DONE`（fact_sheet 非空）> `RESEARCHING`（research_notes 非空）> `CLARIFIED`（answers 非空）> `CLARIFYING`（questions 非空）> `NONE`。
+- stage 判定（brief 层展示态）：`PLANNING`（plan_status=PLANNING，clarify 占位生成中，2026-09-11 新增，优先于其余判定）> `RESEARCH_DONE`（fact_sheet 非空）> `RESEARCHING`（research_notes 非空）> `CLARIFIED`（answers 非空）> `CLARIFYING`（questions 非空）> `NONE`。
 - toolHealth：KB 恒 true；SEARXNG/TAVILY 为惰性状态（`lastCallHadResults`/`lastOk`，初值乐观，调用失败自动降 false），并受 `SEARCH_WEB_ENABLED` 门禁。
 - 权限冒烟：viewer 访问写接口 403（`hasAnyRole('ADMIN','EDITOR')`）。
 
@@ -629,7 +629,7 @@ PublishService.publish
 - **「其他(自行填写)」（R2，2026-09-05）**：`ClarifyForm.vue` 对 single/multi 题渲染「其他(自行填写)」入口——single 选中后切文本框（提交取文本框内容），multi 勾选后文本并入答案（「、」拼接）；锁定回显时不在 options 中的答案自动归「其他」并回填。
 - `DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）。
 - **研究完成 → 自动生成简报（2026-09-05 修复）**：`DeepResearchService.runAsync` 落 fact_sheet 后自动调 `BriefService.generateFromFactSheet`（LLM 一次，以事实手册为唯一事实来源 + 锁定需求 → 简报五字段落同一条 DEEP brief 行，`currentBriefId` 指向该行，状态机 GENERATING_BRIEF→READY）；失败不回滚研究产物（回 DRAFT + lastBriefError，深度面板可手动重试 `/deep/brief`，也可「跳过简报直接生成正文」）。修复「确定研究计划/研究完成后没有简报页面」的结构性缺陷。
-- StepBrief.vue（2026-09-09 模式收敛修订）：**无 FAST/DEEP 模式切换**——唯一生成路径为深度流程 → deepStage 流转 NONE→CLARIFYING→CLARIFIED→RESEARCHING→RESEARCH_DONE → 生成；onMounted 断点恢复（`?gen=deep|DEEP` 均展开深度面板）；「重新生成」改为引导重新确认研究计划（`onRegenerateDeep`，FAST 接口已封死）。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（constants/project.js 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。ragStatus 展示增 `DISABLED`（知识库已停用·全局设置，灰，§6b）。
+- StepBrief.vue（2026-09-11 单一状态机收敛，09-11-brief-gen-flow-refactor）：**无 FAST/DEEP 模式切换**——唯一生成路径为深度流程，无简报区间由唯一 `deepStage` 状态机驱动（值域 `NONE|PLANNING|CLARIFYING|CLARIFIED|RESEARCHING|RESEARCH_DONE`），同一状态恒渲染同一 UI，与进入路径（创建直发/重新进入/仅存草稿）无关；**删除 `deepMode` 路径意图布尔与 6s 有界重探测**。project 就位后 `syncDeepStatus()` 单次拉 `/deep/status` 断点恢复（PLANNING 则续起 2.5s 自轮询），不再依赖 `?gen=deep`。「重新研究生成」直接 `startDeep()` 进 PLANNING（`restarting` 标志跳过旧简报正文分支，新简报落库后恢复）。无简报区间只保留**一个**主操作「开始深度研究」，删除「开始深度研究→生成研究计划」两步链与裸生成按钮。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（constants/project.js 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。ragStatus 展示增 `DISABLED`（知识库已停用·全局设置，灰，§6b）。
 - 移动端：单列纵排、抽屉全屏、触控 ≥44px。
 
 #### 配置（.env.example 已同步）

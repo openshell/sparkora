@@ -22,8 +22,9 @@ graph TD
     B4 --> B5["落 sparkora_article_brief(gen_mode=FAST)<br/>current_brief_id 指向<br/>status = READY,清 last_brief_error<br/>R3: rag_citations 引用明细随 brief 落库"]
     B5 --> B6["用户点选标题偏好<br/>PUT /{id}/selected-title"]
 
-    DEEP1["深度模式 DEEP（S9 六阶段）"] --> D1["①② POST /deep/clarify<br/>ClarifyService: 真实车库名录注入 + LLM<br/>产出研究计划 + 澄清问题<br/>落 brief(gen_mode=DEEP)"]
-    D1 --> D2["用户填 ClarifyForm<br/>POST /deep/clarify-answer<br/>锁定 clarify_answers"]
+    DEEP1["深度模式 DEEP（S9 六阶段）"] --> D1["①② POST /deep/clarify（2026-09-11 异步化）<br/>ClarifyService.start: 真实车库名录注入<br/>同步落 PLANNING 占位(plan_status=PLANNING)立即返回 202<br/>@Async runAsync 后台 LLM 产出研究计划 + 澄清问题<br/>成功 plan_status=READY；失败删占位行 + lastBriefError"]
+    D1 --> D1b["前端 StepBrief 轮询 /deep/status<br/>stage=PLANNING 显示「研究计划生成中」<br/>就绪后自动展开 ClarifyForm"]
+    D1b --> D2["用户填 ClarifyForm<br/>POST /deep/clarify-answer<br/>锁定 clarify_answers"]
     D2 --> D3["③ POST /deep/run<br/>落 PENDING 占位后立即返回(202 语义)<br/>@Async runAsync 后台执行"]
     D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（SEARXNG→Tavily 降级）<br/>逐 agent 落 research_notes<br/>PENDING→RUNNING→DONE/FAILED<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
     D4 --> D5["④ FactSheetService.merge()<br/>汇总事实手册 fact_sheet"]
@@ -81,7 +82,7 @@ graph TD
 ## 3. 关键机制
 
 - **失败语义**：简报失败回 `DRAFT` + `lastBriefError`;版本失败（全部失败才算整体失败）回 `READY` + `lastVersionError`（部分失败仅警告）;发布失败**状态不动**只写 `lastPublishError`，可重试。
-- **并发防护**：`BriefService` / `VersionService` 都用条件更新原子抢占状态（消除 check-then-set 竞态），生成中未过期拒绝重复触发，超 10 分钟视为陈旧放行自愈。
+- **并发防护**：`BriefService` / `VersionService` 都用条件更新原子抢占状态（消除 check-then-set 竞态），生成中未过期拒绝重复触发，超 10 分钟视为陈旧放行自愈。`ClarifyService`（2026-09-11）以部分唯一索引 `uq_brief_planning`（同一项目至多一条 `plan_status='PLANNING'`）+ 陈旧占位清理实现同款并发/自愈，重复触发撞索引转 409。
 - **事务边界**：置「生成中」短事务先提交（前端可见进度），AI 调用无事务，成功后写产物 + 推状态再提交。
 - **RAG 必查降级可见**：检索失败/低置信不阻断生成，而是向 prompt 注入降级提示并强制 AI 在 `factRisks` 标注「发布前人工核实」;检索状态随 brief/version 落库（`ragStatus`）。
 - **发布与预览同源**：`PublishService` 内部直接调 `previewService.preview()`，预览 HTML 即发布真值，降级 HTML 不进公众号。
