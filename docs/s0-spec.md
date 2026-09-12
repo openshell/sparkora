@@ -846,3 +846,58 @@ PublishService.publish
 - [x] AC4 `/car`、`/kb` 等既有路由与页面未改动（`git diff` 核实；KbLibrary 仅机械换 `kbApi`，6 处调用等价）
 - [x] AC5 `npm run build` 通过（exit 0）
 - 既有缺陷（非 C3 引入，未修）：`CarLibrary.vue` 批量重建直调 `http` 但未 import（ReferenceError 隐患），待后续任务修复
+
+---
+
+### 17. 多轮对话式知识问答（C4，正式规格，2026-09-12）
+
+> 独立入口 `/qa`（**非知识中心 Tab**）：多轮对话 + 来源引用。答案基于统一检索（CAR 车型 / NEWS 官方新闻 / KB 通用知识）
+> 三域结果由 LLM 合成，同一会话可追问、上下文连贯。父任务：`09-11-knowledge-base-data-foundation`。
+> 开关契约：浏览/问答**不受** `kb_enabled` 控制，仅生成注入可开关（AC4）。
+
+#### 数据模型（schema.sql S12 区块，幂等 `CREATE TABLE IF NOT EXISTS`）
+
+| 表 | 字段 | 说明 |
+|---|---|---|
+| `sparkora_qa_session` | id / title(≤200，首问摘要，可空) / created_by(归属用户) / created_at / updated_at / deleted | 会话；逻辑删除，仅本人可见 |
+| `sparkora_qa_message` | id / session_id FK→sparkora_qa_session(id) / role(user/assistant) / content / citations(JSON) / rag_status(OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE) / created_at | 消息保留（无逻辑删除）；citations 为 Citation 数组 `[{source,modelName,chunkType,score,chunkText}]`，user 消息为空 |
+
+- 索引 `idx_qa_message_session(session_id)`。无向量表。
+
+#### 多轮上下文策略（明确，不做摘要压缩）
+
+- **检索 query 构造**：`query = 当前问题`；若当前问题 ≤12 字（疑似指代）或会话已有历史，则拼接最近 2 轮 user 问题 + 当前问题（截断 ≤300 字）作为检索文本。
+- **送入 LLM 的历史窗口**：最近 `HISTORY_MAX_TURNS=6` 轮（12 条消息），单条 content 截断 2000 字，总历史 ≤12000 字，超出丢最旧。
+- **知识上下文**：`RagResult.context` 作 system 附加段，仅 OK 时注入；非 OK 时 system 标注降级原因（LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE），让模型回答「知识库未覆盖」。
+- **AI 扩展**：`AiClient.chatMessages(List<Map<String,String>> messages, int maxTokens)`（C4 新增，不破坏既有 `chat`/`chatJson` 签名）；`temperature`/`model` 同 `chat`。
+
+#### 接口契约（`/api/qa`，全部 `R<T>` + 方法级 `@PreAuthorize`）
+
+| 方法 | 路径 | 权限 | 入参 | 返回 |
+|---|---|---|---|---|
+| POST | `/api/qa/sessions` | ADMIN/EDITOR/VIEWER | `{title?}` | `R<QaSessionEntity>`（title 可空，首问回填） |
+| GET | `/api/qa/sessions` | 三角色 | — | `R<List<QaSessionEntity>>`（仅本人，updated_at 倒序） |
+| GET | `/api/qa/sessions/{id}` | 三角色 | — | `R<Map>`：`{session, messages[]}`（messages 按 id 升序；越权/不存在 `R.fail(404)`） |
+| POST | `/api/qa/sessions/{id}/messages` | 三角色 | `{question}`（`@Valid`，≤2000 字） | `R<Map>`：`{userMessage, assistantMessage}`（assistant 含 citations/ragStatus）；越权 404 / AI 失败 500 |
+| DELETE | `/api/qa/sessions/{id}` | 三角色 | — | `R<Void>`（逻辑删，仅本人；越权 404） |
+
+- 会话归属：`created_by = 当前用户名`；越权/不存在统一 404（不泄露存在性）。
+- 检索调用 `CarRagService.retrieveForGeneration(searchQuery, 8, null)`（锚点 null）；**不改** CAR/KB/NEWS 检索语义，**不读** `SettingService.kbEnabled`。
+
+#### 前端
+
+| 文件 | 职责 |
+|---|---|
+| `views/QaChat.vue` | 左侧会话列表（新建/删除/切换）+ 右侧对话流 + 底部输入（Enter 发送 / Shift+Enter 换行）；assistant 气泡下 `CitationList`；三态；移动端单列、触控 ≥44px |
+| `views/project/deep/CitationList.vue` | 新增 `NEWS` 分支（`官方新闻` / `danger`），纯增量，不影响既有 CAR/KB/WEB/MULTI |
+| `api/index.js` | `qaApi`（createSession/listSessions/getSession/ask/removeSession；ask 超时 120s） |
+| `router/index.js` | `/qa`（`meta.auth`），紧随 `/knowledge` |
+| `layouts/TopBar.vue` | 新增「知识问答」导航（登录可见） |
+
+#### 验收清单
+
+- [x] AC1 可创建会话、提问、得到带来源引用的答案（2026-09-12 check 真机：`POST /qa/sessions` → `POST /qa/sessions/1/messages` code=0 / ragStatus=OK / assistant.citations 含 CAR+NEWS；`sparkora_qa_message` 落库）
+- [x] AC2 同一会话多轮追问上下文连贯（2026-09-12 check 真机：首问「海狮08续航配置」→ 追问「那它的价格呢？」正确解析为海狮08价格并答出 DM-i/EV 价格区间，未串到「海豹08」）
+- [x] AC3 答案可引用车型/新闻/通用 KB 三类来源并正确标注（2026-09-12 check 真机：KB 问「家用充电桩怎么选」citations 含 KB(`通用知识`)/CAR/NEWS；CitationList NEWS 分支=官方新闻/danger）
+- [x] AC4 `kb_enabled=false` 时问答仍可用（2026-09-12 check 真机：setting `kbEnabled=false` 下提问仍 code=0/ragStatus=OK；`grep` 确认 QaService/QaController 无 SettingService/kb_enabled 引用）
+- [x] AC5 `mvn -q -DskipTests compile`、`mvn test`（71 全绿）、`npm run build` 通过（2026-09-12 implement 复验）

@@ -136,6 +136,34 @@ public class AiClient {
         }
     }
 
+    /**
+     * 多轮消息 chat(C4 知识问答,不强制 JSON;S12)。
+     * messages 每项为 {role, content},按顺序原样送模型(system / user / assistant 交替)。
+     * temperature/model 同 {@link #chat};复用同一 RestClient 与 parseChat。
+     *
+     * @param messages  有序消息列表
+     * @param maxTokens 上限
+     * @return ChatResult
+     */
+    public ChatResult chatMessages(List<Map<String, String>> messages, int maxTokens) {
+        Map<String, Object> body = Map.of(
+                "model", resolveTextModel(),
+                "messages", messages,
+                "temperature", props.getTemperature(),
+                "max_tokens", maxTokens
+        );
+        try {
+            String resp = rest.post()
+                    .uri("/v1/chat/completions")
+                    .body(body)
+                    .retrieve()
+                    .body(String.class);
+            return parseChat(resp);
+        } catch (Exception e) {
+            throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
+        }
+    }
+
     private ChatResult parseChat(String resp) {
         try {
             JsonNode root = mapper.readTree(resp);

@@ -540,3 +540,33 @@ CREATE TABLE IF NOT EXISTS sparkora_news_sync_job (
     deleted      SMALLINT     NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_news_sync_job_created ON sparkora_news_sync_job(created_at);
+
+-- ============================================================================
+-- S12:多轮对话式知识问答(C4)。
+-- 独立问答会话与消息:citations 存 JSON 数组(Citation: source/modelName/chunkType/score/chunkText),
+-- rag_status 记录该轮检索状态(OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE,KB 降级可见)。
+-- 会话逻辑删除(仅本人可见),消息保留不做逻辑删除。无向量表。
+-- 全部单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+
+-- 问答会话(按 created_by 归属,仅本人可见)
+CREATE TABLE IF NOT EXISTS sparkora_qa_session (
+    id          BIGSERIAL PRIMARY KEY,
+    title       VARCHAR(200),                -- 首问摘要,可空
+    created_by  VARCHAR(64) NOT NULL,        -- 归属用户
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     SMALLINT NOT NULL DEFAULT 0  -- 逻辑删除
+);
+
+-- 问答消息(user / assistant 交替;citations 为 assistant 消息的引用明细 JSON)
+CREATE TABLE IF NOT EXISTS sparkora_qa_message (
+    id          BIGSERIAL PRIMARY KEY,
+    session_id  BIGINT NOT NULL REFERENCES sparkora_qa_session(id),
+    role        VARCHAR(20) NOT NULL,        -- user / assistant
+    content     TEXT NOT NULL,
+    citations   TEXT,                        -- JSON 数组(Citation);user 消息为空
+    rag_status  VARCHAR(20),                 -- OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE;user 消息为空
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_qa_message_session ON sparkora_qa_message(session_id);

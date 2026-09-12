@@ -76,6 +76,7 @@ const tagType = (c) => {
   if (c.source === 'KB') return 'success'
   if (c.source === 'WEB') return 'warning'
   if (c.source === 'MULTI') return 'success'
+  if (c.source === 'NEWS') return 'danger'   // C4:官方新闻域
   return 'primary'
 }
 
@@ -83,6 +84,7 @@ const sourceLabel = (c) => {
   if (c.source === 'KB') return '通用知识'
   if (c.source === 'WEB') return 'WEB 搜索'
   if (c.source === 'MULTI') return '多源交叉'
+  if (c.source === 'NEWS') return '官方新闻'   // C4:官方新闻域
   return '车型数据'
 }
 

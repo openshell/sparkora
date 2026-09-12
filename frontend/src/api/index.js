@@ -158,3 +158,13 @@ export const settingApi = {
   get: () => http.get('/settings'),
   update: (payload) => http.put('/settings', payload)
 }
+
+// C4 多轮对话式知识问答:独立入口,跨三域(CAR/KB/NEWS)检索合成 + 引用
+export const qaApi = {
+  createSession: (title) => http.post('/qa/sessions', { title }),
+  listSessions: () => http.get('/qa/sessions'),
+  getSession: (id) => http.get(`/qa/sessions/${id}`),
+  // AI 合成耗时长,放宽超时(同 generateBrief)
+  ask: (id, question) => http.post(`/qa/sessions/${id}/messages`, { question }, { timeout: 120000 }),
+  removeSession: (id) => http.delete(`/qa/sessions/${id}`)
+}
