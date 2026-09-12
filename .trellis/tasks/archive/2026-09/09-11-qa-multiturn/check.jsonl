@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "核对清单：跨层数据流、复用优先、反模式识别"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 schema 幂等、逻辑删除边界"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 API 分层/三态/触控/引用展示范式"}
+{"file": ".trellis/tasks/09-11-qa-multiturn/prd.md", "reason": "本任务验收标准 AC1~AC5"}

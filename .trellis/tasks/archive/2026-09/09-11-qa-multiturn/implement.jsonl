@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范层索引：目录结构/数据库/错误处理/外部依赖约定"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema.sql 幂等迁移、逻辑删除实体+物理向量表、多域检索候选窗口等约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义与错误码映射，QA 接口 400/404/500 处理"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 分层(具名导出)、http.js 已拆包 R<T>、页面三态/44px/Tab 懒挂载范式"}
+{"file": ".trellis/spec/guides/index.md", "reason": "修改前先搜索、跨层/复用思考清单"}
+{"file": ".trellis/tasks/09-11-qa-multiturn/design.md", "reason": "本任务技术设计：QA 数据模型/REST/多轮策略/开关契约/前端"}
