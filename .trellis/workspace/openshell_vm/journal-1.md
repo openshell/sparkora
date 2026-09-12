@@ -246,3 +246,25 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: kb-cleanup 遗留清理
+<!-- trellis-session: v=2 fp=28026f8f236fe148 -->
+
+**Date**: 2026-09-12
+**Task**: kb-cleanup 遗留清理
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c047f7c` | fix(cleanup): 知识库遗留清理——前端 rebuildAll 封装、新闻列表去 content、定时同步陈旧自愈、新闻块类型测试与死代码 |
+
+### Status
+
+[OK] **Completed**

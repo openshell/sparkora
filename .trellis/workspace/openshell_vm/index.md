@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-09-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~248 | Active |
+| `journal-1.md` | ~270 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-09-12 | kb-cleanup 遗留清理 | `c047f7c` | `main` |
 | 8 | 2026-09-12 | C4 多轮对话式知识问答 | `07fa8d0`, `c94c415` | `main` |
 | 7 | 2026-09-12 | C3 知识中心浏览页 | `5cf4902`, `38fb0ee` | `main` |
 | 6 | 2026-09-12 | C2 新闻数据接入与独立知识域 | `6fa6297`, `4c6f05a` | `main` |
