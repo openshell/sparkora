@@ -223,3 +223,26 @@
 ### Next Steps
 
 - 继续 C4 多轮对话式知识问答
+
+
+## Session 8: C4 多轮对话式知识问答
+<!-- trellis-session: v=2 fp=464badc57b4072f3 -->
+
+**Date**: 2026-09-12
+**Task**: C4 多轮对话式知识问答
+**Branch**: `main`
+
+### Summary
+
+跨三域(CAR/KB/NEWS)检索合成多轮问答:QaService+会话/消息表(S12)+/api/qa+/qa 页面与引用;CitationList 增 NEWS 分支;补 AI/RAG 规范层与 knowledge-base.md 评估结论。AC1-AC5 全通过(71 tests,build 绿)。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `07fa8d0` | feat(S12): 多轮对话式知识问答——跨三域检索合成、会话/消息持久化、/qa 页面与引用 |
+| `c94c415` | docs(spec): 新增 AI/RAG 规范层(单轮/多轮合成 + 三域检索契约 + 开关契约) |
+
+### Status
+
+[OK] **Completed**
