@@ -130,8 +130,8 @@ const onRebuildAll = () => {
     .then(async () => {
       rebuildingAll.value = true
       try {
-        const { data } = await http.post('/car/models/rebuild-all')
-        const st = data.data || {}
+        const res = await carApi.rebuildAll()
+        const st = res.data || {}
         st.failed > 0
           ? ElMessage.warning(`重建完成:成功 ${st.success}/${st.total},失败车型 ${st.failed}(id: ${st.failedModelIds})`)
           : ElMessage.success(`重建完成:${st.success}/${st.total} 个车型已按新口径重建`)

@@ -68,4 +68,24 @@ class NewsDocServiceTest {
             assertTrue(c.length() <= "新闻：硬切（2026-09-01）\n".length() + NewsDocService.MAX_BODY_LEN);
         }
     }
+
+    @Test
+    void 块类型_空正文仅标题锚点块为NEWS_TITLE() {
+        List<String> chunks = NewsDocService.chunkContent("图片型新闻", PUB, "   \n  ");
+        assertEquals(List.of("新闻：图片型新闻（2026-09-01）"), chunks);
+        assertEquals("NEWS_TITLE", NewsDocService.chunkTypeOf(chunks));
+    }
+
+    @Test
+    void 块类型_有正文为NEWS_BODY() {
+        List<String> chunks = NewsDocService.chunkContent("普通新闻", PUB, "正文第一段。");
+        assertEquals("NEWS_BODY", NewsDocService.chunkTypeOf(chunks));
+    }
+
+    @Test
+    void 块类型_多块恒为NEWS_BODY() {
+        List<String> chunks = NewsDocService.chunkContent("多段新闻", PUB, "第一段。\n\n第二段。");
+        assertEquals(2, chunks.size());
+        assertEquals("NEWS_BODY", NewsDocService.chunkTypeOf(chunks));
+    }
 }

@@ -81,6 +81,8 @@ export const carApi = {
   retryJob: (id) => http.post(`/car/sync/jobs/${id}/retry`),
   // 同步单个车型（详情页用，同步阻塞）
   syncOne: (id) => http.post(`/car/models/${id}/sync`, null, { timeout: 300000 }),
+  // 批量重建全部车型向量（ADMIN，一次性运维；耗时=车型数×块数×embedding，放宽超时）
+  rebuildAll: () => http.post('/car/models/rebuild-all', null, { timeout: 300000 }),
   remove: (id) => http.delete(`/car/models/${id}`),
   // 内部问答检索：body={modelId, query, topK?}
   rag: (modelId, query, topK) => http.post('/car/rag', { modelId, query, topK }, { timeout: 120000 })

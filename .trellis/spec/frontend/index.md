@@ -126,7 +126,7 @@ if (res.code === 0) rows.value = res.data          // 分页接口则是 res.dat
 
 ### Don't: 在 `.vue` 里 `import http` 直调接口
 
-见上「API Layer」。历史遗留的 `CarLibrary.vue:133` `http.post('/car/models/rebuild-all')` 未 import 即属此类错误（既有 ReferenceError 隐患，待修）。
+见上「API Layer」。历史遗留的 `CarLibrary.vue` `http.post('/car/models/rebuild-all')`（未 import，ReferenceError 隐患）已在 09-12 kb-cleanup 修为 `carApi.rebuildAll()`；新增接口一律先补 `src/api/index.js` 具名导出。
 
 ---
 

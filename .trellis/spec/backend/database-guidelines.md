@@ -67,13 +67,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
 
 > **Warning**: 占位行失败时若被删除，任何「按项目取最新行」的查询都会回退到更早的旧行，导致轮询误判状态。轮询必须用**本次启动返回的 briefId 精确定位**，不能只按 projectId 取最新（见 error-handling.md「轮询可删除占位」）。
 
-### 定时任务防重叠需带陈旧自愈（09-11 先例：CarSyncScheduler）
+### 定时任务防重叠需带陈旧自愈（09-11 先例：CarSyncScheduler；09-12 落地）
 
-`@Scheduled` 消费任务表（如 `sparkora_car_sync_job`）时，用 `hasRunning()`（`status=RUNNING` 计数）防重叠。**但进程在任务中途死亡会残留 RUNNING 行**，无超时自愈则定时任务被永久跳过。
+`@Scheduled` 消费任务表（如 `sparkora_car_sync_job`）时，用 `hasRunning()`（`status=RUNNING` 计数）防重叠。**但进程在任务中途死亡会残留 RUNNING 行**，无超时自愈则定时任务被永久跳过。**09-12 kb-cleanup 已为车型/新闻两侧补齐自愈**：
 
-- 个人项目/低频场景可先接受该风险（手动路径不受影响），但需在 spec/设计显式记录为已知限制。
-- 完整做法参照 `BriefService` 的 `STALE_GENERATING_MS`：`hasRunning()` 应排除 `updated_at` 超阈值（如 10 分钟）的陈旧 RUNNING 行。
+- 任务表**无 `updated_at`**（与生成类实体不同），存活时间戳用 **`started_at`**。
+- 阈值 `SYNC_STALE_MS = 60 * 60 * 1000L`。**不要照搬生成链路的 10 分钟**：全量 56 车型 + 清洗 + embedding 实测可超 20 分钟，10 分钟会把活任务误判为陈旧。
+- 两个方法成对：`markStaleRunningAsFailed()`（`status=RUNNING 且 started_at < now-60min` 原子置 `FAILED` + `finished_at` + `error_msg`）与 `hasFreshRunning()`（只统计 `RUNNING 且 started_at >= now-60min`）。
+- Scheduler 编排固定为**先清陈旧、再判新鲜**：`markStaleRunningAsFailed(); if (hasFreshRunning()) return;`。顺序不能反，否则陈旧行仍会在本轮被判为阻塞。
+- 手动 `createJob`/`runJob` 的 `status=RUNNING→RUNNING` 原子锁语义**不变**（自愈只作用于定时路径的判定与清尾）。
 - `job_type` 区分来源（`SELECTED` / `RETRY` / `SCHEDULED`），定时触发 `created_by` 走 `SecurityUtil.current()==null → "system"`。
+- 先例：`CarSyncJobService`/`CarSyncScheduler`（车型）、`NewsSyncJobService`/`NewsSyncScheduler`（新闻）。
 
 ---
 

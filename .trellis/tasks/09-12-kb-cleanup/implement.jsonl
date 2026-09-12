@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/index.md","reason":"跨层变更思考清单:前端缺 import、列表响应契约、定时任务状态机"}
+{"file":".trellis/spec/frontend/index.md","reason":"API 分层约定:页面禁直调 http,须经 src/api/index.js 具名导出"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"逻辑删除/原子更新/任务状态机约定(R3 陈旧自愈原子置终态)"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"R<T> 语义与错误映射(R2 响应字段契约)"}
+{"file":".trellis/spec/backend/ai-rag-guidelines.md","reason":"三域检索/新闻域与问答开关契约,确认 R2/R4 不动检索语义"}

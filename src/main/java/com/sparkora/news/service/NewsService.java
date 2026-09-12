@@ -226,6 +226,7 @@ public class NewsService {
         for (NewsEntity n : p.getRecords()) {
             n.setChunkCount(docMapper.selectCount(new QueryWrapper<com.sparkora.domain.entity.NewsDocEntity>()
                     .eq("news_id", n.getId())));
+            n.setContent(null);   // 列表不返回正文大字段(详情接口返回;content 字段 NON_NULL,置空后不出现在 JSON)
         }
         return new PageResult<>(p.getRecords(), p.getTotal(), p.getCurrent(), p.getSize());
     }

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -25,6 +26,8 @@ public class NewsEntity {
     private LocalDateTime publishDate; // 官方 date 解析(失败置空)
     private String tags;           // JSON 数组(官方 tags)
     private String tagNames;       // JSON 数组(官方 tagNames,展示用)
+    // 正文大字段:列表接口不返回(NewsService.list 置 null,NON_NULL 时不出现);详情返回完整正文
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private String content;        // 抽取正文纯文本(图片型新闻可能为空)
     private String source;         // 来源标识,默认 byd-news
     private String syncStatus;     // SUCCESS/FAILED(单条抽取失败)

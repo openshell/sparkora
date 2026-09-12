@@ -34,7 +34,9 @@ public class CarSyncScheduler {
     public void scheduledSync() {
         if (!props.isSyncEnabled()) return;
         try {
-            if (jobService.hasRunning()) {
+            // 先清理进程死亡遗留的陈旧 RUNNING(超 60 分钟),否则定时增量会被永久阻塞
+            jobService.markStaleRunningAsFailed();
+            if (jobService.hasFreshRunning()) {
                 log.warn("定时车型同步跳过:已有运行中的同步任务");
                 return;
             }

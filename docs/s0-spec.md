@@ -341,7 +341,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 | `car_model.intro_images` | **语义 = 图库 `image_asset.id` 列表 JSON**（非 URL）；存量旧数据可能为 URL 数组，双读兼容 |
 | `introImageUrls` | 非持久化派生字段（`@TableField(exist=false)`）：`list()`/`detail()` 由 `introImages` 实时解析——数字 id → `ImageService.publicUrl`，`http` 开头原样保留，解析失败跳过；前端 `CarLibrary.vue` 缩略图取 `introImageUrls[0]` |
 | 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块，并按 `model_id` 物理清理 `sparkora_car_doc_embedding`（兜底历史逻辑删除残留）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
-| 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 定时 `@Scheduled`（`job_type=SCHEDULED`，以官网目录全量幂等刷新，运行中任务存在则跳过）；默认关闭 |
+| 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 定时 `@Scheduled`（`job_type=SCHEDULED`，以官网目录全量幂等刷新，**未过期** RUNNING 任务存在则跳过；陈旧 RUNNING（`started_at` 超 60 分钟）先置 FAILED 自愈后继续，见 §15）；默认关闭 |
 | 配置 | `CAR_SYNC_ENABLED`（默认 false）/ `CAR_SYNC_CRON`（默认 `0 0 3 * * ?`） |
 | KB 索引 | `sparkora_kb_chunk_embedding` 由 IVFFLAT 统一为 HNSW cosine（§6c） |
 
@@ -765,13 +765,14 @@ PublishService.publish
 
 #### 入库与向量化
 
-- `com.sparkora.news.service.NewsDocService`（仿 CarDocService/KbDocService）：`rebuildForNews(newsId)` 先物理清 embedding+doc 再切块（首行「新闻：<title>（<publishDate>）」；空行分段、单段 ≤500、超长按句读切分合并）+ embedding 并发化（固定小线程池）+ 单块失败重试 1 次；`deleteByNews` 物理清块与向量；`chunkCount`。
+- `com.sparkora.news.service.NewsDocService`（仿 CarDocService/KbDocService）：`rebuildForNews(newsId)` 先物理清 embedding+doc 再切块（首行「新闻：<title>（<publishDate>）」；空行分段、单段 ≤500、超长按句读切分合并）+ embedding 并发化（固定小线程池）+ 单块失败重试 1 次；`deleteByNews` 物理清块与向量；`chunkTypeOf(chunks)` 纯函数判定块类型（唯一块且无换行 → `NEWS_TITLE`，其余 `NEWS_BODY`）；块数由调用方 `docMapper.selectCount` 计算，不再提供 `chunkCount(newsId)`/`NewsDocEmbeddingMapper.countByNews()`（C2 死代码已删）。
 - `com.sparkora.news.service.NewsService`：`syncFull()`（遍历 `data.pages` 全部页）/ `syncIncrement()`（列表按 date 倒序，本页全部「已存在且正文非空」即提前停止）；逐条抓正文 → 按 `news_id` 幂等 upsert → `rebuildForNews`；单条失败记 failedItems 不阻断；`list(page,size,keyword)`（分页 + title 模糊 + 块数）、`get(id)`、`existsWithContent(newsId)`。官方 date 解析失败置 null。
 
 #### 同步任务与调度
 
-- `com.sparkora.news.service.NewsSyncJobService`（仿 CarSyncJobService）：`createJob(jobType)`（`@Transactional` 落 RUNNING，created_by=SecurityUtil）；`@Async runJob(jobId)`（原子锁 status=RUNNING→RUNNING 影响行数=0 拒绝）；`finish`（SUCCESS/PARTIAL/FAILED + failed_items JSON）；`get`/`list`/`retry`/`hasRunning`。
-- `com.sparkora.news.service.NewsSyncScheduler`：`@Scheduled(cron="${sparkora.news.sync-cron:0 30 3 * * ?}")`，`NEWS_SYNC_ENABLED=false` 直接返回、`hasRunning()` 防重叠、全程 try/catch，jobType=SCHEDULED。默认关闭。
+- `com.sparkora.news.service.NewsSyncJobService`（仿 CarSyncJobService）：`createJob(jobType)`（`@Transactional` 落 RUNNING，created_by=SecurityUtil）；`@Async runJob(jobId)`（原子锁 status=RUNNING→RUNNING 影响行数=0 拒绝）；`finish`（SUCCESS/PARTIAL/FAILED + failed_items JSON）；`get`/`list`/`retry`/`hasFreshRunning`/`markStaleRunningAsFailed`。
+- `com.sparkora.news.service.NewsSyncScheduler`：`@Scheduled(cron="${sparkora.news.sync-cron:0 30 3 * * ?}")`，`NEWS_SYNC_ENABLED=false` 直接返回、先 `markStaleRunningAsFailed()` 清理陈旧 RUNNING 再 `hasFreshRunning()` 防重叠、全程 try/catch，jobType=SCHEDULED。默认关闭。
+- **定时同步陈旧自愈（kb-cleanup，2026-09-12）**：任务表无 `updated_at`，以 `started_at` 为存活时间戳，阈值 `SYNC_STALE_MS=60 分钟`（全量 56 车型 + 清洗 + embedding 实测可超 20 分钟，10 分钟会误判活任务）。`markStaleRunningAsFailed()` 将 `status=RUNNING 且 started_at < now-60min` 原子置 `FAILED` + `finished_at` + `error_msg='运行超时判定为陈旧,自动终止'`；`hasFreshRunning()` 只统计 `RUNNING 且 started_at >= now-60min`。JVM 中途死亡残留不再永久阻塞定时任务；未过期 RUNNING 仍阻塞（防重叠不回归）。车型（`CarSyncJobService`/`CarSyncScheduler`）与新闻两侧对称实现。手动 `createJob`/`runJob` 的 `status=RUNNING→RUNNING` 原子锁语义不变。
 
 #### 统一检索接入（C2 跨层关键改动）
 

@@ -149,9 +149,26 @@ public class CarSyncJobService {
         return jobMapper.selectList(new QueryWrapper<CarSyncJobEntity>().orderByDesc("id"));
     }
 
-    /** 是否存在运行中的同步任务(定时任务防重叠用)。 */
-    public boolean hasRunning() {
-        return jobMapper.selectCount(new QueryWrapper<CarSyncJobEntity>().eq("status", "RUNNING")) > 0;
+    /** 运行中任务超过该时长视为陈旧(JVM 中途死亡遗留),定时任务不再被其阻塞。任务表无 updated_at,用 started_at。 */
+    private static final long SYNC_STALE_MS = 60 * 60 * 1000L;
+
+    /** 是否存在「未过期」的运行中任务(定时任务防重叠用):排除 started_at 超 60 分钟的陈旧 RUNNING。 */
+    public boolean hasFreshRunning() {
+        LocalDateTime cutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(SYNC_STALE_MS));
+        return jobMapper.selectCount(new QueryWrapper<CarSyncJobEntity>()
+                .eq("status", "RUNNING").ge("started_at", cutoff)) > 0;
+    }
+
+    /** 将陈旧的运行中任务(started_at 超 60 分钟)原子置为 FAILED,清理进程死亡残留、解除定时任务永久阻塞。 */
+    public int markStaleRunningAsFailed() {
+        LocalDateTime cutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(SYNC_STALE_MS));
+        int updated = jobMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<CarSyncJobEntity>()
+                .eq("status", "RUNNING").lt("started_at", cutoff)
+                .set("status", "FAILED")
+                .set("finished_at", LocalDateTime.now())
+                .set("error_msg", "运行超时判定为陈旧,自动终止"));
+        if (updated > 0) log.warn("清理陈旧运行中同步任务 {} 条(超 {} 分钟)", updated, SYNC_STALE_MS / 60000);
+        return updated;
     }
 
     /** 重试失败项:从任务失败明细取 goodsId 列表,创建 RETRY 任务。 */

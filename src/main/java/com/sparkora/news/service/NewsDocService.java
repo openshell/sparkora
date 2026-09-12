@@ -1,6 +1,5 @@
 package com.sparkora.news.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.domain.entity.NewsDocEntity;
 import com.sparkora.domain.entity.NewsEntity;
@@ -61,7 +60,7 @@ public class NewsDocService {
             NewsDocEntity d = new NewsDocEntity();
             d.setNewsId(newsId);
             d.setSeq(i);
-            d.setChunkType(chunks.size() == 1 && isTitleOnly(chunks.get(0)) ? "NEWS_TITLE" : "NEWS_BODY");
+            d.setChunkType(chunkTypeOf(chunks));
             d.setChunkText(chunks.get(i));
             docs.add(d);
         }
@@ -120,9 +119,12 @@ public class NewsDocService {
         embMapper.insert(doc.getId(), doc.getNewsId(), vec);
     }
 
-    /** 某新闻当前块数(列表展示/对账用)。 */
-    public long chunkCount(Long newsId) {
-        return docMapper.selectCount(new QueryWrapper<NewsDocEntity>().eq("news_id", newsId));
+    /**
+     * 块类型:仅当整篇只产出一个块且该块无换行(即纯标题锚点块,正文为空)时为 NEWS_TITLE,其余为 NEWS_BODY。
+     * 提取为纯函数便于单测覆盖两分支。
+     */
+    static String chunkTypeOf(List<String> chunks) {
+        return chunks.size() == 1 && isTitleOnly(chunks.get(0)) ? "NEWS_TITLE" : "NEWS_BODY";
     }
 
     private static boolean isTitleOnly(String chunk) {
