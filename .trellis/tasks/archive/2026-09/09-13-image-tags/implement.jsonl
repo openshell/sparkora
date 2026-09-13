@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "建表幂等/QueryWrapper/物理清理先例——新 sparkora_image_tag 表与索引写法、删图联动清 tag 行遵循此规范"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层与命名入口"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R.fail(400) 与 IllegalArgumentException→400 的既有映射，tag 参数校验复用"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "编译与质量门要求"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层封装约定（不直调 http）、R<T> 拆包、页面骨架三态、44px 触控规范——imageApi 扩展与 ImageLibrary.vue 改动遵循"}
+{"file": "docs/s0-spec.md", "reason": "§10 配图模块字段级契约（数据模型/接口表/页面职责），标签接口与字段必须同步进此文档"}
+{"file": ".trellis/tasks/09-13-image-tags/design.md", "reason": "本任务技术设计：表结构/接口契约/打标钩子/回填策略/前端交互设计"}
+{"file": ".trellis/tasks/09-13-image-tags/prd.md", "reason": "需求与验收标准（R1-R5）"}

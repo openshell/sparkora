@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-13-image-tags/prd.md", "reason": "验收标准清单（R1-R5 + AC 逐条核对）"}
+{"file": ".trellis/tasks/09-13-image-tags/design.md", "reason": "接口契约表与数据模型——核对实现与设计一致（路径/权限/参数/响应/回填/去重合并语义）"}
+{"file": "docs/s0-spec.md", "reason": "§10 契约是否已同步标签表/新接口/tags 字段；三处同步原则（schema+entity+spec）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对建表幂等、无 DO $$、索引命名、物理清理"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端 API 封装走 imageApi、拆包读法、移动端 44px 触控"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量门：mvn compile + npm build 必须通过"}
