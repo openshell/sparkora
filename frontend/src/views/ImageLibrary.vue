@@ -18,12 +18,20 @@
           <el-button type="primary" :loading="uploading" icon="Upload">上传图片</el-button>
         </el-upload>
         <el-button v-if="user.isEditorOrAbove" type="primary" plain icon="MagicStick" @click="aiDrawer = true">AI 生图</el-button>
+        <!-- 上传标签预选(09-13 image-tags):上传与 AI 生图共读,不持久化;可新建/可清空 -->
+        <el-select v-if="user.isEditorOrAbove" v-model="presetTags" multiple filterable allow-create default-first-option
+                   clearable collapse-tags collapse-tags-tooltip placeholder="上传标签" class="tag-preset" size="default">
+          <el-option v-for="t in tagOptionNames" :key="t" :label="t" :value="t" />
+        </el-select>
       </div>
       <div class="tb-group tb-browse">
         <el-input v-model="keyword" clearable placeholder="搜索文件名 / 提示词" class="kw-input" size="default"
                   :prefix-icon="Search" @input="onKeywordInput" @clear="onFilterChange" />
         <el-select v-model="sourceFilter" clearable placeholder="来源" class="src-filter" size="default" @change="onFilterChange">
           <el-option v-for="(label, val) in SOURCE_LABELS" :key="val" :label="label" :value="val" />
+        </el-select>
+        <el-select v-model="tagFilter" clearable filterable placeholder="标签" class="tag-filter" size="default" @change="onFilterChange">
+          <el-option v-for="t in allTags" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
         </el-select>
         <el-select v-model="projectFilter" clearable placeholder="项目" class="proj-filter" size="default" @change="onFilterChange">
           <el-option label="全部 / 全局图" :value="''" />
@@ -41,6 +49,7 @@
     <div v-if="selectMode" class="bulk-bar">
       <span class="bulk-count">已选 {{ selectedIds.size }} 张</span>
       <el-button size="small" @click="selectAllPage">全选本页</el-button>
+      <el-button size="small" type="primary" plain :disabled="!selectedIds.size" @click="openBulkTag">打标签</el-button>
       <el-button size="small" type="danger" :disabled="!selectedIds.size" :loading="bulkDeleting" @click="onBulkDelete">删除</el-button>
       <el-button size="small" text @click="exitSelectMode">取消</el-button>
     </div>
@@ -98,26 +107,38 @@
               <div class="hp-sub">{{ sourceLabel(img.source) }} · {{ projectLabel(img) }} · {{ img.width && img.height ? `${img.width}×${img.height}` : '' }}</div>
               <div class="hp-sub">{{ img.createdBy }} · {{ shortTime(img.createdAt) }}</div>
               <div v-if="img.genModel" class="hp-gen">{{ img.genModel }}{{ img.genSize ? ' · ' + img.genSize : '' }}</div>
+              <!-- 标签行:点击标签直接筛选(09-13 image-tags) -->
+              <div v-if="img.tags && img.tags.length" class="hp-tags">
+                <span v-for="t in img.tags" :key="t" class="hp-tag" :title="`按「${t}」筛选`"
+                      @click.stop="filterByTag(t)">{{ t }}</span>
+              </div>
             </div>
             <div class="hp-actions">
+              <el-button v-if="user.isEditorOrAbove" size="small" text
+                         @click.stop="openTagDialog(img)">编辑标签</el-button>
               <el-button v-if="isAiImage(img) && user.isEditorOrAbove" size="small" text type="primary"
                          :loading="regenId === img.id" @click.stop="onRegenerate(img)">重生成</el-button>
               <el-button v-if="user.isEditorOrAbove" size="small" text type="danger" :loading="deletingId === img.id"
                          @click.stop="onDelete(img)">删除</el-button>
             </div>
           </div>
-          <!-- 移动端:常显文件名一行 + ··· 更多 -->
+          <!-- 移动端:常显文件名一行 + 标签 + ··· 更多 -->
           <div class="mobile-bar">
             <span class="m-name">{{ img.fileName }}</span>
             <el-dropdown trigger="click" @command="(cmd) => onMobileCmd(cmd, img)">
               <el-button size="small" text aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item v-if="isAiImage(img) && user.isEditorOrAbove" command="regen">重新生成</el-dropdown-item>
+                  <el-dropdown-item v-if="user.isEditorOrAbove" command="tags">编辑标签</el-dropdown-item>
+                  <el-dropdown-item v-if="isAiImage(img) && user.isEditorOrAbove" command="regen" divided>重新生成</el-dropdown-item>
                   <el-dropdown-item v-if="user.isEditorOrAbove" command="delete" divided>删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+          </div>
+          <!-- 移动端常显标签行:溢出横向滚动,点标签筛选 -->
+          <div v-if="img.tags && img.tags.length" class="m-tags">
+            <span v-for="t in img.tags" :key="t" class="m-tag" @click.stop="filterByTag(t)">{{ t }}</span>
           </div>
         </div>
       </div>
@@ -132,7 +153,7 @@
     <el-drawer v-model="aiDrawer" title="AI 生图" size="420px" class="ai-drawer">
       <el-tabs v-model="aiTab">
         <el-tab-pane label="文生图" name="text2img">
-          <el-input v-model="aiPrompt" type="textarea" :rows="3" placeholder="例：俯瞰一杯与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
+          <el-input v-model="aiPromptText" type="textarea" :rows="3" placeholder="例：俯瞰一杯与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
           <div class="ai-row">
             <el-select v-model="aiSize" class="size-select">
               <el-option label="方图 1024×1024" value="1024x1024" />
@@ -152,10 +173,10 @@
         <el-tab-pane label="图生图" name="img2img">
           <div v-if="refImage" class="ref-pick">
             <img :src="imgUrl(refImage)" class="ref-thumb" alt="参考图" />
-            <el-button size="small" text type="primary" @click="refDialog = true">重新选择</el-button>
+            <el-button size="small" text type="primary" @click="openRefDialog">重新选择</el-button>
           </div>
-          <el-button v-else plain size="small" @click="refDialog = true">从图库选择参考图</el-button>
-          <el-input v-model="aiPrompt" type="textarea" :rows="3" placeholder="例：保持构图，改为蓝灰色科技感色调" />
+          <el-button v-else plain size="small" @click="openRefDialog">从图库选择参考图</el-button>
+          <el-input v-model="aiPromptImg" type="textarea" :rows="3" placeholder="例：保持构图，改为蓝灰色科技感色调" />
           <div class="ai-row">
             <el-select v-model="aiSize" class="size-select">
               <el-option label="方图 1024×1024" value="1024x1024" />
@@ -186,15 +207,56 @@
       </div>
     </el-drawer>
 
-    <!-- 参考图选择弹窗（图生图;与图库列表同数据源） -->
+    <!-- 参考图选择弹窗（图生图;独立数据源 + 页内搜索 + 分页，不再受主列表筛选/首屏限制） -->
     <el-dialog v-model="refDialog" title="选择参考图" width="720px" class="ref-dialog">
-      <div v-if="!images.length" class="img-pop-empty">图库为空：先上传图片或用文生图生成</div>
+      <el-input v-model="refKeyword" clearable placeholder="搜索文件名 / 提示词" :prefix-icon="Search"
+                class="ref-kw" @input="onRefKeywordInput" @clear="onRefSearch" />
+      <div v-if="refLoading" class="img-pop-empty">加载中…</div>
+      <div v-else-if="!refImages.length" class="img-pop-empty">无匹配图片：换个关键字试试</div>
       <div v-else class="ref-grid">
-        <div v-for="img in images" :key="img.id" class="ref-cell" @click="chooseRef(img)">
+        <div v-for="img in refImages" :key="img.id" class="ref-cell" @click="chooseRef(img)">
           <el-image :src="imgUrl(img)" fit="cover" class="ref-cell-thumb" />
           <span class="ref-cell-name">#{{ img.id }} {{ img.fileName }}</span>
         </div>
       </div>
+      <div v-if="refTotal > refSize" class="ref-pager">
+        <el-pagination v-model:current-page="refPage" :page-size="refSize" :total="refTotal"
+                       layout="prev, pager, next" small background @current-change="loadRefImages" />
+      </div>
+    </el-dialog>
+
+    <!-- 单图编辑标签（09-13 image-tags）：全量覆盖语义 -->
+    <el-dialog v-model="tagDialog" title="编辑标签" width="420px" class="tag-dialog">
+      <div class="tag-dialog-tip">
+        <span class="muted-small">为「{{ tagDialogImage?.fileName }}」设置标签</span>
+      </div>
+      <el-select v-model="tagDialogTags" multiple filterable allow-create default-first-option
+                 placeholder="选择或输入标签后回车" class="tag-dialog-select">
+        <el-option v-for="t in tagOptionNames" :key="t" :label="t" :value="t" />
+      </el-select>
+      <template #footer>
+        <el-button @click="tagDialog = false">取消</el-button>
+        <el-button type="primary" :loading="tagSaving" @click="onSaveTags">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量打标/移除（09-13 image-tags） -->
+    <el-dialog v-model="bulkTagDialog" title="批量打标签" width="420px" class="tag-dialog">
+      <div class="tag-dialog-tip">
+        <span class="muted-small">对已选 {{ selectedIds.size }} 张图片统一操作</span>
+      </div>
+      <el-radio-group v-model="bulkTagAction" class="bulk-tag-mode">
+        <el-radio value="add">补打标签</el-radio>
+        <el-radio value="remove">移除标签</el-radio>
+      </el-radio-group>
+      <el-select v-model="bulkTagTags" multiple filterable allow-create default-first-option
+                 placeholder="选择或输入标签后回车" class="tag-dialog-select">
+        <el-option v-for="t in tagOptionNames" :key="t" :label="t" :value="t" />
+      </el-select>
+      <template #footer>
+        <el-button @click="bulkTagDialog = false">取消</el-button>
+        <el-button type="primary" :loading="bulkTagSaving" @click="onBulkTag">确定</el-button>
+      </template>
     </el-dialog>
 
     <!-- 上传隐藏触发（空态按钮复用） -->
@@ -204,7 +266,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import TopBar from '../layouts/TopBar.vue'
 import { imageApi, projectApi } from '../api'
 import { useUserStore } from '../store/user'
@@ -213,7 +275,7 @@ import { Refresh, WarningFilled, Search, MagicStick, Menu, Grid, Check, MoreFill
 
 /** 图库维护页(S10 功能 + UI 重设计):以看图找图为核心。元数据入 hover 层;批量管理;连续预览;筛选 chip。 */
 const user = useUserStore()
-const SOURCE_LABELS = { upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图', byd: '比亚迪' }
+const SOURCE_LABELS = { upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图', byd: '比亚迪', 'byd-news': '比亚迪新闻' }
 const images = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -222,6 +284,16 @@ const projects = ref([])
 const projectFilter = ref('')
 const sourceFilter = ref('')
 const keyword = ref('')
+// 标签域（09-13 image-tags）：allTags=[{name,count}]；tagFilter=筛选；presetTags=上传/AI 生图预选（不持久化）
+const allTags = ref([])
+const tagFilter = ref('')
+const presetTags = ref([])
+const tagOptionNames = computed(() => {
+  // 预选/编辑下拉选项 = 全库标签 ∪ 当前已选（allow-create 允许新建，此处保证已选项可回显）
+  const set = new Set(allTags.value.map(t => t.name))
+  ;[...presetTags.value, ...tagDialogTags.value, ...bulkTagTags.value].forEach(t => t && set.add(t))
+  return [...set]
+})
 const loadError = ref('')
 const loading = ref(false)
 const uploading = ref(false)
@@ -277,10 +349,11 @@ const onBulkDelete = () => {
 }
 
 // ==== 筛选 chip ====
-const hasFilter = computed(() => !!(keyword.value.trim() || sourceFilter.value || projectFilter.value !== ''))
+const hasFilter = computed(() => !!(keyword.value.trim() || sourceFilter.value || tagFilter.value || projectFilter.value !== ''))
 const activeChips = computed(() => {
   const chips = []
-  if (sourceFilter.value) chips.push({ key: 'src', label: `来源: ${SOURCE_LABELS[sourceFilter.value]}`, clear: () => { sourceFilter.value = ''; onFilterChange() } })
+  if (sourceFilter.value) chips.push({ key: 'src', label: `来源: ${SOURCE_LABELS[sourceFilter.value] || sourceFilter.value}`, clear: () => { sourceFilter.value = ''; onFilterChange() } })
+  if (tagFilter.value) chips.push({ key: 'tag', label: `标签: ${tagFilter.value}`, clear: () => { tagFilter.value = ''; onFilterChange() } })
   if (projectFilter.value !== '') {
     const p = projects.value.find(x => x.id === projectFilter.value)
     chips.push({ key: 'proj', label: `项目: ${p ? '#' + p.id : '#' + projectFilter.value}`, clear: () => { projectFilter.value = ''; onFilterChange() } })
@@ -288,7 +361,9 @@ const activeChips = computed(() => {
   if (keyword.value.trim()) chips.push({ key: 'kw', label: `关键字: ${keyword.value.trim()}`, clear: () => { keyword.value = ''; onFilterChange() } })
   return chips
 })
-const clearAllFilters = () => { sourceFilter.value = ''; projectFilter.value = ''; keyword.value = ''; onFilterChange() }
+const clearAllFilters = () => { sourceFilter.value = ''; projectFilter.value = ''; keyword.value = ''; tagFilter.value = ''; onFilterChange() }
+/** 点卡片标签 → 直接按该标签筛选（09-13 image-tags） */
+const filterByTag = (name) => { tagFilter.value = name; onFilterChange() }
 
 // ==== 连续预览:当前页全部原图 ====
 const pageOriginUrls = computed(() => images.value.map(originUrl))
@@ -320,20 +395,23 @@ const load = async () => {
   loadError.value = ''
   loading.value = true
   try {
-    const [imgRes, projRes] = await Promise.all([
+    const [imgRes, projRes, tagRes] = await Promise.all([
       imageApi.list({
         page: page.value, size,
         projectId: projectFilter.value || undefined,
         source: sourceFilter.value || undefined,
+        tag: tagFilter.value || undefined,
         keyword: keyword.value.trim() || undefined
       }),
-      projectApi.list({ page: 1, size: 100 })
+      projectApi.list({ page: 1, size: 100 }),
+      imageApi.listTags()
     ])
     if (imgRes.code === 0) {
       images.value = imgRes.data?.rows || []
       total.value = imgRes.data?.total || 0
     } else loadError.value = imgRes.msg || '加载失败'
     if (projRes.code === 0) projects.value = projRes.data?.rows || []
+    if (tagRes.code === 0) allTags.value = tagRes.data || []
   } catch (e) {
     loadError.value = e.response?.data?.msg || e.message || '网络异常'
   } finally {
@@ -359,9 +437,9 @@ const beforeUpload = (file) => {
 const doUpload = async ({ file }) => {
   uploading.value = true
   try {
-    const res = await imageApi.upload(undefined, file)
+    const res = await imageApi.upload(undefined, file, presetTags.value)
     if (res.code === 0) {
-      if (res.data?.dedupeHit) ElMessage.info(`图库已有相同图片（#${res.data.id}），已复用未重复上传`)
+      if (res.data?.dedupeHit) ElMessage.info(`图库已有相同图片（#${res.data.id}），已复用并以并集补写标签`)
       else ElMessage.success('已上传进图库')
       page.value = 1
       await load()
@@ -405,12 +483,14 @@ const onRegenerate = async (img) => {
 const onMobileCmd = (cmd, img) => {
   if (cmd === 'delete') onDelete(img)
   else if (cmd === 'regen') onRegenerate(img)
+  else if (cmd === 'tags') openTagDialog(img)
 }
 
 // ==== AI 生图(全局图库) ====
 const aiDrawer = ref(false)
 const aiTab = ref('text2img')
-const aiPrompt = ref('')
+const aiPromptText = ref('')   // 文生图 prompt（09-13 修复：与图生图独立，切换 tab 不再污染）
+const aiPromptImg = ref('')    // 图生图 prompt
 const aiSize = ref('1024x1024')
 const aiCount = ref(1)
 const refImage = ref(null)
@@ -418,12 +498,43 @@ const refDialog = ref(false)
 const generating = ref(false)
 const candidates = ref([])
 
+// ---- 参考图弹窗:独立数据源 + 页内搜索 + 分页（09-13 修复只看主列表第一页的缺陷）----
+const refImages = ref([])
+const refTotal = ref(0)
+const refPage = ref(1)
+const refSize = 24
+const refKeyword = ref('')
+const refLoading = ref(false)
+let refKwTimer = null
+const openRefDialog = () => {
+  refDialog.value = true
+  refPage.value = 1
+  loadRefImages()
+}
+const onRefKeywordInput = () => {
+  clearTimeout(refKwTimer)
+  refKwTimer = setTimeout(onRefSearch, 300)
+}
+const onRefSearch = () => { clearTimeout(refKwTimer); refPage.value = 1; loadRefImages() }
+const loadRefImages = async () => {
+  refLoading.value = true
+  try {
+    const res = await imageApi.list({ page: refPage.value, size: refSize, keyword: refKeyword.value.trim() || undefined })
+    if (res.code === 0) {
+      refImages.value = res.data?.rows || []
+      refTotal.value = res.data?.total || 0
+    } else ElMessage.error(res.msg || '参考图加载失败')
+  } catch (e) {
+    ElMessage.error('参考图加载失败：' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { refLoading.value = false }
+}
+
 const chooseRef = (img) => { refImage.value = img; refDialog.value = false }
 
 /** 候选定位:回主列表第一页并高亮该卡 2s */
 const locateInList = async (img) => {
   page.value = 1
-  if (projectFilter.value !== '' || sourceFilter.value || keyword.value.trim()) {
+  if (projectFilter.value !== '' || sourceFilter.value || tagFilter.value || keyword.value.trim()) {
     clearAllFilters()
   } else {
     await load()
@@ -433,10 +544,10 @@ const locateInList = async (img) => {
 }
 
 const onGenerateText = async () => {
-  if (!aiPrompt.value.trim()) { ElMessage.warning('请输入画面描述'); return }
+  if (!aiPromptText.value.trim()) { ElMessage.warning('请输入画面描述'); return }
   generating.value = true
   try {
-    const res = await imageApi.generateText(null, aiPrompt.value.trim(), aiSize.value, aiCount.value)
+    const res = await imageApi.generateText(null, aiPromptText.value.trim(), aiSize.value, aiCount.value, presetTags.value)
     if (res.code === 0) await afterGenerated(res.data || [])
     else ElMessage.error(res.msg || '生成失败')
   } catch (e) {
@@ -445,10 +556,10 @@ const onGenerateText = async () => {
 }
 const onGenerateFromImage = async () => {
   if (!refImage.value) { ElMessage.warning('请先选择参考图'); return }
-  if (!aiPrompt.value.trim()) { ElMessage.warning('请输入画面描述'); return }
+  if (!aiPromptImg.value.trim()) { ElMessage.warning('请输入画面描述'); return }
   generating.value = true
   try {
-    const res = await imageApi.generateFromImage(null, refImage.value.id, aiPrompt.value.trim(), aiSize.value, aiCount.value)
+    const res = await imageApi.generateFromImage(null, refImage.value.id, aiPromptImg.value.trim(), aiSize.value, aiCount.value, presetTags.value)
     if (res.code === 0) await afterGenerated(res.data || [])
     else ElMessage.error(res.msg || '生成失败')
   } catch (e) {
@@ -463,7 +574,56 @@ const afterGenerated = async (list) => {
   await load()
 }
 
+// ==== 单图编辑标签（09-13 image-tags:全量覆盖） ====
+const tagDialog = ref(false)
+const tagDialogImage = ref(null)
+const tagDialogTags = ref([])
+const tagSaving = ref(false)
+const openTagDialog = (img) => {
+  tagDialogImage.value = img
+  tagDialogTags.value = [...(img.tags || [])]
+  tagDialog.value = true
+}
+const onSaveTags = async () => {
+  const img = tagDialogImage.value
+  if (!img) return
+  tagSaving.value = true
+  try {
+    const res = await imageApi.updateTags(img.id, tagDialogTags.value)
+    if (res.code === 0) {
+      ElMessage.success('标签已保存')
+      tagDialog.value = false
+      await load()
+    } else ElMessage.error(res.msg || '保存失败')
+  } catch (e) {
+    ElMessage.error('保存失败：' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { tagSaving.value = false }
+}
+
+// ==== 批量打标/移除（09-13 image-tags） ====
+const bulkTagDialog = ref(false)
+const bulkTagTags = ref([])
+const bulkTagAction = ref('add')
+const bulkTagSaving = ref(false)
+const openBulkTag = () => { bulkTagTags.value = []; bulkTagAction.value = 'add'; bulkTagDialog.value = true }
+const onBulkTag = async () => {
+  if (!bulkTagTags.value.length) { ElMessage.warning('请选择或输入标签'); return }
+  bulkTagSaving.value = true
+  try {
+    const res = await imageApi.batchTags([...selectedIds.value], bulkTagTags.value, bulkTagAction.value)
+    if (res.code === 0) {
+      ElMessage.success(bulkTagAction.value === 'add' ? '已补打标签' : '已移除标签')
+      bulkTagDialog.value = false
+      exitSelectMode()
+      await load()
+    } else ElMessage.error(res.msg || '操作失败')
+  } catch (e) {
+    ElMessage.error('操作失败：' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { bulkTagSaving.value = false }
+}
+
 onMounted(load)
+onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
 </script>
 
 <style scoped>
@@ -478,6 +638,8 @@ onMounted(load)
 .tb-browse { flex: 1; min-width: 0; justify-content: flex-end; }
 .kw-input { width: 220px; }
 .src-filter { width: 110px; }
+.tag-filter { width: 150px; }
+.tag-preset { width: 180px; }
 .proj-filter { width: 180px; }
 
 /* 批量选择态 */
@@ -521,6 +683,7 @@ onMounted(load)
 .src-tag.src-ai-text2img .src-tag-dot { background: #409eff; }
 .src-tag.src-ai-img2img .src-tag-dot { background: #9b59b6; }
 .src-tag.src-byd .src-tag-dot { background: #e6a23c; }
+.src-tag.src-byd-news .src-tag-dot { background: #f56c6c; }
 
 /* 选择模式 checkbox */
 .check-box { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 6px; background: rgba(255,255,255,.9); border: 1.5px solid var(--line); display: flex; align-items: center; justify-content: center; color: transparent; }
@@ -533,11 +696,16 @@ onMounted(load)
 .hp-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hp-sub { font-size: 11px; opacity: .85; margin-top: 2px; }
 .hp-gen { font-size: 10px; opacity: .7; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hp-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.hp-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .hp-actions .el-button { color: #fff; }
+/* hover 层标签行:点击筛选 */
+.hp-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.hp-tag { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: rgba(255,255,255,.22); color: #fff; cursor: pointer; pointer-events: auto; }
+.hp-tag:hover { background: rgba(255,255,255,.38); }
 
 /* 移动端:常显文件名 + ··· 更多 */
 .mobile-bar { display: none; }
+.m-tags { display: none; }
 
 .pager-row { display: flex; justify-content: center; margin-top: 18px; }
 
@@ -556,22 +724,34 @@ onMounted(load)
 .cand-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); display: block; }
 .cand-id { position: absolute; top: 8px; left: 8px; font-size: 11px; color: #fff; background: rgba(0,0,0,.55); padding: 1px 6px; border-radius: 4px; }
 .img-pop-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
+.ref-kw { margin-bottom: 12px; }
+.ref-pager { display: flex; justify-content: center; margin-top: 12px; }
 .ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 60vh; overflow-y: auto; }
 .ref-cell { cursor: pointer; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; }
 .ref-cell:hover { box-shadow: var(--shadow-hover); }
 .ref-cell-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); }
 .ref-cell-name { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 移动端:hover 不可用,常显文件名行 + ··· */
+/* 标签编辑 / 批量打标对话框 */
+.tag-dialog-tip { margin-bottom: 8px; }
+.tag-dialog-select { width: 100%; }
+.bulk-tag-mode { margin-bottom: 10px; }
+
+/* 移动端:hover 不可用,常显文件名行 + 标签 + ··· */
 @media (max-width: 768px) {
   .img-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .img-grid.compact { grid-template-columns: repeat(3, 1fr); }
   .hover-panel { display: none; }
-  .mobile-bar { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px 6px 6px; background: var(--card); }
+  .mobile-bar { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px 6px 2px; background: var(--card); }
   .m-name { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-bar .el-button { min-height: 44px; min-width: 44px; }
+  /* 移动端常显标签行:单行横向滚动,点标签筛选 */
+  .m-tags { display: flex; gap: 4px; padding: 0 6px 6px; background: var(--card); overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .m-tags::-webkit-scrollbar { display: none; }
+  .m-tag { flex: none; display: inline-flex; align-items: center; min-height: 44px; font-size: 11px; line-height: 1; padding: 0 10px; border-radius: 999px; background: var(--paper); border: 1px solid var(--line); color: var(--muted); }
   .tb-browse { justify-content: flex-start; }
   .kw-input { width: 100%; }
+  .tag-filter, .tag-preset, .src-filter, .proj-filter { width: calc(50% - 5px); }
   .lib-toolbar .el-button { min-height: 44px; }
   .bulk-bar .el-button { min-height: 44px; }
 }
