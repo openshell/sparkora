@@ -106,7 +106,7 @@ public class AiClient {
                     .body(body)
                     .retrieve()
                     .body(String.class);
-            return parseChat(resp);
+            return parseChat(resp, true);
         } catch (Exception e) {
             throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
         }
@@ -165,6 +165,16 @@ public class AiClient {
     }
 
     private ChatResult parseChat(String resp) {
+        return parseChat(resp, false);
+    }
+
+    /**
+     * @param requireJson 该次调用是否强制 response_format=json_object。
+     *  Model 命中 max_tokens 被截断(finish_reason=length)时,JSON 内容必然是半截,
+     *  直接给出可操作的错误(增大 max_tokens),避免上层 Jackson 抛
+     *  "Unexpected end-of-input" 这类无法定位的解析报错(2026-09-13 ClarifyService 实测)。
+     */
+    private ChatResult parseChat(String resp, boolean requireJson) {
         try {
             JsonNode root = mapper.readTree(resp);
             JsonNode choices = root.path("choices");
@@ -175,6 +185,9 @@ public class AiClient {
             String content = msg.path("content").asText("");
             if (content.isBlank()) {
                 throw new AiException("AI content 为空（可能 reasoning_content 截断，需增大 max_tokens）: " + truncate(resp), null);
+            }
+            if (requireJson && "length".equals(choices.get(0).path("finish_reason").asText())) {
+                throw new AiException("AI 输出被 max_tokens 截断（finish_reason=length），JSON 不完整，请增大 max_tokens: " + truncate(content), null);
             }
             int tokens = root.path("usage").path("total_tokens").asInt(0);
             String model = root.path("model").asText("");
