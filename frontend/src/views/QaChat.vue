@@ -59,7 +59,8 @@
                   class="bubble-row"
                   :class="m.role === 'user' ? 'is-user' : 'is-assistant'">
                   <div class="bubble" :class="m.role === 'user' ? 'bubble-user' : 'bubble-assistant'">
-                    <div class="bubble-text">{{ m.content }}</div>
+                    <div v-if="m.role === 'user'" class="bubble-text">{{ m.content }}</div>
+                    <div v-else class="bubble-text markdown-body" v-html="renderMd(m.content)"></div>
                     <CitationList
                       v-if="m.role === 'assistant'"
                       :citations="m.citations"
@@ -104,11 +105,16 @@
 
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
+import MarkdownIt from 'markdown-it'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, WarningFilled, Loading, Promotion } from '@element-plus/icons-vue'
 import TopBar from '../layouts/TopBar.vue'
 import CitationList from './project/deep/CitationList.vue'
 import { qaApi } from '../api'
+
+// 助手答案按 Markdown 渲染（html:false 关闭裸 HTML，规避 XSS）；用户消息仍纯文本展示
+const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
+const renderMd = (src) => { try { return md.render(src || '') } catch { return '' } }
 
 const sessions = ref([])
 const sessionsLoading = ref(false)
@@ -326,6 +332,48 @@ onMounted(loadSessions)
   width: 82%;
 }
 .bubble-text { white-space: pre-wrap; word-break: break-word; }
+
+/* 助手 Markdown 渲染：段落/列表/代码/引用/表格（html:false 已关裸 HTML） */
+.markdown-body { white-space: normal; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 8px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  margin: 12px 0 6px; line-height: 1.4; font-weight: 600;
+}
+.markdown-body h1 { font-size: 18px; }
+.markdown-body h2 { font-size: 16px; }
+.markdown-body h3 { font-size: 15px; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 8px; padding-left: 20px; }
+.markdown-body li { margin: 2px 0; }
+.markdown-body a { color: var(--brand); text-decoration: underline; }
+.markdown-body blockquote {
+  margin: 8px 0; padding: 4px 10px;
+  border-left: 3px solid var(--line-strong); color: var(--muted);
+  background: var(--bg-soft, transparent);
+}
+.markdown-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px; padding: 1px 5px; border-radius: 4px;
+  background: var(--line); color: var(--ink);
+}
+.markdown-body pre {
+  margin: 8px 0; padding: 10px 12px; border-radius: 6px;
+  background: #2b2b2b; color: #eaeaea;
+  overflow-x: auto; white-space: pre;
+}
+.markdown-body pre code { background: transparent; color: inherit; padding: 0; }
+.markdown-body table {
+  border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px;
+  display: block; overflow-x: auto;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--line-strong); padding: 5px 8px; text-align: left;
+}
+.markdown-body th { background: var(--line); font-weight: 600; }
+.markdown-body hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+.markdown-body img { max-width: 100%; border-radius: 6px; }
 .thinking { margin-left: 8px; color: var(--muted); font-size: 13px; }
 .spin { animation: spin 1s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
