@@ -112,6 +112,24 @@ if (res.code === 0) rows.value = res.data          // 分页接口则是 res.dat
 
 `createJob` → 拿 `jobId` → `setInterval(2000)` 轮询 `getJob` → 终态（非 `RUNNING`）`stopPoll()` + 刷新列表；`onBeforeUnmount(stopPoll)` 清理定时器。参照 `CarSync.vue` / `NewsKnowledgePanel.vue`。
 
+### Convention: 防抖定时器必须 `onBeforeUnmount` 清理
+
+搜索框的 `setTimeout` 防抖（`kwTimer` 等）在组件卸载时若不清，回调会在离开页面后仍触发 `load()`（无谓请求/控制台报错）。**每个防抖 timer 都要在 `onBeforeUnmount` 里 `clearTimeout`**（09-13 先例：`ImageLibrary.vue` 的 `kwTimer` / `refKwTimer`）。
+
+```js
+let kwTimer = null
+const onKeywordInput = () => { clearTimeout(kwTimer); kwTimer = setTimeout(load, 300) }
+onBeforeUnmount(() => { clearTimeout(kwTimer) })
+```
+
+### Convention: 抽屉内多 Tab 的表单状态必须按 Tab 拆分
+
+`el-tabs` 切换默认不销毁面板，两个 Tab **共用同一个 `ref`** 会导致内容互相污染（在文生图输入，切到图生图看到同一段文字）。每个 Tab 的表单字段用**独立 ref**（如 `aiPromptText` / `aiPromptImg`），提交各自读取。
+
+### Convention: 弹窗选数据源不要复用主列表的筛选/分页态
+
+主列表（带服务端筛选+分页）被「选择弹窗」复用时，会退化成「只能看当前第一页 + 继承主列表筛选」的隐性 bug。弹窗应持有**独立数据源 + 独立搜索/分页**（09-13 先例：参考图选择弹窗 `refImages`/`refKeyword`/`refPage` 独立调接口 + 防抖搜索 + `el-pagination`）。
+
 ### Convention: 外部相对 URL 解析
 
 后端返回的图片/链接可能是相对路径（如新闻 `imageUrl`/`url`）。前端统一用一个 `resolveUrl`：`/^https?:\/\//i` 开头原样返回，否则拼接源站（新闻 = `https://www.byd.com`）。

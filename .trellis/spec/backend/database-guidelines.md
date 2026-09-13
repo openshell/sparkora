@@ -81,6 +81,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
 
 ---
 
+### 多对多关系表：独立关联表 + 应用层维护外键（09-13 先例：图片标签）
+
+图片与标签这类「多对多、标签按名称自由新建」的关系，用**独立关联表**承载，不往主表加逗号/JSON 列（`body_image_ids` 那类有序小集合才用逗号列）：
+
+```sql
+CREATE TABLE IF NOT EXISTS sparkora_image_tag (
+    id          BIGSERIAL PRIMARY KEY,
+    image_id    BIGINT      NOT NULL,   -- 应用层维护，不建强 FK
+    tag_name    VARCHAR(50) NOT NULL,
+    created_by  VARCHAR(64) NOT NULL,
+    created_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (image_id, tag_name)         -- 数据库级防重
+);
+CREATE INDEX IF NOT EXISTS idx_image_tag_name ON sparkora_image_tag(tag_name);
+```
+
+- **UNIQUE 约束做并发兜底**：批量插入捕 `DuplicateKeyException` 静默吞，写入天然幂等；`mergeTags`（已有∪传入只插差集）语义 = 「补打」。
+- **不建强 FK + 实体无 `@TableLogic`**：关系行生命周期跟父行，父删除时**同事务物理清**（`deleteByImageId`），避免逻辑删除残留孤儿行（同 embedding 表处理先例）。写入前校验父行存在，防止给已删父写孤儿关系（存量 `car_model.intro_images` 可能引用已删图 id）。
+- **批量回填避免 N+1**：列表页先收集父 id 集合，一次 `WHERE image_id IN (...)` 查全部关系行再按父分组回填（`fillTags`）。
+- **按标签反查用两段查询**：`SELECT image_id WHERE tag_name=?`（走标签索引）→ 外层 `qw.in("id", ids)`；命中集超大时截断（本任务保底 500），不引入 JOIN。
+
+> **Warning**: 自由文本标签的 `tag_name` 必须入口统一 normalize（trim/去空/去重保序/长度上限），Controller 的 multipart 多值与 JSON 数组两条入口共用同一个 normalize，否则同一个标签会以 `" 新闻"` / `"新闻 "` 两种形态落库，按标签筛选漏命中。
+
+### multipart 同名多值参数：`getParameterValues` + 逗号拆分
+
+`multipart/form-data` 要传数组时，前端 `FormData.append('tags', v)` 逐项追加同名参数最自然；后端用 `request.getParameterValues("tags")` 收齐后**再对每项按逗号拆分**，兼容「多值」与「单值逗号分隔」两种前端传法：
+
+```java
+String[] raw = request.getParameterValues("tags");
+List<String> tags = new ArrayList<>();
+if (raw != null) for (String v : raw)
+    if (v != null) for (String part : v.split(",")) tags.add(part);
+// 统一走与 batch/JSON 相同的 normalize（trim/去空/去重/长度校验）
+```
+
+- 单值 JSON body（`ImageGenDTO.tags`）与 multipart 两条入口的校验/落库语义必须一致，否则「上传能打标、AI 生图报 400」这类不一致。
+- JSON 数组里的元素**不保证是字符串**（前端可能传数字）：用 `String.valueOf` 归一，避免 `(List<String>)` 强转 `ClassCastException` 直接 500。
+
 ## Migrations
 
 - 全部写进 `schema.sql`（幂等写法，启动自动执行），不引入独立迁移工具。
