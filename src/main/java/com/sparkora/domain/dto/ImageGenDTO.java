@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * AI 生图入参（S10 收口：原裸 Map 解析改为 @Valid DTO）。
  * projectId/refImageId 以 String 承接（兼容数字/字符串形式——前端路由参数为字符串），控制器健壮解析。
@@ -23,4 +25,6 @@ public class ImageGenDTO {
     @Min(value = 1, message = "生成张数至少 1")
     @Max(value = 4, message = "生成张数最多 4")
     private Integer n = 1;
+    /** 随图入库的预选标签（09-13 image-tags；可空=不打标，长度 1~50 由服务层校验）。 */
+    private List<String> tags;
 }

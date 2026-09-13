@@ -570,3 +570,21 @@ CREATE TABLE IF NOT EXISTS sparkora_qa_message (
     created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_qa_message_session ON sparkora_qa_message(session_id);
+
+-- ============================================================================
+-- 09-13 image-tags:图片标签(图库组织维度)。
+-- 独立标签表:标签与图片的关联记录(tag_name + image_id),按名称使用不建标签字典表;
+-- UNIQUE(image_id, tag_name) 数据库级防重,应用层捕 DuplicateKeyException 静默吞(幂等);
+-- 不建强外键(图库删图时应用层同步清理 tag 行,同 KB embedding 兜底清理先例);
+-- 不设 deleted 逻辑删除列(关系行生命周期 = 图片生命周期,物理删)。
+-- 全部单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sparkora_image_tag (
+    id          BIGSERIAL PRIMARY KEY,
+    image_id    BIGINT       NOT NULL,               -- → sparkora_image_asset.id(应用层维护,不建强 FK)
+    tag_name    VARCHAR(50) NOT NULL,                -- 标签名(trim 后 1~50 字符)
+    created_by  VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (image_id, tag_name)
+);
+CREATE INDEX IF NOT EXISTS idx_image_tag_name ON sparkora_image_tag(tag_name);

@@ -335,6 +335,7 @@ public class CarModelService {
     /**
      * 车型介绍图(introduce URL 列表)下载转存图床,写入 sparkora_image_asset(source='byd',全局图库)。
      * car_model.intro_images 更新为图库记录 id 列表(JSON 数组)。单图失败仅告警,不阻断整车型同步。
+     * 09-13 image-tags:preset 预设「车型-<车型名>」标签,走统一入库管线自动落标(零额外逻辑)。
      */
     protected void persistIntroImages(CarModelEntity model, GoodsInfoDto.Item item) {
         if (item == null || item.getIntroduce() == null || item.getIntroduce().isEmpty()) return;
@@ -350,6 +351,7 @@ public class CarModelService {
                 preset.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
                 preset.setSource("byd");
                 preset.setCreatedBy("system");
+                preset.setTags(List.of("车型-" + model.getName()));   // 09-13:自动分类标签(管线自动落标)
                 ImageAssetEntity e = imageService.persistOrReuse(bytes, ext, preset);
                 ids.add(e.getId());
                 log.info("比亚迪车型图已入库 model={} url={} id={} dedupe={}",

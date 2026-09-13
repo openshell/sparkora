@@ -7,10 +7,11 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 配图资产实体。对应 sparkora_image_asset。
- * 四来源统一入库：upload（图库上传）/ ai-text2img（文生图）/ ai-img2img（图生图）/ byd（比亚迪同步）。
+ * 五来源统一入库：upload（图库上传）/ ai-text2img（文生图）/ ai-img2img（图生图）/ byd（比亚迪车型同步）/ byd-news（比亚迪新闻封面，09-13 image-tags）。
  * 图片入库即直接转存图床（storageKey），本地不留文件。
  */
 @Data
@@ -38,6 +39,9 @@ public class ImageAssetEntity {
     /** 去重命中标记（非持久化；S10 起内容哈希命中已有记录时 true，前端提示「复用」）。 */
     @TableField(exist = false)
     private Boolean dedupeHit;
+    /** 图片标签名列表（非持久化；09-13 image-tags 起由标签服务查询回填，按名称排序；无标签为空列表）。 */
+    @TableField(exist = false)
+    private List<String> tags;
 
     // ==== S10 持久化字段（schema.sql S10 段幂等补列；存量行为 NULL） ====
     /** 内容哈希（sha256 hex，入库去重用；仅新增入库必填，存量允许 NULL）。 */

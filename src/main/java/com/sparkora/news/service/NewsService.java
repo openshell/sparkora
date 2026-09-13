@@ -41,15 +41,19 @@ public class NewsService {
     private final NewsDocMapper docMapper;
     private final NewsDocService docService;
     private final ObjectMapper json;
+    /** 图库服务(09-13 image-tags:封面图下载转存入库,source=byd-news)。 */
+    private final com.sparkora.service.ImageService imageService;
 
     public NewsService(NewsProperties props, BydNewsClient client, NewsMapper newsMapper,
-                       NewsDocMapper docMapper, NewsDocService docService, ObjectMapper json) {
+                       NewsDocMapper docMapper, NewsDocService docService, ObjectMapper json,
+                       com.sparkora.service.ImageService imageService) {
         this.props = props;
         this.client = client;
         this.newsMapper = newsMapper;
         this.docMapper = docMapper;
         this.docService = docService;
         this.json = json;
+        this.imageService = imageService;
     }
 
     /** 同步结果(成功/失败计数 + 失败明细,随任务落库)。 */
@@ -158,7 +162,9 @@ public class NewsService {
         return new SyncOutcome(success, failed, failedItems);
     }
 
-    /** 单条新闻:抓详情正文 → 解析 → upsert 主表 → 重建切块向量。 */
+    /** 单条新闻:抓详情正文 → 解析 → upsert 主表 → 重建切块向量。
+     *  09-13 image-tags:封面图下载走统一入库管线进图库(source=byd-news,标签「新闻」);
+     *  单图下载失败仅告警不阻断新闻入库(同车型图容错先例);sparkora_news.image_url 保留原 URL 留痕。 */
     @Transactional
     protected void upsertOne(String newsId, JsonNode rec) {
         String title = text(rec, "title");
@@ -179,6 +185,18 @@ public class NewsService {
             }
         } catch (Exception e) {
             log.warn("新闻正文抽取失败 newsId={} url={}: {}", newsId, url, e.getMessage());
+        }
+
+        // 封面图转存入库(09-13):失败仅告警,不阻断新闻记录入库
+        if (imageUrl != null && !imageUrl.isBlank()) {
+            try {
+                String ext = imageUrl.contains(".webp") ? "webp" : "jpg";   // 预命名,实际扩展名由魔数嗅探覆盖
+                imageService.saveExternalImage(null, imageUrl,
+                        "news-" + newsId + "." + ext, "byd-news", List.of("新闻"), "system");
+                log.info("新闻封面图已入库 newsId={} imageUrl={}", newsId, shorten(imageUrl));
+            } catch (Exception e) {
+                log.warn("新闻封面图转存失败(跳过,不阻断) newsId={} imageUrl={}: {}", newsId, imageUrl, e.getMessage());
+            }
         }
 
         NewsEntity n = newsMapper.selectOne(new QueryWrapper<NewsEntity>().eq("news_id", newsId));
@@ -245,6 +263,12 @@ public class NewsService {
         if (v == null || v.isNull()) return null;
         String s = v.asText();
         return s == null || s.isBlank() ? null : s;
+    }
+
+    /** 日志用 URL 截断(过长截 100 字符)。 */
+    private static String shorten(String s) {
+        if (s == null) return "null";
+        return s.length() > 100 ? s.substring(0, 100) + "…" : s;
     }
 
     /** 数组字段序列化为 JSON 字符串;非数组返回 null。 */
