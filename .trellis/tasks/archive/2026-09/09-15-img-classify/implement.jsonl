@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema 幂等迁移（ADD COLUMN IF NOT EXISTS）、多对多关联表先例、索引与查询规范、精确匹配防子串误命中教训——新列 source_ref/cover_image_id 与多标签 AND 查询遵循此规范"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "IllegalArgumentException→R.fail(400) 错误映射矩阵；来源接口非新闻图返回 news:null 的容错语义"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域向量检索契约与开关契约——子A 的标签/来源将作为子B 嵌入文本输入，需保持与检索域一致的数据语义"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层封装约定（imageApi 具名导出不直调 http）、R<T> 拆包、页面三态、移动端 44px、防抖 timer 清理——图库多选筛选与新闻页标签改动遵循"}
+{"file": "docs/s0-spec.md", "reason": "§10 图库字段级契约与页面职责、§7 新闻表结构——source_ref/cover_image_id/主题词表/多标签 AND/来源接口/封面接图库 均须同步进此文档"}
+{"file": ".trellis/tasks/09-15-img-classify/prd.md", "reason": "本任务需求与验收标准（R1-R7 + AC 逐条）"}
+{"file": ".trellis/tasks/09-15-img-classify/design.md", "reason": "技术设计：受控主题词表、分类器签名、source_ref 模型、多标签 AND 查询实现、存量回溯策略、前端分组筛选"}
+{"file": ".trellis/tasks/09-15-img-classify/implement.md", "reason": "执行计划与 M2 词表回归验证要求、风险点与回滚"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父任务需求总集与跨子任务验收标准（理解本任务在地基中的定位与边界）"}

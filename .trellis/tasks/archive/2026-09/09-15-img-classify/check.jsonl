@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-15-img-classify/prd.md", "reason": "R1-R7 验收标准逐条核对（主题词表/年份标签/命名空间/source_ref/打标时机/多标签 AND/新闻页接图库）"}
+{"file": ".trellis/tasks/09-15-img-classify/design.md", "reason": "核对实现与设计一致：分类器词表、标签命名、AND 查询交集逻辑、回溯精确匹配、接口契约"}
+{"file": ".trellis/tasks/09-15-img-classify/implement.md", "reason": "核对 M2 词表回归是否执行并记录实测调整；核对各里程碑完成度"}
+{"file": "docs/s0-spec.md", "reason": "§10/§7 是否已同步字段与契约（三处同步原则：schema + entity + spec）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对建表/加列幂等、索引命名、无 DO $$、精确匹配防误命中、多对多关联表清理"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端走 imageApi、拆包读法、tagFilter 由单值改数组的波及面（hasFilter/clearAllFilters/activeChips/locateInList）、移动端 44px"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父级跨子验收标准（存量 157 张回溯、零回归、与三域同空间预留）"}
