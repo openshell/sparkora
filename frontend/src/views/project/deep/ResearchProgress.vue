@@ -21,12 +21,14 @@
     </div>
     <div class="tool-health">
       <span class="tl">工具:</span>
-      <el-tag size="small" type="success" effect="plain">KB ✓</el-tag>
-      <el-tag v-if="webEnabled" size="small" :type="toolHealth.SEARXNG ? 'success' : 'danger'" effect="plain">
-        SEARXNG {{ toolHealth.SEARXNG ? '✓' : '✗ 引擎不可用,已降级' }}
+      <el-tag size="small" :type="healthView('KB').type" effect="plain">
+        KB {{ healthView('KB').text }}
       </el-tag>
-      <el-tag v-if="webEnabled" size="small" :type="toolHealth.TAVILY ? 'success' : 'info'" effect="plain">
-        Tavily {{ toolHealth.TAVILY ? '✓' : '未配置' }}
+      <el-tag size="small" :type="healthView('SEARXNG').type" effect="plain">
+        SEARXNG {{ healthView('SEARXNG').text }}
+      </el-tag>
+      <el-tag size="small" :type="healthView('TAVILY').type" effect="plain">
+        Tavily {{ healthView('TAVILY').text }}
       </el-tag>
     </div>
   </div>
@@ -34,23 +36,28 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { DataAnalysis, Loading } from '@element-plus/icons-vue'
 import http from '../../../api/http'
 
 const props = defineProps({ briefId: { type: Number, required: true } })
 const emit = defineEmits(['done'])
+const route = useRoute()
 const agents = ref([])
-const toolHealth = ref({ SEARXNG: false, TAVILY: false })
-const webEnabled = ref(true)
+// 空对象=首次轮询返回前为未知态:不得乐观臆断「全部可用」(接口异常时轮询静默,恒绿会误导)
+const toolHealth = ref({})
 const polling = ref(false)
 let timer = null
 let doneEmitted = false
 let startedAt = Date.now()
 
+const FINISHED = ['DONE', 'FALLBACK', 'FAILED']
+const doneCount = computed(() =>
+  agents.value.filter(a => FINISHED.includes(a.status)).length)
 const allDone = computed(() => agents.value.length > 0
-  && agents.value.every(a => a.status === 'DONE' || a.status === 'FALLBACK' || a.status === 'FAILED'))
+  && agents.value.every(a => FINISHED.includes(a.status)))
 const pct = computed(() => agents.value.length === 0 ? 0
-  : Math.round(agents.value.filter(a => a.status === 'DONE' || a.status === 'FALLBACK' || a.status === 'FAILED').length / agents.value.length * 100))
+  : Math.round(doneCount.value / agents.value.length * 100))
 const factCount = (a) => {
   try { const f = typeof a.factsJson === 'string' ? JSON.parse(a.factsJson) : a.factsJson; return (f.facts || []).length } catch { return 0 }
 }
@@ -59,6 +66,18 @@ const gapCount = (a) => {
 }
 const tagType = (s) => ({ DONE: 'success', FALLBACK: 'warning', FAILED: 'danger', RUNNING: 'warning', PENDING: 'info' }[s] || 'info')
 const label = (s) => ({ DONE: '已完成', FALLBACK: '降级完成', FAILED: '失败', RUNNING: '进行中', PENDING: '排队' }[s] || s)
+
+// 工具健康状态码 → 展示;FAILED 文案按工具区分(SEARXNG 已降级 / Tavily 仅调用失败)
+const healthView = (tool) => {
+  const s = toolHealth.value[tool]
+  if (!s) return { type: 'info', text: '--' }   // 未知态(首轮未返回/接口异常)不谎报可用
+  if (s === 'DISABLED') return { type: 'info', text: '已停用' }
+  if (s === 'UNCONFIGURED') return { type: 'info', text: '未配置' }
+  if (s === 'FAILED') return tool === 'SEARXNG'
+    ? { type: 'danger', text: '✗ 引擎不可用,已降级' }
+    : { type: 'warning', text: '✗ 调用失败' }
+  return { type: 'success', text: '✓' }
+}
 
 const finish = () => {
   if (doneEmitted) return
@@ -70,20 +89,18 @@ const finish = () => {
 const poll = async () => {
   polling.value = true
   try {
-    const res = await http.get(`/projects/${routeId()}/deep/status?briefId=${props.briefId}`)
+    const res = await http.get(`/projects/${route.params.id}/deep/status?briefId=${props.briefId}`)
     const d = res.data || {}
+    if (d.toolHealth) toolHealth.value = d.toolHealth
     if (d.agents) {
       const arr = typeof d.agents === 'string' ? JSON.parse(d.agents) : d.agents
       agents.value = arr.map(a => ({ ...a, status: a.status || 'PENDING' }))   // 保留后端真实状态
-      toolHealth.value = d.toolHealth || toolHealth.value
     }
     // 兜底:后端 stage 已是 RESEARCH_DONE(研究完成)也触发 done,不依赖 agent 状态
     if (d.stage === 'RESEARCH_DONE') finish()
   } catch { /* 轮询失败静默,下次再试 */ }
   finally { polling.value = false }
 }
-const routeId = () => window.location.pathname.split('/')[2]
-
 // 全部完成 → 通知父组件(仅一次),并停止轮询
 watch(allDone, (v) => { if (v) finish() })
 

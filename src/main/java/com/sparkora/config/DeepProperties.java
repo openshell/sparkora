@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  */
 @Data
 @Component
-@ConfigurationProperties(prefix = "sparkora.ai.deep")
+@ConfigurationProperties(prefix = "sparkora.deep")
 public class DeepProperties {
 
     /** 研究子代理外部搜索总开关(SEARXNG+Tavily);false 时仅查本地统一知识库。 */

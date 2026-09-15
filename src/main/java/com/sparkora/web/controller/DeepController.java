@@ -42,6 +42,8 @@ public class DeepController {
     private final com.sparkora.deep.tool.SearxngSearchTool searxngTool;
     private final com.sparkora.deep.tool.TavilySearchTool tavilyTool;
     private final com.sparkora.config.DeepProperties deepProps;
+    /** 系统检索设置(09-15:toolHealth 反映真实 KB/WEB 运行时门控) */
+    private final com.sparkora.service.SettingService settingService;
 
     public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
@@ -50,7 +52,8 @@ public class DeepController {
                           com.sparkora.mapper.StyleProfileMapper styleMapper,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
-                          com.sparkora.config.DeepProperties deepProps) {
+                          com.sparkora.config.DeepProperties deepProps,
+                          com.sparkora.service.SettingService settingService) {
         this.clarifyService = clarifyService;
         this.researchService = researchService;
         this.writerService = writerService;
@@ -61,6 +64,7 @@ public class DeepController {
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
         this.deepProps = deepProps;
+        this.settingService = settingService;
     }
 
     /** ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。body: {topic?, extraInfo?}。 */
@@ -193,11 +197,12 @@ public class DeepController {
             out.put("genMode", b.getGenMode());
             out.put("stage", stageOf(b));
             out.put("planStatus", b.getPlanStatus());
-            // 工具健康(设计 6.3):KB 恒可用;SEARXNG/TAVILY 取惰性状态(最近一次调用结果)
-            Map<String, Boolean> toolHealth = new LinkedHashMap<>();
-            toolHealth.put("KB", true);
-            toolHealth.put("SEARXNG", deepProps.isSearchWebEnabled() && searxngTool.available());
-            toolHealth.put("TAVILY", deepProps.isSearchWebEnabled() && tavilyTool.available());
+            // 工具健康(09-15):状态码 OK|DISABLED|UNCONFIGURED|FAILED,如实反映设置门控与配置态
+            boolean webAllowed = deepProps.isSearchWebEnabled() && settingService.isWebSearchEnabled();
+            Map<String, String> toolHealth = new LinkedHashMap<>();
+            toolHealth.put("KB", settingService.isKbEnabled() ? "OK" : "DISABLED");
+            toolHealth.put("SEARXNG", webHealth(webAllowed, searxngTool.configured(), searxngTool.lastCallOk()));
+            toolHealth.put("TAVILY", webHealth(webAllowed, tavilyTool.configured(), tavilyTool.lastCallOk()));
             out.put("toolHealth", toolHealth);
             if (b.getResearchPlan() != null) out.put("researchPlan", b.getResearchPlan());
             if (b.getClarifyQuestions() != null) out.put("questions", b.getClarifyQuestions());
@@ -208,6 +213,13 @@ public class DeepController {
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
         }
+    }
+
+    /** WEB 工具健康状态码:门控关闭 > 未配置 > 最近调用失败 > 正常。 */
+    private static String webHealth(boolean allowed, boolean configured, boolean lastCallOk) {
+        if (!allowed) return "DISABLED";
+        if (!configured) return "UNCONFIGURED";
+        return lastCallOk ? "OK" : "FAILED";
     }
 
     private String stageOf(ArticleBriefEntity b) {

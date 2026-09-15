@@ -12,8 +12,14 @@ public interface SearchTool {
     /** 工具名:KB / SEARXNG / TAVILY(研究计划 toolHints 与工具健康展示用)。 */
     String name();
 
-    /** 是否可用(SEARXNG 引擎异常/未配置时 false,调用方降级其他工具)。 */
+    /** 是否可用(仅判配置就绪:密钥/地址缺失时 false,调用方降级其他工具;不含调用结果)。 */
     boolean available();
+
+    /** 配置态:密钥/地址是否就绪(不随调用结果变化)。 */
+    default boolean configured() { return true; }
+
+    /** 最近一次调用是否成功(初值 true=未调用过,乐观;仅供健康展示,不参与 available 判定)。 */
+    default boolean lastCallOk() { return true; }
 
     /**
      * 搜索。返回命中条目(不超过 maxResults);异常由实现内部捕获并返回空列表(不抛出,避免子代理整体失败)。

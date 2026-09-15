@@ -14,7 +14,7 @@ import java.util.Map;
 
 /**
  * Tavily 搜索(S9):POST https://api.tavily.com/search {api_key, query, max_results, search_depth}。
- * 密钥 TAVILY_API_KEY(.env);未配置或调用失败 → available()=false,调用方降级。
+ * 密钥 TAVILY_API_KEY(.env);available() 仅判密钥是否配置(失败不闩锁,下次研究自动重试)。
  */
 @Slf4j
 @Component
@@ -23,6 +23,7 @@ public class TavilySearchTool implements SearchTool {
     private final String apiKey;
     private final RestClient rest;
     private final ObjectMapper json;
+    /** 最近一次调用是否成功(仅供健康展示;不参与 available 门控,失败可自恢复)。 */
     private volatile boolean lastOk = true;
 
     public TavilySearchTool(com.sparkora.config.DeepProperties deepProps,
@@ -41,7 +42,17 @@ public class TavilySearchTool implements SearchTool {
 
     @Override
     public boolean available() {
-        return apiKey != null && !apiKey.isBlank() && lastOk;
+        return configured();
+    }
+
+    @Override
+    public boolean configured() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
+    @Override
+    public boolean lastCallOk() {
+        return lastOk;
     }
 
     @Override

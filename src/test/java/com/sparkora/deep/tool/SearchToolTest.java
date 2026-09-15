@@ -7,11 +7,10 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * SearchTool 降级行为单测:KB 永可用/SEARXNG 空结果降级/Tavily 未配置不可用。
+ * SearchTool 行为单测:KB 永可用/SEARXNG 失败仅记健康态不闩锁/Tavily 未配置不可用。
  */
 class SearchToolTest {
 
@@ -26,14 +25,26 @@ class SearchToolTest {
     }
 
     @Test
-    void SEARXNG_空结果_标记不可用() {
+    void SEARXNG_空结果_仅标记健康态不闩锁() {
         SearxngSearchTool tool = new SearxngSearchTool(
                 new org.springframework.mock.env.MockEnvironment().withProperty("SEARXNG_BASE_URL", "http://127.0.0.1:1"),
                 new com.fasterxml.jackson.databind.ObjectMapper());
         assertTrue(tool.available(), "初始可用");
+        assertTrue(tool.lastCallOk(), "初始乐观");
         List<SearchTool.SearchHit> hits = tool.search("test", 5);   // 连接失败 → 空
         assertTrue(hits.isEmpty());
-        assertEquals(false, tool.available(), "调用失败后惰性降级");
+        assertEquals(false, tool.lastCallOk(), "失败仅记健康态");
+        assertTrue(tool.available(), "可用性只判配置就绪,失败可自恢复");
+    }
+
+    @Test
+    void TAVILY_有密钥_可用性只判配置不闩锁() {
+        TavilySearchTool tool = new TavilySearchTool(new DeepProperties() {
+            @Override public String effectiveTavilyKey() { return "dummy-key"; }
+        }, new com.fasterxml.jackson.databind.ObjectMapper());
+        assertTrue(tool.available(), "有 key 即可用");
+        assertTrue(tool.configured(), "配置就绪");
+        assertTrue(tool.lastCallOk(), "未调用过乐观为真");
     }
 
     @Test
