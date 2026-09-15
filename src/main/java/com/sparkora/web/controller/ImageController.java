@@ -57,19 +57,34 @@ public class ImageController {
     }
 
     /** 图库分页列表（S10）：?projectId=&source=&keyword=&tag=&page=&size= 组合查询，响应 PageResult。
-     *  09-13 image-tags：tag 筛选与其他筛选可组合；rows 每条含 tags（按名称排序）。 */
+     *  09-13 image-tags：tag 筛选与其他筛选可组合；rows 每条含 tags（按名称排序）。
+     *  09-15 img-classify：tag 支持多值（重复参数或单值内逗号分隔），语义为 AND（须同时具备全部标签）。 */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
     public R<PageResult<ImageAssetEntity>> list(@RequestParam(required = false) Long projectId,
                                                  @RequestParam(required = false) String source,
                                                  @RequestParam(required = false) String keyword,
-                                                 @RequestParam(required = false) String tag,
+                                                 @RequestParam(required = false) List<String> tag,
                                                  @RequestParam(defaultValue = "1") long page,
                                                  @RequestParam(defaultValue = "24") long size) {
         try {
-            return R.ok(service.list(projectId, source, keyword, tag, page, size));
+            return R.ok(service.list(projectId, source, keyword, splitTags(tag), page, size));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());
+        }
+    }
+
+    /** 图片来源追溯（09-15 img-classify）：data={sourceRef, news:{id,newsId,title,publishDate,url}|null, imageUrl}。
+     *  非新闻图（upload / AI 生成图 / byd 车型图）或查无新闻 → news:null，仍 HTTP 200 不报错。 */
+    @GetMapping("/{id}/source")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<com.sparkora.domain.dto.ImageSourceDTO> source(@PathVariable Long id) {
+        try {
+            return R.ok(service.getSource(id));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "查询图片来源失败: " + ex.getMessage());
         }
     }
 
@@ -93,7 +108,7 @@ public class ImageController {
                                       @RequestParam(required = false) List<String> tags) {
         try {
             CurrentUser cu = SecurityUtil.require();
-            return R.ok(service.upload(projectId, file, splitMultipartTags(tags), cu.getUsername()));
+            return R.ok(service.upload(projectId, file, splitTags(tags), cu.getUsername()));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());
         } catch (org.springframework.web.multipart.MultipartException ex) {
@@ -104,8 +119,8 @@ public class ImageController {
         }
     }
 
-    /** multipart tags 参数解析：多值参数收齐 + 单值内逗号拆分后合并（normalize 统一由服务层做）。 */
-    private static List<String> splitMultipartTags(List<String> raw) {
+    /** 标签类参数（multipart 或 query）解析：多值参数收齐 + 单值内逗号拆分后合并（normalize 统一由服务层做）。 */
+    private static List<String> splitTags(List<String> raw) {
         if (raw == null || raw.isEmpty()) return null;
         List<String> out = new ArrayList<>();
         for (String s : raw) {

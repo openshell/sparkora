@@ -68,6 +68,8 @@ public class ImageService {
     private final ObjectProvider<QiniuProperties> qiniuProps;
     /** 图片标签服务（09-13 image-tags：入库管线落标/列表回填/删图清理）。 */
     private final ImageTagService tagService;
+    /** 新闻主表 mapper（09-15 img-classify：来源追溯 source_ref → 新闻元信息）；新闻域可选，缺失时降级 news:null。 */
+    private final ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper;
 
     private final java.net.http.HttpClient transferClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -77,7 +79,8 @@ public class ImageService {
     public ImageService(ImageProperties imageProps, ImageAssetMapper imageMapper,
                         ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
                         AiImageClient aiImageClient, ImageStorage imageStorage,
-                        ObjectProvider<QiniuProperties> qiniuProps, ImageTagService tagService) {
+                        ObjectProvider<QiniuProperties> qiniuProps, ImageTagService tagService,
+                        ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper) {
         this.imageProps = imageProps;
         this.imageMapper = imageMapper;
         this.projectMapper = projectMapper;
@@ -86,6 +89,7 @@ public class ImageService {
         this.imageStorage = imageStorage;
         this.qiniuProps = qiniuProps;
         this.tagService = tagService;
+        this.newsMapper = newsMapper;
     }
 
     // ==================== 上传 ====================
@@ -263,6 +267,7 @@ public class ImageService {
             fillDerived(hit);
             hit.setDedupeHit(true);
             applyPresetTags(hit, preset, true);   // 命中已有图:merge 补上本次预选但缺失的标签
+            applyPresetSourceRef(hit, preset);    // 09-15:来源串只在缺失时补写(同图被多新闻引用保留首次值)
             log.info("配图去重命中 hash={} 复用记录 id={}（未上传图床）", hash, hit.getId());
             return hit;
         }
@@ -274,6 +279,32 @@ public class ImageService {
         fillDerived(preset);
         applyPresetTags(preset, preset, false);   // 新入库:全量写标签
         return preset;
+    }
+
+    /**
+     * 来源串钩子（09-15 img-classify）：去重命中已有图时，仅当已有 source_ref 为空才补写本次来源
+     * （同一图片被不同新闻引用时保留首次值，不覆盖；历史已追溯的图不被重同步改写）。
+     *
+     * 并发安全：条件写在 UPDATE 的 WHERE 里（原子条件更新，同 database-guidelines「原子抢占」范式），
+     * 而非只依赖 Java 端先读后判——先读后写存在 check-then-set 竞态窗口（两条新闻并发同步同一张图时
+     * 都读到空值，后写覆盖先写，违背「保留首次值」语义）。WHERE 命中 0 行说明已被并发写入，
+     * 此时以库中现有值为准回填实体，避免响应体与库不一致。
+     */
+    private void applyPresetSourceRef(ImageAssetEntity target, ImageAssetEntity preset) {
+        String ref = preset.getSourceRef();
+        if (ref == null || ref.isBlank()) return;
+        if (target.getSourceRef() != null && !target.getSourceRef().isBlank()) return;
+        int updated = imageMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ImageAssetEntity>()
+                        .eq("id", target.getId())
+                        .and(w -> w.isNull("source_ref").or().eq("source_ref", ""))
+                        .set("source_ref", ref));
+        if (updated > 0) {
+            target.setSourceRef(ref);
+            return;
+        }
+        ImageAssetEntity fresh = imageMapper.selectById(target.getId());
+        target.setSourceRef(fresh == null ? ref : fresh.getSourceRef());
     }
 
     /** 落标钩子：preset.tags 非空时按「新图 saveTags / 命中 mergeTags」写入目标图，并回填 entity.tags 供响应携带。 */
@@ -297,10 +328,11 @@ public class ImageService {
      * 下载字节（超时 30s）→ 魔数嗅探 → 统一入库管线（persistOrReuse，含去重与标签钩子）。
      * 相对 URL 自动拼 https://www.byd.com 前缀（参照前端 resolveUrl 语义）。
      * 下载/嗅探失败抛 RuntimeException，由调用方 catch 决定是否阻断（新闻封面仅告警不阻断）。
+     * 09-15 img-classify 起加 sourceRef（来源引用串，新闻图=官方 news_id），透传落库。
      * @param operator 标签与记录的创建人（如 "system"）
      */
     public ImageAssetEntity saveExternalImage(Long projectId, String url, String fileName, String source,
-                                              List<String> tags, String operator) {
+                                              List<String> tags, String operator, String sourceRef) {
         String absolute = resolveBydUrl(url);
         byte[] bytes = fetchExternalBytes(absolute);
         String ext = sniffExt(bytes);
@@ -310,6 +342,7 @@ public class ImageService {
         preset.setSource(source);
         preset.setTags(tags);
         preset.setCreatedBy(operator);
+        preset.setSourceRef(sourceRef);
         return persistOrReuse(bytes, ext, preset);
     }
 
@@ -357,8 +390,11 @@ public class ImageService {
 
     /** 图库分页列表（S10：服务端筛选 + 分页，替代「全量拉取 + 前端过滤」）。
      *  09-13 image-tags：新增 tag 筛选（两段查询：先按标签名查 image_id 集，再 IN 主表），
-     *  rows 回填 tags（页内批查，避免 N+1）；tag 命中集超 500 截前 500 保查询稳定。 */
-    public PageResult<ImageAssetEntity> list(Long projectId, String source, String keyword, String tag, long page, long size) {
+     *  rows 回填 tags（页内批查，避免 N+1）；tag 命中集超 500 截前 500 保查询稳定。
+     *  09-15 img-classify：tag 从单值扩为多值，语义为 **AND**（须同时具备所有指定标签）；
+     *  逐标签取 id 集求交集，交集为空直接返回空页（不查库）。传 1 个标签即原单标签语义（向后兼容）。 */
+    public PageResult<ImageAssetEntity> list(Long projectId, String source, String keyword, List<String> tags,
+                                             long page, long size) {
         if (page < 1) page = 1;
         if (size < 1 || size > 100) size = 24;
         if (source != null && !source.isBlank() && !SOURCES.contains(source))
@@ -368,11 +404,12 @@ public class ImageService {
         if (source != null && !source.isBlank()) qw.eq("source", source);
         String kw = keyword == null ? "" : keyword.trim();
         if (!kw.isEmpty()) qw.and(w -> w.like("file_name", kw).or().like("prompt_text", kw));
-        if (tag != null && !tag.isBlank()) {
-            // 两段查询(QueryWrapper 无 JOIN):先查标签命中 id 集(走 idx_image_tag_name),空集直接空页
-            List<Long> ids = tagService.imageIdsByTag(tag.trim());
-            if (ids.isEmpty()) return new PageResult<>(List.of(), 0, page, size);
-            if (ids.size() > 500) ids = ids.subList(0, 500);   // 命中集截断保底(图库分页 ≤100/页)
+        List<String> normTags = normalizeTagFilter(tags);
+        if (!normTags.isEmpty()) {
+            // 两段查询(QueryWrapper 无 JOIN):逐标签查命中 id 集(走 idx_image_tag_name),取交集实现 AND
+            java.util.Set<Long> ids = resolveTagIds(normTags, tagService::imageIdsByTag);
+            if (ids == null || ids.isEmpty()) return new PageResult<>(List.of(), 0, page, size);   // 无图同时命中全部标签
+            if (ids.size() > 500) ids = new java.util.HashSet<>(new ArrayList<>(ids).subList(0, 500));   // 命中集截断保底
             qw.in("id", ids);
         }
         qw.orderByDesc("id");
@@ -380,6 +417,39 @@ public class ImageService {
         p.getRecords().forEach(this::fillDerived);
         tagService.fillTags(p.getRecords());   // 页内批查回填标签
         return new PageResult<>(p.getRecords(), p.getTotal(), p.getCurrent(), p.getSize());
+    }
+
+    /** tag 筛选参数归一：去空/trim/去重（保序）；null/空 → 空列表（不筛）。 */
+    static List<String> normalizeTagFilter(List<String> tags) {
+        if (tags == null || tags.isEmpty()) return List.of();
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (String t : tags) {
+            if (t == null) continue;
+            String v = t.trim();
+            if (!v.isEmpty()) out.add(v);
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * 多标签 AND 交集解算（纯函数，可单测）：对归一后每个标签取命中 id 集求交集。
+     * 返回 null = 未指定标签（不筛）；返回空集 = 无图同时命中全部标签（调用方直接返回空页，不查库）。
+     * @param lookup 标签名 → 命中图片 id 集（生产实现 = tagService.imageIdsByTag）
+     */
+    static java.util.Set<Long> resolveTagIds(List<String> tags, java.util.function.Function<String, List<Long>> lookup) {
+        List<String> norm = normalizeTagFilter(tags);
+        if (norm.isEmpty()) return null;
+        java.util.Set<Long> ids = null;
+        for (String tag : norm) {
+            java.util.Set<Long> hit = new java.util.HashSet<>(lookup.apply(tag));
+            if (ids == null) {
+                ids = hit;
+            } else {
+                ids.retainAll(hit);
+            }
+            if (ids.isEmpty()) break;   // 交集已空，提前退出
+        }
+        return ids == null ? java.util.Set.of() : ids;
     }
 
     /** 填充非持久化 url 字段（由 storageKey 拼图床公网 URL）。 */
@@ -412,6 +482,43 @@ public class ImageService {
         if (img.getStorageKey() == null || img.getStorageKey().isBlank())
             throw new IllegalStateException("图片未转存图床: " + imageId);
         return imageStorage.publicUrl(img.getStorageKey());
+    }
+
+    /** 由图库记录 id 取图库公网 URL，不存在或未转存时返回 null（列表/派生字段填充用，不抛异常）。 */
+    public String publicUrlQuietly(Long imageId) {
+        if (imageId == null) return null;
+        try {
+            ImageAssetEntity img = imageMapper.selectById(imageId);
+            if (img == null || img.getStorageKey() == null || img.getStorageKey().isBlank()) return null;
+            return imageStorage.publicUrl(img.getStorageKey());
+        } catch (Exception e) {
+            log.warn("取图片公网 URL 失败(忽略) id={}: {}", imageId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 图片来源追溯（09-15 img-classify）：返回 {sourceRef, news, imageUrl}。
+     * 新闻图（source_ref = 官方 news_id）反查 sparkora_news 得标题/日期/原文链接；
+     * 非新闻图或查无新闻 → news:null（HTTP 200 不报错，前端不展示来源行）。
+     */
+    public com.sparkora.domain.dto.ImageSourceDTO getSource(Long imageId) {
+        ImageAssetEntity img = imageMapper.selectById(imageId);
+        if (img == null) throw new IllegalArgumentException("图片不存在: " + imageId);
+        String ref = img.getSourceRef();
+        com.sparkora.domain.dto.ImageSourceDTO.NewsRef news = null;
+        if (ref != null && !ref.isBlank()) {
+            com.sparkora.mapper.NewsMapper nm = newsMapper.getIfAvailable();
+            com.sparkora.domain.entity.NewsEntity n = nm == null ? null : nm.selectOne(
+                    new QueryWrapper<com.sparkora.domain.entity.NewsEntity>().eq("news_id", ref).last("LIMIT 1"));
+            if (n != null) {
+                news = new com.sparkora.domain.dto.ImageSourceDTO.NewsRef(
+                        n.getId(), n.getNewsId(), n.getTitle(), n.getPublishDate(), n.getUrl());
+            }
+        }
+        String imageUrl = img.getStorageKey() == null || img.getStorageKey().isBlank()
+                ? null : imageStorage.publicUrl(img.getStorageKey());
+        return new com.sparkora.domain.dto.ImageSourceDTO(ref, news, imageUrl);
     }
 
     /**

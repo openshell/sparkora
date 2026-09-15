@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 新闻主表实体。对应 sparkora_news(C2 新闻知识域)。
@@ -37,7 +38,15 @@ public class NewsEntity {
     private LocalDateTime updatedAt;
     @TableLogic
     private Integer deleted;
+    /** 封面图对应的图库资产 id（09-15 img-classify；可空，不建外键）。 */
+    private Long coverImageId;
     /** 非持久化派生字段:该新闻的向量块数(列表展示用,由 NewsService 填充)。 */
     @TableField(exist = false)
     private Long chunkCount;
+    /** 非持久化派生字段:封面图库公网 URL(由 coverImageId 经图库取,优先于官网 imageUrl)。 */
+    @TableField(exist = false)
+    private String coverImageUrl;
+    /** 非持久化派生字段:按标题分类命中的主题(受控词表,保序;供前端标签展示与筛选跳转)。 */
+    @TableField(exist = false)
+    private List<String> themes;
 }

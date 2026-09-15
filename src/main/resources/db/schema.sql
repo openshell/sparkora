@@ -588,3 +588,14 @@ CREATE TABLE IF NOT EXISTS sparkora_image_tag (
     UNIQUE (image_id, tag_name)
 );
 CREATE INDEX IF NOT EXISTS idx_image_tag_name ON sparkora_image_tag(tag_name);
+
+-- ============================================================================
+-- 09-15 img-classify:图片来源追溯 + 新闻封面关联图库。
+-- source_ref 通用来源引用串（新闻图=官方 news_id 字符串；其他来源可留空，未来可扩车型 goods_id 等），
+-- 供图库卡片「来源：<新闻标题>·<日期>」展示与跳原文（GET /api/images/{id}/source）；
+-- cover_image_id 指向 sparkora_image_asset.id（可空）：新闻列表/详情优先用图库公网 URL 展示封面。
+-- 两列均不建外键（沿用图库表应用层维护惯例），存量行为 NULL，全量语句幂等可重跑。
+-- ============================================================================
+ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS source_ref VARCHAR(200);
+CREATE INDEX IF NOT EXISTS idx_image_asset_source_ref ON sparkora_image_asset(source_ref);
+ALTER TABLE sparkora_news ADD COLUMN IF NOT EXISTS cover_image_id BIGINT;

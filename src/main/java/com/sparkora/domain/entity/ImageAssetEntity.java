@@ -50,4 +50,8 @@ public class ImageAssetEntity {
     private String genModel;
     /** 生成留档：请求尺寸（AI 来源；auto/未指定为 NULL）。 */
     private String genSize;
+
+    // ==== 09-15 img-classify 持久化字段（schema.sql 幂等补列；存量行为 NULL） ====
+    /** 来源引用串：新闻图 = 官方 news_id（如 /page/byd-cn/news-2026/detail632）；其他来源留空。 */
+    private String sourceRef;
 }

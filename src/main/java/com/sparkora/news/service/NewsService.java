@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.domain.dto.PageResult;
+import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.domain.entity.NewsEntity;
 import com.sparkora.mapper.NewsDocMapper;
 import com.sparkora.mapper.NewsMapper;
@@ -164,7 +165,9 @@ public class NewsService {
 
     /** 单条新闻:抓详情正文 → 解析 → upsert 主表 → 重建切块向量。
      *  09-13 image-tags:封面图下载走统一入库管线进图库(source=byd-news,标签「新闻」);
-     *  单图下载失败仅告警不阻断新闻入库(同车型图容错先例);sparkora_news.image_url 保留原 URL 留痕。 */
+     *  单图下载失败仅告警不阻断新闻入库(同车型图容错先例);sparkora_news.image_url 保留原 URL 留痕。
+     *  09-15 img-classify:封面图另携带标题分类的主题/年份标签（NewsImageClassifier）与 source_ref=newsId；
+     *  入库成功后回填 sparkora_news.cover_image_id（仅在为空或指向已失效图时才写，不覆盖有效值）。 */
     @Transactional
     protected void upsertOne(String newsId, JsonNode rec) {
         String title = text(rec, "title");
@@ -188,12 +191,18 @@ public class NewsService {
         }
 
         // 封面图转存入库(09-13):失败仅告警,不阻断新闻记录入库
+        Long coverImageId = null;
         if (imageUrl != null && !imageUrl.isBlank()) {
             try {
                 String ext = imageUrl.contains(".webp") ? "webp" : "jpg";   // 预命名,实际扩展名由魔数嗅探覆盖
-                imageService.saveExternalImage(null, imageUrl,
-                        "news-" + newsId + "." + ext, "byd-news", List.of("新闻"), "system");
-                log.info("新闻封面图已入库 newsId={} imageUrl={}", newsId, shorten(imageUrl));
+                // 09-15:主题/年份标签由标题与发布日期派生（零 AI）；新闻标签与分类标签并集入库
+                List<String> imageTags = new ArrayList<>();
+                imageTags.add("新闻");
+                imageTags.addAll(com.sparkora.news.classify.NewsImageClassifier.toTagsFrom(title, publishDate));
+                ImageAssetEntity asset = imageService.saveExternalImage(null, imageUrl,
+                        "news-" + newsId + "." + ext, "byd-news", imageTags, "system", newsId);
+                coverImageId = asset == null ? null : asset.getId();
+                log.info("新闻封面图已入库 newsId={} imageId={} imageUrl={}", newsId, coverImageId, shorten(imageUrl));
             } catch (Exception e) {
                 log.warn("新闻封面图转存失败(跳过,不阻断) newsId={} imageUrl={}: {}", newsId, imageUrl, e.getMessage());
             }
@@ -215,6 +224,10 @@ public class NewsService {
         n.setLastSyncAt(LocalDateTime.now());
         n.setLastSyncError(null);
         n.setUpdatedAt(LocalDateTime.now());
+        // 09-15:封面图库 id — 仅在本次成功入库且现有值为空/已失效时写（不覆盖已同步的有效值）
+        if (coverImageId != null && coverImageValid(n.getCoverImageId(), coverImageId)) {
+            n.setCoverImageId(coverImageId);
+        }
         if (isNew) {
             n.setCreatedAt(LocalDateTime.now());
             newsMapper.insert(n);
@@ -225,6 +238,13 @@ public class NewsService {
         docService.rebuildForNews(n.getId());
     }
 
+    /** 现有封面 id 为空或已被删除（指向不存在的图库图）时才允许写入新值，防止重同步覆盖有效封面。 */
+    private boolean coverImageValid(Long existing, Long newId) {
+        if (existing == null) return true;
+        if (existing.equals(newId)) return true;
+        return imageService.publicUrlQuietly(existing) == null;
+    }
+
     /** 增量判定:该官方 id 已存在且正文非空(空正文视为需重试,不提前退出)。 */
     public boolean existsWithContent(String newsId) {
         if (newsId == null || newsId.isBlank()) return false;
@@ -232,7 +252,7 @@ public class NewsService {
         return n != null && n.getContent() != null && !n.getContent().isBlank();
     }
 
-    /** 分页列表(标题模糊;填充块数)。 */
+    /** 分页列表(标题模糊;填充块数)。09-15 img-classify:另填封面的图库公网 URL 与标题分类主题。 */
     public PageResult<NewsEntity> list(long page, long size, String keyword) {
         if (page < 1) page = 1;
         if (size < 1 || size > 100) size = 12;
@@ -244,6 +264,7 @@ public class NewsService {
         for (NewsEntity n : p.getRecords()) {
             n.setChunkCount(docMapper.selectCount(new QueryWrapper<com.sparkora.domain.entity.NewsDocEntity>()
                     .eq("news_id", n.getId())));
+            fillDerived(n);
             n.setContent(null);   // 列表不返回正文大字段(详情接口返回;content 字段 NON_NULL,置空后不出现在 JSON)
         }
         return new PageResult<>(p.getRecords(), p.getTotal(), p.getCurrent(), p.getSize());
@@ -255,7 +276,18 @@ public class NewsService {
         if (n == null) throw new IllegalArgumentException("新闻不存在");
         n.setChunkCount(docMapper.selectCount(new QueryWrapper<com.sparkora.domain.entity.NewsDocEntity>()
                 .eq("news_id", id)));
+        fillDerived(n);
         return n;
+    }
+
+    /**
+     * 非持久化派生字段填充（09-15 img-classify）：
+     *  - coverImageUrl：封面图库公网 URL（由 cover_image_id 经图库取；取不到留 null，前端回退官网 imageUrl）；
+     *  - themes：标题分类命中的主题（受控词表，供卡片标签展示与跳图库筛选；不查图库）。
+     */
+    private void fillDerived(NewsEntity n) {
+        n.setCoverImageUrl(imageService.publicUrlQuietly(n.getCoverImageId()));
+        n.setThemes(com.sparkora.news.classify.NewsImageClassifier.classifyThemes(n.getTitle()));
     }
 
     private static String text(JsonNode node, String field) {
