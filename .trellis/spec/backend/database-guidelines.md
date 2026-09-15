@@ -104,6 +104,36 @@ CREATE INDEX IF NOT EXISTS idx_image_tag_name ON sparkora_image_tag(tag_name);
 
 > **Warning**: 自由文本标签的 `tag_name` 必须入口统一 normalize（trim/去空/去重保序/长度上限），Controller 的 multipart 多值与 JSON 数组两条入口共用同一个 normalize，否则同一个标签会以 `" 新闻"` / `"新闻 "` 两种形态落库，按标签筛选漏命中。
 
+### 受控词表分类不建 DB 字典表 + 来源关联列（09-15 先例：新闻图主题分类）
+
+「按固定维度给数据打分类」这类需求，**分类词表放代码常量、不建 DB 字典表**；分类结果复用已有的标签/关系表承载，主表只加一个**通用来源关联列**：
+
+```java
+// NewsImageClassifier：纯静态无 Spring 依赖，可单测；LinkedHashMap 保序即展示序
+private static final Map<String, Pattern> THEMES = new LinkedHashMap<>();  // 销量/出海/合作签约/...
+public static List<String> classifyThemes(String title)     // 0~n，可重叠
+public static List<String> toTags(String title, LocalDate publishDate)  // 主题/x + 年份/y
+```
+
+- **词表放代码的理由**：分类维度是低频变更的**产品定义**，放代码可版本化、可单测、可复现（零 AI 调用）、避免运行时配置漂移；改词表=改代码发版，可接受。DB 字典表只适合运营端实时增删的场景。
+- **允许一词多主题**（不互斥）：如「海外销量创新高」同时属销量+出海，强制单主题丢信息；下游筛选用多标签 AND 天然处理。
+- **无命中不打标签**，不强制归「其他」——噪音标签比缺失更难清理。
+- **标签命名空间前缀**（`主题/销量`、`年份/2026`）：把系统生成标签与用户自由标签隔离，筛选下拉可按 `/` 前缀分组；代价是名称不「干净」。替代方案是标签表加 `group` 列，但纯名称模型下前缀是低成本做法。
+- **词表必须用真实数据回归**：上线前跑全量真实标题统计各主题命中数 + 人工核对宽泛词（如 `获`/`发布`/`榜`）误命中；调整后的词表要**记录在案**（implement.md「实测词表调整」），否则后续无法判断命中分布变化是词表还是数据变动。
+
+主表加来源关联列（通用串，非强 FK）：
+
+```sql
+ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS source_ref VARCHAR(200);
+CREATE INDEX IF NOT EXISTS idx_image_asset_source_ref ON sparkora_image_asset(source_ref);
+```
+
+- 一个 `source_ref` 承载所有来源（新闻图=`news_id` 业务唯一键，而非自增 id，更稳定）；其他来源留空，未来可扩展。
+- **存量回溯优先用已有信息解析，不做网络重抓**：新闻图文件名含 `detail<数字>`，正则提取后反查 `news_id` 精确后缀匹配——**必须 Java 端 `endsWith` 精确比对，LIKE 只做粗筛**（否则 `detail63` 会误配 `detail632`）。
+- 回溯只处理待补行（`source_ref IS NULL`），天然幂等；异常仅 warn，日志汇总「处理 X/跳过 Y/失败 Z」。
+
+> **Warning**: 「仅当列值为空才补写」这类语义**必须把条件写进 UPDATE 的 WHERE**（`.and(w -> w.isNull("source_ref").or().eq("source_ref",""))`），不能只在 Java 端先读后判——先读后写存在 check-then-set 竞态窗口（两条新闻并发同步同一张图时都读到空值，后写覆盖先写，违背「保留首次值」语义）。判定原子性与 09-11「原子抢占」同范式。命中 0 行时以库中现有值回填实体，避免响应体与库不一致。
+
 ### multipart 同名多值参数：`getParameterValues` + 逗号拆分
 
 `multipart/form-data` 要传数组时，前端 `FormData.append('tags', v)` 逐项追加同名参数最自然；后端用 `request.getParameterValues("tags")` 收齐后**再对每项按逗号拆分**，兼容「多值」与「单值逗号分隔」两种前端传法：

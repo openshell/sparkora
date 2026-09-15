@@ -130,6 +130,20 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 
 主列表（带服务端筛选+分页）被「选择弹窗」复用时，会退化成「只能看当前第一页 + 继承主列表筛选」的隐性 bug。弹窗应持有**独立数据源 + 独立搜索/分页**（09-13 先例：参考图选择弹窗 `refImages`/`refKeyword`/`refPage` 独立调接口 + 防抖搜索 + `el-pagination`）。
 
+### Convention: 路由 query 驱动的筛选必须双向同步 URL
+
+筛选条件从 `route.query` 预置（如从新闻页点标签跳 `/images?tag=主题/销量`）时，**清除筛选也要同步清 URL**（`router.replace`），否则 `route.query` 残留旧值，用户再次从外部点同一筛选时 vue-router 判定重复导航、`watch(route.query)` 不触发，表现为「点了没反应」（09-15 先例：`ImageLibrary.vue` 的 `syncRouteTag()`）。
+
+```js
+// 筛选态变更（选/清单个 chip、全清）→ 回写 URL
+const syncRouteTag = () => router.replace({ query: { ...route.query, tag: tagFilter.value.length ? tagFilter.value.join(',') : undefined } })
+// watch 内先比对当前筛选态，一致则短路，避免自身回流触发重复 load
+watch(() => route.query.tag, (v) => { const next = parseTag(v); if (sameFilter(next, tagFilter.value)) return; applyFilterFromRoute() })
+```
+
+- 从 query 预置时要**完全镜像**（含清空分支）：外部 `tag=` 为空应清空筛选，而不是保留旧值。
+- 09-13 遗留教训：`tagFilter` 从 `''` 改 `[]` 时，`hasFilter`/`clearAllFilters`/`activeChips`/`locateInList`/`load()` 全部波及处需一次性核对。
+
 ### Convention: 外部相对 URL 解析
 
 后端返回的图片/链接可能是相对路径（如新闻 `imageUrl`/`url`）。前端统一用一个 `resolveUrl`：`/^https?:\/\//i` 开头原样返回，否则拼接源站（新闻 = `https://www.byd.com`）。
