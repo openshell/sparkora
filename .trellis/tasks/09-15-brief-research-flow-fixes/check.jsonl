@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-15-brief-research-flow-fixes/prd.md", "reason": "逐条核对 AC 与零回归要求"}
+{"file": ".trellis/tasks/09-15-brief-research-flow-fixes/design.md", "reason": "核对 D1-D4 方案是否落地、契约变更是否两端一致"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误映射矩阵/状态机回退惯例核对"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 API 拆包与 anti-pattern(禁止直调 http)核对"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "toolHealth 契约跨层一致性(后端字符串码↔前端映射)核对"}
+{"file": ".trellis/spec/guides/index.md", "reason": "AI 交叉审查假阳性核对规则"}
