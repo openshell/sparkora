@@ -116,10 +116,23 @@ export const kbApi = {
 
 export const imageApi = {
   // 图库分页列表（S10）：?projectId=&source=&keyword=&tag=&page=&size=，total 供分页
-  // 09-13 image-tags：tag 单标签筛选，可与其他筛选组合；rows 每条含 tags[]
-  list: (params) => http.get('/images', { params: { page: 1, size: 24, ...(params || {}) } }),
+  // 09-13 image-tags：tag 筛选，可与其他筛选组合；rows 每条含 tags[]
+  // 09-15 img-classify：tag 可传数组，语义为 AND（须同时具备全部标签）。
+  // 注意 axios 默认把数组序列化成 `tag[]=a&tag[]=b`（Spring 不识别），故在此拼成逗号单参数
+  //（后端 splitTags 同时支持「重复参数」与「单值内逗号分隔」两种传法）。
+  list: (params) => {
+    const p = { page: 1, size: 24, ...(params || {}) }
+    if (Array.isArray(p.tag)) {
+      const v = p.tag.filter(t => t != null && String(t).trim()).map(t => String(t).trim()).join(',')
+      p.tag = v || undefined
+    }
+    return http.get('/images', { params: p })
+  },
   // 全库标签清单（09-13 image-tags）：data 直接是 [{name, count}]（count 降序），预选/筛选同源
   listTags: () => http.get('/images/tags'),
+  // 图片来源追溯（09-15 img-classify）：data={sourceRef, news:{id,newsId,title,publishDate,url}|null, imageUrl}
+  // 非新闻图（upload/AI 生成图/车型图）返回 news:null，HTTP 200 不报错
+  getSource: (imageId) => http.get(`/images/${imageId}/source`),
   // 上传图库图：multipart file + projectId? + tags?（同名多值，逐项 append；空数组不 append）
   upload: (projectId, file, tags) => {
     const fd = new FormData()

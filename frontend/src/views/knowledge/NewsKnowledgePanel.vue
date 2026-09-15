@@ -50,11 +50,16 @@
       <div class="news-list">
         <div v-for="row in rows" :key="row.id" class="news-card" @click="openDetail(row)">
           <div class="thumb">
-            <el-image v-if="resolveImageUrl(row.imageUrl)" :src="resolveImageUrl(row.imageUrl)" fit="cover" lazy />
+            <el-image v-if="coverOf(row)" :src="coverOf(row)" fit="cover" lazy />
             <div v-else class="thumb-ph"><el-icon :size="22"><Document /></el-icon></div>
           </div>
           <div class="card-body">
             <div class="n-title serif">{{ row.title }}</div>
+            <!-- 主题标签（09-15 img-classify）：点击跳图库按「主题/<名>」筛选，不触发卡片详情 -->
+            <div class="n-themes" v-if="row.themes && row.themes.length">
+              <el-tag v-for="t in row.themes" :key="t" size="small" type="warning" effect="plain" round
+                      class="theme-tag" @click.stop="gotoImageLibrary(t)">主题/{{ t }}</el-tag>
+            </div>
             <div class="n-tags" v-if="parseTags(row.tagNames).length">
               <el-tag v-for="(t, i) in parseTags(row.tagNames).slice(0, 3)" :key="i" size="small" effect="plain" round>{{ t }}</el-tag>
             </div>
@@ -88,7 +93,11 @@
         <div class="d-tags" v-if="parseTags(detail.tagNames).length">
           <el-tag v-for="(t, i) in parseTags(detail.tagNames)" :key="i" size="small" effect="plain" round>{{ t }}</el-tag>
         </div>
-        <el-image v-if="resolveImageUrl(detail.imageUrl)" class="d-cover" :src="resolveImageUrl(detail.imageUrl)" fit="cover" />
+        <div class="d-tags" v-if="detail.themes && detail.themes.length">
+          <el-tag v-for="t in detail.themes" :key="t" size="small" type="warning" effect="plain" round
+                  class="theme-tag" @click="gotoImageLibrary(t)">主题/{{ t }}</el-tag>
+        </div>
+        <el-image v-if="coverOf(detail)" class="d-cover" :src="coverOf(detail)" fit="cover" />
         <div v-if="detail.content" class="d-content">{{ detail.content }}</div>
         <div v-else class="d-empty">该新闻为图片型内容，请查看官方原文。</div>
         <div class="d-actions">
@@ -101,12 +110,14 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { newsApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, WarningFilled, Document, Loading, CircleCheck } from '@element-plus/icons-vue'
 
 const user = useUserStore()
+const router = useRouter()
 
 const rows = ref([])
 const loading = ref(false)
@@ -137,6 +148,13 @@ const resolveUrl = (u) => {
 }
 // 语义别名：封面图解析（列表/抽屉共用同一规则）
 const resolveImageUrl = resolveUrl
+/** 封面优先取图库公网 URL（09-15 img-classify：coverImageUrl 非空时优先），未同步封面回退官网 imageUrl */
+const coverOf = (row) => (row && row.coverImageUrl) ? row.coverImageUrl : resolveImageUrl(row && row.imageUrl)
+
+/** 点主题标签 → 跳图库并按「主题/<名>」筛选（09-15 img-classify） */
+const gotoImageLibrary = (theme) => {
+  router.push({ name: 'images', query: { tag: `主题/${theme}` } })
+}
 
 // tagNames 是 JSON 数组字符串，解析失败静默降级为空数组
 const parseTags = (s) => {
@@ -270,6 +288,9 @@ onBeforeUnmount(stopPoll)
 .card-body { padding: 10px 12px 10px 0; min-width: 0; }
 .n-title { font-weight: 700; font-size: 15px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .n-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0; }
+/* 主题标签（09-15 img-classify）：可点击跳图库筛选 */
+.n-themes { display: flex; gap: 4px; flex-wrap: wrap; margin: 6px 0; }
+.theme-tag { cursor: pointer; }
 .n-meta { color: var(--faint); font-size: 12px; display: flex; gap: 6px; }
 
 /* 详情抽屉 */
@@ -303,5 +324,7 @@ onBeforeUnmount(stopPoll)
   .job-type { width: 100%; }
   .sync-btn { width: 100%; margin-left: 0; }
   .news-list { grid-template-columns: 1fr; }
+  /* 可点主题标签触控目标 ≥44px（移动端） */
+  .theme-tag { min-height: 44px; padding: 0 12px; display: inline-flex; align-items: center; }
 }
 </style>

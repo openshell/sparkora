@@ -30,8 +30,12 @@
         <el-select v-model="sourceFilter" clearable placeholder="来源" class="src-filter" size="default" @change="onFilterChange">
           <el-option v-for="(label, val) in SOURCE_LABELS" :key="val" :label="label" :value="val" />
         </el-select>
-        <el-select v-model="tagFilter" clearable filterable placeholder="标签" class="tag-filter" size="default" @change="onFilterChange">
-          <el-option v-for="t in allTags" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
+        <el-select v-model="tagFilter" multiple filterable collapse-tags collapse-tags-tooltip clearable
+                   placeholder="标签（可多选，AND）" class="tag-filter" size="default" @change="onFilterChange">
+          <!-- 09-15 img-classify:标签按命名空间前缀分组（主题/年份/其他），受控主题与自由标签隔离 -->
+          <el-option-group v-for="g in tagGroups" :key="g.name" :label="g.name">
+            <el-option v-for="t in g.options" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
+          </el-option-group>
         </el-select>
         <el-select v-model="projectFilter" clearable placeholder="项目" class="proj-filter" size="default" @change="onFilterChange">
           <el-option label="全部 / 全局图" :value="''" />
@@ -106,6 +110,13 @@
               <div class="hp-name" :title="img.fileName">{{ img.fileName }}</div>
               <div class="hp-sub">{{ sourceLabel(img.source) }} · {{ projectLabel(img) }} · {{ img.width && img.height ? `${img.width}×${img.height}` : '' }}</div>
               <div class="hp-sub">{{ img.createdBy }} · {{ shortTime(img.createdAt) }}</div>
+              <!-- 来源追溯行（09-15 img-classify）：新闻图显示「来源：<标题> · <日期>」，点击跳原文 -->
+              <div v-if="sourceInfo(img.id) && sourceInfo(img.id).news" class="hp-src">
+                <span class="hp-src-text" :title="sourceInfo(img.id).news.title"
+                      @click.stop="openNews(sourceInfo(img.id))">
+                  来源：{{ sourceInfo(img.id).news.title }} · {{ shortDay(sourceInfo(img.id).news.publishDate) }}
+                </span>
+              </div>
               <div v-if="img.genModel" class="hp-gen">{{ img.genModel }}{{ img.genSize ? ' · ' + img.genSize : '' }}</div>
               <!-- 标签行:点击标签直接筛选(09-13 image-tags) -->
               <div v-if="img.tags && img.tags.length" class="hp-tags">
@@ -139,6 +150,11 @@
           <!-- 移动端常显标签行:溢出横向滚动,点标签筛选 -->
           <div v-if="img.tags && img.tags.length" class="m-tags">
             <span v-for="t in img.tags" :key="t" class="m-tag" @click.stop="filterByTag(t)">{{ t }}</span>
+          </div>
+          <!-- 移动端来源追溯行（09-15 img-classify，hover 不可用，常显） -->
+          <div v-if="sourceInfo(img.id) && sourceInfo(img.id).news" class="m-src"
+               @click.stop="openNews(sourceInfo(img.id))">
+            来源：{{ sourceInfo(img.id).news.title }}
           </div>
         </div>
       </div>
@@ -266,7 +282,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import TopBar from '../layouts/TopBar.vue'
 import { imageApi, projectApi } from '../api'
 import { useUserStore } from '../store/user'
@@ -284,15 +301,33 @@ const projects = ref([])
 const projectFilter = ref('')
 const sourceFilter = ref('')
 const keyword = ref('')
-// 标签域（09-13 image-tags）：allTags=[{name,count}]；tagFilter=筛选；presetTags=上传/AI 生图预选（不持久化）
+// 标签域（09-13 image-tags）：allTags=[{name,count}]；tagFilter=筛选（09-15 起为数组，多标签 AND）；presetTags=上传/AI 生图预选（不持久化）
 const allTags = ref([])
-const tagFilter = ref('')
+const tagFilter = ref([])
 const presetTags = ref([])
 const tagOptionNames = computed(() => {
   // 预选/编辑下拉选项 = 全库标签 ∪ 当前已选（allow-create 允许新建，此处保证已选项可回显）
   const set = new Set(allTags.value.map(t => t.name))
   ;[...presetTags.value, ...tagDialogTags.value, ...bulkTagTags.value].forEach(t => t && set.add(t))
   return [...set]
+})
+/** 标签下拉分组（09-15 img-classify）：按 `/` 前缀分组——「主题」/「年份」独立成组，其余归「其他」。 */
+const tagGroups = computed(() => {
+  const groups = new Map()
+  for (const t of allTags.value) {
+    const i = t.name.indexOf('/')
+    const g = i > 0 ? t.name.slice(0, i) : '其他'
+    if (!groups.has(g)) groups.set(g, [])
+    groups.get(g).push(t)
+  }
+  // 分组顺序固定：主题 > 年份 > 其他 > 其余（保序输出）
+  const order = ['主题', '年份', '其他']
+  return [...groups.entries()]
+    .sort((a, b) => {
+      const ia = order.indexOf(a[0]), ib = order.indexOf(b[0])
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+    })
+    .map(([name, options]) => ({ name, options }))
 })
 const loadError = ref('')
 const loading = ref(false)
@@ -349,11 +384,14 @@ const onBulkDelete = () => {
 }
 
 // ==== 筛选 chip ====
-const hasFilter = computed(() => !!(keyword.value.trim() || sourceFilter.value || tagFilter.value || projectFilter.value !== ''))
+const hasFilter = computed(() => !!(keyword.value.trim() || sourceFilter.value || tagFilter.value.length || projectFilter.value !== ''))
 const activeChips = computed(() => {
   const chips = []
   if (sourceFilter.value) chips.push({ key: 'src', label: `来源: ${SOURCE_LABELS[sourceFilter.value] || sourceFilter.value}`, clear: () => { sourceFilter.value = ''; onFilterChange() } })
-  if (tagFilter.value) chips.push({ key: 'tag', label: `标签: ${tagFilter.value}`, clear: () => { tagFilter.value = ''; onFilterChange() } })
+  // 09-15 img-classify:每个选中标签各一个 chip,可单独清除（多标签 AND）
+  for (const t of tagFilter.value) {
+    chips.push({ key: `tag:${t}`, label: `标签: ${t}`, clear: () => { tagFilter.value = tagFilter.value.filter(x => x !== t); syncRouteTag(); onFilterChange() } })
+  }
   if (projectFilter.value !== '') {
     const p = projects.value.find(x => x.id === projectFilter.value)
     chips.push({ key: 'proj', label: `项目: ${p ? '#' + p.id : '#' + projectFilter.value}`, clear: () => { projectFilter.value = ''; onFilterChange() } })
@@ -361,9 +399,71 @@ const activeChips = computed(() => {
   if (keyword.value.trim()) chips.push({ key: 'kw', label: `关键字: ${keyword.value.trim()}`, clear: () => { keyword.value = ''; onFilterChange() } })
   return chips
 })
-const clearAllFilters = () => { sourceFilter.value = ''; projectFilter.value = ''; keyword.value = ''; tagFilter.value = ''; onFilterChange() }
-/** 点卡片标签 → 直接按该标签筛选（09-13 image-tags） */
-const filterByTag = (name) => { tagFilter.value = name; onFilterChange() }
+const clearAllFilters = () => { sourceFilter.value = ''; projectFilter.value = ''; keyword.value = ''; tagFilter.value = []; syncRouteTag(); onFilterChange() }
+/** 点卡片标签 → 直接按该标签筛选（09-13 image-tags；09-15 起为多选数组，点已选标签则取消） */
+const filterByTag = (name) => {
+  tagFilter.value = tagFilter.value.includes(name)
+    ? tagFilter.value.filter(t => t !== name)
+    : [...tagFilter.value, name]
+  syncRouteTag()
+  onFilterChange()
+}
+
+// ==== 来源追溯（09-15 img-classify）：hover/移动端显示「来源：<新闻标题>·<日期>」 ====
+const sourceMap = ref({})
+const sourceInfo = (id) => sourceMap.value[id]
+const shortDay = (t) => (t ? String(t).replace('T', ' ').slice(0, 10) : '')
+const openNews = (info) => {
+  const u = info?.news?.url
+  if (u) window.open(/^https?:\/\//i.test(u) ? u : 'https://www.byd.com' + u, '_blank', 'noopener')
+}
+/** 页内批查来源（仅新闻来源图有值；失败静默，卡片不显示来源行）；结果按当前页收敛，避免长会话累积 */
+const loadSources = async (rows) => {
+  const targets = rows.filter(r => r.sourceRef)
+  const next = {}
+  if (!targets.length) { sourceMap.value = next; return }
+  const list = await Promise.all(targets.map(async r => {
+    try {
+      const res = await imageApi.getSource(r.id)
+      return res.code === 0 ? [r.id, res.data] : null
+    } catch { return null }
+  }))
+  for (const item of list) if (item) next[item[0]] = item[1]
+  sourceMap.value = next
+}
+
+// ==== 外部入口（09-15 img-classify）：/images?tag=主题/销量（新闻卡片点主题标签跳图库筛同主题） ====
+const route = useRoute()
+const router = useRouter()
+/** 路由 query 的 tag（支持重复/逗号）解析为筛选数组 */
+const tagsFromRoute = () => {
+  const raw = route.query.tag
+  const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw]
+  return [...new Set(arr.flatMap(v => String(v).split(',')).map(s => s.trim()).filter(Boolean))]
+}
+/** 路由 query 的 tag 预置到多选筛选（跨页面跳转/刷新落地）。 */
+const applyFilterFromRoute = () => { tagFilter.value = tagsFromRoute() }
+/**
+ * 标签筛选变化后把 route.query.tag 同步为当前选中（router.replace，不进历史栈）。
+ * 必要性：清掉 chip 后若 URL 仍留旧 tag，再次从新闻页点同一主题时 query 未变 →
+ * vue-router 判定重复导航、watch 不触发 → 筛选不生效（点了没反应）。
+ */
+const syncRouteTag = () => {
+  const cur = tagsFromRoute()
+  const next = tagFilter.value
+  if (cur.length === next.length && cur.every((t, i) => next[i] === t)) return
+  const query = { ...route.query }
+  if (next.length) query.tag = [...next]
+  else delete query.tag
+  router.replace({ query })
+}
+watch(() => route.query.tag, () => {
+  const tags = tagsFromRoute()
+  // 自身 syncRouteTag 触发的回流：与当前筛选一致则不动（防重复 load）
+  if (tags.length === tagFilter.value.length && tags.every((t, i) => tagFilter.value[i] === t)) return
+  tagFilter.value = tags
+  onFilterChange()
+})
 
 // ==== 连续预览:当前页全部原图 ====
 const pageOriginUrls = computed(() => images.value.map(originUrl))
@@ -400,7 +500,7 @@ const load = async () => {
         page: page.value, size,
         projectId: projectFilter.value || undefined,
         source: sourceFilter.value || undefined,
-        tag: tagFilter.value || undefined,
+        tag: tagFilter.value.length ? tagFilter.value : undefined,
         keyword: keyword.value.trim() || undefined
       }),
       projectApi.list({ page: 1, size: 100 }),
@@ -409,6 +509,7 @@ const load = async () => {
     if (imgRes.code === 0) {
       images.value = imgRes.data?.rows || []
       total.value = imgRes.data?.total || 0
+      loadSources(images.value)
     } else loadError.value = imgRes.msg || '加载失败'
     if (projRes.code === 0) projects.value = projRes.data?.rows || []
     if (tagRes.code === 0) allTags.value = tagRes.data || []
@@ -534,7 +635,7 @@ const chooseRef = (img) => { refImage.value = img; refDialog.value = false }
 /** 候选定位:回主列表第一页并高亮该卡 2s */
 const locateInList = async (img) => {
   page.value = 1
-  if (projectFilter.value !== '' || sourceFilter.value || tagFilter.value || keyword.value.trim()) {
+  if (projectFilter.value !== '' || sourceFilter.value || tagFilter.value.length || keyword.value.trim()) {
     clearAllFilters()
   } else {
     await load()
@@ -622,7 +723,7 @@ const onBulkTag = async () => {
   } finally { bulkTagSaving.value = false }
 }
 
-onMounted(load)
+onMounted(() => { applyFilterFromRoute(); load() })
 onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
 </script>
 
@@ -702,10 +803,15 @@ onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
 .hp-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .hp-tag { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; background: rgba(255,255,255,.22); color: #fff; cursor: pointer; pointer-events: auto; }
 .hp-tag:hover { background: rgba(255,255,255,.38); }
+/* hover 层来源追溯行（09-15 img-classify）：点击跳新闻原文 */
+.hp-src { margin-top: 4px; }
+.hp-src-text { display: inline-block; max-width: 100%; font-size: 10px; opacity: .92; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: auto; text-decoration: underline dotted; }
+.hp-src-text:hover { opacity: 1; }
 
 /* 移动端:常显文件名 + ··· 更多 */
 .mobile-bar { display: none; }
 .m-tags { display: none; }
+.m-src { display: none; }
 
 .pager-row { display: flex; justify-content: center; margin-top: 18px; }
 
@@ -749,6 +855,10 @@ onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
   .m-tags { display: flex; gap: 4px; padding: 0 6px 6px; background: var(--card); overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
   .m-tags::-webkit-scrollbar { display: none; }
   .m-tag { flex: none; display: inline-flex; align-items: center; min-height: 44px; font-size: 11px; line-height: 1; padding: 0 10px; border-radius: 999px; background: var(--paper); border: 1px solid var(--line); color: var(--muted); }
+  /* 移动端来源行（09-15 img-classify）：常显单行省略，点击跳新闻原文（触控目标 ≥44px）。
+     用 block + line-height 而非 flex——flex 容器上的 text-overflow 对匿名 flex item 不生效，
+     标题超长会被硬裁而无「…」；block 才能正常省略。 */
+  .m-src { display: block; min-height: 44px; line-height: 44px; padding: 0 6px; background: var(--card); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tb-browse { justify-content: flex-start; }
   .kw-input { width: 100%; }
   .tag-filter, .tag-preset, .src-filter, .proj-filter { width: calc(50% - 5px); }
