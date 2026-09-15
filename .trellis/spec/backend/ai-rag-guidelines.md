@@ -118,6 +118,63 @@ prompt += rag.ok() ? rag.context() : degradeNote(rag.status());
 
 ---
 
+## Scenario: 搜索工具可用性契约（SearchTool 健康状态）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改外部搜索工具（实现 `SearchTool`），或改动工具健康展示（`/deep/status` 的 `toolHealth`）。
+
+### 2. Signatures
+```java
+public interface SearchTool {
+    String name();
+    boolean available();                  // 仅判配置就绪(见契约)
+    default boolean configured() { return true; }     // 密钥/地址是否就绪,不随调用结果变化
+    default boolean lastCallOk() { return true; }     // 最近一次调用是否成功(初值乐观,仅供展示)
+    List<SearchHit> search(String query, int maxResults);
+}
+```
+
+### 3. Contracts
+- **`available()` 只表示「配置就绪」**：Tavily = 密钥非空；SEARXNG = 地址非空。**不得包含 `lastCallOk()`**——否则调用失败后 `available()==false`，调用方（`SubAgentRunner`）跳过 `search()`，而失败标志只能在被跳过的 `search()` 里重置 → **永久禁用，直到重启**（自锁死）。
+- `configured()` = 配置态（与 `available()` 同源，供 `toolHealth` 三态判定复用）。
+- `lastCallOk()` = 最近一次调用健康态，仅用于**展示**；调用失败置 false 不再影响门控，故下次研究天然重试（自恢复）。
+- `toolHealth`（`/deep/status` 响应）值为状态码字符串，非布尔：
+  - `OK` | `DISABLED`（被设置门控关闭）| `UNCONFIGURED`（无 key/地址）| `FAILED`（最近一次调用失败）
+  - `KB` = `SettingService.isKbEnabled() ? "OK" : "DISABLED"`（反映 DB 运行时门控，**不恒 true**）。
+  - `SEARXNG`/`TAVILY`：`webAllowed = DeepProperties.isSearchWebEnabled() && SettingService.isWebSearchEnabled()`；优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。
+- 前端 `ResearchProgress.vue` 未拿到 `toolHealth`（首轮前/接口异常）时渲染 `--`，**不得**乐观默认全部可用。
+
+### 4. Validation & Error Matrix
+- 无 key/地址 → `configured()=false` → `available()=false` → 调用方跳过（`toolHealth=UNCONFIGURED`）。
+- 密钥有效但单次调用异常 → `lastCallOk()=false`、`available()` 仍 true → 下次研究重新调用（`toolHealth=FAILED`）。
+- 设置门控关闭（DB `web_search_enabled=f` 或部署级 `SEARCH_WEB_ENABLED=false`）→ `toolHealth=DISABLED`，`DeepResearchService` 配额置 0。
+- KB 停用（`kb_enabled=f`）→ `toolHealth.KB=DISABLED`，`applySettingGates` 剔除 KB 工具。
+
+### 5. Good/Base/Bad Cases
+- Good: `available()` 纯配置判定；健康态另经 `configured()/lastCallOk()` 组合成状态码。
+- Base: 未调用过 `lastCallOk()=true`（乐观），前端显示 `✓`。
+- Bad: `available() = hasKey && lastOk`（惰性闩锁）——一次失败永久禁用。
+
+### 6. Tests Required
+- 无 key → `available()=false`；有 key → `available()=true`。
+- 调用失败后 `available()` **仍为 true**（回归断言，防闩锁回潮），且 `lastCallOk()=false`。
+- `toolHealth` 四态与优先级；KB `DISABLED` 反映 `kb_enabled=f`。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+public boolean available() { return apiKey != null && !apiKey.isBlank() && lastOk; }
+// 调用方: if (!webTool.available()) continue;  → 失败后再也不调用,lastOk 永无机会复位
+```
+#### Correct
+```java
+@Override public boolean available() { return configured(); }
+@Override public boolean configured() { return apiKey != null && !apiKey.isBlank(); }
+@Override public boolean lastCallOk() { return lastOk; }   // 仅展示,失败自恢复
+```
+
+---
+
 ## Naming / Conventions
 
 - 会话仅创建者可见：按 `created_by` 过滤，越权与不存在**统一** `IllegalArgumentException("会话不存在")` → 控制器 404（不泄露存在性）。
@@ -147,3 +204,13 @@ prompt += rag.ok() ? rag.context() : degradeNote(rag.status());
 **Fix**: 检索 query 在短问题/有历史时拼接最近 2 轮 user 问题（`QaService.buildSearchQuery`，≤300 字）。
 
 **Prevention**: 多轮链路的检索 query 与送 LLM 的 messages 分别构造——送 LLM 保留结构化历史，检索用拼接补指代。
+
+### Common Mistake: @ConfigurationProperties 前缀漂移导致整块配置静默失效
+
+**Symptom**: 按文档配置了 `SEARCH_WEB_ENABLED=false` 或 `sparkora.deep.tavily-api-key`，但行为毫无变化（开关关不掉、key 字段恒空）；应用不报错、启动正常，极难发现。
+
+**Cause**: `DeepProperties` 声明 `prefix = "sparkora.ai.deep"`，而 `application.yml` 把 `deep:` 写在 `sparkora:` 下（`sparkora.deep`，`ai` 的**兄弟**节点）→ Spring relaxed binding 找不到对应前缀，整块字段保持 Java 默认值，**不抛异常**。此前仅因 `TavilySearchTool` 构造时绕过 Spring 直读环境变量 `TAVILY_API_KEY` 才碰巧可用，掩盖了缺陷。
+
+**Fix**: 令注解前缀与实际 YAML 路径一致。本仓库域配置类惯例为 `sparkora.<domain>`（`NewsProperties`/`CarProperties`/`WenyanProperties`/`QiniuProperties`/`ImageProperties`），故 `DeepProperties` 取 `sparkora.deep`。
+
+**Prevention**: 新增/改动 `@ConfigurationProperties` 时，用 `grep -rn "prefix = \"sparkora" src/main/java` 对照 `application.yml` 的缩进层级逐一核对；字段绑定不能只靠"环境变量兜底"证伪，需构造 `ApplicationContextRunner` 或启动后读取 `getXxx()` 实测非默认值。

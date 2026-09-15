@@ -265,7 +265,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 
 **前端**：`/settings` 路由（TopBar「设置」，EDITOR 及以上可见）；双 `el-switch` + 说明文案 + 双关警示；写入口仅 ADMIN（`user.isAdmin` 隐藏保存按钮，后端 `@PreAuthorize` 兜底）。
 
-**与 `.env` 的关系**：`AI_RAG_KB_ENABLED`（§6c，部署级）仅在本地统一检索通道内继续生效（`kbEnabled=true` 时）；深度链路的工具装配以设置页为准。`DEEP_SEARCH_WEB_ENABLED` 同理仅作 SEARXNG/Tavily 的部署级可用性控制。
+**与 `.env` 的关系**：`AI_RAG_KB_ENABLED`（§6c，部署级）仅在本地统一检索通道内继续生效（`kbEnabled=true` 时）；深度链路的工具装配以设置页为准。`SEARCH_WEB_ENABLED`（`sparkora.deep.search-web-enabled`）同理仅作 SEARXNG/Tavily 的部署级可用性控制。
 
 **检索策略升级（S6.2，2026-09-03；修复海狮08 文章价格/续航错误暴露的检索精度缺陷）**：
 
@@ -663,7 +663,7 @@ PublishService.publish
 | GET | `/deep/status` | 三角色 | `?briefId`(缺省取最新 DEEP brief) | `{briefId, genMode, stage, planStatus, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
 
 - stage 判定（brief 层展示态）：`PLANNING`（plan_status=PLANNING，clarify 占位生成中，2026-09-11 新增，优先于其余判定）> `RESEARCH_DONE`（fact_sheet 非空）> `RESEARCHING`（research_notes 非空）> `CLARIFIED`（answers 非空）> `CLARIFYING`（questions 非空）> `NONE`。
-- toolHealth：KB 恒 true；SEARXNG/TAVILY 为惰性状态（`lastCallHadResults`/`lastOk`，初值乐观，调用失败自动降 false），并受 `SEARCH_WEB_ENABLED` 门禁。
+- toolHealth（2026-09-15 契约升级，值由布尔改状态码 `OK|DISABLED|UNCONFIGURED|FAILED`）：`KB` = `kb_enabled ? OK : DISABLED`（反映设置页运行时门控，不再恒 true）；`SEARXNG`/`TAVILY` 先判 `SEARCH_WEB_ENABLED && webSearchEnabled`（false → `DISABLED`），再按 `configured()`（密钥/地址就绪）→ `UNCONFIGURED`、`lastCallOk()`（最近一次调用健康态，初值乐观）→ `FAILED`/`OK`。优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。前端未拿到该字段时渲染 `--`（未知态，不谎报可用）。
 - 权限冒烟：viewer 访问写接口 403（`hasAnyRole('ADMIN','EDITOR')`）。
 
 #### 工具层（SearchTool 抽象，`com.sparkora.deep.tool`）
@@ -671,14 +671,14 @@ PublishService.publish
 | 工具 | 实现 | 来源 | 降级语义 |
 |---|---|---|---|
 | KB | `KnowledgeSearchTool` | 委托 `CarRagService.retrieveForGeneration` 统一检索（§6c，S8） | 异常 warn，不抛出 |
-| SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + lastCallHadResults=false；不重试 |
-| TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}` | 密钥未配置/失败 → available()=false |
+| SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + `lastCallOk()=false`（仅供健康展示）；`available()` 仅判地址就绪，失败不闩锁 |
+| TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}` | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试 |
 - WEB 选择顺序：SEARXNG → Tavily（拿到结果即止）；每子代理 webQuota=`max(1, 8/n)`，`SEARCH_WEB_ENABLED=false` 时为 0（纯 KB）。
 - **KB 锚点感知检索（R1，2026-09-06）**：`KnowledgeSearchTool.search(query, maxResults, anchors)` 委托 `retrieveForGeneration`（锚点加权 + 参数级子查询 + 核心块/权益块分层配额）；锚点由 `DeepResearchService.resolveAnchors` 解析（项目关联车型为准 → `CarModelMatcherService` 按主题识别兜底，失败不阻断）；子代理 KB 检索 query 用「主题 + 问题」复合语料（纯问题如「价格对比」缺车型上下文相似度必散）。非 OK 状态返回空列表归 gaps（行为同旧）。
 - **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块（命中含 MODEL_INFO/价格区间文本）时跳过 WEB 补查——WEB 只补 KB 缺口，不与 KB 平行全问题重搜、不得覆盖 KB 结论。
 - **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB 来源 → **KB 胜出**（不比较相似度/置信度，量纲不同不可比；按来源身份定优先级：本系统知识库（比亚迪同步清洗）> 外部 WEB）。WEB 条目降级为该条目 `alternatives`（URL 列表）留证据，并写 warnings「以知识库为准；外部来源(N 条)有异说,未采用」。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
 - `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 modelName 字段。
-- 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.ai.deep.tavily-api-key`（dotenv 注入 System property，嵌套占位符 `${A:${B:}}` Spring 不支持，故 yml 只挂 `TAVILY_API_KEY`）。
+- 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.deep.tavily-api-key`（`DeepProperties` 绑定前缀 `sparkora.deep`，2026-09-15 修正；dotenv 注入 System property，嵌套占位符 `${A:${B:}}` Spring 不支持，故 yml 只挂 `TAVILY_API_KEY`）。
 
 #### 研究笔记 / 事实手册结构
 
