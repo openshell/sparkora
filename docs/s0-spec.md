@@ -58,11 +58,12 @@ GET   /api/settings                        系统检索设置（读）    权限
 PUT   /api/settings                        系统检索设置（写）    权限 ADMIN
 GET   /api/projects/{id}/versions          版本列表             权限 ADMIN/EDITOR/VIEWER
 PUT   /api/projects/{id}/current-version   设定当前版本         权限 ADMIN/EDITOR
-GET   /api/images              图库列表(支持 tag 筛选) 权限 ADMIN/EDITOR/VIEWER
+GET   /api/images              图库列表(tag 多值 AND 筛选) 权限 ADMIN/EDITOR/VIEWER
 POST  /api/images/upload       上传图库图(支持预选标签) 权限 ADMIN/EDITOR
 POST  /api/images/generate-text    文生图(支持预选标签)  权限 ADMIN/EDITOR
 POST  /api/images/generate-from-image  图生图(支持预选标签) 权限 ADMIN/EDITOR
 GET   /api/images/tags         全库标签清单(含引用数)  权限 ADMIN/EDITOR/VIEWER
+GET   /api/images/{id}/source  图片来源追溯(新闻标题/日期/原文) 权限 ADMIN/EDITOR/VIEWER
 PUT   /api/images/{id}/tags    单图标签全量覆盖        权限 ADMIN/EDITOR
 POST  /api/images/tags/batch   批量补打/移除标签        权限 ADMIN/EDITOR
 POST  /api/projects/{id}/images/{imageId}/cover   选封面   权限 ADMIN/EDITOR
@@ -458,6 +459,24 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - 非持久化字段新增：`thumbUrl`（七牛 imageView2/2/w/360/format/webp 派生；非七牛实现降级为 url）、`dedupeHit`（Boolean，去重命中标记）、`tags`（`List<String>`，09-13 image-tags 起由标签服务回填，按名称排序；无标签为空列表）。
 - **去重管线（五来源统一）**：upload / 文生图 / 图生图 / byd（车型介绍图）/ byd-news（新闻封面）均走 `ImageService.persistOrReuse`（算哈希→查命中→复用或上传图床）。BYD 额外收益：车型同步幂等重跑不重复占图床对象。并发同哈希双写容忍（先查后插，竞态窗口最多多传一份对象）。
 
+**09-15 img-classify 增量字段（幂等 ALTER；存量行为 NULL，旧代码兼容）**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| source_ref | VARCHAR(200) | **来源引用串**（通用，一个字段承载所有来源）：新闻图 = 官方 `news_id`（如 `/page/byd-cn/news-2026/detail632`），其他来源留空（未来可扩车型 goods_id 等）。索引 `idx_image_asset_source_ref`。**不建外键**（沿用图库表应用层维护惯例） |
+
+- **写入语义**：增量（`NewsService.upsertOne`）随封面入库透传 `sourceRef`；去重命中已有图时**仅当已有 `source_ref` 为空才补写**（同一图片被不同新闻引用保留首次值，不覆盖，见 `ImageService.applyPresetSourceRef`）。该补写是**原子条件更新**（`WHERE id=? AND (source_ref IS NULL OR source_ref='')`，同 database-guidelines「原子抢占」范式）：WHERE 命中 0 行说明并发已写入，此时以库中现有值为准回填实体——只靠 Java 端先读后判存在 check-then-set 竞态（两条新闻并发同步同一张图会互相覆盖）。
+- **存量回溯**：`ImageTagBackfillRunner` 启动任务按文件名 `detail<数字>` → `news_id` **精确后缀匹配**（先 LIKE 粗筛候选，再 Java 端精确比对，防 `detail63` 误配 `detail632`）反查新闻回填；只处理 `source='byd-news' AND source_ref IS NULL`，幂等可重跑。
+- **追溯读取**：`GET /api/images/{id}/source`（见下方 API 表）。
+
+**新闻-图库封面关联（`sparkora_news`，09-15 img-classify 幂等补列）**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| cover_image_id | BIGINT | 封面图对应的图库资产 id（可空，**不建外键**）。列表/详情返回非持久化 `coverImageUrl`（图床公网 URL，由图库实时拼），前端**优先用它展示**，官网 `image_url` 保留为回退（未同步封面的 10 条新闻走回退链路） |
+
+- 回填时机：新闻增量入库（`upsertOne` 拿到 asset id 后）与存量回溯（`ImageTagBackfillRunner`）两处；**仅在新闻侧 `cover_image_id` 为空（或指向已失效图）时才写**，重同步不覆盖已同步的有效值（`NewsService.coverImageValid`）。
+
 ### 图片标签（09-13 image-tags，独立标签表）
 
 **数据模型（`sparkora_image_tag`，schema.sql S-tags 段幂等 `CREATE TABLE IF NOT EXISTS`）**：
@@ -491,10 +510,39 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | 来源 | 自动标签 | 实现 |
 |---|---|---|
 | 车型介绍图（source=`byd`） | `车型-<车型名>`（如 `车型-大唐EV`） | `CarModelService.persistIntroImages` preset 传 tags，走统一管线自动落标；**存量追溯**由 `ImageTagBackfillRunner` 启动一次性遍历 `car_model.intro_images` asset id 列表 mergeTags（幂等可重跑，异常不阻断启动；URL 旧格式跳过） |
-| 新闻封面图（source=`byd-news`） | `新闻` | `NewsService.upsertOne` 下载 `imageUrl` 字节走 `saveExternalImage` 入库（相对 URL 拼 `https://www.byd.com`）；单图下载失败仅告警**不阻断新闻入库**；`sparkora_news.image_url` 保留原 URL 留痕（新闻页展示链路零改动） |
+| 新闻封面图（source=`byd-news`） | `新闻` + **`主题/<主题名>`** + **`年份/<年>`**（09-15 img-classify） | `NewsService.upsertOne` 下载 `imageUrl` 字节走 `saveExternalImage` 入库（相对 URL 拼 `https://www.byd.com`，带 `sourceRef=news_id`）；标签由 `NewsImageClassifier.toTagsFrom(title, publishDate)` 派生（零 AI）。单图下载失败仅告警**不阻断新闻入库**；`sparkora_news.image_url` 保留原 URL 留痕 |
 
 - 新闻正文内嵌图**不入库**（图片型新闻多为装饰长图，量级/噪音风险，范围外）。
 - 来源白名单 `SOURCES` = `upload` / `ai-text2img` / `ai-img2img` / `byd` / **`byd-news`**（非法值 400）。
+
+### 新闻图片主题分类（09-15 img-classify，子A）
+
+**分类器**：`com.sparkora.news.classify.NewsImageClassifier`（纯静态、无 Spring 依赖、零 AI 调用、可单测）。词表是**受控产品定义**，以代码常量 `LinkedHashMap<String, Pattern>` 固化（保序 = 展示序；改词表 = 改代码发版，不入 DB 字典表）。输入新闻标题 → 命中主题集合（保序 0~n，**允许重叠**，如「海外销售再创新高」同时命中「销量」+「出海」）；无命中不打主题标签（不强制归「其他」，避免噪音标签）。
+
+| 顺序 | 主题 | 关键词（正则） |
+|---|---|---|
+| 1 | 销量 | `销售` |
+| 2 | 出海 | `海外\|出海\|出口\|全球化\|国际化\|欧洲\|拉美\|东南亚\|巴西\|泰国\|印尼\|印度\|日本\|澳洲\|澳大\|乌兹\|匈牙利\|墨西哥\|文莱\|哥伦比亚\|香港\|德国\|慕尼黑\|东京\|曼谷\|首尔\|韩国\|英国\|智利\|罗马尼亚\|瑞士\|尼日利亚\|柬埔寨\|贝宁\|加蓬` |
+| 3 | 合作签约 | `合作\|签约\|携手\|战略` |
+| 4 | 技术发布 | `发布\|技术\|刀片\|云辇\|智驾\|平台\|闪充\|芯片\|系统` |
+| 5 | 里程碑 | `下线\|里程碑\|万辆\|纪录` |
+| 6 | 荣誉 | `荣\|获\|奖\|榜\|500强\|冠军` |
+| 7 | 财报ESG | `财报\|业绩\|ESG` |
+| 8 | 车展上市 | `上市\|首发\|车展\|亮相` |
+| 9 | 社会责任 | `捐赠\|慈善\|公益\|驰援\|救灾\|基金` |
+
+> 词表以**真实 167 条新闻标题回归**校准（`NewsImageClassifierTest` + 任务 implement.md「实测词表调整」）：实测命中 销量 45 / 出海 65 / 合作签约 18 / 技术发布 22 / 里程碑 25 / 荣誉 22 / 财报ESG 6 / 车展上市 16 / 社会责任 3，无命中 21。design.md 草案的出海词表未覆盖「进入/登陆 <国> 市场」类标题，回归时补入国别词（智利/罗马尼亚/瑞士/尼日利亚/柬埔寨/贝宁/加蓬/首尔/韩国/英国）并将「国际化」并入；宽泛词「荣/获/榜」「发布」回归确认无误命中，保留。
+
+**标签命名空间**（与用户自由标签隔离，筛选下拉可按前缀分组）：
+
+| 标签 | 命名 | 说明 |
+|---|---|---|
+| 主题标签 | `主题/<主题名>`（如 `主题/销量`） | 受控词表命中，0~n 个 |
+| 年份标签 | `年份/<年>`（如 `年份/2026`） | 由来源新闻 `publish_date` 派生；取不到日期则不打 |
+
+- 命名空间前缀的目的：与用户自由标签（用户自建的「销量」）隔离；`GET /api/images/tags` 返回的**名称即含前缀**（响应结构不变，仍是 `[{name,count}]`），前端按 `/` 前缀 `el-option-group` 分组展示（`主题` / `年份` / `其他`）。
+- 人工修正：复用既有单图编辑（`PUT /{id}/tags` 全量覆盖）与批量打标（`POST /tags/batch`），无需新 UI。
+- **存量回溯**：`ImageTagBackfillRunner` 新闻分支只处理 `source='byd-news' AND source_ref IS NULL` 的图（分批 200，避免全量内存），解析文件名 → 反查新闻 → `mergeTags`（只插差集，幂等）+ 回填 `source_ref`/`cover_image_id`；异常仅 warn 不阻断启动，日志汇总「处理 X / 跳过 Y / 失败 Z」。2026-09-16 实测：157 张全部处理（跳过 0 / 失败 0），重跑零新增。
 
 ### 版本-图片关联（挂版本，不挂项目）
 
@@ -511,8 +559,9 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/images` | 三角色 | `?projectId=&source=&keyword=&tag=&page=1&size=24` 组合查询（source 白名单 upload/ai-text2img/ai-img2img/byd/byd-news，非法值 400；keyword 命中 file_name/prompt_text，ILIKE；`tag` 命中任一标签即返回，其余筛选照常组合，两段查询先按 `idx_image_tag_name` 取 image_id 集再 IN 主表） | `PageResult`：`{rows[], total, page, size}`；rows 内每条含 url + thumbUrl + **tags[]**（按名称排序）。**S10 起不再返回全量列表** |
-| GET | `/api/images/tags` | 三角色 | — | `data` = `[{name, count}]`（全库标签 + 引用数量，count 降序「常用优先」；预选控件与筛选联想同源复用） |
+| GET | `/api/images` | 三角色 | `?projectId=&source=&keyword=&tag=&page=1&size=24` 组合查询（source 白名单 upload/ai-text2img/ai-img2img/byd/byd-news，非法值 400；keyword 命中 file_name/prompt_text，ILIKE；**09-15 起 `tag` 支持多值**——重复参数或单值内逗号分隔，语义为 **AND**（图片须同时具备所有指定标签），逐标签查 `idx_image_tag_name` 取 id 集求交集，交集为空直接返回空页；其余筛选照常组合；单值行为与旧版单标签等价） | `PageResult`：`{rows[], total, page, size}`；rows 内每条含 url + thumbUrl + **tags[]**（按名称排序）+ **sourceRef**。**S10 起不再返回全量列表** |
+| GET | `/api/images/{id}/source` | 三角色 | —（09-15 img-classify 新增） | `data = {sourceRef, news, imageUrl}`：`news` 为 `{id, newsId, title, publishDate, url}`（source_ref 为官方 news_id 且能反查到新闻时）；**非新闻图（upload / AI 生成图 / 车型图）或查无新闻 → `news: null`**（显式输出，HTTP 200 不报错）；图片不存在 `R.fail(400)` |
+| GET | `/api/images/tags` | 三角色 | — | `data` = `[{name, count}]`（全库标签 + 引用数量，count 降序「常用优先」；预选控件与筛选联想同源复用；**09-15 起名称含 `主题/`、`年份/` 前缀**，响应结构不变） |
 | POST | `/api/images/upload` | ADMIN/EDITOR | multipart `file` + `projectId?`（可空=全局图库）+ `tags?`（同名多值或单值内逗号分隔均可） | `{image}`（含 `dedupeHit` 与 `tags`）；类型限 png/jpg/webp，≤10MB（`IMAGE_MAX_UPLOAD_MB`），超限 `R.fail(400)` |
 | DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录 + 图床对象 + **标签行物理清** |
 | POST | `/api/images/generate-text` | ADMIN/EDITOR | `{projectId?, prompt, size?, n?, tags?[]}`（`@Valid` DTO；n 1~4 默认 1） | **S10 起响应为数组** `{images[]}`：n 张候选逐张入库（后端循环 n 次单张调用，单张失败跳过，全部失败 `R.fail(500)` 含候选模型错误明细）；每张含 genModel/genSize/dedupeHit/tags |
@@ -534,6 +583,8 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 - **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，el-pagination 翻页）；网格缩略图走 thumbUrl（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡提供**一键重生成**；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图从当前列表选参考图；n(1/2/4) 张候选生成，projectId 传空=全局图库，产物即进图库）。**UI 重设计（S10+）**：卡片瘦身——默认仅缩略图+来源小标，元数据/操作入 hover 浮层（移动端常显文件名行+「···」更多操作）；工具条两段式（主操作|浏览控制）；大图预览支持当前页连续浏览；筛选状态 chip 条（单独清除/一键全清）；批量选择模式（多选→单次确认删除，被引用图后端拒绝逐张提示）；舒适/紧凑密度切换（localStorage 记忆）。素材管理归图库，不在文章流程内。
   - **标签能力（09-13 image-tags）**：工具条「上传标签」预选控件（multiple allow-create，上传与 AI 生图共读，不持久化）；工具条标签筛选下拉（数据源 `GET /api/images/tags`，与 chip 条联动，可与其他筛选组合）；卡片 hover 层/移动端常显区展示标签，**点标签直接触发筛选**；卡片 hover 操作区/移动端 ··· 菜单「编辑标签」→ 对话框全量覆盖（`PUT /{id}/tags`）；批量选择态「打标签」→ 对话框（标签多选 + add/remove 单选 → `POST /tags/batch`）。**R5 交互修复**：AI 抽屉文生图/图生图 prompt 拆为独立 ref（切换 tab 不再互相污染）；参考图选择弹窗独立数据源 + 页内搜索（300ms 防抖）+ 分页（不再只看主列表第一页）；来源标签补「比亚迪新闻」（`byd-news`，红色点）。
+  - **主题分类筛选与来源展示（09-15 img-classify）**：标签筛选改 **multiple**（`tagFilter` 由字符串改数组，多标签 **AND**），chip 条**逐个展示可单独清除**（点已选标签再点即取消）；下拉按 `/` 前缀用 `el-option-group` **分组展示**（`主题` / `年份` / `其他`）；卡片 hover 层（移动端常显行）显示**来源行**「来源：<新闻标题> · <日期>」，点击跳新闻原文（走 `GET /api/images/{id}/source`，页内批查懒加载，非新闻图不显示）；支持外部入口 `/images?tag=主题/销量`（预置筛选，供新闻卡片点主题标签跳转）。**路由与筛选双向同步**：挂载时按 `route.query.tag` 预置筛选；chip 单独清除 / 全清 / 点卡片标签后 `router.replace` 把 URL 同步为当前选中（`syncRouteTag`）——否则清掉 chip 后 URL 仍留旧 tag，再次从新闻页点同一主题时 query 未变、vue-router 判定重复导航、watch 不触发，出现「点了没反应」。
+- **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。
 - **预览步配图面板（项目向导 Step3 并入 Step4）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。
 
 ---
@@ -795,7 +846,7 @@ PublishService.publish
 
 | 表 | 字段 | 说明 |
 |---|---|---|
-| `sparkora_news` | id / **news_id VARCHAR(200) UNIQUE**（官方字符串 id，业务唯一键）/ title(≤500) / url / image_url / publish_date / tags(JSON) / tag_names(JSON) / content / source(默认 byd-news) / sync_status(SUCCESS/FAILED) / last_sync_at / last_sync_error / created_at / updated_at / deleted | 新闻主表；逻辑删。索引 `idx_news_publish(publish_date)` / `idx_news_status(sync_status)` |
+| `sparkora_news` | id / **news_id VARCHAR(200) UNIQUE**（官方字符串 id，业务唯一键）/ title(≤500) / url / image_url / publish_date / tags(JSON) / tag_names(JSON) / content / source(默认 byd-news) / sync_status(SUCCESS/FAILED) / last_sync_at / last_sync_error / **cover_image_id BIGINT**（09-15 img-classify 幂等补列：封面图对应的图库 asset id，可空不建外键）/ created_at / updated_at / deleted | 新闻主表；逻辑删。索引 `idx_news_publish(publish_date)` / `idx_news_status(sync_status)` |
 | `sparkora_news_doc` | id / **news_id BIGINT FK→sparkora_news(id)**（内部 id）/ seq / chunk_type(NEWS_BODY/NEWS_TITLE) / chunk_text / token_count / created_at / updated_at / deleted | 检索块；首行固定「新闻：<title>（<publishDate>）」。索引 `idx_news_doc_news` |
 | `sparkora_news_doc_embedding` | id / doc_id FK / news_id FK / embedding VECTOR(1024) / created_at | 物理表（无 deleted）；HNSW cosine `idx_news_doc_emb_vec` + `idx_news_doc_emb_news` |
 | `sparkora_news_sync_job` | id / job_type(FULL/INCREMENT/SCHEDULED/RETRY) / status(RUNNING/SUCCESS/PARTIAL/FAILED) / total / success / failed / failed_items(JSON:[{newsId,title,error}]) / started_at / finished_at / error_msg / created_by / created_at / deleted | 同步任务表（复用车型任务表范式）。索引 `idx_news_sync_job_created` |
@@ -811,7 +862,7 @@ PublishService.publish
 #### 入库与向量化
 
 - `com.sparkora.news.service.NewsDocService`（仿 CarDocService/KbDocService）：`rebuildForNews(newsId)` 先物理清 embedding+doc 再切块（首行「新闻：<title>（<publishDate>）」；空行分段、单段 ≤500、超长按句读切分合并）+ embedding 并发化（固定小线程池）+ 单块失败重试 1 次；`deleteByNews` 物理清块与向量；`chunkTypeOf(chunks)` 纯函数判定块类型（唯一块且无换行 → `NEWS_TITLE`，其余 `NEWS_BODY`）；块数由调用方 `docMapper.selectCount` 计算，不再提供 `chunkCount(newsId)`/`NewsDocEmbeddingMapper.countByNews()`（C2 死代码已删）。
-- `com.sparkora.news.service.NewsService`：`syncFull()`（遍历 `data.pages` 全部页）/ `syncIncrement()`（列表按 date 倒序，本页全部「已存在且正文非空」即提前停止）；逐条抓正文 → 按 `news_id` 幂等 upsert → `rebuildForNews`；单条失败记 failedItems 不阻断；`list(page,size,keyword)`（分页 + title 模糊 + 块数）、`get(id)`、`existsWithContent(newsId)`。官方 date 解析失败置 null。**09-13 image-tags 起**：`upsertOne` 另下载 `imageUrl` 封面字节走统一入库管线转存图库（`source=byd-news`、标签「新闻」，`sparkora_news.image_url` 保留原 URL 留痕）；**单图下载失败仅告警不阻断新闻入库**（同车型图容错先例）。
+- `com.sparkora.news.service.NewsService`：`syncFull()`（遍历 `data.pages` 全部页）/ `syncIncrement()`（列表按 date 倒序，本页全部「已存在且正文非空」即提前停止）；逐条抓正文 → 按 `news_id` 幂等 upsert → `rebuildForNews`；单条失败记 failedItems 不阻断；`list(page,size,keyword)`（分页 + title 模糊 + 块数）、`get(id)`、`existsWithContent(newsId)`。官方 date 解析失败置 null。**09-13 image-tags 起**：`upsertOne` 另下载 `imageUrl` 封面字节走统一入库管线转存图库（`source=byd-news`、标签「新闻」，`sparkora_news.image_url` 保留原 URL 留痕）；**单图下载失败仅告警不阻断新闻入库**（同车型图容错先例）。**09-15 img-classify 起**：封面入库携带 `NewsImageClassifier.toTagsFrom(title, publishDate)` 派生的 `主题/<名>` 与 `年份/<年>` 标签及 `sourceRef=news_id`；入库成功后回填 `cover_image_id`（`null` 或指向已失效图时才写，不覆盖有效值）；`list`/`get` 另填非持久化 `coverImageUrl`（图库公网 URL）与 `themes`（标题分类主题，同分类器重算不查图库）。
 
 #### 同步任务与调度
 
@@ -828,7 +879,7 @@ PublishService.publish
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/news` | 三角色 | 分页列表 `?page&size&keyword`，`PageResult`（含 id/title/publishDate/tagNames/imageUrl/chunkCount） |
+| GET | `/api/news` | 三角色 | 分页列表 `?page&size&keyword`，`PageResult`（含 id/title/publishDate/tagNames/imageUrl/chunkCount；**09-15 img-classify 起另含 `coverImageUrl`**（图库公网 URL，无同步封面时为 null）**与 `themes`**（标题分类命中主题，保序数组）；列表/详情均携带） |
 | GET | `/api/news/{id}` | 三角色 | 详情（含 content）；不存在 `R.fail(404)` |
 | POST | `/api/news/sync/jobs` | ADMIN/EDITOR | body `{jobType:"FULL"\|"INCREMENT"}`（缺省 INCREMENT），返回 `{jobId}` |
 | GET | `/api/news/sync/jobs/{id}` | 三角色 | 任务进度；不存在 `R.fail(404)` |
