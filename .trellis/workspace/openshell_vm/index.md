@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-09-12
+- **Total Sessions**: 11
+- **Last Active**: 2026-09-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~270 | Active |
+| `journal-1.md` | ~338 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-09-16 | 简报研究链路修复:配置绑定、工具健康与进度分子 | `bb3c0ad`, `f39bbb1`, `0d65fd4` | `main` |
 | 9 | 2026-09-12 | kb-cleanup 遗留清理 | `c047f7c` | `main` |
 | 8 | 2026-09-12 | C4 多轮对话式知识问答 | `07fa8d0`, `c94c415` | `main` |
 | 7 | 2026-09-12 | C3 知识中心浏览页 | `5cf4902`, `38fb0ee` | `main` |

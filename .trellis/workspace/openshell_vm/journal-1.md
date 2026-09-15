@@ -268,3 +268,43 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: 简报研究链路修复:配置绑定、工具健康与进度分子
+<!-- trellis-session: v=2 fp=6b70267a31b18b6d -->
+
+**Date**: 2026-09-16
+**Task**: 简报研究链路修复:配置绑定、工具健康与进度分子
+**Branch**: `main`
+
+### Summary
+
+修复简报页深度研究链路三类缺陷:进度分子 doneCount 缺失、DeepProperties 前缀漂移致配置整块静默失效、SearchTool 可用性惰性闩锁与 toolHealth 展示失真
+
+### Main Changes
+
+- DeepProperties 绑定前缀 sparkora.ai.deep → sparkora.deep,修复 SEARCH_WEB_ENABLED / tavily-api-key 未绑定
+- SearchTool 增 configured()/lastCallOk(),available() 收敛为纯配置判定,消除一次失败永久禁用
+- toolHealth 由布尔改状态码 OK|DISABLED|UNCONFIGURED|FAILED,纳入 SettingService 运行时门控
+- ResearchProgress 补 doneCount 进度分子、状态码工具标签、useRoute() 替代手工路径解析
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bb3c0ad` | fix(deep): 修复研究链路配置绑定与工具健康展示 |
+| `f39bbb1` | docs(spec): 同步工具健康状态码契约并沉淀前缀漂移/闩锁教训 |
+| `0d65fd4` | chore(task): 简报研究链路修复任务工件 |
+
+### Testing
+
+- [OK] mvn -q -DskipTests compile EXIT 0；mvn test 85 通过 0 失败；npm run build EXIT 0
+- [OK] check 子代理实测 R2 绑定探针与 R4 live toolHealth 状态码通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 可选手测 UI 渲染级 AC(进度递增、工具标签)
