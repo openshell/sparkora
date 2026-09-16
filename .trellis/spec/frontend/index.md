@@ -59,6 +59,33 @@ if (res.code === 0) rows.value = res.data          // 分页接口则是 res.dat
 
 ---
 
+### Convention: 「建议 → 用户批准」链路的写入必须双写（渲染 + 登记）
+
+系统产出的**建议**（配图候选等）在用户显式批准前**零副作用**；批准后若「渲染层」与「登记字段」是两套机制，必须**同时写**，只写一处会导致隐性不一致：
+
+```js
+// 采用一张建议图(09-15 article-auto-illustrate)：两处都写
+// 注意候选是 ImageSearchHit(record)：id 字段名是 imageId，不是 id！
+const imageId = img.imageId
+const url = img.url                                   // 必须用图床原图 URL(thumbUrl 是 webp 派生，微信素材接口不支持)
+await imageApi.addBodyImage(projectId.value, imageId) // ① 登记(计数+防误删；可失败，先做)
+editorRef.value?.insertMdAtAnchor?.(group.headingPath, `\n![](${url})\n`)  // ② 真正渲染
+```
+
+- 只写 markdown → 发布页计数错、图片可能被误删；只写登记字段 → 根本不渲染（该字段不参与渲染，见 spec §10 已知债务）。
+- **先登记后插入，且插入失败要回滚登记**：登记是可失败的网络/鉴权写；若先插正文再登记失败，会留下「正文有图、`body_image_ids` 没有」的隐性不一致。反之插入失败时回滚登记，避免「计数虚高但正文无图」。
+- 回滚前判断该图是否**本次新登记**（对照 `imgSnapshot.bodyImageIds`），已登记过的图不得因插入失败被移除（会误删用户既有插图）。
+- **接口 DTO 是 record 时字段名可能与实体不同**：建议/检索类候选走 `ImageSearchHit`（`imageId`/`url`/`thumbUrl`），图库实体走 `id`/`url`。混用会静默传 `undefined`（如 `POST /images/undefined/body` → 400「参数 imageId 格式不正确」），且**编译与构建都不会报错**——对照 `frontend/src/api/index.js` 的接口注释确认字段名。
+- **不得提供任何自动写入路径**：不设自动插入开关；生成建议（检索）可自动，写入必须用户点。服务侧也不得注入可写字段的组件。
+
+**Related**: `frontend/src/views/project/StepPreview.vue`（智能建议 tab）、`frontend/src/components/MarkdownEditor.vue`（`insertMdAtAnchor`）。
+
+### Convention: 按标题定位插入时「找不到必须退回光标处」
+
+`MarkdownEditor.insertMdAtAnchor(headingPath, text)` 按标题文本**首次出现**定位插入点；**标题不存在/为空必须退回 `insertMd`（光标处）而非静默丢弃**——丢掉用户内容比插错位置更糟。同名标题接受「插到第一个同名标题后」的近似行为（已知限制，写入 spec）。
+
+返回值为 `boolean`：`true`=已插入（按标题定位 **或** 退回光标处），`false`=编辑器未就绪、**未插入任何内容**——调用方据此回滚已登记的 `body_image_ids`。`insertAtCursor` 同样返回 `boolean`（原先 `return` 无值，会被 `!== false` 误判为成功）。
+
 ## Page Conventions
 
 ### Convention: 页面骨架统一

@@ -172,6 +172,27 @@ CREATE INDEX IF NOT EXISTS idx_image_asset_source_ref ON sparkora_image_asset(so
 
 > **Warning**: 「仅当列值为空才补写」这类语义**必须把条件写进 UPDATE 的 WHERE**（`.and(w -> w.isNull("source_ref").or().eq("source_ref",""))`），不能只在 Java 端先读后判——先读后写存在 check-then-set 竞态窗口（两条新闻并发同步同一张图时都读到空值，后写覆盖先写，违背「保留首次值」语义）。判定原子性与 09-11「原子抢占」同范式。命中 0 行时以库中现有值回填实体，避免响应体与库不一致。
 
+### 派生数据不落库，只持久化用户决策（09-15 先例：配图建议「忽略」）
+
+「按需重算且结果稳定」的**派生视图**（如正文 × 图库的语义检索建议）**不落库**——落库只会引入「建议陈旧」（正文/图库变了，库里建议还是旧的），按需计算已足够。**只有用户的显式决策**需要持久化：
+
+```sql
+CREATE TABLE IF NOT EXISTS sparkora_illustration_dismiss (
+    id BIGSERIAL PRIMARY KEY,
+    project_id BIGINT NOT NULL, version_id BIGINT NOT NULL,
+    anchor_key VARCHAR(200) NOT NULL,       -- 定位指纹(非序号)
+    created_by VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (version_id, anchor_key)         -- 重复「忽略」幂等
+);
+CREATE INDEX IF NOT EXISTS idx_illustration_dismiss_version ON sparkora_illustration_dismiss(version_id);
+```
+
+- **定位用指纹而非序号**：被引用对象（正文段落）会编辑，序号漂移会让决策错位到别的对象；指纹（稳定字段 + 内容短哈希）在未编辑时稳定，编辑后仅该条失效、不误伤其他。
+- 幂等写入 = 先查 + `UNIQUE` 兜底捕 `DuplicateKeyException`；该写入无外层事务，冲突后无后续 SQL 会撞 aborted 事务（若在事务内，见上「向量/派生数据写入需与调用方事务隔离」）。
+
+> **Warning**: 关联/派生表的「清空」不要用 `updateById(entity)`——MyBatis-Plus `NOT_NULL` 策略会跳过 `null` 字段，导致**清空最后一行的操作静默失败**（先例：`ImageService.modifyBodyImage` 移除最后一张插图后 `body_image_ids` 不为空）。置空必须用 `UpdateWrapper.set(col, null)`。
+
 ### multipart 同名多值参数：`getParameterValues` + 逗号拆分
 
 `multipart/form-data` 要传数组时，前端 `FormData.append('tags', v)` 逐项追加同名参数最自然；后端用 `request.getParameterValues("tags")` 收齐后**再对每项按逗号拆分**，兼容「多值」与「单值逗号分隔」两种前端传法：

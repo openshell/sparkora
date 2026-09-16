@@ -235,6 +235,61 @@ public void embedQuietly(Long imageId) {
 
 ---
 
+## Scenario: 配图建议（派生建议，零副作用；09-15 article-auto-illustrate 子C）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改「基于正文自动产出候选」类能力（文章配图建议、问答配图建议…），或改动 `IllustrationSuggestionService` / `AnchorExtractor`。
+
+### 2. Signatures
+```java
+// AnchorExtractor（纯静态，无 Spring/AI 依赖，可单测）
+record Anchor(int anchorIndex, String headingPath, String text, String key)
+static List<Anchor> extract(String contentMd, int maxAnchors)      // 上限保序截断
+static String fingerprint(String headingPath, String text)         // 归一化文本前 80 字符 sha256 前 12 位
+
+// IllustrationSuggestionService（只读；刻意不注入 ImageService）
+record AnchorSuggestion(String anchorKey, int anchorIndex, String headingPath,
+                        String anchorText, List<ImageSearchHit> candidates)
+List<AnchorSuggestion> suggest(Long projectId, List<String> tags, Double minScore)
+void dismiss(Long projectId, String anchorKey, String operator)
+```
+
+### 3. Contracts
+- **派生建议零副作用**：`suggest` 只读正文 + 图库（`searchImages`），**不写 `content_md` / `body_image_ids`**；服务**不得注入 `ImageService`**（否则 `modifyBodyImage`/`setCover` 写路径可达）。生成建议前后 DB 的 `content_md`/`body_image_ids` 必须完全一致（硬验证项）。
+- **无自动插入能力**：不存在自动写入开关/配置；写入仅由用户显式「采用」触发（前端 markdown 插入 + `POST /images/{id}/body`）。
+- **建议不落库**：建议是「当前正文 + 当前图库」的派生视图（可重算、结果稳定）；只有用户的「忽略」决策持久化。落库会引入「建议陈旧」。
+- **锚点用指纹而非序号**：正文编辑后序号漂移会让「忽略」记录错位；指纹（标题路径 + 归一化文本 sha256 前 12 位）未编辑时稳定，纯格式调整（加粗/换行）不改指纹。
+- **单锚点失败降级**：任一锚点检索失败仅 warn 跳过，其余锚点照常返回（不整体 500）；门槛以下无候选 → 该锚点不出现（不报错）。
+- **`dismiss` 幂等**：先查 + `UNIQUE(version_id, anchor_key)` 兜底，捕 `DuplicateKeyException` 静默吞（无外层事务，不会污染调用方）。
+
+### 4. Validation & Error Matrix
+- 项目不存在 → 400「项目不存在」；无当前版本 → 400「尚未生成正文版本，无法生成配图建议」；正文空 → 400「正文为空，无法生成配图建议」。
+- `minScore` <0 或 >1 → 400；`anchorKey` 空/超 200 字符 → 400。
+- VIEWER：suggest 200（读）；dismiss 403。
+
+### 5. Good/Base/Bad Cases
+- Good: 建议生成走只读依赖（project/version/embedding/dismiss mapper 的读方法），前端「采用」才双写。
+- Base: 图库规模小（~170 张）时多数锚点无候选 → 空态给可操作指引（调低门槛/换标签/补图）。
+- Bad: 因候选分数高就自动插入；或在建议服务里注入 `ImageService` 顺手写 `body_image_ids`。
+
+### 6. Tests Required
+- `AnchorExtractorTest`：分段/前言/H1 不计入、纯列表/引用/代码块/图片/过短跳过、上限截断、markdown 清洗、指纹稳定性与超长窗口、null/空/非法上限边界。
+- `IllustrationSuggestionServiceTest`：前置校验 4 例、按锚点组装与 topN/门槛透传、无候选不出现、单锚点失败跳过、已忽略过滤、`dismiss` 幂等与唯一冲突、**零副作用断言**（写方法从未被调用 + 反射断言未注入 `ImageService`）。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// suggest 里顺手写 body_image_ids：违反「建议零副作用」硬约束
+if (hit.score() > 0.9) imageService.modifyBodyImage(projectId, hit.imageId(), "add");
+```
+#### Correct
+```java
+// 只返回建议；写入由前端在用户点「采用」后触发（markdown + addBodyImage 双写）
+out.add(new AnchorSuggestion(a.key(), idx, a.headingPath(), a.text(), hits));
+```
+
+---
+
 ## Naming / Conventions
 
 - 会话仅创建者可见：按 `created_by` 过滤，越权与不存在**统一** `IllegalArgumentException("会话不存在")` → 控制器 404（不泄露存在性）。
