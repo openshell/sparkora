@@ -267,6 +267,67 @@
             </div>
           </div>
         </el-tab-pane>
+        <!-- 智能建议(09-15 article-auto-illustrate 子C):按段落锚点语义检索图库,产出**建议**。
+             系统只给建议,点「插入到此段」/「全部采用」才会写入正文(无自动插入开关)。 -->
+        <el-tab-pane label="智能建议" name="suggest">
+          <div class="sug-head">
+            <el-input-number v-model="sugMinScore" size="small" class="sug-score"
+                             :min="0" :max="1" :step="0.05" :precision="2" controls-position="right" />
+            <el-select v-model="sugTagFilter" multiple collapse-tags collapse-tags-tooltip clearable
+                       placeholder="标签预过滤(可多选)" size="small" class="sug-tags">
+              <el-option v-for="t in allTags" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
+            </el-select>
+            <el-button type="primary" size="small" :loading="sugLoading" :disabled="busy" @click="generateSuggestions">
+              {{ sugLoaded ? '重新生成' : '生成建议' }}
+            </el-button>
+          </div>
+          <div class="img-pop-tip">
+            系统只给建议，点「插入到此段」或「全部采用」才会写入正文；不会自动插图。
+          </div>
+
+          <!-- 空态:未生成 -->
+          <div v-if="!sugLoaded && !sugLoading" class="img-pop-empty">
+            点「生成建议」，系统按正文段落语义匹配图库图片（仅建议，需你确认）。
+          </div>
+          <el-skeleton v-else-if="sugLoading" :rows="4" animated />
+          <!-- 空态:生成后无候选 / 全部被忽略（区分文案:后者是用户主动忽略，不应再劝「调低门槛」） -->
+          <div v-else-if="!sugGroups.length" class="img-pop-empty">
+            <template v-if="sugDismissedCount">
+              已忽略全部建议段落。若想重新看到建议，可调低门槛或换标签后再点「重新生成」。
+            </template>
+            <template v-else>
+              本次没有匹配到合适配图。可尝试调低门槛、换标签预过滤，或先到「图库」页补充图片
+              （图库越丰富，建议越有用）。
+            </template>
+          </div>
+          <div v-else class="sug-list">
+            <div v-for="g in sugGroups" :key="g.anchorKey" class="sug-group">
+              <div class="sug-group-head">
+                <span class="sug-group-title">{{ g.headingPath || '开头段落' }}</span>
+                <span class="sug-group-actions">
+                  <el-button size="small" plain :disabled="busy" @click="onAdoptGroup(g)">全部采用</el-button>
+                  <el-button size="small" text :disabled="busy" @click="onDismissGroup(g)">忽略此段</el-button>
+                </span>
+              </div>
+              <div class="sug-anchor-text">{{ g.anchorText }}</div>
+              <div class="sug-grid">
+                <div v-for="img in g.candidates" :key="img.imageId" class="sug-cell">
+                  <el-image :src="img.thumbUrl || img.url" fit="cover" class="sug-thumb"
+                            :preview-src-list="[img.url]" preview-teleported hide-on-click-modal />
+                  <div class="sug-meta">
+                    <span class="sug-score-val">相关度 {{ (img.score * 100).toFixed(0) }}%</span>
+                    <span v-if="sugAdopted.has(img.imageId)" class="sug-adopted">已采用</span>
+                  </div>
+                  <div class="sug-tag-row">
+                    <el-tag v-for="t in (img.tags || [])" :key="t" size="small" effect="plain">{{ t }}</el-tag>
+                  </div>
+                  <el-button size="small" type="primary" plain class="sug-insert"
+                             :disabled="busy" @click="onAdoptOne(g, img)">插入到此段</el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </el-drawer>
   </el-card>
@@ -333,6 +394,18 @@ const refImage = ref(null)          // 图生图参考图
 const refDialog = ref(false)
 const generating = ref(false)       // AI 生成中
 const busy = ref(false)             // 封面操作中
+
+// ==== 智能配图建议(09-15 article-auto-illustrate 子C)====
+// 硬约束:系统只产出建议,**绝不自动写入**;配图进入正文的唯一路径是用户点「插入到此段」/「全部采用」。
+// 无任何自动插入开关(不存在 AUTO_ILLUSTRATE_ENABLED 之类配置)。
+const sugGroups = ref([])          // 按锚点分组的建议: [{anchorKey,anchorIndex,headingPath,anchorText,candidates[]}]
+const sugLoading = ref(false)
+const sugLoaded = ref(false)       // 是否已生成过(区分「未生成」/「生成后无候选」空态)
+const sugTagFilter = ref([])       // 标签预过滤(AND 语义)
+const sugMinScore = ref(0.3)       // 相似度门槛(默认与后端 AI_IMAGE_MIN_SCORE 同口径)
+const sugAdopted = ref(new Set())  // 本次会话已采用的图片 id(仅用于候选标记「已采用」)
+const sugDismissedCount = ref(0)   // 本次会话已忽略的锚点数(区分「无候选」与「全被忽略」两种空态)
+const allTags = ref([])            // 全库标签清单(预过滤下拉同源)
 
 // ==== 图库分页检索状态(S10:抽屉「图库」tab 与参考图弹窗共用,触底加载) ====
 const SOURCE_LABELS = { upload: '上传', 'ai-text2img': '文生图', 'ai-img2img': '图生图', byd: '比亚迪' }
@@ -693,6 +766,123 @@ const onRegenerate = async (img) => {
 
 const chooseRef = (img) => { refImage.value = img; refDialog.value = false }
 
+// ==== 智能配图建议(09-15 article-auto-illustrate 子C)====
+// 生成建议 = 只读检索(零副作用);采用 = 唯一写入路径(用户显式点击)。
+/** 生成建议(可重算,幂等):按锚点分组返回候选;无候选锚点不出现。 */
+const generateSuggestions = async () => {
+  sugLoading.value = true
+  try {
+    const res = await projectApi.illustrationSuggestions(projectId.value, {
+      tags: sugTagFilter.value.length ? sugTagFilter.value : undefined,
+      minScore: sugMinScore.value
+    })
+    if (res.code === 0) {
+      sugGroups.value = res.data || []
+      sugLoaded.value = true
+      sugAdopted.value = new Set()
+      sugDismissedCount.value = 0   // 本轮重新生成 → 重置:空态文案不沿用上一轮忽略(后端已过滤,本轮不会返回被忽略锚点)
+      if (!sugGroups.value.length) ElMessage.info('本次没有匹配到合适配图,可调低门槛或先去图库补图')
+    } else ElMessage.error(res.msg || '生成建议失败')
+  } catch (e) {
+    ElMessage.error('生成建议失败:' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { sugLoading.value = false }
+}
+
+/** 加载全库标签清单(预过滤下拉;失败静默,不阻塞建议功能)。 */
+const loadSugTags = async () => {
+  if (allTags.value.length) return
+  try {
+    const res = await imageApi.listTags()
+    if (res.code === 0) allTags.value = res.data || []
+  } catch (e) { /* 标签清单仅为可选预过滤,失败忽略 */ }
+}
+
+/** 单张采用(用户批准):① 登记 body_image_ids(保证发布页计数+防误删) ② markdown 插入锚点处(保证真正渲染)。
+ *  二者均幂等;两处都写才自洽——只写 markdown 则发布计数错/图片可能被误删,只写登记则根本不渲染。
+ *  注意:① 是可失败的网络/鉴权写,故先做①——失败时正文原样不动,不会留下「已插正文、未登记」的隐性不一致。 */
+const adoptSuggestion = async (group, img, silent) => {
+  // candidates 是 ImageSearchHit(record), 其 id 字段名是 imageId(不是 id)——用错会退化成 /images/undefined/body → 400
+  const imageId = img?.imageId ?? img?.id
+  const url = originUrl(img)
+  if (imageId == null) throw new Error('候选图缺少 id,无法登记插图')
+  if (!url) throw new Error('候选图缺少图床 URL,无法插入正文')
+  // 编辑器不可用则直接失败:否则会「登记了但是没插进正文」,发布页计数虚高
+  const insert = editorRef.value?.insertMdAtAnchor
+  if (typeof insert !== 'function') throw new Error('编辑器未就绪,请稍后重试')
+  const md = `\n![](${url})\n`
+  // 是否本次新登记:用于回滚判定——已登记过的图不能因「② 插入失败」被移除(会误删用户既有插图)。
+  // 同时看会话内已采用集合:同名图在两组里重复采用时,快照可能尚未刷新,不能误判为「本次新登记」。
+  const alreadyRegistered = (imgSnapshot.value?.bodyImageIds || []).map(String).includes(String(imageId))
+      || sugAdopted.value.has(imageId)
+  // ① 登记 body_image_ids(幂等;失败则正文原样不动)
+  const res = await imageApi.addBodyImage(projectId.value, imageId)
+  if (res.code !== 0) throw new Error(res.msg || '登记插图失败')
+  // ② 插入正文:优先按锚点标题定位;找不到标题时编辑器内部退回光标处(不丢内容)。
+  //    ② 未插入(编辑器未就绪)或抛错则回滚 ①——「两处都写」不能只写一半
+  //    (只登记不渲染 → 发布页计数虚高;只渲染不登记 → 计数偏低且图可被误删)。
+  let inserted = false
+  try {
+    inserted = insert(group.headingPath, md) !== false
+  } catch (e) {
+    inserted = false
+  }
+  if (!inserted) {
+    if (!alreadyRegistered) {
+      try { await imageApi.removeBodyImage(projectId.value, imageId) } catch (ignored) { /* 回滚失败:留给用户手动移除 */ }
+    }
+    throw new Error('插入正文失败（编辑器未就绪），已回滚登记，请重试')
+  }
+  const next = new Set(sugAdopted.value)
+  next.add(imageId)
+  sugAdopted.value = next
+  if (!silent) ElMessage.success('已插入到正文并登记插图')
+}
+
+const onAdoptOne = async (group, img) => {
+  busy.value = true
+  try {
+    await adoptSuggestion(group, img)
+    try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响已完成的写入,仅提示 */ }
+  } catch (e) {
+    ElMessage.error('采用失败:' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { busy.value = false }
+}
+
+/** 整组采用:逐张执行(单张失败不阻断其余,末尾汇总提示)。
+ *  倒序插入:每次都插到标题行之后,倒序执行才能让「相关度最高」的排在紧贴标题的第一位(与候选展示序一致)。 */
+const onAdoptGroup = async (group) => {
+  if (!group.candidates?.length) return
+  busy.value = true
+  let ok = 0, fail = 0
+  try {
+    for (const img of [...group.candidates].reverse()) {
+      try {
+        await adoptSuggestion(group, img, true)
+        ok++
+      } catch (e) { fail++ }
+    }
+    try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响已完成的写入,仅提示 */ }
+    if (fail) ElMessage.warning(`已采用 ${ok} 张,${fail} 张失败`)
+    else ElMessage.success(`已采用 ${ok} 张`)
+  } catch (e) {
+    ElMessage.error('采用失败:' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { busy.value = false }
+}
+
+/** 忽略该锚点建议组:落库「忽略」记录(幂等),后续生成建议不再推荐该锚点。 */
+const onDismissGroup = async (group) => {
+  busy.value = true
+  try {
+    const res = await projectApi.dismissIllustration(projectId.value, group.anchorKey)
+    if (res.code !== 0) throw new Error(res.msg || '忽略失败')
+    sugGroups.value = sugGroups.value.filter(g => g.anchorKey !== group.anchorKey)
+    sugDismissedCount.value += 1
+    ElMessage.success('已忽略此段建议')
+  } catch (e) {
+    ElMessage.error('忽略失败:' + (e.response?.data?.msg || e.message || '网络异常'))
+  } finally { busy.value = false }
+}
+
 watch(saveState, (s) => { if (s !== 'dirty') return })
 watch(dirty, (d) => {
   if (d) { saveState.value = 'dirty'; localStorage.setItem(draftKey.value, contentMd.value) }
@@ -746,8 +936,10 @@ watch(() => props.project, (p) => {
 watch(previewable, (ok) => { if (ok && !loaded.value && !loadError.value) loadContent() })
 // S10:抽屉/参考图弹窗首次打开时拉图库分页(后续打开仅在空态时重拉,避免打断滚动位置)
 watch(imgDrawer, (open) => { if (open && !libraryImages.value.length) reloadLibrary() })
+// 智能建议 tab 首次进入时拉标签清单(仅可选预过滤;建议由用户点按钮触发生成,不自动请求)
+watch(imgTab, (t) => { if (t === 'suggest') loadSugTags() })
 watch(refDialog, (open) => { if (open && !libraryImages.value.length) reloadLibrary() })
-onBeforeUnmount(() => { clearTimeout(renderTimer); flushSavePreviewStyle() })
+onBeforeUnmount(() => { clearTimeout(renderTimer); clearTimeout(libKwTimer); flushSavePreviewStyle() })
 </script>
 
 <style scoped>
@@ -810,6 +1002,27 @@ onBeforeUnmount(() => { clearTimeout(renderTimer); flushSavePreviewStyle() })
 .ref-cell:hover { border-color: var(--brand); }
 .ref-cell-thumb { width: 100%; aspect-ratio: 1; border-radius: var(--radius-sm); }
 .ref-cell-name { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 智能配图建议(09-15 article-auto-illustrate 子C):只给建议,点采用才写入 */
+.sug-head { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+.sug-score { width: 120px; flex: none; }
+.sug-tags { flex: 1; min-width: 150px; }
+.sug-list { max-height: 62vh; overflow-y: auto; }
+.sug-group { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 12px; background: var(--card); }
+.sug-group-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin-bottom: 4px; }
+.sug-group-title { font-size: 13px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sug-group-actions { flex: none; display: inline-flex; gap: 4px; }
+.sug-anchor-text { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sug-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.sug-cell { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; }
+.sug-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); }
+.sug-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 5px; }
+.sug-score-val { font-size: 11px; color: var(--muted); }
+.sug-adopted { font-size: 11px; color: #fff; background: var(--ok, #67c23a); border-radius: 8px; padding: 0 6px; }
+.sug-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 20px; }
+.sug-tag-row .el-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sug-insert { width: 100%; margin-top: 6px; min-height: 32px; }
 
 /* ===== 工具栏(三段分组:选择器 | 开关 | 动作;统一 36px 高度) ===== */
 .ctrl-bar {
@@ -904,6 +1117,11 @@ onBeforeUnmount(() => { clearTimeout(renderTimer); flushSavePreviewStyle() })
   /* 移动端配图抽屉全屏,网格两列 */
   .img-drawer { --el-drawer-size: 100% !important; }
   .img-pop-grid { grid-template-columns: repeat(2, 1fr); }
+  /* 智能建议:移动端单列 + 触控目标 >=44px */
+  .sug-grid { grid-template-columns: 1fr; }
+  .sug-group-actions .el-button,
+  .sug-insert { min-height: 44px; }
+  .sug-head .el-button { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .wenyan-preview { animation: none; }

@@ -49,7 +49,15 @@ export const projectApi = {
   // 09-11-preview-publish-bridge:保存预览页样式(主题/高亮/Mac/脚注,项目级);body={theme?,highlight?,macStyle?,footnote?}
   savePreviewStyle: (id, data) => http.put(`/projects/${id}/preview-style`, data),
   // 09-11-preview-publish-bridge:保存发布元信息(作者/原文地址,项目级);body={author?,sourceUrl?}
-  savePublishMeta: (id, data) => http.put(`/projects/${id}/publish-meta`, data)
+  savePublishMeta: (id, data) => http.put(`/projects/${id}/publish-meta`, data),
+  // 09-15 article-auto-illustrate 子C:配图建议(按段落锚点语义检索图库,零副作用——不写正文/body_image_ids)。
+  // body={tags?[], minScore?};data=[{anchorKey,anchorIndex,headingPath,anchorText,candidates[ImageSearchHit]}]
+  // 逐锚点 embedding 检索,放宽超时
+  illustrationSuggestions: (id, data) =>
+    http.post(`/projects/${id}/illustration-suggestions`, data || {}, { timeout: 120000 }),
+  // 忽略某锚点建议组(该锚点后续不再推荐;幂等);body={anchorKey}
+  dismissIllustration: (id, anchorKey) =>
+    http.post(`/projects/${id}/illustration-suggestions/dismiss`, { anchorKey })
 }
 
 export const styleApi = {

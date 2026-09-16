@@ -42,11 +42,44 @@ const mkTheme = (HighlightStyle, syntaxHighlighting, defaultHighlightStyle) => {
 }
 
 const insertAtCursor = (text) => {
-  if (!view) return
+  if (!view) return false
   const { state } = view
   const pos = state.selection.main.head
   view.dispatch({ changes: { from: pos, insert: text }, selection: { anchor: pos + text.length } })
   view.focus()
+  return true
+}
+
+/**
+ * 按标题文本定位插入(09-15 article-auto-illustrate 智能配图建议:插入到锚点段首)。
+ * - headingPath 为空 / 找不到标题 → 退回光标处插入(insertAtCursor),**保证不丢内容**(丢内容比插错位置更糟);
+ * - 找到标题 → 插到「该标题行末尾之后」;headingPath 含层级(如「续航实测 > 高速工况」)时,用最后一段匹配(最具体标题);
+ * - 同名标题按**首次出现**定位(已知限制:重复标题会插到第一个同名标题后)。
+ * @returns {boolean} true=文本已插入(按标题定位 或 退回光标处); false=编辑器尚未就绪,**未插入任何内容**
+ *   (调用方据此回滚已登记的 body_image_ids,避免「登记了但没插进正文」)。
+ */
+const insertMdAtAnchor = (headingPath, text) => {
+  if (!view) return false
+  const raw = String(headingPath || '').trim()
+  if (!raw) return insertAtCursor(text)
+  // 层级路径取最具体的一级标题文本,并去掉 markdown 标记与首尾空白
+  const parts = raw.split('>').map(s => s.trim()).filter(Boolean)
+  const title = (parts[parts.length - 1] || raw).replace(/^#+\s*/, '').trim()
+  if (!title) return insertAtCursor(text)
+  const doc = view.state.doc.toString()
+  const lines = doc.split('\n')
+  let offset = 0
+  for (const line of lines) {
+    const m = /^(#{1,6})\s+(.*)$/.exec(line)
+    if (m && m[2].trim() === title) {
+      const pos = offset + line.length   // 标题行末尾
+      view.dispatch({ changes: { from: pos, insert: text }, selection: { anchor: pos + text.length } })
+      view.focus()
+      return true
+    }
+    offset += line.length + 1
+  }
+  return insertAtCursor(text)
 }
 
 /** 编辑器滚动 → 上层(百分比,用于与预览同步)。 */
@@ -155,6 +188,8 @@ defineExpose({
   insertText: insertAtCursor,
   /** 上层业务插入 markdown(插图面板等):插到当前光标处并聚焦。 */
   insertMd: insertAtCursor,
+  /** 智能配图建议:插到指定锚点标题之后(找不到标题退回光标处)。返回 false=编辑器未就绪未插入。见 insertMdAtAnchor 注释。 */
+  insertMdAtAnchor,
   focus: () => view?.focus(),
   /** 父组件发起的滚动同步(百分比)。 */
   scrollToPercent: (p) => {
