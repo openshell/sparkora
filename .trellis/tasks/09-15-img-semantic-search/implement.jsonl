@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema 幂等建表（CREATE TABLE/INDEX IF NOT EXISTS,禁 DO $$）、VECTOR 列用注解 SQL 而非 BaseMapper、物理删关联表同事务清理、精确匹配防子串、索引命名——图片向量表与删图联动遵循"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域向量检索契约（同空间硬约束/HNSW cosine/候选窗口按域隔离/门槛与 topk 配置）、EmbedStats 重建范式——图片向量域必须与三域同模型同维度，检索写法对齐现有范式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "IllegalArgumentException→R.fail(400)、模型未配置/调用失败的 500 映射、DTO @Valid 中文消息规范——search 接口的校验与错误矩阵"}
+{"file": "docs/s0-spec.md", "reason": "§1 接口清单登记位置、§10 图库字段级契约、检索章节结构——两个新接口与图片向量域须同步进 spec"}
+{"file": ".trellis/tasks/09-15-img-semantic-search/prd.md", "reason": "本任务需求 R1-R5 与验收标准 AC 逐条"}
+{"file": ".trellis/tasks/09-15-img-semantic-search/design.md", "reason": "技术设计：表结构、嵌入文本构造规则、service/mapper 签名、检索 SQL 与标签预过滤、接口契约与错误矩阵、权衡与回滚"}
+{"file": ".trellis/tasks/09-15-img-semantic-search/implement.md", "reason": "执行计划 M1-M8、真机验证清单、DB 交叉核对、风险点"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父任务需求总集：本任务在 B 位的地基定位、与子C/子D 的下游契约（searchImages 被消费）"}
+{"file": "src/main/java/com/sparkora/mapper/CarDocEmbeddingMapper.java", "reason": "向量 mapper 注解 SQL 参考实现（searchTopKUnified 的 UNION 与候选窗口隔离、1-(<=>) 分数表达、字面量 ::vector 传参）"}
+{"file": "src/main/java/com/sparkora/kb/service/KbDocService.java", "reason": "rebuild 先清后插 + EmbedStats(total,success,failed) + 单块失败 warn 跳过计数的参考范式"}

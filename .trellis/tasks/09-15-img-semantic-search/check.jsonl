@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-15-img-semantic-search/prd.md", "reason": "R1-R5 与 AC 逐条核对（向量表同构/嵌入文本分派/增量+重建幂等/检索接口与门槛/可观测）"}
+{"file": ".trellis/tasks/09-15-img-semantic-search/design.md", "reason": "核对实现与设计一致：表结构/唯一索引、TextBuilder 四来源规则与 2000 截断、embedQuietly 吞异常边界、标签 AND 预过滤、DTO 契约、URL/标签回填"}
+{"file": ".trellis/tasks/09-15-img-semantic-search/implement.md", "reason": "核对里程碑完成度、真机清单与 DB 交叉核对是否执行、风险缓解是否落实（runner try/catch、钩子位置）"}
+{"file": "docs/s0-spec.md", "reason": "新表/新接口/新配置是否已同步（schema+entity+spec 三处同步原则）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对建表幂等两次执行、无 DO $$、索引命名、物理删联动、vector 注解 SQL 用法"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对与三域同维度同距离函数、候选窗口隔离是否被破坏、门槛与 topk 配置接入是否遵循惯例"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父级跨子验收：与三域同向量空间、零回归（三域检索行为不变）"}
