@@ -25,28 +25,65 @@
         </el-select>
       </div>
       <div class="tb-group tb-browse">
-        <el-input v-model="keyword" clearable placeholder="搜索文件名 / 提示词" class="kw-input" size="default"
+        <!-- 语义搜索模式(09-15 img-semantic-search 子B):自然语言找图,与下方精确筛选互斥 -->
+        <el-tooltip content="语义搜索：用自然语言找图，如「比亚迪销量海报」" placement="top" :show-after="300">
+          <el-button :type="semanticMode ? 'primary' : ''" :plain="!semanticMode" :icon="Aim"
+                     @click="toggleSemanticMode">语义搜索</el-button>
+        </el-tooltip>
+        <el-input v-if="semanticMode" v-model="semanticQuery" clearable placeholder="如：比亚迪销量海报 / 出海签约现场" class="sem-input" size="default"
+                  :prefix-icon="Aim" @keyup.enter="runSemanticSearch" @clear="exitSemantic" />
+        <el-input v-else v-model="keyword" clearable placeholder="搜索文件名 / 提示词" class="kw-input" size="default"
                   :prefix-icon="Search" @input="onKeywordInput" @clear="onFilterChange" />
-        <el-select v-model="sourceFilter" clearable placeholder="来源" class="src-filter" size="default" @change="onFilterChange">
-          <el-option v-for="(label, val) in SOURCE_LABELS" :key="val" :label="label" :value="val" />
-        </el-select>
-        <el-select v-model="tagFilter" multiple filterable collapse-tags collapse-tags-tooltip clearable
-                   placeholder="标签（可多选，AND）" class="tag-filter" size="default" @change="onFilterChange">
-          <!-- 09-15 img-classify:标签按命名空间前缀分组（主题/年份/其他），受控主题与自由标签隔离 -->
-          <el-option-group v-for="g in tagGroups" :key="g.name" :label="g.name">
-            <el-option v-for="t in g.options" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
-          </el-option-group>
-        </el-select>
-        <el-select v-model="projectFilter" clearable placeholder="项目" class="proj-filter" size="default" @change="onFilterChange">
-          <el-option label="全部 / 全局图" :value="''" />
-          <el-option v-for="p in projects" :key="p.id" :label="`#${p.id} ${p.topic}`" :value="p.id" />
-        </el-select>
+        <template v-if="!semanticMode">
+          <el-select v-model="sourceFilter" clearable placeholder="来源" class="src-filter" size="default" @change="onFilterChange">
+            <el-option v-for="(label, val) in SOURCE_LABELS" :key="val" :label="label" :value="val" />
+          </el-select>
+          <el-select v-model="tagFilter" multiple filterable collapse-tags collapse-tags-tooltip clearable
+                     placeholder="标签（可多选，AND）" class="tag-filter" size="default" @change="onFilterChange">
+            <!-- 09-15 img-classify:标签按命名空间前缀分组（主题/年份/其他），受控主题与自由标签隔离 -->
+            <el-option-group v-for="g in tagGroups" :key="g.name" :label="g.name">
+              <el-option v-for="t in g.options" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
+            </el-option-group>
+          </el-select>
+          <el-select v-model="projectFilter" clearable placeholder="项目" class="proj-filter" size="default" @change="onFilterChange">
+            <el-option label="全部 / 全局图" :value="''" />
+            <el-option v-for="p in projects" :key="p.id" :label="`#${p.id} ${p.topic}`" :value="p.id" />
+          </el-select>
+        </template>
+        <template v-else>
+          <el-select v-model="semanticTags" multiple filterable collapse-tags collapse-tags-tooltip clearable
+                     placeholder="限定标签（可选，AND）" class="tag-filter" size="default" @change="refreshSemantic">
+            <el-option-group v-for="g in tagGroups" :key="g.name" :label="g.name">
+              <el-option v-for="t in g.options" :key="t.name" :label="`${t.name} (${t.count})`" :value="t.name" />
+            </el-option-group>
+          </el-select>
+          <!-- 相关度门槛：太低掺噪、太高空结果；开放调节避免「搜了没结果」无从下手 -->
+          <el-tooltip content="相关度门槛：越高越严（结果更少更准）；搜不到时调低" placement="top" :show-after="300">
+            <el-select v-model="semanticMinScore" class="score-filter" size="default" @change="refreshSemantic">
+              <el-option label="宽松 0.15" :value="0.15" />
+              <el-option label="默认 0.30" :value="0.3" />
+              <el-option label="严格 0.45" :value="0.45" />
+            </el-select>
+          </el-tooltip>
+          <el-button type="primary" :icon="Aim" :loading="semanticLoading" @click="runSemanticSearch">搜索</el-button>
+        </template>
         <el-tooltip content="紧凑 / 舒适密度" placement="top" :show-after="300">
           <el-button text :icon="density === 'compact' ? Menu : Grid" aria-label="切换网格密度" @click="toggleDensity" />
         </el-tooltip>
-        <el-button text :icon="Refresh" aria-label="刷新" @click="load" />
-        <el-button v-if="user.isEditorOrAbove && !selectMode && images.length" text type="danger" plain @click="enterSelectMode">批量管理</el-button>
+        <el-button v-if="!semanticMode" text :icon="Refresh" aria-label="刷新" @click="load" />
+        <el-button v-if="user.isEditorOrAbove && !selectMode && images.length && !semanticMode" text type="danger" plain @click="enterSelectMode">批量管理</el-button>
       </div>
+    </div>
+
+    <!-- 语义搜索提示条：结果按相关度排序，展示命中原因（嵌入原文） -->
+    <div v-if="semanticMode" class="sem-bar">
+      <span class="sem-bar-text">
+        <el-icon><Aim /></el-icon>
+        语义搜索 {{ semanticQuery ? `「${semanticQuery}」` : '' }} · 按相关度排序
+        <template v-if="semanticActive">，命中 {{ total }} 张</template>
+      </span>
+      <el-tag v-if="semanticActive" size="small" type="info" effect="plain">门槛 ≥{{ semanticMinScore }}，按相关度排序</el-tag>
+      <el-button size="small" text @click="exitSemantic">退出语义搜索</el-button>
     </div>
 
     <!-- 批量选择态工具条 -->
@@ -58,8 +95,8 @@
       <el-button size="small" text @click="exitSelectMode">取消</el-button>
     </div>
 
-    <!-- 筛选状态 chip 条 -->
-    <div v-if="activeChips.length" class="chip-row">
+    <!-- 筛选状态 chip 条（语义搜索模式不展示精确筛选态） -->
+    <div v-if="activeChips.length && !semanticMode" class="chip-row">
       <el-tag v-for="c in activeChips" :key="c.key" closable size="small" effect="plain" round @close="c.clear">
         {{ c.label }}
       </el-tag>
@@ -77,11 +114,18 @@
     <div v-else-if="!images.length" class="empty-state">
       <el-empty :image-size="100">
         <template #description>
-          <div class="empty-desc">{{ hasFilter ? '无匹配图片：调整或清除筛选条件' : '图库还是空的，从上传或 AI 生成开始' }}</div>
+          <div class="empty-desc">
+            <template v-if="semanticMode && semanticActive">没有相关度达标（≥{{ semanticMinScore }}）的图片：换个说法、去掉限定标签，或把门槛调低</template>
+            <template v-else-if="semanticMode">输入自然语言描述后回车搜索，如「比亚迪销量海报」</template>
+            <template v-else>{{ hasFilter ? '无匹配图片：调整或清除筛选条件' : '图库还是空的，从上传或 AI 生成开始' }}</template>
+          </div>
         </template>
         <div class="empty-actions">
-          <el-button type="primary" icon="Upload" :loading="uploading" @click="triggerUpload">上传图片</el-button>
-          <el-button v-if="user.isEditorOrAbove" type="primary" plain icon="MagicStick" @click="aiDrawer = true">AI 生图</el-button>
+          <el-button v-if="semanticMode" @click="exitSemantic">退出语义搜索</el-button>
+          <template v-else>
+            <el-button type="primary" icon="Upload" :loading="uploading" @click="triggerUpload">上传图片</el-button>
+            <el-button v-if="user.isEditorOrAbove" type="primary" plain icon="MagicStick" @click="aiDrawer = true">AI 生图</el-button>
+          </template>
         </div>
       </el-empty>
     </div>
@@ -108,8 +152,12 @@
           <div class="hover-panel">
             <div class="hp-meta">
               <div class="hp-name" :title="img.fileName">{{ img.fileName }}</div>
-              <div class="hp-sub">{{ sourceLabel(img.source) }} · {{ projectLabel(img) }} · {{ img.width && img.height ? `${img.width}×${img.height}` : '' }}</div>
-              <div class="hp-sub">{{ img.createdBy }} · {{ shortTime(img.createdAt) }}</div>
+              <div class="hp-sub">{{ hpSubText(img) }}</div>
+              <!-- 语义搜索命中：显示相关度分数与嵌入原文（可解释性） -->
+              <div v-if="img.score != null" class="hp-score" :title="img.sourceText">
+                相关度 {{ (img.score * 100).toFixed(0) }}%<span v-if="img.sourceText" class="hp-score-why"> · {{ img.sourceText }}</span>
+              </div>
+              <div v-else class="hp-sub">{{ img.createdBy }} · {{ shortTime(img.createdAt) }}</div>
               <!-- 来源追溯行（09-15 img-classify）：新闻图显示「来源：<标题> · <日期>」，点击跳原文 -->
               <div v-if="sourceInfo(img.id) && sourceInfo(img.id).news" class="hp-src">
                 <span class="hp-src-text" :title="sourceInfo(img.id).news.title"
@@ -156,10 +204,12 @@
                @click.stop="openNews(sourceInfo(img.id))">
             来源：{{ sourceInfo(img.id).news.title }}
           </div>
+          <!-- 移动端语义分数行（09-15 img-semantic-search，hover 不可用，常显） -->
+          <div v-if="img.score != null" class="m-score">相关度 {{ (img.score * 100).toFixed(0) }}%</div>
         </div>
       </div>
-      <!-- 分页 -->
-      <div class="pager-row">
+      <!-- 分页：语义搜索为 topK 无分页，仅图库浏览态显示 -->
+      <div v-if="!semanticMode" class="pager-row">
         <el-pagination v-model:current-page="page" :page-size="size" :total="total"
                        layout="prev, pager, next, total" background @current-change="load" />
       </div>
@@ -288,7 +338,7 @@ import TopBar from '../layouts/TopBar.vue'
 import { imageApi, projectApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, WarningFilled, Search, MagicStick, Menu, Grid, Check, MoreFilled, Upload } from '@element-plus/icons-vue'
+import { Refresh, WarningFilled, Search, MagicStick, Menu, Grid, Check, MoreFilled, Upload, Aim } from '@element-plus/icons-vue'
 
 /** 图库维护页(S10 功能 + UI 重设计):以看图找图为核心。元数据入 hover 层;批量管理;连续预览;筛选 chip。 */
 const user = useUserStore()
@@ -335,6 +385,75 @@ const uploading = ref(false)
 const deletingId = ref(null)
 const regenId = ref(null)
 const highlightId = ref(null)        // AI 候选定位高亮
+
+// ==== 语义搜索模式（09-15 img-semantic-search 子B）====
+// 与精确筛选（关键字/来源/标签/项目）互斥：语义搜索走 POST /images/search，按相关度排序、无分页。
+// 展示复用同一网格（命中项字段为 ImageSearchHit 子集，score/sourceText 额外存在）。
+const semanticMode = ref(false)
+const semanticQuery = ref('')
+const semanticTags = ref([])         // 语义检索的标签 AND 预过滤（可选）
+const semanticLoading = ref(false)
+const semanticActive = ref(false)    // 已执行过检索（区分「未搜」与「搜了没结果」）
+const semanticMinScore = ref(0.3)    // 相关度门槛（可选调；默认与后端 AI_IMAGE_MIN_SCORE 一致）
+const toggleSemanticMode = () => {
+  if (semanticMode.value) {
+    exitSemantic()
+    return
+  }
+  if (selectMode.value) exitSelectMode()   // 两种模式互斥：进入语义搜索前退出批量选择
+  semanticMode.value = true
+  semanticQuery.value = ''
+  semanticTags.value = []
+  semanticActive.value = false
+  images.value = []
+  total.value = 0
+  sourceMap.value = {}
+}
+/** 退出语义搜索 → 回到图库浏览态（保留原有精确筛选状态） */
+const exitSemantic = () => {
+  semanticMode.value = false
+  semanticActive.value = false
+  images.value = []
+  total.value = 0
+  sourceMap.value = {}
+  page.value = 1
+  load()
+}
+/** 语义检索命中（ImageSearchHit）→ 网格卡片形状（补 id/url/thumbUrl，保留 score/sourceText 供展示）。
+ *  命中缺少 projectId/width/height/createdBy 等字段——这些在语义模式下仅作次要信息，缺失时模板自动留空。 */
+const hitToCard = (h) => ({
+  id: h.imageId,
+  fileName: h.fileName,
+  source: h.source,
+  sourceRef: h.sourceRef,
+  url: h.url,
+  thumbUrl: h.thumbUrl,
+  tags: h.tags || [],
+  score: h.score,
+  sourceText: h.sourceText
+})
+/** 执行语义检索：空 query 提示；结果直接替换网格并按相关度降序（后端已排序） */
+const runSemanticSearch = async () => {
+  const q = semanticQuery.value.trim()
+  if (!q) { ElMessage.warning('请输入搜索描述'); return }
+  semanticLoading.value = true
+  loadError.value = ''
+  try {
+    const res = await imageApi.search(q, { tags: semanticTags.value, minScore: semanticMinScore.value })
+    if (res.code === 0) {
+      images.value = (res.data || []).map(hitToCard)
+      total.value = images.value.length
+      semanticActive.value = true
+      loadSources(images.value)
+    } else loadError.value = res.msg || '检索失败'
+  } catch (e) {
+    loadError.value = e.response?.data?.msg || e.message || '网络异常'
+  } finally {
+    semanticLoading.value = false
+  }
+}
+/** 标签变化后若已搜索过则重跑（未搜索过不动） */
+const refreshSemantic = () => { if (semanticActive.value) runSemanticSearch() }
 
 // ==== 密度切换(localStorage 记忆) ====
 const density = ref(localStorage.getItem('sparkora-lib-density') || 'cozy')
@@ -400,8 +519,19 @@ const activeChips = computed(() => {
   return chips
 })
 const clearAllFilters = () => { sourceFilter.value = ''; projectFilter.value = ''; keyword.value = ''; tagFilter.value = []; syncRouteTag(); onFilterChange() }
-/** 点卡片标签 → 直接按该标签筛选（09-13 image-tags；09-15 起为多选数组，点已选标签则取消） */
+/** 点卡片标签 → 直接按该标签筛选（09-13 image-tags；09-15 起为多选数组，点已选标签则取消）。
+ *  语义模式下点标签则退出检索、回到浏览态按该标签筛选（语义结果与精确筛选不混用）。 */
 const filterByTag = (name) => {
+  if (semanticMode.value) {
+    semanticMode.value = false
+    semanticActive.value = false
+    semanticQuery.value = ''
+    semanticTags.value = []
+    tagFilter.value = [name]
+    syncRouteTag()
+    onFilterChange()
+    return
+  }
   tagFilter.value = tagFilter.value.includes(name)
     ? tagFilter.value.filter(t => t !== name)
     : [...tagFilter.value, name]
@@ -461,6 +591,13 @@ watch(() => route.query.tag, () => {
   const tags = tagsFromRoute()
   // 自身 syncRouteTag 触发的回流：与当前筛选一致则不动（防重复 load）
   if (tags.length === tagFilter.value.length && tags.every((t, i) => tagFilter.value[i] === t)) return
+  // 外部跳入带 tag（如新闻页点主题标签）→ 退出语义搜索，回到浏览态按标签筛选
+  if (semanticMode.value) {
+    semanticMode.value = false
+    semanticActive.value = false
+    semanticQuery.value = ''
+    semanticTags.value = []
+  }
   tagFilter.value = tags
   onFilterChange()
 })
@@ -475,9 +612,15 @@ const sourceLabel = (s) => SOURCE_LABELS[s] || s
 const shortTime = (t) => (t || '').slice(5, 16).replace('T', ' ')
 const isAiImage = (img) => img.source === 'ai-text2img' || img.source === 'ai-img2img'
 const projectLabel = (img) => {
+  if (img.projectId === undefined) return ''   // 语义检索命中无 projectId 字段（非持久化投影），不臆断为「全局」
   if (img.projectId == null) return '全局'
   const p = projects.value.find(x => x.id === img.projectId)
   return p ? `#${p.id}` : `#${img.projectId}`
+}
+/** hover 副标题：过滤空段，避免语义模式下项目段缺失留下多余分隔符 */
+const hpSubText = (img) => {
+  const dims = img.width && img.height ? `${img.width}×${img.height}` : ''
+  return [sourceLabel(img.source), projectLabel(img), dims].filter(Boolean).join(' · ')
 }
 
 let kwTimer = null
@@ -542,8 +685,7 @@ const doUpload = async ({ file }) => {
     if (res.code === 0) {
       if (res.data?.dedupeHit) ElMessage.info(`图库已有相同图片（#${res.data.id}），已复用并以并集补写标签`)
       else ElMessage.success('已上传进图库')
-      page.value = 1
-      await load()
+      await refreshView()
     }
     else ElMessage.error(res.msg || '上传失败')
   } catch (e) {
@@ -552,13 +694,19 @@ const doUpload = async ({ file }) => {
 }
 
 // ==== 单卡删除 / 重生成 ====
+/** 变更后刷新当前视图：语义模式重跑检索，浏览模式重载列表 */
+const refreshView = async () => {
+  if (semanticMode.value) { await runSemanticSearch(); return }
+  page.value = 1
+  await load()
+}
 const onDelete = (img) => {
   ElMessageBox.confirm(`删除「${img.fileName}」？被封面/插图引用时会被拒绝。`, '删除确认', { type: 'warning' })
     .then(async () => {
       deletingId.value = img.id
       try {
         const res = await imageApi.remove(img.id)
-        if (res.code === 0) { ElMessage.success('已删除'); await load() }
+        if (res.code === 0) { ElMessage.success('已删除'); await refreshView() }
         else ElMessage.error(res.msg || '删除失败')
       } catch (e) {
         ElMessage.error('删除失败：' + (e.response?.data?.msg || e.message))
@@ -573,8 +721,7 @@ const onRegenerate = async (img) => {
     if (res.code === 0) {
       const list = res.data || []
       ElMessage.success(`已重新生成 ${list.length} 张（新图在列表最前）`)
-      page.value = 1
-      await load()
+      await refreshView()
     } else ElMessage.error(res.msg || '重新生成失败')
   } catch (e) {
     ElMessage.error('重新生成失败：' + (e.response?.data?.msg || e.message || '网络异常'))
@@ -632,8 +779,9 @@ const loadRefImages = async () => {
 
 const chooseRef = (img) => { refImage.value = img; refDialog.value = false }
 
-/** 候选定位:回主列表第一页并高亮该卡 2s */
+/** 候选定位:回主列表第一页并高亮该卡 2s（语义模式下先退出检索回浏览态） */
 const locateInList = async (img) => {
+  if (semanticMode.value) { semanticMode.value = false; semanticActive.value = false }
   page.value = 1
   if (projectFilter.value !== '' || sourceFilter.value || tagFilter.value.length || keyword.value.trim()) {
     clearAllFilters()
@@ -671,8 +819,7 @@ const afterGenerated = async (list) => {
   candidates.value = list
   const reused = list.some(img => img.dedupeHit)
   ElMessage.success(reused ? `生成 ${list.length} 张（部分与图库重复，已复用）` : `生成成功 ${list.length} 张，已进图库`)
-  page.value = 1
-  await load()
+  await refreshView()
 }
 
 // ==== 单图编辑标签（09-13 image-tags:全量覆盖） ====
@@ -694,7 +841,7 @@ const onSaveTags = async () => {
     if (res.code === 0) {
       ElMessage.success('标签已保存')
       tagDialog.value = false
-      await load()
+      await refreshView()
     } else ElMessage.error(res.msg || '保存失败')
   } catch (e) {
     ElMessage.error('保存失败：' + (e.response?.data?.msg || e.message || '网络异常'))
@@ -738,10 +885,16 @@ onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
 .tb-primary { flex: none; }
 .tb-browse { flex: 1; min-width: 0; justify-content: flex-end; }
 .kw-input { width: 220px; }
+.sem-input { width: 260px; }
 .src-filter { width: 110px; }
 .tag-filter { width: 150px; }
+.score-filter { width: 130px; }
 .tag-preset { width: 180px; }
 .proj-filter { width: 180px; }
+
+/* 语义搜索提示条（09-15 img-semantic-search 子B） */
+.sem-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); flex-wrap: wrap; }
+.sem-bar-text { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
 
 /* 批量选择态 */
 .bulk-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); }
@@ -797,6 +950,9 @@ onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
 .hp-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hp-sub { font-size: 11px; opacity: .85; margin-top: 2px; }
 .hp-gen { font-size: 10px; opacity: .7; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* hover 层语义分数行（09-15 img-semantic-search）：分数 + 嵌入原文截断，title 显示全文 */
+.hp-score { font-size: 10px; opacity: .92; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hp-score-why { opacity: .8; }
 .hp-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .hp-actions .el-button { color: #fff; }
 /* hover 层标签行:点击筛选 */
@@ -812,6 +968,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
 .mobile-bar { display: none; }
 .m-tags { display: none; }
 .m-src { display: none; }
+.m-score { display: none; }
 
 .pager-row { display: flex; justify-content: center; margin-top: 18px; }
 
@@ -859,10 +1016,14 @@ onBeforeUnmount(() => { clearTimeout(kwTimer); clearTimeout(refKwTimer) })
      用 block + line-height 而非 flex——flex 容器上的 text-overflow 对匿名 flex item 不生效，
      标题超长会被硬裁而无「…」；block 才能正常省略。 */
   .m-src { display: block; min-height: 44px; line-height: 44px; padding: 0 6px; background: var(--card); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 移动端语义分数行（09-15 img-semantic-search）：常显 */
+  .m-score { display: block; padding: 2px 6px 6px; background: var(--card); font-size: 11px; color: var(--muted); }
   .tb-browse { justify-content: flex-start; }
   .kw-input { width: 100%; }
-  .tag-filter, .tag-preset, .src-filter, .proj-filter { width: calc(50% - 5px); }
+  .sem-input { width: 100%; }
+  .tag-filter, .tag-preset, .src-filter, .proj-filter, .score-filter { width: calc(50% - 5px); }
   .lib-toolbar .el-button { min-height: 44px; }
   .bulk-bar .el-button { min-height: 44px; }
+  .sem-bar .el-button { min-height: 44px; }
 }
 </style>

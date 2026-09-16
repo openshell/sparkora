@@ -130,6 +130,15 @@ export const imageApi = {
   },
   // 全库标签清单（09-13 image-tags）：data 直接是 [{name, count}]（count 降序），预选/筛选同源
   listTags: () => http.get('/images/tags'),
+  // 图片语义检索（09-15 img-semantic-search 子B）：body={query, topK?, minScore?, tags?[]}，
+  // tags 为 AND 预过滤（与 list 同语义）；data=[ImageSearchHit] 按 score 降序（无分页，topK 上限 50）。
+  // 命中含 imageId/score/sourceText/fileName/source/sourceRef/url/thumbUrl/tags[]，字段少于图库实体。
+  search: (query, opts) => http.post('/images/search', {
+    query,
+    topK: opts?.topK,
+    minScore: opts?.minScore,
+    tags: opts?.tags?.length ? opts.tags : undefined
+  }, { timeout: 60000 }),
   // 图片来源追溯（09-15 img-classify）：data={sourceRef, news:{id,newsId,title,publishDate,url}|null, imageUrl}
   // 非新闻图（upload/AI 生成图/车型图）返回 news:null，HTTP 200 不报错
   getSource: (imageId) => http.get(`/images/${imageId}/source`),
