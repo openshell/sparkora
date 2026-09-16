@@ -70,6 +70,8 @@ PUT   /api/images/{id}/tags    单图标签全量覆盖        权限 ADMIN/EDIT
 POST  /api/images/tags/batch   批量补打/移除标签        权限 ADMIN/EDITOR
 POST  /api/projects/{id}/images/{imageId}/cover   选封面   权限 ADMIN/EDITOR
 POST  /api/projects/{id}/images/{imageId}/body     选/取消正文插图 权限 ADMIN/EDITOR
+POST  /api/projects/{id}/illustration-suggestions  配图建议(按段落锚点语义检索,零副作用) 权限 ADMIN/EDITOR/VIEWER
+POST  /api/projects/{id}/illustration-suggestions/dismiss  忽略某锚点建议组(幂等) 权限 ADMIN/EDITOR
 GET   /api/styles              风格库列表            权限 ADMIN/EDITOR/VIEWER
 GET   /api/styles/{id}         风格详情              权限 ADMIN/EDITOR/VIEWER
 POST  /api/styles              新建风格              权限 ADMIN/EDITOR
@@ -634,6 +636,23 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 
 > 理由：多版本各有排版，预览/发布按「当前版本」取图；项目级关联无法表达版本间差异。
 
+**配图建议「忽略」记录（09-15 article-auto-illustrate 子C 新表，幂等建表）**：
+
+`sparkora_illustration_dismiss`（**只有用户的「忽略」决策落库**；建议候选本身不落库）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL | 主键 |
+| project_id | BIGINT | → `sparkora_article_project.id`（应用层维护，不建强 FK） |
+| version_id | BIGINT | → `sparkora_article_version.id`（忽略记录不跨版本） |
+| anchor_key | VARCHAR(200) | 锚点指纹（`headingPath` + 归一化文本前 80 字符的 sha256 前 12 位 hex） |
+| created_by | VARCHAR(64) | 操作人（用户名或 system） |
+| created_at | TIMESTAMP | 默认 `CURRENT_TIMESTAMP` |
+
+- `UNIQUE (version_id, anchor_key)` 数据库级防重（重复忽略幂等，不报错）；索引 `idx_illustration_dismiss_version`。
+- 无 `deleted` 逻辑删除列：关系行生命周期 = 版本生命周期，物理删（同 `sparkora_image_tag` 惯例）；不建强外键（沿用图库表应用层维护惯例）。
+- 语义见下文「配图建议」。
+
 ### 配图 API（全部 `R<T>` 包装；HTTP 200；S10 起检索/生成契约升级）
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
@@ -653,12 +672,73 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[], coverImage?, bodyImages[]}`。**S10 语义改写**：`images` 从全量图库收缩为**当前版本引用的图**（封面+插图）；新增服务端解析的 `coverImage`（对象含 url）/`bodyImages`（按 bodyImageIds 顺序）。全量图库浏览改走 `GET /api/images` 分页接口 |
 | POST | `/api/projects/{id}/images/{imageId}/cover` | ADMIN/EDITOR | — | `{ok:true}`（version.cover_image_id）；重复选同一张幂等 |
 | POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 version.body_image_ids）；重复添加幂等 |
+| POST | `/api/projects/{id}/illustration-suggestions` | 三角色 | `{tags?[], minScore?}`（09-15 article-auto-illustrate 子C 新增）；`tags` 为**标签 AND 预过滤**（同 `GET /api/images`）；`minScore` null → `AI_IMAGE_MIN_SCORE`（默认 0.3），须在 [0,1] 否则 400 | `data = [{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}]`，`candidates` 为 `ImageSearchHit`（同 `/api/images/search`，按 score 降序）。**零副作用**：只读正文 + 图库，**不修改 `content_md` / `body_image_ids`**。无候选的锚点不出现在结果中（不报错）；单锚点检索失败仅跳过该锚点（其余照常返回）。无当前版本 → `R.fail(400,"尚未生成正文版本，无法生成配图建议")`；正文空 → `R.fail(400,"正文为空，无法生成配图建议")`；项目不存在 → `R.fail(400,"项目不存在")`。契约详解见下文「配图建议」 |
+| POST | `/api/projects/{id}/illustration-suggestions/dismiss` | ADMIN/EDITOR | `{anchorKey}`（09-15 article-auto-illustrate 子C 新增） | `{ok:true}`；写 `sparkora_illustration_dismiss`（`UNIQUE(version_id, anchor_key)`），**幂等**（重复忽略不报错、不重复插入）。`anchorKey` 空/超长(>200) → `R.fail(400)`；无当前版本 → `R.fail(400)`。VIEWER 调用 403 |
 
 - 图片访问：**图床公网 URL**（`url` 字段，由 `storage_key` 实时拼）。`/images/**` 静态映射已删除（S6 本地不留）。
 - **缩略图交付（S10）**：列表/网格用 `thumbUrl`（七牛 imageView2/2/w/360/format/webp，交付层转换零转码成本）；大图预览、正文插入、wenyan 拉图、公众号发布均用原图 `url`。非七牛图床实现降级 thumbUrl=url（`ObjectProvider` 可选注入，`ImageStorage` 接口不掺七牛特性）。
 - 文生图/图生图返回的 axonhub URL **必须转存图床**（临时 URL 会过期），转存失败则该次生成报错（不留死链）。
 - 请求体数字字段（projectId/refImageId）统一健壮解析：兼容数字与字符串形式（前端路由参数为字符串）。
 - **S6 起 `complete-images` 接口已删除**（配图并入预览，不再有「完成配图」状态推进）。
+
+### 配图建议（2026-09-16，09-15 article-auto-illustrate 子C 新增）
+
+把图库从「手动选图」升级为「**系统建议、用户定夺**」：正文生成后按段落语义检索图库，产出配图**建议**。
+
+> **硬约束（不可违背）**：系统**只产出建议，绝不自动写入**。配图进入正文的唯一路径是用户在预览页显式操作（单张「插入到此段」/ 整组「全部采用」）。**不存在任何自动插入开关**（无 `AUTO_ILLUSTRATE_ENABLED` 之类配置），从设计上排除无人值守自动配图。生成建议本身**零副作用**：不写 `content_md`、不写 `body_image_ids`。
+
+**锚点切分（`AnchorExtractor`，纯静态可单测）**
+
+- 按 ATX 标题（`##`/`###+`）分段：每个标题到下一个标题之间为一个锚点；标题前的前言也算一个锚点（`headingPath` 为空串）；`#` H1 视为文章标题（不产生锚点、不计入正文）。`###` 挂到最近的 `##` 下（`headingPath` 形如「续航实测 > 高速工况」）。
+- 无标题时（罕见）退化为按空行切分段落，每段一个锚点。
+- **跳过**：纯列表段落（非空行全部是 `-`/`*`/`+`/`1.` 列表项）、引用块行（`>`）、代码块（``` 围栏内）、图片/链接-only 段落（避免给配图建议区自己推荐）、去空白后 **< 30 字**的过短段落。
+- `text` 剔除 markdown 标记（标题符号/加粗/行内代码；链接保留文字），单空格连接。
+- **上限** `AI_ILLUSTRATION_MAX_ANCHORS`（默认 5），保序取前 N 个（优先靠前段落，避免配图过密）。
+- **锚点指纹 `anchor_key`** = `headingPath` + 归一化（剥标记 + 去全部空白）文本前 80 字符的 **sha256 前 12 位 hex**。用指纹而非序号：正文编辑后序号会漂移，忽略记录会错位到别的段落；指纹在正文未编辑时稳定，纯格式调整（加粗/换行）不改变指纹。
+
+**建议生成（`IllustrationSuggestionService.suggest`）**
+
+1. 取项目当前版本（`current_version_id`）→ 无版本/正文空 → 400（见接口表）。
+2. `AnchorExtractor.extract(contentMd, maxAnchors)`。
+3. 过滤**已忽略**锚点（按 `version_id` 查 `sparkora_illustration_dismiss` 的 `anchor_key` 集合）。
+4. 逐锚点调 `ImageEmbeddingService.searchImages(anchorText, topN=AI_ILLUSTRATION_TOP_N, minScore, tags)`（子B 图片语义检索；串行 ≤5 次，无并发复杂度）。**单锚点失败仅 warn 跳过**，其余照常返回（图库/模型偶发失败不应让整页建议不可用）；门槛以下无候选 → 该锚点不出现。
+5. 组装 `{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}`。
+
+- **建议候选不落库**：建议是「当前正文 + 当前图库」的**派生视图**，按需重算且结果稳定（检索确定性 + 无随机）；落库只会引入「建议陈旧」问题。只有用户的「忽略」决策需要持久化。
+- **可重算/幂等**：同一版本同一正文 + 同一图库 → 相同结果；正文变更后结果随锚点变化（符合预期）。
+
+**「采用」的写入（用户批准后，唯一写入路径）**
+
+采用必须**两处都写**（2026-09-16 勘察修正）：
+
+1. **编辑器插入 markdown `![](图床原图URL)` 到锚点位置**（`MarkdownEditor.insertMdAtAnchor(headingPath, text)`：按标题文本**首次出现**定位插到该标题行之后；找不到标题则**退回光标处**，保证不丢内容）——保证**真正渲染**；
+2. **调既有 `POST /api/projects/{id}/images/{imageId}/body?action=add`** 登记 `body_image_ids`——保证**发布页「插图 N 张」计数正确 + 图片受删图引用保护**。
+
+二者均幂等（`addBodyImage` 幂等；重复插入 markdown 用户可见可自行编辑）。不新增关联模型。
+
+**「忽略」的语义**
+
+- 「忽略此段」→ `POST /{id}/illustration-suggestions/dismiss` body `{anchorKey}` 写 dismiss 表；后续生成建议该锚点被跳过（不再反复打扰）。
+- **不提供「取消忽略」的 UI**（非目标）；如需恢复，删表记录即可。
+- 忽略记录与版本耦合（`version_id + anchor_key`），版本切换后不跨版本（符合语义：不同版本正文不同）。
+
+**可关闭（R6）**
+
+- `AI_ILLUSTRATION_SUGGEST_ENABLED`（默认 `true`）→ `sparkora.ai.illustration-suggest-enabled`：关闭后 `suggest` 直接 `R.fail(400,"配图建议功能已关闭")`，**不产生建议、不调 embedding**。
+- **关闭的是「建议的生成」，与 R3「禁止自动写入」是两件事**：本开关关闭后系统仍然不会自动插入任何配图（系统本就无自动写入能力）。**不存在**任何自动插入开关。
+
+**与「AI 不写图」约束的边界（R5）**
+
+- **保留** `VersionService` 的仿写 prompt 禁图片约束与 `stripImages` 二次清洗——AI **仍不生成图片占位**（避免 AI 编造必 404 的图 URL、且无法保证与图库一致）。
+- 配图由「系统建议 → 用户批准」在生成后补入，与「AI 不写图」不冲突；本项目**不存在**「AI 写占位标记 → 系统替换」方案。
+
+**已知债务（本任务不修复，记录在案）**
+
+- `body_image_ids` **不参与渲染**：`PreviewService.buildMarkdown()` 的 `bodyImageUrls` 参数完全未被使用，正文插图落点只由 `contentMd` 中的 `![](url)` 决定。
+- **手动插图（预览页图库/AI 生图面板）只写 markdown、不登记 `body_image_ids`**（前端 `insertBodyImage` 仅调 `editorRef.insertMd()`）；仅「智能建议采用」两处都写。历史 34 个版本中 4 个 `body_image_ids` 非空且正文 `![` 出现 0 次，两者本就脱节。
+- 修复方向是「`body_image_ids` 改为基于正文解析」，波及 `delete` 引用保护、`projectImages`、发布页计数，超出本任务范围（用户选择「markdown + 登记」双写，非大规模修复）。
+- 另注：`ImageService.modifyBodyImage` 清空 `body_image_ids` 时用 `updateById`（MyBatis-Plus `NOT_NULL` 策略）会把 `null` 跳过，导致**移除最后一张插图后字段不清空**（`add` 正常）。既有缺陷，与本任务无关。
+
 
 ### 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级；2026-09-13 image-tags 标签能力）
 
@@ -668,6 +748,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
   - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（`sparkora_image_embedding`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由子C/子D 承载）。
 - **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。
 - **预览步配图面板（项目向导 Step3 并入 Step4）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。
+- **预览页「智能建议」tab（09-15 article-auto-illustrate 子C）**：配图抽屉第 3 个 tab（`imgTab='suggest'`）。顶部：相似度门槛（默认 0.3）+ 标签预过滤多选（AND，数据源 `GET /api/images/tags`）+「生成建议/重新生成」按钮 + 提示「系统只给建议，点采用才写入正文」。按锚点分组卡片：锚点标题（`headingPath` 或「开头段落」）+ 锚点文本摘要 + 候选网格（缩略图/相关度百分比/标签）。每张候选「插入到此段」；每组「全部采用」/「忽略此段」。**空态三态**：未生成（引导点生成）/ 生成后无候选（提示调低门槛、换标签或先去图库补图）/ 全部被忽略。**建议不自动触发**——须用户点「生成建议」（避免打开抽屉即产生 embedding 调用）。移动端单列、触控目标 ≥44px。
 
 ---
 
@@ -686,6 +767,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - **S6 图库完全依赖图床，本地不留**：图片入库即直接转存图床（`ImageStorage.upload`），`storage_key` 非空；预览/发布组装时直接取 `storage_key` 拼公网 URL，**不再懒转存**。图床供应商抽象层 `ImageStorage`（当前实现七牛 `QiniuService`），切换供应商只需新增实现类 + 改配置。
 - **配图组装规则（2026-09-01 定稿；2026-09-11 修订 R3，预览到发布衔接）**：`buildMarkdown` 后端发布链路统一组装为 frontmatter(`title` + 有封面时 `cover: <图URL>` + 手填 `author`/`source_url`) + 正文；**预览页/复制排版只渲染纯正文**（`renderMarkdownHtml(contentMd)`），不再把 frontmatter 拼进前端 markdown（`@wenyan-md/core` 不解析/剥离 frontmatter，会导致 `<hr>`+`<h2>title:…</h2>` 残留）；frontmatter 组装职责完全移到后端发布链路。**插图落点完全由正文 markdown 引用决定**——正文中引用了哪张图（图床公网 URL）、出现在哪里，就是最终文章的落点；未被正文引用的选定插图**不自动追加文末**（所见即所得）。`cover` 仅进公众号草稿封面元信息，不在正文渲染——正文里看不到封面图属预期。
 - **插图落点（2026-09-01 交互定稿）**：预览页工具栏「插图」面板按选定顺序列出已选插图，点击即以 markdown 图片语法插入编辑器光标处（左栏 md 可见可编辑，正文已引用的在面板内标绿 ✓）；正文里没引用的插图不会出现在文章中（不自动追加文末），口径在面板内明示。
+- **配图建议的落点（2026-09-16，09-15 article-auto-illustrate）**：预览页配图抽屉「智能建议」tab 的候选，用户点「插入到此段」/「全部采用」时（用户批准后才执行）：① 经 `MarkdownEditor.insertMdAtAnchor(headingPath, md)` 把 `![](原图URL)` 插到**锚点标题行之后**（按标题首次出现定位；标题找不到退回光标处）；② 调 `POST /api/projects/{id}/images/{imageId}/body?action=add` 登记 `body_image_ids`。**插图落点仍完全由正文 markdown 决定**（与上式一致）；系统绝不自动写入。详见 §10「配图建议」。
 - 删除图：`ImageService.delete` 落库删除 + 图床对象（非阻塞，失败仅 warn）。
 - 降级链：wenyan CLI 不可达/超时/失败 → 简化保底渲染（degraded=true + 中文原因）；主题名按后端权威目录校验防 CLI 参数注入；CLI 超时 `WENYAN_RENDER_TIMEOUT_MS`（默认 30s）。
 - **主题目录（09-11-wenyan-themes）**：权威清单由 `WenyanThemeCatalog` 固定，共 **15 个** = 8 个 wenyan 内置（`default/orangeheart/rainbow/lapis/pie/maize/purple/phycat`）+ 7 个 mdnice 社区主题（`custom:chazi 姹紫 / custom:mohei 墨黑 / custom:nenqin 嫩青 / custom:hongfei 红绯 / custom:lanqing 兰青 / custom:shanchui 山吹 / custom:quanzhanlan 全栈蓝`）。`.env WENYAN_THEME_NAMES` 已废弃，不再参与校验/下发。详见 `docs/wenyan.md`。
