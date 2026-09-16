@@ -620,3 +620,24 @@ CREATE TABLE IF NOT EXISTS sparkora_image_embedding (
 CREATE UNIQUE INDEX IF NOT EXISTS uk_image_emb_image ON sparkora_image_embedding(image_id);
 CREATE INDEX IF NOT EXISTS idx_image_emb_vec_hnsw ON sparkora_image_embedding
     USING hnsw (embedding vector_cosine_ops);
+
+-- ============================================================================
+-- 09-15 article-auto-illustrate:配图建议「忽略」记录（子C）。
+-- 语义:用户忽略某锚点的建议组后,该锚点不再推荐（避免反复打扰）。
+-- 锚点用 anchor_key（锚点定位指纹）而非序号——正文编辑后序号会漂移,指纹稳定。
+-- 建议本身**不落库**:建议是「当前正文 + 当前图库」的派生视图（可重算、结果稳定）,
+-- 落库只会引入「建议陈旧」问题;只有「忽略」这个用户决策需要持久化。
+-- UNIQUE(version_id, anchor_key) 数据库级防重,重复忽略不报错（幂等）。
+-- 不建强外键（沿用 sparkora_image_tag 惯例,应用层维护）;物理删（同 tag/embedding 表）。
+-- 全部单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sparkora_illustration_dismiss (
+    id          BIGSERIAL PRIMARY KEY,
+    project_id  BIGINT       NOT NULL,               -- → sparkora_article_project.id(应用层维护,不建强 FK)
+    version_id  BIGINT       NOT NULL,               -- → sparkora_article_version.id(忽略记录不跨版本)
+    anchor_key  VARCHAR(200) NOT NULL,               -- 锚点指纹(见 AnchorExtractor.fingerprint)
+    created_by  VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (version_id, anchor_key)
+);
+CREATE INDEX IF NOT EXISTS idx_illustration_dismiss_version ON sparkora_illustration_dismiss(version_id);

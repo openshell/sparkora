@@ -41,6 +41,15 @@ public class AiProperties {
     /** 图片语义检索相似度门槛（09-15 img-semantic-search）:低于该余弦相似度的图片命中被过滤;默认 0.3（对齐 AI_RAG_MIN_SCORE）。 */
     private double imageMinScore = 0.3;
 
+    /** 配图建议锚点数上限（09-15 article-auto-illustrate）:单次建议最多取前 N 个可配图锚点,避免配图过密;默认 5。 */
+    private int illustrationMaxAnchors = 5;
+    /** 配图建议每锚点候选图数量（09-15 article-auto-illustrate）:逐锚点语义检索返回的候选条数;默认 3。 */
+    private int illustrationTopN = 3;
+    /** 配图建议生成总开关（09-15 article-auto-illustrate R6）:false 时 suggest 直接抛 IllegalArgumentException
+     *  （控制器映射 400「配图建议功能已关闭」），不产生建议、不调 embedding。
+     *  注意:关闭的是**建议的生成**,与「禁止自动写入正文」是两件事——本项关闭后系统仍不会自动写入,只是不再给建议。 */
+    private boolean illustrationSuggestEnabled = true;
+
     /** 解析图片模型轮询列表：优先 imageModels，为空回退 imageModel。 */
     public List<String> imageModelList() {
         String raw = (imageModels != null && !imageModels.isBlank()) ? imageModels : imageModel;

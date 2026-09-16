@@ -43,13 +43,15 @@ public class ArticleProjectController {
     private final com.sparkora.service.PreviewService previewService;
     private final com.sparkora.service.PublishService publishService;
     private final ImitationService imitationService;
+    private final com.sparkora.service.IllustrationSuggestionService suggestionService;
 
     public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
                                     ArticleProjectCarService carService, CarModelMatcherService matcherService,
                                     com.sparkora.service.ImageService imageService,
                                     com.sparkora.service.PreviewService previewService,
                                     com.sparkora.service.PublishService publishService,
-                                    ImitationService imitationService) {
+                                    ImitationService imitationService,
+                                    com.sparkora.service.IllustrationSuggestionService suggestionService) {
         this.mapper = mapper;
         this.briefService = briefService;
         this.versionService = versionService;
@@ -59,6 +61,7 @@ public class ArticleProjectController {
         this.previewService = previewService;
         this.publishService = publishService;
         this.imitationService = imitationService;
+        this.suggestionService = suggestionService;
     }
 
     @GetMapping
@@ -350,6 +353,49 @@ public class ArticleProjectController {
         }
     }
 
+    // ==================== 配图建议（09-15 article-auto-illustrate，子C；字段级契约见 spec §11）====================
+
+    /**
+     * 生成按锚点分组的配图建议（三角色可读）。
+     *
+     * **零副作用**：只读正文与图库做语义检索，不修改 {@code content_md} / {@code body_image_ids}。
+     * 配图进入正文的唯一路径是用户在预览页显式点「采用」（无任何自动插入开关）。
+     * body: {"tags":["主题/销量"], "minScore":0.3}（均可选）。
+     */
+    @PostMapping("/{id}/illustration-suggestions")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<List<com.sparkora.service.IllustrationSuggestionService.AnchorSuggestion>> illustrationSuggestions(
+            @PathVariable Long id, @RequestBody(required = false) java.util.Map<String, Object> body) {
+        try {
+            return R.ok(suggestionService.suggest(id, stringListOf(body == null ? null : body.get("tags")),
+                    doubleOf(body == null ? null : body.get("minScore"))));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "生成配图建议失败: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * 忽略某锚点的建议组（ADMIN/EDITOR）：该锚点后续不再推荐（避免反复打扰）。
+     * body: {"anchorKey":"a1b2c3d4e5f6"}。幂等：重复忽略不报错。
+     */
+    @PostMapping("/{id}/illustration-suggestions/dismiss")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> dismissIllustrationSuggestion(@PathVariable Long id,
+                                                 @RequestBody java.util.Map<String, String> body) {
+        try {
+            CurrentUser cu = SecurityUtil.current();
+            suggestionService.dismiss(id, body == null ? null : body.get("anchorKey"),
+                    cu == null ? "system" : cu.getUsername());
+            return R.ok();
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "忽略配图建议失败: " + ex.getMessage());
+        }
+    }
+
     // ==================== 预览到发布衔接(09-11-preview-publish-bridge)====================
 
     /** 保存预览页样式(主题/高亮/Mac/脚注,项目级;ADMIN/EDITOR)。只更新非 null 字段。 */
@@ -469,5 +515,33 @@ public class ArticleProjectController {
             publishService.markFailure(id, ex.getMessage());
             return R.fail(500, "发布失败: " + ex.getMessage());
         }
+    }
+
+    // ==================== 请求体解析工具（配图建议）====================
+
+    /** JSON 数组 → List&lt;String&gt;；元素不保证是字符串（前端可能传数字），统一 String.valueOf 归一。 */
+    private static List<String> stringListOf(Object raw) {
+        if (!(raw instanceof List<?> list)) return null;
+        List<String> out = new java.util.ArrayList<>();
+        for (Object v : list) {
+            if (v != null) out.add(String.valueOf(v));
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /**
+     * JSON number → Double；兼容字符串形式（前端控件可能传字符串），缺省/非法返回 null
+     * （由服务层按配置默认收敛，不报错）。与「请求体数字字段统一健壮解析」既有惯例一致。
+     */
+    private static Double doubleOf(Object raw) {
+        if (raw instanceof Number n) return n.doubleValue();
+        if (raw instanceof String s && !s.isBlank()) {
+            try {
+                return Double.valueOf(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 }
