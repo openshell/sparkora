@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-15-article-auto-illustrate/prd.md", "reason": "R1-R6 与 AC 逐条核对，重点：AC「生成建议后 body_image_ids 与正文均未被修改」与「代码与配置中不存在自动写入配图的能力」是硬约束，必须独立验证"}
+{"file": ".trellis/tasks/09-15-article-auto-illustrate/design.md", "reason": "核对实现与设计一致：锚点切分规则与指纹、建议零副作用、忽略表与幂等、采用双写（markdown + body_image_ids）、接口契约与错误矩阵、不改 stripImages/prompt 的边界"}
+{"file": ".trellis/tasks/09-15-article-auto-illustrate/implement.md", "reason": "核对 M1-M8 完成度；尤其 M7 第 2 项「零副作用生成前后 DB 对比」与风险点「任何分支不得调用 modifyBodyImage/写 content_md」"}
+{"file": "docs/s0-spec.md", "reason": "新表/新接口/建议链路是否同步（schema+entity+spec 三处同步）；body_image_ids 遗留债务是否记录"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对建表幂等两次执行、无 DO $$、唯一约束、物理删"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对未破坏三域+图片域检索行为（searchImages 只读复用、无签名变更）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对走 projectApi、拆包读法、insertMdAtAnchor 未改 insertMd、移动端 44px、timer 清理"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对「markdown 插入 ↔ body_image_ids 登记 ↔ 渲染 ↔ 发布计数」四层一致：采用后必须四处自洽"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父级跨子验收：本任务与子B 依赖顺序、零回归"}

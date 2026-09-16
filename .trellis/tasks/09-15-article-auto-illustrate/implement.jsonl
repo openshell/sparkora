@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/09-15-article-auto-illustrate/prd.md", "reason": "本任务需求 R1-R6 与验收标准 AC 逐条；含用户硬约束「配图=建议，必须用户批准，无自动插入开关」"}
+{"file": ".trellis/tasks/09-15-article-auto-illustrate/design.md", "reason": "技术设计：勘察发现（渲染只认 contentMd 的 markdown；body_image_ids 为遗留字段）、锚点切分与指纹算法、建议不落库、忽略表、采用双写、接口契约与错误矩阵、与旧 prompt 边界"}
+{"file": ".trellis/tasks/09-15-article-auto-illustrate/implement.md", "reason": "执行计划 M1-M8、真机验证清单（含零副作用硬验证）、风险与回滚"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父任务需求总集：R-C1 已同步为「建议须用户批准」；本任务与子B/子D 的依赖关系"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema 幂等建表（CREATE TABLE/INDEX IF NOT EXISTS,禁 DO $$）、物理删关联表、唯一约束防重、应用层外键——dismiss 表遵循"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "图片向量域（第四域）检索契约：searchImages 签名、门槛与 topK、标签 AND 预过滤——建议生成复用；并核对不得破坏三域+图片域行为"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "IllegalArgumentException→R.fail(400)、DTO/入参校验中文消息、单点失败降级的处理惯例——建议接口错误矩阵"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层封装（projectApi 具名导出不直调 http）、R<T> 拆包、页面三态、移动端 44px、防抖 timer 清理——建议面板与 api 扩展遵循"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流检查要点：本任务触及「正文 markdown ↔ body_image_ids ↔ 渲染 ↔ 发布」四层，需按此核对一致性"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用既有机制（modifyBodyImage/addBodyImage、MarkdownEditor.insertMd、ImageEmbeddingService.searchImages）而非新造——本任务核心设计原则"}
+{"file": "docs/s0-spec.md", "reason": "§1 接口清单登记位置、§10/§11 预览与配图契约、页面职责——新接口与建议链路须同步"}

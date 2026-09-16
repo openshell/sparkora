@@ -38,10 +38,14 @@
 - 建议的生成（检索）可自动触发，**但建议本身只是待批准状态**，不改变正文与 `body_image_ids`。
 - 用户「忽略」的建议应被记住（不再重复推荐同一锚点的该批候选），避免反复打扰。
 
-### R4 插入复用既有机制
+### R4 采用时同时写 markdown 与登记 `body_image_ids`（勘察修正）
 
-- 采用后调既有 `ImageService.modifyBodyImage(projectId, imageId, "add")` 写入 `body_image_ids`，不新增关联模型。
-- 正文内的图片引用格式沿用预览/发布既有约定（frontmatter `cover` 用于封面；正文插图由 `body_image_ids` + 渲染层插入）。
+- **勘察结论（09-16，改变原始假设）**：实际渲染只认 `contentMd` 里的 `![](url)` markdown——`PreviewService.buildMarkdown()` 的 `bodyImageUrls` 参数完全未被使用（`PreviewService.java:124-137`）；手动插图也只调 `editorRef.insertMd()`，从不调 `addBodyImage`（前端无调用点）。`body_image_ids` 是遗留字段，但仍影响发布页「插图 N 张」展示（`StepPublish.vue:62`）与删图引用保护（`ImageService.java:559-568`）。
+- 因此「采用」必须**两处都写**（用户 09-16 确认）：
+  1. 编辑器插入 markdown `![](url)` 到锚点位置——保证**真正渲染**；
+  2. 调既有 `ImageService.modifyBodyImage(projectId, imageId, "add")`（前端 `imageApi.addBodyImage`）登记 `body_image_ids`——保证**发布页计数正确 + 图片被引用保护**（防误删）。
+- 二者均幂等（`addBodyImage` 已幂等）；不新增关联模型。
+- 复用既有机制：`MarkdownEditor` 新增 `insertMdAtAnchor(headingPath, text)`（不改既有 `insertMd`）。
 
 ### R5 替换「禁止图片」旧策略
 
@@ -69,7 +73,8 @@
 - [ ] 预览页展示按锚点分组的「智能配图建议」；支持单张采用、整组采用、忽略。
 - [ ] **生成建议后 `body_image_ids` 与正文均未被修改**（建议本身零副作用）；只有用户点击采用才写入。
 - [ ] **代码与配置中不存在自动写入配图的能力**（无自动插入开关；不因高分数而自动插入）。
-- [ ] 采用后 `body_image_ids` 正确写入且幂等（重复采用同一张不重复）。
+- [ ] 采用后 `contentMd` 含该图 markdown 引用，且 `body_image_ids` 含该 id；重复采用不重复登记（幂等）。
+- [ ] 采用后的配图在预览中正常渲染，发布页「插图 N 张」计数正确，且该图受删图引用保护。
 - [ ] 被「忽略」的建议组不再对同一锚点重复推荐。
 - [ ] 建议可重算且结果稳定；无候选的锚点不报错。
 - [ ] AI 仍不生成图片占位（正文无编造图 URL）；采用后的配图与既有渲染/发布链路兼容，预览与发布所见图即所得。
