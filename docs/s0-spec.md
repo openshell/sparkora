@@ -64,6 +64,8 @@ POST  /api/images/generate-text    文生图(支持预选标签)  权限 ADMIN/E
 POST  /api/images/generate-from-image  图生图(支持预选标签) 权限 ADMIN/EDITOR
 GET   /api/images/tags         全库标签清单(含引用数)  权限 ADMIN/EDITOR/VIEWER
 GET   /api/images/{id}/source  图片来源追溯(新闻标题/日期/原文) 权限 ADMIN/EDITOR/VIEWER
+POST  /api/images/search       图片语义检索(自然语言查图) 权限 ADMIN/EDITOR/VIEWER
+POST  /api/images/embeddings/rebuild  图片向量全量重建 权限 ADMIN/EDITOR
 PUT   /api/images/{id}/tags    单图标签全量覆盖        权限 ADMIN/EDITOR
 POST  /api/images/tags/batch   批量补打/移除标签        权限 ADMIN/EDITOR
 POST  /api/projects/{id}/images/{imageId}/cover   选封面   权限 ADMIN/EDITOR
@@ -376,6 +378,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | `AI_RAG_MIN_SCORE` / `AI_RAG_REJECT_SCORE` | 知识库 RAG 检索门槛(逐块/整体;契约见 §6b) | ✅ S6.1 启用 |
 | `AI_RAG_KB_TOPK` / `AI_RAG_KB_ENABLED` | 通用知识库检索配额/总开关(契约见 §6c) | ✅ S7 启用 |
 | `AI_RAG_ANCHOR_BOOST` | 统一检索锚点车型加权系数(契约见 §6c) | ✅ S8 启用 |
+| `AI_IMAGE_MIN_SCORE` | 图片语义检索相似度门槛(契约见 §10「图片语义检索」;默认 0.3) | ✅ 09-15 img-semantic-search 启用 |
 | `IMAGE_STORAGE_DIR` | 数据盘目录（S6 起图片不再落本地；仅 wenyan 渲染临时文件落位） | ✅ S3b 启用 |
 | `WECHAT_*` | 公众号草稿发布 | ⏸ **S5 经 wenyan-server 发布(微信凭据配在 server 端,Sparkora 不直连微信)** |
 | `WENYAN_MCP_*` | wenyan 预览/发布 | ✅ S5 启用(SERVER_URL/SERVER_API_KEY/PUBLISH_TIMEOUT_MS;发布通道 = 远程 wenyan-server) |
@@ -544,6 +547,82 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - 人工修正：复用既有单图编辑（`PUT /{id}/tags` 全量覆盖）与批量打标（`POST /tags/batch`），无需新 UI。
 - **存量回溯**：`ImageTagBackfillRunner` 新闻分支只处理 `source='byd-news' AND source_ref IS NULL` 的图（分批 200，避免全量内存），解析文件名 → 反查新闻 → `mergeTags`（只插差集，幂等）+ 回填 `source_ref`/`cover_image_id`；异常仅 warn 不阻断启动，日志汇总「处理 X / 跳过 Y / 失败 Z」。2026-09-16 实测：157 张全部处理（跳过 0 / 失败 0），重跑零新增。
 
+### 图片语义检索（09-15 img-semantic-search，子B）
+
+**语义**：让图片可被**自然语言检索**（「销量海报」「出海签约的照片」），为子C（文章自动配图）与子D（问答语义配图）提供检索能力。图片本身没有可嵌入文本，用**描述性文本代理**（来源新闻标题 / 标签 / AI prompt / 文件名）向量化。
+
+**数据模型（`sparkora_image_embedding`，schema.sql 09-15 img-semantic-search 段幂等 `CREATE TABLE IF NOT EXISTS`）**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL | 主键 |
+| image_id | BIGINT NOT NULL | → `sparkora_image_asset.id`（应用层维护，**不建强外键**；与 `sparkora_image_tag` 同惯例） |
+| embedding | VECTOR(1024) NOT NULL | **与 car/kb/news 三域同模型（Qwen3-Embedding-8B）同维度（1024）同向量空间**——硬约束，否则跨域检索无意义，故**不存模型名/维度列** |
+| source_text | TEXT NOT NULL | 嵌入原文（调试 + 重建可追溯） |
+| created_at | TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+
+- **一图一向量**：`CREATE UNIQUE INDEX IF NOT EXISTS uk_image_emb_image ON sparkora_image_embedding(image_id)` —— 唯一约束即幂等保证（重建先物理删后插，重复插入不可能；并发重复嵌入第二插入报唯一冲突由 `embedQuietly` 吞掉并 warn）。
+- 向量索引 `idx_image_emb_vec_hnsw`：`USING hnsw (embedding vector_cosine_ops)`（与三域统一 HNSW cosine）。
+- **不加 `deleted` 列**（物理表，同三域 embedding 表）；**不建 FK**：删图时应用层同事务物理清向量（`ImageService.delete` → `embeddingService.deleteByImageId`），防残留向量命中已删图。
+- 实体：本表**无 entity**（VECTOR 类型 MyBatis-Plus `BaseMapper` 无法处理），用注解 SQL mapper `ImageEmbeddingMapper`（`insert`/`deleteByImageId`/`findImageIdsWithoutEmbedding`/`searchTopK`，参照 `CarDocEmbeddingMapper` 先例）。
+
+**嵌入文本构造（`com.sparkora.image.embed.ImageEmbeddingTextBuilder`，纯静态可单测）**：
+
+| source | 文本构成 |
+|---|---|
+| `byd-news` | 来源**新闻标题**（优先，由 `source_ref` 反查 `sparkora_news.news_id`）+ 标签（含 `主题/*`、`年份/*`）；查不到标题退化为只用标签 |
+| `ai-text2img` / `ai-img2img` | `prompt_text` + 标签 |
+| `upload` | 文件名（去扩展名）+ 标签 |
+| `byd`（车型图） | 文件名（去扩展名）+ 标签（含 `车型-*`） |
+
+- 各段**空格连接、去空段**；整体 trim 后为空 → 兜底 `(图片 <id>)`，**仍写向量**（避免图库里出现永远搜不到的缺向量图，低质命中由检索门槛过滤）。
+- 标签**原样拼**（保留 `主题/` 前缀）：「销量」等关键词本身就是检索信号，剥前缀反而丢信息。
+- 文本长度上限 **2000 字符**截断（防超长输入打爆 embedding；标题+标签实际远小于此）。
+- 嵌入文本构造在 `ImageEmbeddingService` 内按需拼（新闻标题反查），**重建路径自给自足**——无需调用方补上下文。
+
+**向量化时机**：
+
+| 时机 | 行为 |
+|---|---|
+| 增量（入库） | `ImageService.persistOrReuse` 在**新图 insert 成功后**与**去重命中分支**均调 `embeddingService.embedQuietly(id)`（best-effort：捕获全部异常仅 warn，**绝不影响图片入库**——图片可用性优先于可检索性；钩子在入库成功之后，不掩盖入库本身异常） |
+| 重生成继承标签后 | `ImageService.regenerate` 复制源图标签后重嵌（嵌入文本与最终标签保持一致） |
+| 存量补齐 | `ImageEmbeddingBackfillRunner`（`ApplicationRunner`，`@Order(20)`）启动调 `rebuildMissing()`——只处理 `LEFT JOIN` 差集为空向量的图；异常仅 warn **不阻断启动**；日志 `图片向量补齐完成:total=X success=Y failed=Z(耗时Nms)`。2026-09-16 首启实测 166/166、0 失败；重跑「无缺失,跳过(total=0)」。**独立守护线程执行**（实测 166 图串行 embedding 约 173s，不占启动主线程；应用就绪不被拖慢） |
+| 全量重建 | `POST /api/images/embeddings/rebuild`（ADMIN/EDITOR）：遍历全部图片逐图重新嵌入（**先物理清旧向量再插**，幂等），单图失败跳过并计数 |
+
+**启动补齐顺序（09-15 修订，`@Order` 硬约束）**：`ImageTagBackfillRunner`（`@Order(10)`，补 `主题/*`/`年份/*`/`车型-*` 标签与 `source_ref`）必须**先于** `ImageEmbeddingBackfillRunner`（`@Order(20)`）——嵌入文本依赖标签信号，先嵌入后补标会让存量图拿到「无标签」低质向量，且因「已有向量」`rebuildMissing()` 不再修（静默、需人工调全量重建）。两个 runner 都显式标注 `@Order` 固定该契约。
+
+**事务隔离（09-15 修订，关键契约）**：向量写入（`ImageEmbeddingService.embedOne` → `persistVector`）经自注入代理走 `@Transactional(REQUIRES_NEW)`，**绝不加入调用方的环境事务**：
+- 入库链路（新闻同步 `NewsService.upsertOne`、车型同步 `persistModel`）自身是事务性的；若向量 SQL 在其中失败（维度不符 / 唯一索引并发冲突），PostgreSQL 会把**整个调用方事务**置为 aborted——此后调用方任何 SQL 都抛 `current transaction is aborted`，Java 侧 `catch` 无法挽回，「嵌入失败不阻断图片入库」契约即被打破（图片 INSERT 也会随事务回滚）。独立事务后向量失败只回滚自身，调用方照常提交。
+- 独立事务同时让「先删后插」**原子化**：重嵌失败回滚保留旧向量，不留「删了没插上」的空洞。
+- embedding 网络调用放在事务之外（不长时间占连接）。
+
+
+**检索实现（`ImageEmbeddingService.searchImages`）**：`query` 空校验 → **标签 AND 预过滤**（复用图库列表的 `resolveTagIds` 交集语义；交集为空**直接返回空列表且不调用 embedding**，省一次调用）→ `EmbeddingClient.embed(query)` → `ImageEmbeddingMapper.searchTopK`（HNSW cosine 排序，**门槛写在 SQL 的 WHERE**，不传输注定被丢弃的行；白名单候选集 ≤500 截断保底，与 `GET /api/images` 一致）→ 批查主表回填 `fileName/source/sourceRef` + 派生 `url/thumbUrl`（复用 `ImageService.fillDerived` 静态实现，同一派生规则只此一处）+ `ImageTagService.fillTags` 回填 `tags`。
+
+**接口契约（全部 `R<T>`，HTTP 200 业务失败；§1 已登记）**：
+
+| 方法 | 路径 | 权限 | 请求 | 响应 |
+|---|---|---|---|---|
+| POST | `/api/images/search` | 三角色 | `{query, topK?, minScore?, tags?[]}`（`@Valid ImageEmbedDTO`；`tags` AND 语义，与 `GET /api/images` 一致） | `data = [{imageId, score, sourceText, fileName, source, sourceRef, url, thumbUrl, tags[]}]`，按 `score` 降序 |
+| POST | `/api/images/embeddings/rebuild` | ADMIN/EDITOR | 无 body | `data = {total, success, failed}`（幂等：重复调用结果稳定；失败图不阻断整体，原因见后端日志） |
+
+**错误矩阵**：
+
+| 条件 | 行为 |
+|---|---|
+| `query` 空/空白/缺失 | 400 `R.fail(400,"检索内容不能为空")`（DTO `@NotBlank` 中文消息） |
+| `topK` > 50 / < 1 | 收敛为 50 / 默认 10（**不报错**） |
+| `minScore` 为 null | 用 `AI_IMAGE_MIN_SCORE`（默认 0.3） |
+| `tags` 无交集成空集 | 200 `data: []`（**不调用 embedding**） |
+| `AI_EMBEDDING_MODEL` 未配置 | 500（消息含「未配置」，来自 `EmbeddingClient.embedList`） |
+| embedding 调用失败 | 500 `R.fail(500,"图片语义检索失败: …")` |
+| VIEWER 调 search | 200（三角色可读） |
+| VIEWER 调 rebuild | 403（`@PreAuthorize`） |
+
+**配置**：`AI_IMAGE_MIN_SCORE`（默认 0.3，对齐 `AI_RAG_MIN_SCORE` 口径）→ `sparkora.ai.image-min-score`。
+
+**已知限制**：标签变更**不触发实时重嵌**——`source_text` 会与当前标签漂移（检索仍能命中旧文本）；用重建接口修正即可（实时重嵌留给后续任务）。
+
 ### 版本-图片关联（挂版本，不挂项目）
 
 `sparkora_article_version` 增列（幂等 ALTER）：
@@ -562,8 +641,10 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 | GET | `/api/images` | 三角色 | `?projectId=&source=&keyword=&tag=&page=1&size=24` 组合查询（source 白名单 upload/ai-text2img/ai-img2img/byd/byd-news，非法值 400；keyword 命中 file_name/prompt_text，ILIKE；**09-15 起 `tag` 支持多值**——重复参数或单值内逗号分隔，语义为 **AND**（图片须同时具备所有指定标签），逐标签查 `idx_image_tag_name` 取 id 集求交集，交集为空直接返回空页；其余筛选照常组合；单值行为与旧版单标签等价） | `PageResult`：`{rows[], total, page, size}`；rows 内每条含 url + thumbUrl + **tags[]**（按名称排序）+ **sourceRef**。**S10 起不再返回全量列表** |
 | GET | `/api/images/{id}/source` | 三角色 | —（09-15 img-classify 新增） | `data = {sourceRef, news, imageUrl}`：`news` 为 `{id, newsId, title, publishDate, url}`（source_ref 为官方 news_id 且能反查到新闻时）；**非新闻图（upload / AI 生成图 / 车型图）或查无新闻 → `news: null`**（显式输出，HTTP 200 不报错）；图片不存在 `R.fail(400)` |
 | GET | `/api/images/tags` | 三角色 | — | `data` = `[{name, count}]`（全库标签 + 引用数量，count 降序「常用优先」；预选控件与筛选联想同源复用；**09-15 起名称含 `主题/`、`年份/` 前缀**，响应结构不变） |
+| POST | `/api/images/search` | 三角色 | `{query, topK?, minScore?, tags?[]}`（09-15 img-semantic-search 新增；`tags` AND 语义同 `GET /api/images`；`topK` 默认 10 上限 50，超限收敛不报错；`minScore` null 时用 `AI_IMAGE_MIN_SCORE` 默认 0.3） | `data = [{imageId, score, sourceText, fileName, source, sourceRef, url, thumbUrl, tags[]}]`（`score` 余弦相似度降序）。`query` 空 → `R.fail(400,"检索内容不能为空")`；`tags` 交集空 → `data:[]`（不调 embedding）；模型未配置/调用失败 → `R.fail(500,…)`。契约详解见下文「图片语义检索」 |
+| POST | `/api/images/embeddings/rebuild` | ADMIN/EDITOR | 无 body（09-15 img-semantic-search 新增） | `data = {total, success, failed}`（全量重建图片向量：先物理清旧向量再插，**幂等**；单图失败不阻断整体、原因见日志）。VIEWER 调用 403 |
 | POST | `/api/images/upload` | ADMIN/EDITOR | multipart `file` + `projectId?`（可空=全局图库）+ `tags?`（同名多值或单值内逗号分隔均可） | `{image}`（含 `dedupeHit` 与 `tags`）；类型限 png/jpg/webp，≤10MB（`IMAGE_MAX_UPLOAD_MB`），超限 `R.fail(400)` |
-| DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录 + 图床对象 + **标签行物理清** |
+| DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录 + 图床对象 + **标签行物理清** + **向量行物理清**（09-15 img-semantic-search：防残留向量命中已删图） |
 | POST | `/api/images/generate-text` | ADMIN/EDITOR | `{projectId?, prompt, size?, n?, tags?[]}`（`@Valid` DTO；n 1~4 默认 1） | **S10 起响应为数组** `{images[]}`：n 张候选逐张入库（后端循环 n 次单张调用，单张失败跳过，全部失败 `R.fail(500)` 含候选模型错误明细）；每张含 genModel/genSize/dedupeHit/tags |
 | POST | `/api/images/generate-from-image` | ADMIN/EDITOR | `{projectId?, refImageId, prompt, size?, n?, tags?[]}`（`@Valid` DTO） | **S10 起响应为数组** `{images[]}`（同上）；provider 不支持 edits 时 `R.fail(500, 明确提示)` |
 | POST | `/api/images/{id}/regenerate` | ADMIN/EDITOR | —（S10 新增） | `{images[]}`（1 张）：用源图 prompt/gen_size 重新生成**新图**（不覆盖源图）。源图须 source∈{ai-text2img,ai-img2img} 且 prompt 非空，img2img 复用源图 ref_image_id（参考图已删则 400）；**09-13 起新图继承源图标签** |
@@ -584,6 +665,7 @@ S0 骨架用 `spring-dotenv` 或启动时读 `.env`，映射到 `@ConfigurationP
 - **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，el-pagination 翻页）；网格缩略图走 thumbUrl（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡提供**一键重生成**；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图从当前列表选参考图；n(1/2/4) 张候选生成，projectId 传空=全局图库，产物即进图库）。**UI 重设计（S10+）**：卡片瘦身——默认仅缩略图+来源小标，元数据/操作入 hover 浮层（移动端常显文件名行+「···」更多操作）；工具条两段式（主操作|浏览控制）；大图预览支持当前页连续浏览；筛选状态 chip 条（单独清除/一键全清）；批量选择模式（多选→单次确认删除，被引用图后端拒绝逐张提示）；舒适/紧凑密度切换（localStorage 记忆）。素材管理归图库，不在文章流程内。
   - **标签能力（09-13 image-tags）**：工具条「上传标签」预选控件（multiple allow-create，上传与 AI 生图共读，不持久化）；工具条标签筛选下拉（数据源 `GET /api/images/tags`，与 chip 条联动，可与其他筛选组合）；卡片 hover 层/移动端常显区展示标签，**点标签直接触发筛选**；卡片 hover 操作区/移动端 ··· 菜单「编辑标签」→ 对话框全量覆盖（`PUT /{id}/tags`）；批量选择态「打标签」→ 对话框（标签多选 + add/remove 单选 → `POST /tags/batch`）。**R5 交互修复**：AI 抽屉文生图/图生图 prompt 拆为独立 ref（切换 tab 不再互相污染）；参考图选择弹窗独立数据源 + 页内搜索（300ms 防抖）+ 分页（不再只看主列表第一页）；来源标签补「比亚迪新闻」（`byd-news`，红色点）。
   - **主题分类筛选与来源展示（09-15 img-classify）**：标签筛选改 **multiple**（`tagFilter` 由字符串改数组，多标签 **AND**），chip 条**逐个展示可单独清除**（点已选标签再点即取消）；下拉按 `/` 前缀用 `el-option-group` **分组展示**（`主题` / `年份` / `其他`）；卡片 hover 层（移动端常显行）显示**来源行**「来源：<新闻标题> · <日期>」，点击跳新闻原文（走 `GET /api/images/{id}/source`，页内批查懒加载，非新闻图不显示）；支持外部入口 `/images?tag=主题/销量`（预置筛选，供新闻卡片点主题标签跳转）。**路由与筛选双向同步**：挂载时按 `route.query.tag` 预置筛选；chip 单独清除 / 全清 / 点卡片标签后 `router.replace` 把 URL 同步为当前选中（`syncRouteTag`）——否则清掉 chip 后 URL 仍留旧 tag，再次从新闻页点同一主题时 query 未变、vue-router 判定重复导航、watch 不触发，出现「点了没反应」。
+  - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（`sparkora_image_embedding`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由子C/子D 承载）。
 - **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。
 - **预览步配图面板（项目向导 Step3 并入 Step4）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。
 
