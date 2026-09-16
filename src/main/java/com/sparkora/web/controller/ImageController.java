@@ -33,14 +33,18 @@ public class ImageController {
     private final ImageTagService tagService;
     private final com.sparkora.config.WenyanProperties wenyanProps;
     private final com.sparkora.service.PreviewService previewService;
+    /** 图片语义向量服务（09-15 img-semantic-search：自然语言检索 + 向量重建）。 */
+    private final com.sparkora.service.ImageEmbeddingService embeddingService;
 
     public ImageController(ImageService service, ImageTagService tagService,
                            com.sparkora.config.WenyanProperties wenyanProps,
-                           com.sparkora.service.PreviewService previewService) {
+                           com.sparkora.service.PreviewService previewService,
+                           com.sparkora.service.ImageEmbeddingService embeddingService) {
         this.service = service;
         this.tagService = tagService;
         this.wenyanProps = wenyanProps;
         this.previewService = previewService;
+        this.embeddingService = embeddingService;
     }
 
     /** 数字字段健壮解析：兼容 Number(Integer/Long/…) 与字符串形式（"4"/" 4"），空/非法返回 null 或抛 400。 */
@@ -254,6 +258,35 @@ public class ImageController {
             if (v != null) out.add(String.valueOf(v));
         }
         return out;
+    }
+
+    /** 图片语义检索（09-15 img-semantic-search）：body {query, topK?, minScore?, tags?[]}。
+     *  自然语言查图（如「销量海报」），向量 cos 相似度降序 + 门槛过滤；tags 为 AND 预过滤（与 GET /api/images 同语义）。
+     *  响应 data=[{imageId, score, sourceText, fileName, source, sourceRef, url, thumbUrl, tags[]}]。
+     *  query 空 → DTO @Valid 400；topK 超限收敛不报错；tags 交集空 → data:[]（不调 embedding）；
+     *  模型未配置/embedding 调用失败 → 500（消息含原因）。 */
+    @PostMapping("/search")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<List<com.sparkora.domain.dto.ImageSearchHit>> search(@Validated @RequestBody com.sparkora.domain.dto.ImageEmbedDTO body) {
+        try {
+            return R.ok(embeddingService.searchImages(body.getQuery(), body.getTopK(), body.getMinScore(), body.getTags()));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "图片语义检索失败: " + ex.getMessage());
+        }
+    }
+
+    /** 图片向量全量重建（09-15 img-semantic-search，ADMIN/EDITOR）：遍历全部图片重新嵌入（先清后插，幂等）。
+     *  单图失败不阻断整体；返回 {total, success, failed}（失败原因见后端日志）。 */
+    @PostMapping("/embeddings/rebuild")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<com.sparkora.service.ImageEmbeddingService.EmbedStats> rebuildEmbeddings() {
+        try {
+            return R.ok(embeddingService.rebuildAll());
+        } catch (Exception ex) {
+            return R.fail(500, "图片向量重建失败: " + ex.getMessage());
+        }
     }
 
     /** 预览参数清单(S4):主题目录/高亮清单与开关默认值,前端下拉同源。 */

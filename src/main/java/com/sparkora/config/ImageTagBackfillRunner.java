@@ -14,6 +14,7 @@ import com.sparkora.service.ImageTagService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -32,9 +33,13 @@ import java.util.regex.Pattern;
  *  - 新闻分支（09-15）：文件名解析 detail<数字> → 精确匹配 sparkora_news.news_id 后缀 →
  *    用同一分类器补主题/年份标签 + 回填 source_ref 与 sparkora_news.cover_image_id。
  * 零网络成本：新闻分支只反查库内新闻，不重新下载图片。
+ *
+ * 顺序（09-15 img-semantic-search）：显式 {@code @Order(10)}，必须**早于** {@link ImageEmbeddingBackfillRunner}
+ * （{@code @Order(20)}）——图片嵌入文本依赖标签信号，补标须先完成，否则存量图会拿到「无标签」低质向量。
  */
 @Slf4j
 @Component
+@Order(10)
 public class ImageTagBackfillRunner implements ApplicationRunner {
 
     /** 新闻图文件名形如 news-_page_byd-cn_news-2026_detail632.jpg（数字即官方 detail 序号）。 */

@@ -54,6 +54,7 @@ sparkora:
     rag-kb-enabled: ${AI_RAG_KB_ENABLED:true}   # S7:通用知识库总开关(false 回退 S6.2 纯车型域)
     rag-anchor-boost: ${AI_RAG_ANCHOR_BOOST:1.15} # S8:锚点车型块分数加权系数(统一检索重排)
     rag-news-topk: ${AI_RAG_NEWS_TOPK:4}        # C2:官方新闻域生成检索注入块数上限(与车型/KB 配额独立;0=关闭 NEWS 注入)
+    image-min-score: ${AI_IMAGE_MIN_SCORE:0.3}  # 09-15:图片语义检索相似度门槛(低于该余弦相似度的图片命中被过滤)
   deep:                                  # S9 深度生成模式
     search-web-enabled: ${SEARCH_WEB_ENABLED:true}   # 研究子代理外部搜索总开关
     tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)

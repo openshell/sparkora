@@ -599,3 +599,24 @@ CREATE INDEX IF NOT EXISTS idx_image_tag_name ON sparkora_image_tag(tag_name);
 ALTER TABLE sparkora_image_asset ADD COLUMN IF NOT EXISTS source_ref VARCHAR(200);
 CREATE INDEX IF NOT EXISTS idx_image_asset_source_ref ON sparkora_image_asset(source_ref);
 ALTER TABLE sparkora_news ADD COLUMN IF NOT EXISTS cover_image_id BIGINT;
+
+-- ============================================================================
+-- 09-15 img-semantic-search:图片语义向量域（子B）。
+-- 图片无自身文本,用「描述性文本代理」嵌入(新闻标题+标签 / AI prompt / 文件名),
+-- 复用 Qwen3-Embedding-8B 1024 维,与 car/kb/news 三域**同一向量空间**（同模型同维度是硬约束,
+-- 否则跨域检索无意义;故不存模型名/维度列,沿用 KB 域最简形态）。
+-- 一图一向量:唯一索引 uk_image_emb_image 即幂等保证(重建先物理删后插,不可能重复);
+-- 不建强外键(同 sparkora_image_tag 惯例,应用层维护,删图时同事务物理清向量);
+-- 不设 deleted 列(物理表,同三域 embedding 表)。
+-- 全部单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS sparkora_image_embedding (
+    id          BIGSERIAL PRIMARY KEY,
+    image_id    BIGINT       NOT NULL,               -- → sparkora_image_asset.id(应用层维护,不建强 FK)
+    embedding   VECTOR(1024) NOT NULL,               -- 与 car/kb/news 三域同模型同维度
+    source_text TEXT         NOT NULL,               -- 嵌入原文(便于调试与重建追溯)
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_image_emb_image ON sparkora_image_embedding(image_id);
+CREATE INDEX IF NOT EXISTS idx_image_emb_vec_hnsw ON sparkora_image_embedding
+    USING hnsw (embedding vector_cosine_ops);

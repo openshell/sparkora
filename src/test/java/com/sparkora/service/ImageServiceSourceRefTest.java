@@ -49,13 +49,14 @@ class ImageServiceSourceRefTest {
     @Mock ObjectProvider<QiniuProperties> qiniuProps;
     @Mock ImageTagService tagService;
     @Mock ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper;
+    @Mock ImageEmbeddingService embeddingService;
 
     ImageService service;
 
     @BeforeEach
     void setUp() {
         service = new ImageService(imageProps, imageMapper, projectMapper, versionMapper,
-                aiImageClient, imageStorage, qiniuProps, tagService, newsMapper);
+                aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
     }
 
     /** 造 preset（本次入库携带的来源串）。 */

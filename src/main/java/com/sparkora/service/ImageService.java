@@ -70,6 +70,8 @@ public class ImageService {
     private final ImageTagService tagService;
     /** 新闻主表 mapper（09-15 img-classify：来源追溯 source_ref → 新闻元信息）；新闻域可选，缺失时降级 news:null。 */
     private final ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper;
+    /** 图片语义向量服务（09-15 img-semantic-search：入库后 best-effort 嵌向量、删图联动清向量）。 */
+    private final ImageEmbeddingService embeddingService;
 
     private final java.net.http.HttpClient transferClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -80,7 +82,8 @@ public class ImageService {
                         ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
                         AiImageClient aiImageClient, ImageStorage imageStorage,
                         ObjectProvider<QiniuProperties> qiniuProps, ImageTagService tagService,
-                        ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper) {
+                        ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper,
+                        ImageEmbeddingService embeddingService) {
         this.imageProps = imageProps;
         this.imageMapper = imageMapper;
         this.projectMapper = projectMapper;
@@ -90,6 +93,7 @@ public class ImageService {
         this.qiniuProps = qiniuProps;
         this.tagService = tagService;
         this.newsMapper = newsMapper;
+        this.embeddingService = embeddingService;
     }
 
     // ==================== 上传 ====================
@@ -209,6 +213,7 @@ public class ImageService {
         for (ImageAssetEntity e : out) {
             tagService.copyTags(imageId, e.getId(), operator);
             e.setTags(tagService.tagNamesOf(e.getId()));
+            embeddingService.embedQuietly(e.getId());   // 09-15:标签继承后重嵌，嵌入文本与最终标签保持一致
         }
         return out;
     }
@@ -268,6 +273,7 @@ public class ImageService {
             hit.setDedupeHit(true);
             applyPresetTags(hit, preset, true);   // 命中已有图:merge 补上本次预选但缺失的标签
             applyPresetSourceRef(hit, preset);    // 09-15:来源串只在缺失时补写(同图被多新闻引用保留首次值)
+            embeddingService.embedQuietly(hit.getId());   // 09-15 img-semantic-search:去重命中同样确保有向量(缺向量图由重建补齐)
             log.info("配图去重命中 hash={} 复用记录 id={}（未上传图床）", hash, hit.getId());
             return hit;
         }
@@ -278,6 +284,9 @@ public class ImageService {
         imageMapper.insert(preset);
         fillDerived(preset);
         applyPresetTags(preset, preset, false);   // 新入库:全量写标签
+        // 09-15 img-semantic-search:入库成功后 best-effort 嵌向量(钩子在 insert 之后,embedQuietly 自吞异常,
+        // 绝不影响入库链路——标签/来源已落库,嵌入文本才能取到完整信号)
+        embeddingService.embedQuietly(preset.getId());
         return preset;
     }
 
@@ -454,14 +463,23 @@ public class ImageService {
 
     /** 填充非持久化 url 字段（由 storageKey 拼图床公网 URL）。 */
     private void fillUrl(ImageAssetEntity img) {
+        fillUrl(img, imageStorage);
+    }
+
+    /** url 派生实现（静态：图库列表与图片语义检索命中回填共用同一规则）。 */
+    static void fillUrl(ImageAssetEntity img, ImageStorage storage) {
         if (img.getStorageKey() != null && !img.getStorageKey().isBlank()) {
-            img.setUrl(imageStorage.publicUrl(img.getStorageKey()));
+            img.setUrl(storage.publicUrl(img.getStorageKey()));
         }
     }
 
     /** 填充非持久化 thumbUrl（S10：七牛 imageView2/webp 派生；非七牛实现降级为原图 url）。 */
     private void fillThumbUrl(ImageAssetEntity img) {
-        QiniuProperties q = qiniuProps.getIfAvailable();
+        fillThumbUrl(img, imageStorage, qiniuProps.getIfAvailable());
+    }
+
+    /** thumbUrl 派生实现（静态：同 fillUrl）。 */
+    static void fillThumbUrl(ImageAssetEntity img, ImageStorage storage, QiniuProperties q) {
         if (q != null && q.configured() && img.getUrl() != null) {
             img.setThumbUrl(q.thumbUrl(img.getStorageKey()));
         } else {
@@ -471,8 +489,16 @@ public class ImageService {
 
     /** 列表/快照共用的展示派生字段填充（url + thumbUrl）。 */
     private void fillDerived(ImageAssetEntity img) {
-        fillUrl(img);
-        fillThumbUrl(img);
+        fillDerived(img, imageStorage, qiniuProps.getIfAvailable());
+    }
+
+    /**
+     * 展示派生字段填充（静态实现，09-15 img-semantic-search 起被 `ImageEmbeddingService` 检索命中回填复用）：
+     * 同一派生规则只此一处实现（url 由图床拼、thumbUrl 按供应商能力派生/降级）。
+     */
+    static void fillDerived(ImageAssetEntity img, ImageStorage storage, QiniuProperties q) {
+        fillUrl(img, storage);
+        fillThumbUrl(img, storage, q);
     }
 
     /** 由图库记录 id 取图床公网 URL（图片入库即已转存，storageKey 非空）。 */
@@ -542,6 +568,7 @@ public class ImageService {
             throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应预览步骤移除后再删除");
         }
         tagService.deleteByImageId(id);   // 09-13:标签行生命周期=图片生命周期,删图联动物理清(同 KB embedding 兜底先例)
+        embeddingService.deleteByImageId(id);   // 09-15 img-semantic-search:向量行同样物理清(防残留向量命中已删图)
         imageMapper.deleteById(id);
         // 同步删图床对象(非阻塞,失败仅告警)
         imageStorage.delete(img.getStorageKey());
