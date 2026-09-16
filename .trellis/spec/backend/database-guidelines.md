@@ -67,6 +67,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_brief_planning
 
 > **Warning**: 占位行失败时若被删除，任何「按项目取最新行」的查询都会回退到更早的旧行，导致轮询误判状态。轮询必须用**本次启动返回的 briefId 精确定位**，不能只按 projectId 取最新（见 error-handling.md「轮询可删除占位」）。
 
+### 启动补齐任务：依赖排序 + 网络耗时异步化（09-15 先例：图片标签/向量 runner）
+
+多个 `ApplicationRunner` 做存量补齐时，**依赖关系必须用 `@Order` 显式固定**，不能靠注册顺序巧合：
+
+```java
+@Component @Order(10)   // 补标签（A）
+public class ImageTagBackfillRunner implements ApplicationRunner { ... }
+@Component @Order(20)   // 补向量（B，嵌入文本依赖 A 产出的标签）
+public class ImageEmbeddingBackfillRunner implements ApplicationRunner { ... }
+```
+
+- **顺序反了会静默损坏数据**：B 用了 A 还没补的字段，产物「看起来完整但内容低质」；更糟的是 B 的补齐判定（如「已有向量」差集）会把错误产物视为已完成，**永不自动修复**，只能人工全量重建。
+- **网络型补齐放独立守护线程**：逐行 embedding 是串行网络调用（图库 ~170 图实测 173s），`ApplicationRunner.run()` 返回前应用不就绪——放 `new Thread(..., "xxx-backfill").start()`（daemon），日志输出进度与耗时。阈值参考：超过 ~30s 即应异步。
+- **异常必须全吞**（仅 warn）：补齐失败不得阻断启动，可事后调重建接口补救。
+- 幂等判据用**差集**（`LEFT JOIN ... WHERE e.id IS NULL` / `WHERE col IS NULL`），重跑 `total=0` 自然跳过。
+- 先例：`ImageTagBackfillRunner`（`@Order(10)`）+ `ImageEmbeddingBackfillRunner`（`@Order(20)`，守护线程）。
+
+### 向量/派生数据写入需与调用方事务隔离（09-15 先例：REQUIRES_NEW）
+
+「best-effort 写入」（嵌入、派生缓存）若发生在**调用方事务内**，其 SQL 失败会让 PostgreSQL 把整个事务标记为 aborted，此后调用方任何 SQL 都抛 `current transaction is aborted`——Java 侧 `catch` 无法挽回，主流程（父表 INSERT）照样回滚，**「失败不阻断主流程」的契约被悄悄打破**：
+
+```java
+// 自注入代理（@Lazy）——this.persistVector(...) 不经代理，@Transactional 不生效
+@Autowired @Lazy private ImageEmbeddingService self;
+
+public void embedOne(ImageAssetEntity img) {
+    String vec = embeddingClient.embed(text);   // 网络调用放在事务外
+    (self == null ? this : self).persistVector(...);   // self==null 兼容单测直 new
+}
+
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void persistVector(...) { deleteByImageId(id); insert(id, vec); }  // 独立事务 + 先删后插原子化
+```
+
+- 判定信号：写入方有 `catch (Exception e) { log.warn(...) }` 却仍可能让主流程失败 → 必须隔离事务。
+- 附带收益：独立事务让「先删后插」原子化，重写失败回滚保留旧值，不留空洞。
+- 先例：`CarSyncJobService`/`ClarifyService` 的自注入代理写法；09-15 `ImageEmbeddingService.persistVector`。
+
 ### 定时任务防重叠需带陈旧自愈（09-11 先例：CarSyncScheduler；09-12 落地）
 
 `@Scheduled` 消费任务表（如 `sparkora_car_sync_job`）时，用 `hasRunning()`（`status=RUNNING` 计数）防重叠。**但进程在任务中途死亡会残留 RUNNING 行**，无超时自愈则定时任务被永久跳过。**09-12 kb-cleanup 已为车型/新闻两侧补齐自愈**：

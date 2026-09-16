@@ -175,6 +175,66 @@ public boolean available() { return apiKey != null && !apiKey.isBlank() && lastO
 
 ---
 
+## Scenario: 图片向量域（第四域，09-15 img-semantic-search）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改图片语义检索（`ImageEmbeddingService`）、图片向量表，或改动图片嵌入文本规则。
+
+### 2. Signatures
+```java
+// ImageEmbeddingTextBuilder（纯静态，可单测，零 AI）
+static String build(ImageAssetEntity img, List<String> tags, String newsTitle)  // 2000 字符截断，全空兜底 (图片 <id>)
+// ImageEmbeddingService
+record EmbedStats(int total, int success, int failed)          // 对标 KbDocService.EmbedStats
+void embedOne(ImageAssetEntity img)                            // 先物理删旧向量再插（幂等）
+void embedQuietly(Long imageId)                                // 吞全部异常仅 warn，绝不影响图片入库
+EmbedStats rebuildAll() / rebuildMissing()                     // 全量 / 仅补 LEFT JOIN 差集
+void deleteByImageId(Long imageId)                             // 删图联动
+List<ImageSearchHit> searchImages(String query, Integer topK, Double minScore, List<String> tags)
+```
+
+### 3. Contracts
+- **同空间硬约束**：`sparkora_image_embedding.embedding VECTOR(1024)` + HNSW `vector_cosine_ops`，复用 `EmbeddingClient`（Qwen3-Embedding-8B）。**不新增 embedding 客户端、不存模型名/维度列**——列存模型名只会制造「不同模型混检索」的错觉。
+- **一图一向量**：`UNIQUE(image_id)` 即幂等保证（重建先清后插）；不加 `deleted`（物理表）、不建 FK（应用层维护，删图同事务清向量，同 `sparkora_image_tag` 惯例）。
+- **图片无自身文本 → 描述性文本代理**：byd-news=来源新闻标题（`source_ref` 反查）+ 标签；ai-*=promptText+标签；upload/byd=文件名去扩展名+标签。标签**原样拼**（保留 `主题/` 前缀，「销量」即检索信号）。
+- **全空仍嵌入**（兜底 `(图片 <id>)`）：缺向量图在语义检索中永久不可见，比低质向量更糟；低质命中交给门槛过滤。
+- **标签预过滤 = AND 交集**（与 `GET /api/images` 同语义，复用 `resolveTagIds`），交集为空**早返回且不调 embedding**；候选集 ≤500 截断保底。
+- **门槛下推到 SQL WHERE**（`1 - (embedding <=> vec) >= minScore`），不传输注定被丢弃的行；`topK` 默认 10 / 上限 50 收敛不报错；`minScore` null → `AI_IMAGE_MIN_SCORE`（默认 0.3）。
+- **注解 SQL 的 XML 转义（踩坑）**：`@Select("<script>…")` 内容是 XML，pgvector 距离运算符 `<=>` 与比较符 `>=`、`<if test='ids.size() > 0'>` 的 `>` **必须写成 `&lt;=&gt;` / `&gt;=` / `&gt;`**，否则 SAXParser 报「元素内容必须由格式正确的字符数据或标记组成」→ **启动期 mapper 注册失败**（编译期不报，只有跑起来才炸）。
+- **向量写入必须与调用方事务隔离（`REQUIRES_NEW`）**：入库链路（新闻/车型同步）可能是事务性的，向量 SQL 若在其中失败（维度不符 / 唯一索引并发冲突），PostgreSQL 会把**整个调用方事务**置为 aborted，此后调用方任何 SQL 都抛 `current transaction is aborted`——Java 侧 `catch` 无法挽回，「嵌入失败不阻断入库」契约即失效（父表 INSERT 也随事务回滚）。故 `persistVector` 经**自注入代理**（`@Autowired @Lazy`，`this.` 调用不走代理）走 `@Transactional(propagation = REQUIRES_NEW)`；embedding 网络调用放在事务之外。独立事务同时让「先删后插」原子化（失败回滚保留旧向量，不留空洞）。
+- **启动补齐 runner 的 `@Order` 硬约束**：补标签 runner（`@Order(10)`）必须早于补向量 runner（`@Order(20)`）——嵌入文本依赖标签信号，顺序反了会让存量图拿到「无标签」低质向量，且因「已有向量」`rebuildMissing()` 不再修（静默、需人工全量重建）。同类「B 依赖 A 产物」的启动补齐任务都要显式排序。
+- **启动期网络任务异步化**：逐图/逐块 embedding 是串行网络调用（图库 ~170 图实测约 173s），不能占启动主线程（`ApplicationRunner.run` 返回前应用未就绪）——放独立守护线程，日志输出进度与耗时；阈值参考：超过 ~30s 即应异步。
+
+### 4. Validation & Error Matrix
+- `query` 空/空白 → `IllegalArgumentException("检索内容不能为空")` → 400（DTO `@NotBlank` 同文案）。
+- 标签交集空 → 200 `data:[]`（不调 embedding）；`AI_EMBEDDING_MODEL` 空 / 调用失败 → 500。
+- 增量嵌入失败 / 唯一索引并发冲突 → 仅 warn（不阻断入库），事后用 rebuild 接口补齐。
+
+### 5. Good/Base/Bad Cases
+- Good: 入库钩子挂在 `persistOrReuse` **insert 成功之后**（标签/来源已落库，嵌入文本才拿得到完整信号），`embedQuietly` 自吞异常。
+- Base: 启动 runner `rebuildMissing()` 只补差集，异常仅 warn 不阻断启动（重跑 `total=0` 跳过）。
+- Bad: 把 embedding 调用放在入库事务内并让失败回滚图片入库；或在事务外先读后判「是否有向量」。
+
+### 6. Tests Required
+- 四来源嵌入文本分派 + 标题缺失退化 + 全空兜底 + 2000 截断 + null 安全（`ImageEmbeddingTextBuilderTest`）。
+- query 空校验、标签交集空早返回（断言 `embed` **未被调用**）、topK 收敛、minScore 默认与门槛透传、命中回填 url/thumbUrl/tags、向量残留但图已删跳过、`embedQuietly` 吞异常、rebuild 计数（`ImageEmbeddingServiceTest`）。
+- **事务隔离回归**：断言 `embedOne` 经自注入代理（`persistVector` 被调用）而非在当前 SqlSession 直写（`ImageEmbeddingServiceTest`，反射注入 `self`）。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+public void embedQuietly(Long imageId) { embeddingClient.embed(text); }  // 抛出去 → 图片入库失败
+```
+#### Correct
+```java
+public void embedQuietly(Long imageId) {
+    try { ImageAssetEntity img = imageMapper.selectById(imageId); if (img != null) embedOne(img); }
+    catch (Exception e) { log.warn("图片向量化失败(不影响入库,可用重建接口补齐) id={}: {}", imageId, e.getMessage()); }
+}
+```
+
+---
+
 ## Naming / Conventions
 
 - 会话仅创建者可见：按 `created_by` 过滤，越权与不存在**统一** `IllegalArgumentException("会话不存在")` → 控制器 404（不泄露存在性）。
