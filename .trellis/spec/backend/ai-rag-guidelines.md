@@ -72,7 +72,9 @@ aiClient.chatMessages(messages, 2048);
 ```java
 CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long> anchorModelIds)
 // RagResult{status, context, hitCount, maxScore, coveredText, citations}
-// Citation{source, modelName, chunkType, score, chunkText}; source∈{CAR,KB,NEWS}
+// Citation{source, modelName, chunkType, score, chunkText, docId}; source∈{CAR,KB,NEWS}
+//   docId 可空（09-15 qa-auto-illustrate 补读；CAR=car_doc.id/KB=kb_chunk.id/NEWS=news_doc.id）；
+//   保留 5 参兼容构造器（docId=null），既有调用方不受影响；详见本文「问答答案配图」Scenario
 // RagStatus{OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE}
 ```
 
@@ -286,6 +288,82 @@ if (hit.score() > 0.9) imageService.modifyBodyImage(projectId, hit.imageId(), "a
 ```java
 // 只返回建议；写入由前端在用户点「采用」后触发（markdown + addBodyImage 双写）
 out.add(new AnchorSuggestion(a.key(), idx, a.headingPath(), a.text(), hits));
+```
+
+---
+
+## Scenario: 问答答案配图（只读派生展示；09-15 qa-auto-illustrate 子D）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改「随答案附带的展示性派生内容」（问答配图、答案附注…），或改动 `QaImageRefService` / `QaImageIntent` / `Citation.docId`。
+
+### 2. Signatures
+```java
+// CarRagService（纯增量，向后兼容）
+record UnifiedHit(String chunkText, String chunkType, double score,
+                  String source, Long modelId, String modelName, Long docId) {}
+record Citation(String source, String modelName, String chunkType, double score,
+                String chunkText, Long docId) {
+    Citation(String source, ..., String chunkText) { this(..., null); }   // 5 参兼容构造器
+}
+
+// QaImageIntent（纯静态，可单测）
+static boolean isImageIntent(String question)    // 关键词命中
+static String cleanQuery(String question)        // 剥离意图短语；剥空回退原问题
+
+// QaImageRefService（只读；**所有路径内部 try/catch，永不抛出**）
+record QaImageRef(Long imageId, String url, String thumbUrl, String title, String newsId, String source)
+List<QaImageRef> forAnswer(List<Citation> citations, String question, int limit)   // 两路合并去重
+List<QaImageRef> byNewsCitations(List<Citation> citations, int limit)              // 便宜路径
+List<QaImageRef> bySemanticQuery(String question, int limit)                       // 语义路径
+
+// ImageService（只读批量：selectBatchIds + 复用 fillDerived）
+List<ImageAssetEntity> loadDerived(List<Long> imageIds)
+```
+
+### 3. Contracts
+- **record 加字段必须保留旧参构造器**：`Citation` 加可空 `docId` 时保留 5 参构造器（委托 6 参传 null），否则既有调用方（`BriefService.citationsJson`/`KnowledgeSearchTool`/`QaServiceTest`）编译失败。纯增量字段对 JSON 消费者无害（前端不读即无影响）。
+- **检索 SQL 已 SELECT 的列要在读行处补读**：统一检索 SQL 早已 `SELECT docId`，但 `retrieveUnified` 读行时丢弃 → 消费方拿不到定位 id。加字段是「读侧一行」的事，**不动 SQL、不动配额与排序**（`searchTopKUnified` 是三域候选窗口隔离的关键资产）。
+- **重排/重建 record 处必须透传全部字段**：锚点 boost 分支 `new UnifiedHit(...)` 少传一个字段就静默丢数据（本任务最高风险点）。加字段时 grep 所有 `new XxxRecord(` 构造点逐一核对。
+- **展示性派生内容 = 只读 + 降级**：配图不写任何用户内容、无批准流程（与子C「写入正文须批准」不同，因为子C 改的是用户内容）。解析失败 → 落 null + warn，**主产物（答案）优先**；`QaService.ask` 调用处再包一层 try/catch 双保险。
+- **派生展示不落库（除本次的答案配图例外说明）**：本任务的 `image_refs` 是**消息的组成部分**（与答案同时产生、随消息生命周期），故落列；而「可随时重算的建议」（子C 配图建议）仍不落库（避免建议陈旧）。判定：内容是否为「该次生成的结果快照」——是则落，否则按需重算。
+- **意图判定用关键词而非 LLM**：零成本、可单测、可解释；误判代价仅是「多显示几张图」时不值得引入 LLM。**非命中不得触发 embedding**（性能硬约束，用 `never()` 断言）。
+- **预览/引用必须用原图 URL**：配图 `preview-src-list` 用 `url` 而非 `thumbUrl`（webp 派生，既有教训）；缩略展示才用 `thumbUrl || url`。
+
+### 4. Validation & Error Matrix
+| 条件 | 行为 |
+|---|---|
+| 无 NEWS 引用 / `docId` 为空 | 新闻关联图为空（不查库、不报错） |
+| NEWS 引用无 `cover_image_id` | 跳过该条 |
+| 图库资产已删/无 `url` | 跳过该条（`loadDerived` 后按 `url` 过滤） |
+| 语义检索失败 / 非图片意图 | 该路径空（后者不调 `searchImages`）；答案正常 |
+| 配图整体异常 | `image_refs=null` + warn；答案照常落库 |
+| 历史消息 `image_refs` NULL | 前端不展示图片区（零回归） |
+
+### 5. Good/Base/Bad Cases
+- Good: `forAnswer` 两路各自 try/catch + 外层再兜一层；合并按 `imageId` 去重且新闻图优先（与引用强相关）。
+- Base: 无 NEWS 引用且非图片意图 → 空列表 → 落 null（前端不渲染）。
+- Bad: 意图判定接 LLM（每条问答多一次调用）；或让配图异常冒泡打断 `ask`（答案丢失）。
+
+### 6. Tests Required
+- record 兼容构造器可用（5 参 → docId=null）；`retrieveUnified` 读入 docId 且缺列不 NPE。
+- **boost 重排后 docId 保留**（回归断言，防静默失效）。
+- 意图：正例/负例/null/空；**非图片意图 `verify(searchImages, never())`**。
+- 合并去重（同 imageId 两路命中 → 1 条，新闻图优先）、上限截断、新闻占满上限不再调语义检索。
+- 降级：任一依赖抛异常 → 返回空列表**不抛出**（`answer` 仍落库、`imageRefs` 为 null）。
+- 前端字段名与 record 一致（`imageId` 而非实体 `id`）——编译/单测发现不了，需真机或 curl 打通 API 层。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// boost 分支重建 record 时漏传 docId → NEWS 配图静默失效（且无任何报错）
+boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), h.score() * boost,
+        h.source(), h.modelId(), h.modelName()));
+```
+#### Correct
+```java
+boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), h.score() * boost,
+        h.source(), h.modelId(), h.modelName(), h.docId()));   // 全字段透传
 ```
 
 ---

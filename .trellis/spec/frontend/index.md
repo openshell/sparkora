@@ -175,6 +175,31 @@ watch(() => route.query.tag, (v) => { const next = parseTag(v); if (sameFilter(n
 
 后端返回的图片/链接可能是相对路径（如新闻 `imageUrl`/`url`）。前端统一用一个 `resolveUrl`：`/^https?:\/\//i` 开头原样返回，否则拼接源站（新闻 = `https://www.byd.com`）。
 
+### Convention: 后端 TEXT 列存 JSON 的字段，前端消费必须兼容「字符串 / 数组」两态
+
+后端 JSON 字段统一以 TEXT 列存**字符串**（`citations`、`image_refs`、`similarityReport` 等，见 database-guidelines「JSON 字段统一 TEXT 列」），但不同链路（或未来后端改为直接返回数组/DTO）可能给出数组。前端消费前必须归一：
+
+```js
+// QaChat.vue imgRefsOf / CitationList.vue localList 同款兼容写法
+const listOf = (raw) => {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string' && raw) { try { const v = JSON.parse(raw); return Array.isArray(v) ? v : [] } catch { return [] } }
+  return []
+}
+```
+
+- 兼容写法要**容错**（`JSON.parse` 失败返回空数组），不能抛异常打断渲染；历史行字段为 `NULL` → 归一为空数组 → `v-if` 不渲染（零回归）。
+- 派生展示字段（如配图）用 `v-if="… && listOf(m).length"` 而非 `v-if="m.field"`（字符串 `"[]"` 与 `null` 都要正确判空）。
+- 引用/建议类条目若是后端 record（`QaImageRef`/`ImageSearchHit`），**字段名以 record 为准**（`imageId` 非实体 `id`）——对照 `src/api/index.js` 注释确认；混用会静默传 `undefined`（09-15 P0 先例，编译与构建都不报错）。
+
+### Convention: 图片预览必须用原图 URL，缩略图只用派生 URL
+
+配图/图片列表的**预览大图**（`preview-src-list`）与**插入正文**必须用原图 `url`；`thumbUrl`（七牛 `imageView2`/webp 派生）只用于网格缩略展示。原因：webp 派生图微信素材接口不支持（40113 unsupported file type，2026-09-11 全站预览坏图先例）。
+
+```vue
+<el-image :src="img.thumbUrl || img.url" :preview-src-list="[img.url]" preview-teleported hide-on-click-modal />
+```
+
 ---
 
 ## Anti-patterns
