@@ -65,6 +65,23 @@
                       v-if="m.role === 'assistant'"
                       :citations="m.citations"
                       :rag-status="m.ragStatus" />
+                    <!-- 答案配图（09-15 qa-auto-illustrate）：只读附加展示，历史消息无 imageRefs 不渲染 -->
+                    <div v-if="m.role === 'assistant' && imgRefsOf(m).length" class="qa-imgs">
+                      <div
+                        v-for="img in imgRefsOf(m)"
+                        :key="img.imageId"
+                        class="qa-img-cell">
+                        <el-image
+                          class="qa-img-thumb"
+                          :src="img.thumbUrl || img.url"
+                          :preview-src-list="[img.url]"
+                          :initial-index="0"
+                          preview-teleported
+                          fit="cover" />
+                        <span class="qa-img-title" :title="img.title || ''">{{ img.title || '配图' }}</span>
+                        <span class="qa-img-src">{{ img.newsId ? '新闻' : (img.source || '图库') }}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </template>
@@ -128,6 +145,21 @@ const asking = ref(false)
 const scrollRef = ref(null)
 
 const fmtTime = (t) => (t ? String(t).replace('T', ' ').slice(0, 16) : '')
+
+/**
+ * 答案配图（09-15 qa-auto-illustrate）。后端 image_refs 是 JSON 字符串（TEXT 列，同 citations 惯例），
+ * 但不同链路/未来可能直接给数组——两种形态都要兼容（同 CitationList 的兼容写法）。
+ * 字段名以 QaImageRef record 为准：imageId/url/thumbUrl/title/newsId/source（非实体 id）。
+ * 历史消息无 imageRefs → 返回空数组 → v-if 不渲染（行为不变）。
+ */
+const imgRefsOf = (m) => {
+  const raw = m?.imageRefs
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string' && raw) {
+    try { const v = JSON.parse(raw); return Array.isArray(v) ? v : [] } catch { return [] }
+  }
+  return []
+}
 
 const loadSessions = async () => {
   sessionsLoading.value = true
@@ -374,6 +406,44 @@ onMounted(loadSessions)
 .markdown-body th { background: var(--line); font-weight: 600; }
 .markdown-body hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
 .markdown-body img { max-width: 100%; border-radius: 6px; }
+
+/* 答案配图行（09-15 qa-auto-illustrate）：横向滚动缩略图，点击 el-image 预览原图 */
+.qa-imgs {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.qa-img-cell {
+  flex: 0 0 auto;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qa-img-thumb {
+  width: 96px;
+  height: 96px;              /* ≥44px 触控目标 */
+  min-height: 44px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  display: block;
+}
+.qa-img-title {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.qa-img-src { font-size: 11px; color: var(--faint); }
+
 .thinking { margin-left: 8px; color: var(--muted); font-size: 13px; }
 .spin { animation: spin 1s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
