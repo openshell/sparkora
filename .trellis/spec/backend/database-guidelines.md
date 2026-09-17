@@ -258,6 +258,7 @@ SELECT * FROM (
 
 - C2 前只有 CAR/KB 时，`(CAR∪KB) LIMIT` 与旧全局 `LIMIT` 语义等价——**演进时把既有域合并保留原语义，新域单独开窗口**，避免回归。
 - 调用方传入的 `limit` 必须 ≥ 各域配额（默认 `topK*4` 且至少 32，远大于 `ragKbTopk`/`ragNewsTopk`）。
+- **图片域（第四域）是同空间但独立检索**：`sparkora_image_embedding` 与三域同模型同维度，但**不并入 `searchTopKUnified`**（图片查询是独立入口 `POST /api/images/search`，不与文本块混排）。同空间只保证「同一 embedding 模型/维度」这一硬约束，不代表共用一条 SQL；新增域时按「是否需要与既有域混排」决定并入还是独立，不要为了「统一」把异质结果强行 UNION。
 - 不要在服务层用「加大 limit」来补偿多域争抢——候选窗口隔离才是根因修复，加大 limit 会静默扩大下游注入集。
 
 ---
