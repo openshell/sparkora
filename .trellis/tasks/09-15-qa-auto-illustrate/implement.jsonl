@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/09-15-qa-auto-illustrate/prd.md", "reason": "本任务需求 R1-R5 + R3b 展示模型（直接展示无需批准）与验收标准 AC 逐条；含待查项结论"}
+{"file": ".trellis/tasks/09-15-qa-auto-illustrate/design.md", "reason": "技术设计：docId 传递（含 boost 重排易漏点与 5 参兼容构造器）、配图解析服务两路径、意图判定、合并去重、DTO 结构、错误矩阵、权衡与回滚"}
+{"file": ".trellis/tasks/09-15-qa-auto-illustrate/implement.md", "reason": "执行计划 M1-M7、真机验证清单、DB 交叉核对、风险点（含验证禁改生产数据、前端字段名兼容）"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父任务需求总集：R-D1/R-D2、依赖关系、跨子验收（零回归、与三域检索一致）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "schema 幂等补列（ADD COLUMN IF NOT EXISTS,禁 DO $$）、可空列纯增量——image_refs 遵循"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域+图片域检索契约：UnifiedHit/Citation 结构、docId 语义（CAR=car_doc.id/KB=kb_chunk.id/NEWS=news_doc.id）、候选窗口与配额——本任务只在读侧补一列，不得破坏既有检索行为"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "配图解析失败必须降级不阻断（答案优先）——best-effort 与日志约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据、不可逆副作用隔离、契约级硬约束需断言、前端字段名错误编译发现不了需真机——本任务验证遵循"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层封装、拆包读法、record vs 实体字段名混用坑（子C P0 教训）、移动端 44px、预览用原图 URL——QaChat 展示遵循"}
+{"file": "docs/s0-spec.md", "reason": "问答章节与 §1 接口清单：image_refs 字段、docId、配图展示契约须同步"}

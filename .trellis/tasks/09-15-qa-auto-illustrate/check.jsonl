@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-15-qa-auto-illustrate/prd.md", "reason": "R1-R5 + R3b 与 AC 逐条核对；重点：配图不阻断答案、非图片意图不触发检索、直接展示无批准流程、零回归"}
+{"file": ".trellis/tasks/09-15-qa-auto-illustrate/design.md", "reason": "核对实现与设计一致：docId 三处传递（含 boost 重排）、5 参兼容构造器、两路径合并去重、意图关键词、DTO 字段、错误矩阵"}
+{"file": ".trellis/tasks/09-15-qa-auto-illustrate/implement.md", "reason": "核对 M1-M7 完成度；尤其 M2 第 5 项（boost 后 docId 保留）、M4 第 14 项（解析异常不阻断答案）、风险点落实"}
+{"file": "docs/s0-spec.md", "reason": "image_refs 字段与 docId 是否已同步（schema+entity+spec 三处同步原则）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对补列幂等两次执行、无 DO $$、纯增量可空列"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对三域检索 SQL 与配额未被改动（只多读一列）、Citation JSON 多字段未破坏既有消费方"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对「验证未修改既有生产数据行」：本次核对只能用 JUnit+Mock 或自建临时会话，并需显式声明"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 imageRefs 字符串/数组兼容、preview-src-list 用原图 url、移动端 44px、record 字段名未混用"}
+{"file": ".trellis/tasks/09-15-image-smart-app/prd.md", "reason": "父级跨子验收：R-D1/R-D2 与零回归"}
