@@ -24,11 +24,15 @@ import java.util.Map;
  * 数据流(ask):
  *   载入本会话历史 → 构造检索 query(短问题/追问拼接最近 2 轮 user 问题) →
  *   {@link CarRagService#retrieveForGeneration} 跨三域检索 → 组装多轮 messages(system + 历史 + 本轮) →
- *   {@link AiClient#chatMessages} 合成 → 落 user + assistant 消息(citations/rag_status)。
+ *   {@link AiClient#chatMessages} 合成 → 解析答案配图({@link QaImageRefService},失败仅 warn 不阻断) →
+ *   落 user + assistant 消息(citations/rag_status/image_refs)。
  *
  * 开关契约:问答链路**不读** {@code SettingService.kbEnabled}/sparkora_setting,浏览/问答独立于「生成注入」开关;
  * KB 域是否参与由检索层既有 AiProperties.ragKbEnabled 决定(本服务不改)。
  * 归属:会话仅 created_by 本人可见,越权/不存在统一 IllegalArgumentException(控制器映射 404,不泄露存在性)。
+ *
+ * 09-15 qa-auto-illustrate(子D):配图为**只读附加展示**(新闻关联图 + 图片意图语义检索图),
+ * 不写任何用户内容、无批准流程;解析失败落 image_refs=null,答案照常落库。
  */
 @Slf4j
 @Service
@@ -51,18 +55,23 @@ public class QaService {
     static final int ANSWER_MAX_TOKENS = 2048;
     /** 会话标题自动生成截断。 */
     static final int TITLE_MAX = 50;
+    /** 单条答案配图数上限（09-15 qa-auto-illustrate；产品展示决策，防刷屏——不值得配置化）。 */
+    static final int IMAGE_REF_MAX = 3;
 
     private final QaSessionMapper sessionMapper;
     private final QaMessageMapper messageMapper;
     private final CarRagService ragService;
+    private final QaImageRefService imageRefService;
     private final AiClient aiClient;
     private final ObjectMapper json;
 
     public QaService(QaSessionMapper sessionMapper, QaMessageMapper messageMapper,
-                     CarRagService ragService, AiClient aiClient, ObjectMapper json) {
+                     CarRagService ragService, QaImageRefService imageRefService,
+                     AiClient aiClient, ObjectMapper json) {
         this.sessionMapper = sessionMapper;
         this.messageMapper = messageMapper;
         this.ragService = ragService;
+        this.imageRefService = imageRefService;
         this.aiClient = aiClient;
         this.json = json;
     }
@@ -139,7 +148,17 @@ public class QaService {
         // 4) AI 合成(非 JSON;失败抛 AiException,由控制器映射 500,不落半截消息)
         String answer = aiClient.chatMessages(messages, ANSWER_MAX_TOKENS).content();
 
-        // 5) 落 user 消息 + assistant 消息(citations JSON / rag_status)
+        // 4.5) 解析答案配图(只读附加展示;失败仅 warn,答案可用性优先——绝不阻断)
+        //      新闻关联图(命中 NEWS 引用)+ 图片意图问法的语义检索图,合并去重后落 image_refs。
+        //      空 → 落 null(与历史行一致,前端不展示图片区)。
+        List<com.sparkora.domain.dto.QaImageRef> imageRefs = List.of();
+        try {
+            imageRefs = imageRefService.forAnswer(rag.citations(), q, IMAGE_REF_MAX);
+        } catch (Exception e) {
+            log.warn("问答配图解析失败(忽略) session={}: {}", sessionId, e.getMessage());
+        }
+
+        // 5) 落 user 消息 + assistant 消息(citations JSON / rag_status / image_refs)
         QaMessageEntity userMsg = new QaMessageEntity();
         userMsg.setSessionId(sessionId);
         userMsg.setRole("user");
@@ -153,6 +172,7 @@ public class QaService {
         assistantMsg.setContent(answer);
         assistantMsg.setCitations(toJson(rag.citations()));
         assistantMsg.setRagStatus(rag.status().name());
+        assistantMsg.setImageRefs(imageRefs == null || imageRefs.isEmpty() ? null : toJson(imageRefs));
         assistantMsg.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(assistantMsg);
 
@@ -263,7 +283,7 @@ public class QaService {
         try {
             return json.writeValueAsString(o);
         } catch (Exception e) {
-            log.warn("问答 citations 序列化失败: {}", e.getMessage());
+            log.warn("问答消息 JSON 序列化失败(citations/image_refs): {}", e.getMessage());
             return null;
         }
     }

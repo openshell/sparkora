@@ -21,12 +21,14 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +48,7 @@ class QaServiceTest {
     @Mock QaSessionMapper sessionMapper;
     @Mock QaMessageMapper messageMapper;
     @Mock CarRagService ragService;
+    @Mock QaImageRefService imageRefService;
     @Mock AiClient aiClient;
 
     QaService service;
@@ -54,7 +57,7 @@ class QaServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new QaService(sessionMapper, messageMapper, ragService, aiClient, new ObjectMapper());
+        service = new QaService(sessionMapper, messageMapper, ragService, imageRefService, aiClient, new ObjectMapper());
     }
 
     private QaSessionEntity ownedSession(Long id) {
@@ -246,5 +249,73 @@ class QaServiceTest {
         verify(sessionMapper).update(any(), cap.capture());
         String setSql = ((com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<?>) cap.getValue()).getSqlSet();
         assertTrue(setSql.contains("title"), () -> "首问应回填标题: " + setSql);
+    }
+
+    // ==================== 09-15 qa-auto-illustrate：答案配图 ====================
+
+    @Test
+    void 配图非空_imageRefs落库为JSON_并按上限常量调用解析() {
+        when(sessionMapper.selectById(7L)).thenReturn(ownedSession(7L));
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        CarRagService.RagResult rag = new CarRagService.RagResult(CarRagService.RagStatus.OK,
+                "知识来源：官方新闻\n---\n【官方新闻：比亚迪发布新车型】正文\n---\n", 1, 0.9, "",
+                List.of(new CarRagService.Citation("NEWS", "比亚迪发布新车型", "NEWS_BODY", 0.9, "块文本", 1688L)));
+        when(ragService.retrieveForGeneration(anyString(), anyInt(), any())).thenReturn(rag);
+        stubAnswer("答案。");
+        when(imageRefService.forAnswer(anyList(), anyString(), anyInt())).thenReturn(List.of(
+                new com.sparkora.domain.dto.QaImageRef(84L, "http://pic/x.jpg", "http://pic/x.thumb.jpg",
+                        "比亚迪发布新车型", "/page/byd-cn/news-2026/detail588", "byd-news")));
+
+        Map<String, Object> out = service.ask(7L, "比亚迪最近和谁合作？", USER);
+
+        QaMessageEntity assistant = (QaMessageEntity) out.get("assistantMessage");
+        // 配图是附加展示,不改变答案与既有字段
+        assertEquals("答案。", assistant.getContent());
+        assertEquals("OK", assistant.getRagStatus());
+        assertTrue(assistant.getCitations().contains("\"source\":\"NEWS\""));
+        assertNotNull(assistant.getImageRefs(), "非空配图必须落 image_refs JSON");
+        assertTrue(assistant.getImageRefs().contains("\"imageId\":84"));
+        assertTrue(assistant.getImageRefs().contains("byd-news"));
+        // 上限常量透传（产品决策：单条答案 ≤3 张）
+        verify(imageRefService).forAnswer(anyList(), anyString(), eq(QaService.IMAGE_REF_MAX));
+        assertEquals(3, QaService.IMAGE_REF_MAX);
+    }
+
+    @Test
+    void 配图解析抛异常_答案仍正常落库_imageRefs为null() {
+        when(sessionMapper.selectById(8L)).thenReturn(ownedSession(8L));
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        CarRagService.RagResult rag = new CarRagService.RagResult(CarRagService.RagStatus.OK,
+                "知识来源：官方新闻\n---\n【官方新闻：某新闻】正文\n---\n", 1, 0.9, "",
+                List.of(cite("NEWS")));
+        when(ragService.retrieveForGeneration(anyString(), anyInt(), any())).thenReturn(rag);
+        stubAnswer("答案照常。");
+        when(imageRefService.forAnswer(anyList(), anyString(), anyInt()))
+                .thenThrow(new RuntimeException("配图解析炸了"));
+
+        Map<String, Object> out = service.ask(8L, "问题", USER);   // 不抛
+
+        QaMessageEntity assistant = (QaMessageEntity) out.get("assistantMessage");
+        assertEquals("答案照常。", assistant.getContent(), "配图失败不得影响答案");
+        assertEquals("OK", assistant.getRagStatus());
+        assertNull(assistant.getImageRefs(), "配图解析失败 → image_refs 落 null(前端不展示图片区)");
+        verify(messageMapper, org.mockito.Mockito.times(2)).insert(any(QaMessageEntity.class));
+    }
+
+    @Test
+    void 配图为空列表_imageRefs落null_历史行行为一致() {
+        when(sessionMapper.selectById(9L)).thenReturn(ownedSession(9L));
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        CarRagService.RagResult rag = new CarRagService.RagResult(CarRagService.RagStatus.OK,
+                "知识来源：车型数据\n---\n【车型数据：海狮08EV】参数\n---\n", 1, 0.9, "",
+                List.of(cite("CAR")));
+        when(ragService.retrieveForGeneration(anyString(), anyInt(), any())).thenReturn(rag);
+        stubAnswer("无图答案。");
+        when(imageRefService.forAnswer(anyList(), anyString(), anyInt())).thenReturn(List.of());
+
+        Map<String, Object> out = service.ask(9L, "海狮08续航多少", USER);
+
+        QaMessageEntity assistant = (QaMessageEntity) out.get("assistantMessage");
+        assertNull(assistant.getImageRefs(), "空配图存 null(与历史 NULL 行一致)");
     }
 }

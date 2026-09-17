@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -108,6 +109,14 @@ class CarRagServiceTest {
         m.put("chunkText", text);
         m.put("score", score);
         m.put("docId", 1);
+        return m;
+    }
+
+    /** 统一检索行(带显式 docId;09-15 qa-auto-illustrate 补读该列,供 NEWS 配图定位)。 */
+    private static Map<String, Object> urowDoc(String source, Long modelId, String modelName,
+                                               String chunkType, String text, double score, Long docId) {
+        Map<String, Object> m = urow(source, modelId, modelName, chunkType, text, score);
+        if (docId == null) m.remove("docId"); else m.put("docId", docId);
         return m;
     }
 
@@ -450,5 +459,70 @@ class CarRagServiceTest {
         CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
         CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of(1L));
         assertEquals(0.60, r.maxScore(), 1e-9, "NEWS 不参与锚点加权,分数不得被放大");
+    }
+
+    // ==================== 09-15 qa-auto-illustrate：Citation/UnifiedHit docId ====================
+
+    @Test
+    void retrieveUnified_读入docId_可空不NPE() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urowDoc("NEWS", null, "官方新闻标题", "NEWS_BODY", "新闻正文", 0.8, 1688L),
+                urowDoc("CAR", 1L, "海狮08EV", "PARAM_GROUP", "车型块", 0.7, null));   // 无 docId 行
+        CarRagService svc = newService(mapper);
+
+        List<CarRagService.UnifiedHit> hits = svc.retrieveUnified("查询", 32);
+
+        assertEquals(2, hits.size());
+        assertEquals(1688L, hits.get(0).docId(), "docId 必须从检索行读入(SQL 本已 SELECT)");
+        assertNull(hits.get(1).docId(), "缺列/空值必须为 null 而非 NPE");
+    }
+
+    @Test
+    void retrieveForGeneration_citations透传docId_NEWS块可定位来源新闻() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urowDoc("NEWS", null, "比亚迪发布新车型", "NEWS_BODY", "新闻：比亚迪发布新车型（2026-09-01）\n正文", 0.8, 1688L));
+        CarRagService svc = newService(mapper);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("比亚迪 新车型", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        CarRagService.Citation newsCite = r.citations().stream()
+                .filter(c -> "NEWS".equals(c.source())).findFirst().orElseThrow();
+        assertEquals(1688L, newsCite.docId(), "NEWS 引用必须带 docId(问答配图链路依赖)");
+    }
+
+    /**
+     * 最高风险点回归：锚点加权分支会**重建** UnifiedHit，漏传 docId 会让域内 id 在加权后丢失
+     * → NEWS/CAR 配图静默失效。此处用 CAR 锚点块走该分支，断言 docId 保留。
+     */
+    @Test
+    void 锚点加权重排_docId必须透传不丢失() {
+        FakeMapper mapper = new FakeMapper();
+        mapper.unifiedRows = List.of(
+                urowDoc("CAR", 55L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200", 0.60, 777L),
+                urowDoc("NEWS", null, "官方新闻", "NEWS_BODY", "新闻：官方新闻（2026-09-01）\n正文", 0.65, 1688L));
+        AiProperties props = new AiProperties();
+        props.setRagAnchorBoost(1.5);   // 放大系数让锚点块走加权重建分支,且重排后仍入选
+        CarRagService svc = new CarRagService(mapper, new FakeKbEmbMapper(), new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力对比", 4, List.of(55L));
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        CarRagService.Citation carCite = r.citations().stream()
+                .filter(c -> "CAR".equals(c.source())).findFirst().orElseThrow();
+        assertEquals(777L, carCite.docId(), "boost 重排重建 UnifiedHit 时必须透传 docId");
+        CarRagService.Citation newsCite = r.citations().stream()
+                .filter(c -> "NEWS".equals(c.source())).findFirst().orElseThrow();
+        assertEquals(1688L, newsCite.docId(), "NEWS 块不走加权分支,docId 同样不得丢失");
+    }
+
+    @Test
+    void Citation五参兼容构造器_docId为null() {
+        CarRagService.Citation c = new CarRagService.Citation("CAR", "比亚迪", "PARAM_GROUP", 0.9, "块文本");
+        assertNull(c.docId(), "既有 5 参调用方(简报/深度检索/测试)不受影响,docId 为 null");
+        assertEquals("CAR", c.source());
+        assertEquals("块文本", c.chunkText());
     }
 }

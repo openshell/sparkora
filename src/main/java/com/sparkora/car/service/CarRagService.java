@@ -40,9 +40,15 @@ public class CarRagService {
     /** 带类型与分数的检索命中(配额分层用)。chunkType: MODEL_INFO/PARAM_GROUP/RIGHTS/FEATURE/KB_CHUNK。 */
     public record TypedHit(String chunkText, String chunkType, double score) {}
 
-    /** 统一检索命中(S8):TypedHit + 来源域与来源名(车型名/知识标题),供行内来源标注与锚点加权。 */
+    /**
+     * 统一检索命中(S8):TypedHit + 来源域与来源名(车型名/知识标题),供行内来源标注与锚点加权。
+     *
+     * @param docId 域内文档块 id（09-15 qa-auto-illustrate 补读；语义随 source 变化：
+     *              CAR=sparkora_car_doc.id / KB=sparkora_kb_chunk.id / NEWS=sparkora_news_doc.id；可空）。
+     *              供消费方定位来源实体（如 NEWS 反查来源新闻封面图），检索 SQL 本已 SELECT，此前读行时丢弃。
+     */
     public record UnifiedHit(String chunkText, String chunkType, double score,
-                             String source, Long modelId, String modelName) {
+                             String source, Long modelId, String modelName, Long docId) {
         TypedHit toTyped() { return new TypedHit(chunkText, chunkType, score); }
     }
 
@@ -51,13 +57,21 @@ public class CarRagService {
 
     /**
      * 知识引用条目(S6.1 扩展:rag_citations 落库,前端简报/版本页可核查「AI 引用了哪些知识」)。
-     * @param source     来源域 CAR(车型数据)| KB(通用知识库)
+     * @param source     来源域 CAR(车型数据)| KB(通用知识库)| NEWS(官方新闻)
      * @param modelName  车型名或知识标题(检索块自带的标注名)
-     * @param chunkType  块类型 MODEL_INFO/PARAM_GROUP/RIGHTS/FEATURE/KB_CHUNK
+     * @param chunkType  块类型 MODEL_INFO/PARAM_GROUP/RIGHTS/FEATURE/KB_CHUNK/NEWS_BODY
      * @param score      相似度分数(锚点加权后的排序分)
      * @param chunkText  块文本摘要(截断,详见 CITE_TEXT_MAX)
+     * @param docId      域内文档块 id（09-15 qa-auto-illustrate；随 source 变化，可空；供问答配图定位来源）。
+     *                   保留 5 参构造器以兼容既有调用方（简报/深度检索/测试），既有代码不受影响。
      */
-    public record Citation(String source, String modelName, String chunkType, double score, String chunkText) {}
+    public record Citation(String source, String modelName, String chunkType, double score,
+                           String chunkText, Long docId) {
+        /** 兼容构造器（docId=null）：既有 5 参调用方（BriefService/KnowledgeSearchTool/测试）编译与行为不变。 */
+        public Citation(String source, String modelName, String chunkType, double score, String chunkText) {
+            this(source, modelName, chunkType, score, chunkText, null);
+        }
+    }
 
     /** 引用摘要单条文本截断长度(前端展示只需首行概要,控制 rag_citations 体积)。 */
     private static final int CITE_TEXT_MAX = 120;
@@ -248,8 +262,9 @@ public class CarRagService {
         List<UnifiedHit> boosted = new ArrayList<>();
         for (UnifiedHit h : merged) {
             if ("CAR".equals(h.source()) && anchors.contains(h.modelId())) {
+                // 注意:重建 UnifiedHit 时必须透传 docId(NEWS 不走此分支,但漏传会让域内 id 在加权后丢失)
                 boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), Math.min(1.0, h.score() * boost),
-                        h.source(), h.modelId(), h.modelName()));
+                        h.source(), h.modelId(), h.modelName(), h.docId()));
             } else {
                 boosted.add(h);
             }
@@ -345,7 +360,7 @@ public class CarRagService {
             String text = h.chunkText();
             if (text != null && text.length() > CITE_TEXT_MAX) text = text.substring(0, CITE_TEXT_MAX) + "…";
             cites.add(new Citation(h.source(), h.modelName() == null ? "" : h.modelName(),
-                    h.chunkType(), h.score(), text == null ? "" : text));
+                    h.chunkType(), h.score(), text == null ? "" : text, h.docId()));
         }
         return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString(), cites);
     }
@@ -357,6 +372,8 @@ public class CarRagService {
 
     /**
      * 统一检索(S8):全库 top-K,跨车型域与 KB 域。
+     * 09-15 qa-auto-illustrate:补读行内 docId（SQL 本已 SELECT 该列；域内语义随 source 变化），
+     * 供问答配图经 NEWS 块定位来源新闻。**不改 SQL、不改配额与排序**。
      */
     public List<UnifiedHit> retrieveUnified(String query, int limit) {
         if (query == null || query.isBlank() || limit <= 0) return List.of();
@@ -370,7 +387,8 @@ public class CarRagService {
             String source = row.get("source") == null ? "CAR" : String.valueOf(row.get("source"));
             Long modelId = row.get("modelId") == null ? null : ((Number) row.get("modelId")).longValue();
             String modelName = row.get("modelName") == null ? "" : String.valueOf(row.get("modelName"));
-            hits.add(new UnifiedHit(text, type, score, source, modelId, modelName));
+            Long docId = row.get("docId") == null ? null : ((Number) row.get("docId")).longValue();
+            hits.add(new UnifiedHit(text, type, score, source, modelId, modelName, docId));
         }
         return hits;
     }

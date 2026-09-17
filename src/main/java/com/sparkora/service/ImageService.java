@@ -501,6 +501,30 @@ public class ImageService {
         fillThumbUrl(img, storage, q);
     }
 
+    /**
+     * 批量取图库记录 + 派生展示字段（url/thumbUrl）（09-15 qa-auto-illustrate）。
+     *
+     * **只读**：仅 selectBatchIds + fillDerived，不写任何列；供问答配图批量解析新闻封面
+     * （避免 N+1，也避免在问答侧重新实现「storageKey→url / 七牛 thumbUrl」派生规则导致两处漂移）。
+     * 不存在的 id 直接跳过（图已删/引用失效 → 该条配图不出图，不报错）。
+     *
+     * @param imageIds 图库资产 id 列表（可空/含 null）
+     * @return 命中记录（带 url/thumbUrl）；顺序不保证（调用方按 id 索引）
+     */
+    public List<ImageAssetEntity> loadDerived(List<Long> imageIds) {
+        if (imageIds == null || imageIds.isEmpty()) return List.of();
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        for (Long id : imageIds) {
+            if (id != null) ids.add(id);
+        }
+        if (ids.isEmpty()) return List.of();
+        List<ImageAssetEntity> imgs = imageMapper.selectBatchIds(ids);
+        if (imgs == null || imgs.isEmpty()) return List.of();
+        QiniuProperties q = qiniuProps.getIfAvailable();
+        for (ImageAssetEntity img : imgs) fillDerived(img, imageStorage, q);
+        return imgs;
+    }
+
     /** 由图库记录 id 取图床公网 URL（图片入库即已转存，storageKey 非空）。 */
     public String publicUrl(Long imageId) {
         ImageAssetEntity img = imageMapper.selectById(imageId);

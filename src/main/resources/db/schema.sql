@@ -641,3 +641,14 @@ CREATE TABLE IF NOT EXISTS sparkora_illustration_dismiss (
     UNIQUE (version_id, anchor_key)
 );
 CREATE INDEX IF NOT EXISTS idx_illustration_dismiss_version ON sparkora_illustration_dismiss(version_id);
+
+-- ============================================================================
+-- 09-15 qa-auto-illustrate:问答答案配图（子D）。
+-- 语义:答案引用了新闻知识时,随答案展示来源新闻的图库封面（便宜路径,经 Citation.docId 定位）;
+-- 「给我看销量海报」类图片意图问法额外走图片语义检索（语义路径）,两路合并去重后展示。
+-- 只读附加展示:不写任何用户内容、无批准流程（与子C「写入正文须批准」的风险模型不同）。
+-- 仅 assistant 消息非空;历史行为 NULL → 前端不展示图片区（零回归）。
+-- 结构:[{imageId, url, thumbUrl, title, newsId, source}];JSON 字符串存 TEXT 列（同 citations 惯例）。
+-- 单条幂等语句;不能用 DO $$ 块(Spring ScriptUtils 不支持 dollar-quote)。
+-- ============================================================================
+ALTER TABLE sparkora_qa_message ADD COLUMN IF NOT EXISTS image_refs TEXT;
