@@ -1,5 +1,6 @@
 # 图床接入(S4 预览/发布用)
 
+> 回链：[系统说明总览](README.md) ｜ 消费方：[spec/image.md](spec/image.md)、[spec/preview.md](spec/preview.md)、[spec/publish.md](spec/publish.md)。
 > 密钥一律放 `.env`(不入库,本文件仅作接口说明)。
 
 ## 七牛云(当前采用)

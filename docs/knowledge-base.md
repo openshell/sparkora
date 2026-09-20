@@ -1,7 +1,7 @@
 # Sparkora 知识基座与多轮问答
 
-> 父任务：`09-11-knowledge-base-data-foundation`。本文汇总 R4 评估结论、三域知识基座架构、多轮问答实现与数据同步。
-> 相关规格：`docs/s0-spec.md` §15（新闻知识域 C2）、§16（知识中心 C3）、§17（多轮问答 C4）。
+> 回链：[系统说明总览](README.md) ｜ 模块契约：[spec/retrieval.md](spec/retrieval.md)、[spec/knowledge/kb.md](spec/knowledge/kb.md)、[spec/knowledge/car.md](spec/knowledge/car.md)、[spec/knowledge/news.md](spec/knowledge/news.md)、[spec/knowledge/center.md](spec/knowledge/center.md)、[spec/knowledge/qa.md](spec/knowledge/qa.md)。
+> 父任务：`09-11-knowledge-base-data-foundation`。本文汇总 R4 评估结论、三域知识基座架构、多轮问答实现与数据同步（深潜文档，字段级契约见上述模块文档）。
 
 ---
 

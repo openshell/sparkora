@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 配图接口（S3b，字段级契约见 docs/s0-spec.md §10）。
+ * 配图接口（S3b，字段级契约见 docs/spec/image.md）。
  * - VIEWER 可读图库；ADMIN/EDITOR 可上传/生成/选定封面插图。
  * - AI 生成接口耗时较长，前端单独放宽超时（同 generate/versions 模式）。
  * - body 里的 projectId/refImageId 做健壮解析：前端可能传字符串(路由参数)或数字，均接受。

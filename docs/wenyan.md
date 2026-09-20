@@ -1,6 +1,7 @@
 # wenyan 主题与发布机制
 
-> 本文沉淀 Sparkora 排版预览与发布的 wenyan 关键机制,便于后续开发理解。权威字段级契约仍以 `docs/s0-spec.md` §11/§12 为准。
+> 回链：[系统说明总览](README.md) ｜ 模块契约：[spec/preview.md](spec/preview.md)、[spec/publish.md](spec/publish.md)。
+> 本文沉淀 Sparkora 排版预览与发布的 wenyan 关键机制,便于后续开发理解。权威字段级契约以模块文档为准。
 
 ## 1. 双通道总览
 
@@ -78,7 +79,7 @@ classpath 资源打包进 jar 后 `getFile()` 不可用,故 `WenyanThemeCatalog.
 
 1. 确认目标 CLI 版本内置该主题(`wenyan theme -l`)。
 2. 在 `WenyanThemeCatalog.BUILTIN` 增加一项(含色点/是否亮色)。
-3. 前端无需改动(目录驱动);可选:更新 `docs/s0-spec.md` §11。
+3. 前端无需改动(目录驱动);可选:更新 [spec/preview.md](spec/preview.md)。
 
 ### 新增社区主题
 

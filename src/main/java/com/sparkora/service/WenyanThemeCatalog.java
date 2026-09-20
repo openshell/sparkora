@@ -18,7 +18,7 @@ import java.util.Map;
 /**
  * wenyan 主题权威目录(8 内置 + 7 社区)。
  *
- * 背景(详见 docs/wenyan.md 与 spec §11/§12):
+ * 背景(详见 docs/wenyan.md 与 docs/spec/preview.md、docs/spec/publish.md):
  *  - 内置主题由本机 wenyan CLI 原生识别,渲染时传 `--theme <id>`;
  *  - 社区主题(mdnice 7 个)CLI 不识别,须用 `--custom-theme <本地CSS绝对路径>` 渲染,
  *    且该参数不支持网络 URL,故 CSS 必须随后端包内置(classpath:wenyan-themes/*.css)。

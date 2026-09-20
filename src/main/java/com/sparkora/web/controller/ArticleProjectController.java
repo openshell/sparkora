@@ -192,7 +192,7 @@ public class ArticleProjectController {
         return R.ok(briefService.currentBrief(id));
     }
 
-    // ==================== 文章仿写（09-09-article-imitation，字段级契约见 spec §14）====================
+    // ==================== 文章仿写（09-09-article-imitation，字段级契约见 docs/spec/imitation.md）====================
 
     /**
      * 分析原文 + 风格推荐(ADMIN/EDITOR)。同步调用,前端 loading 等待(AI 耗时较长,前端单独放宽超时)。
@@ -225,15 +225,15 @@ public class ArticleProjectController {
      * 生成多版本正文（基于当前 brief + 用户选择的风格）。body: {"styleIds":[1,2]}（风格库 id 列表）。
      * 每选一个风格生成一版。同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
      * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目封死(深度版本走 POST /api/deep/{id}/generate);
-     * 文章仿写(09-09-article-imitation §14)例外:genSource=IMITATION 时本接口复用为仿写生成
-     * (多风格一次生成,产出仿写正文+相似度自检,状态机同 §4)。
+     * 文章仿写(09-09-article-imitation，docs/spec/imitation.md)例外:genSource=IMITATION 时本接口复用为仿写生成
+     * (多风格一次生成,产出仿写正文+相似度自检,状态机同 docs/spec/overview.md)。
      */
     @PostMapping("/{id}/generate/versions")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<List<ArticleVersionEntity>> generateVersions(@PathVariable Long id,
                                                           @RequestBody java.util.Map<String, java.util.List<Long>> body) {
         // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目恒 410(深度单版走 /deep/generate);
-        // 文章仿写(09-09-article-imitation §14)例外放行:复用本接口多风格一次生成(仿写 prompt+去图+相似度自检)。
+        // 文章仿写(09-09-article-imitation，docs/spec/imitation.md)例外放行:复用本接口多风格一次生成(仿写 prompt+去图+相似度自检)。
         ArticleProjectEntity p = mapper.selectById(id);
         if (p == null) return R.fail(404, "项目不存在");
         if (!"IMITATION".equals(p.getGenSource())) {
@@ -315,7 +315,7 @@ public class ArticleProjectController {
         return R.ok();
     }
 
-    // ==================== 配图（S3b，字段级契约见 spec §10）====================
+    // ==================== 配图（S3b，字段级契约见 docs/spec/image.md）====================
 
     /** 配图快照：项目全部图 + 当前版本封面/插图（三角色可读）。 */
     @GetMapping("/{id}/images")
@@ -353,7 +353,7 @@ public class ArticleProjectController {
         }
     }
 
-    // ==================== 配图建议（09-15 article-auto-illustrate，子C；字段级契约见 spec §11）====================
+    // ==================== 配图建议（09-15 article-auto-illustrate，子C；字段级契约见 docs/spec/image.md）====================
 
     /**
      * 生成按锚点分组的配图建议（三角色可读）。

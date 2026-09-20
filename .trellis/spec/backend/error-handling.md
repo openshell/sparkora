@@ -118,7 +118,7 @@ public R<Void> handleBind(BindException ex) {
 
 **Cause**: 成功分支只写了产物与状态，未清空 `project.last_brief_error`（BriefService 成功分支会清空）。
 
-**Fix**: 成功分支 `fresh = projectMapper.selectById(...)` 重取 + 判 null，清空 `lastBriefError`（截断/失败回退同理见 §5）。
+**Fix**: 成功分支 `fresh = projectMapper.selectById(...)` 重取 + 判 null，清空 `lastBriefError`（截断/失败回退同理见 `docs/spec/brief-generation.md` 与 `docs/spec/overview.md` 状态机）。
 
 **Prevention**: 新增异步生成链路时，成功分支对齐 BriefService：写产物 + 推进状态 + 清 last_*_error 三件事齐全。
 

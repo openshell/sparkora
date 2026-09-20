@@ -12,7 +12,7 @@ import java.util.List;
  * 必须用「描述性文本代理」——把来源新闻标题、图片标签、AI prompt、文件名等既有信号拼成一段文本，
  * 交给统一的 EmbeddingClient（Qwen3-Embedding-8B / 1024 维）向量化。
  *
- * 按 {@code source} 分派（契约见 docs/s0-spec.md §10「图片语义检索」）：
+ * 按 {@code source} 分派（契约见 docs/spec/image.md「图片语义检索」）：
  * <ul>
  *   <li>{@code byd-news}：来源新闻标题（优先，由 source_ref 反查）+ 标签（含 主题/*、年份/*）；</li>
  *   <li>{@code ai-text2img} / {@code ai-img2img}：promptText + 标签；</li>

@@ -212,7 +212,7 @@ if (raw != null) for (String v : raw)
 
 - 全部写进 `schema.sql`（幂等写法，启动自动执行），不引入独立迁移工具。
 - 注意：**不能用 `DO $$` 块**——Spring ScriptUtils 不支持 dollar-quote（会把块按 `;` 截断）；列搬数用「补列 → UPDATE 搬数据 → DROP 旧列」三条单语句实现。
-- 表结构变更三处同步：`schema.sql`（幂等）+ 对应 entity/mapper + `docs/s0-spec.md` 字段级表格。
+- 表结构变更三处同步：`schema.sql`（幂等）+ 对应 entity/mapper + `docs/spec/**` 对应模块文档字段级表格（规格入口 `docs/README.md`）。
 
 ### 索引幂等切换（改索引类型/名字，不每次启动重建）
 

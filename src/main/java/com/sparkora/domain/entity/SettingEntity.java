@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 系统级检索设置实体。对应 sparkora_setting,单行表(固定 id=1)。
  * 页面控制内部知识库/外部搜索的启用;生成链路运行时经 SettingService 读取(带内存缓存)。
- * 设计:09-09-brief-gen-redesign §2.1。
+ * 设计:09-09-brief-gen-redesign(契约见 docs/spec/settings.md)。
  */
 @Data
 @TableName("sparkora_setting")

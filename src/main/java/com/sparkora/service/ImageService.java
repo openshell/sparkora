@@ -253,7 +253,7 @@ public class ImageService {
 
     // ==================== 查询 / 封面 / 插图 / 完成配图 ====================
 
-    /** 来源参数白名单（spec §10；非法值 400）。09-13 image-tags 起新增 byd-news（比亚迪新闻封面）。 */
+    /** 来源参数白名单（docs/spec/image.md；非法值 400）。09-13 image-tags 起新增 byd-news（比亚迪新闻封面）。 */
     private static final java.util.Set<String> SOURCES = java.util.Set.of("upload", "ai-text2img", "ai-img2img", "byd", "byd-news");
 
     /**
