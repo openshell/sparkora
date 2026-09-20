@@ -23,6 +23,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Docs Structure Guide](./docs-structure-guide.md) | 规格文档层级与引用规则（指向文件而非编号；结构变更先枚举引用） | 改动 docs 结构/新增模块文档/更新规格引用时 |
 
 ---
 
