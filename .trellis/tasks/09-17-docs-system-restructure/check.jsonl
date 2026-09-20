@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-17-docs-system-restructure/prd.md", "reason": "逐条核对 AC:信息完整性/删除 s0-spec/引用迁移/索引无死链"}
+{"file": ".trellis/tasks/09-17-docs-system-restructure/design.md", "reason": "核对目标结构落地、引用迁移映射是否全部执行"}
+{"file": ".trellis/tasks/09-17-docs-system-restructure/implement.md", "reason": "按迁移映射表做 §0-§17 反向完整性核对"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对契约文档无遗漏消费者、索引与代码路径一致"}
