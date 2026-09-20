@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-09-16
+- **Total Sessions**: 12
+- **Last Active**: 2026-09-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~338 | Active |
+| `journal-1.md` | ~347 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-09-20 | 系统说明文档重构:总览+模块结构,删除 s0-spec | `ce67176`, `247efdb`, `e7c47fe` | `main` |
 | 10 | 2026-09-16 | 简报研究链路修复:配置绑定、工具健康与进度分子 | `bb3c0ad`, `f39bbb1`, `0d65fd4` | `main` |
 | 9 | 2026-09-12 | kb-cleanup 遗留清理 | `c047f7c` | `main` |
 | 8 | 2026-09-12 | C4 多轮对话式知识问答 | `07fa8d0`, `c94c415` | `main` |

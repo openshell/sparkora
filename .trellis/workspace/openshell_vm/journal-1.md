@@ -308,3 +308,40 @@ Session summary was not supplied.
 ### Next Steps
 
 - 可选手测 UI 渲染级 AC(进度递增、工具标签)
+
+
+## Session 12: 系统说明文档重构:总览+模块结构,删除 s0-spec
+<!-- trellis-session: v=2 fp=eadfce8159c98112 -->
+
+**Date**: 2026-09-20
+**Task**: 系统说明文档重构:总览+模块结构,删除 s0-spec
+**Branch**: `main`
+
+### Summary
+
+将 1188 行 s0-spec 巨石重构为 docs/README.md 总览 + docs/spec/** 17 份模块文档,删除原文件并同步全部引用
+
+### Main Changes
+
+- 新增 docs/README.md 总览(架构图/概念地图/模块索引表/全局约定/配置总览)
+- 拆解 s0-spec 为 docs/spec/** 模块文档并删除原文件(决策 B:彻底迁移移除)
+- article-generation-flow 重写为当前唯一深度链路(去 FAST 双模式)
+- 同步代码注释/README/AGENTS/Trellis spec/skill 全部引用指向模块文档
+- 新增 .trellis/spec/guides/docs-structure-guide.md(引用指向文件而非编号)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ce67176` | feat(docs): 重构系统说明文档为总览+模块结构 |
+| `247efdb` | docs(spec): 沉淀文档结构层级与「引用指向文件而非编号」约定 |
+| `e7c47fe` | chore(task): 系统说明文档重构任务工件 |
+
+### Testing
+
+- [OK] 反向信息完整性核对:表/接口/env/枚举零丢失;死链 0;回链 17/17
+- [OK] mvn -q -DskipTests compile EXIT 0;Java diff 仅注释行
+
+### Status
+
+[OK] **Completed**
