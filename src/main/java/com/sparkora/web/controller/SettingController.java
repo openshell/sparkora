@@ -35,6 +35,8 @@ public class SettingController {
     @PreAuthorize("hasRole('ADMIN')")
     public R<SettingEntity> update(@Valid @RequestBody SettingUpdateDto dto) {
         Long userId = SecurityUtil.current() != null ? SecurityUtil.current().getUserId() : null;
-        return R.ok(service.update(dto.getKbEnabled(), dto.getWebSearchEnabled(), userId));
+        // 策略合法性兜底(@Pattern 已挡非法字符;空串视为不改)
+        return R.ok(service.update(dto.getKbEnabled(), dto.getWebSearchEnabled(),
+                dto.getWebProviderOrder(), userId));
     }
 }

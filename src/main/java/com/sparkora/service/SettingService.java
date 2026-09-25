@@ -17,6 +17,9 @@ public class SettingService {
 
     public static final long SINGLE_ROW_ID = 1L;
 
+    /** 外部搜索 provider 顺序默认值(TAVILY 优先、SearxNG 兜底,2026-09-25 反转旧决策)。 */
+    public static final String DEFAULT_PROVIDER_ORDER = "TAVILY,SEARXNG";
+
     private final SettingMapper mapper;
     private volatile SettingEntity cache;
 
@@ -36,6 +39,7 @@ public class SettingService {
                     row.setId(SINGLE_ROW_ID);
                     row.setKbEnabled(false);
                     row.setWebSearchEnabled(true);
+                    row.setWebProviderOrder(DEFAULT_PROVIDER_ORDER);
                     row.setUpdatedAt(LocalDateTime.now());
                     row.setDeleted(0);
                     try {
@@ -61,9 +65,14 @@ public class SettingService {
         return Boolean.TRUE.equals(get().getWebSearchEnabled());
     }
 
+    /** 外部搜索 provider 顺序(运行时全局策略;空则回退部署级默认,由调用方处理)。 */
+    public String getWebProviderOrder() {
+        return get().getWebProviderOrder();
+    }
+
     /** 更新设置(字段 null 不改),写库后刷缓存。 */
     @Transactional
-    public SettingEntity update(Boolean kbEnabled, Boolean webSearchEnabled, Long userId) {
+    public SettingEntity update(Boolean kbEnabled, Boolean webSearchEnabled, String webProviderOrder, Long userId) {
         SettingEntity row = mapper.selectById(SINGLE_ROW_ID);
         if (row == null) {
             // 首次写入:按入参(缺省取默认)插入单行
@@ -71,10 +80,12 @@ public class SettingService {
             row.setId(SINGLE_ROW_ID);
             row.setKbEnabled(kbEnabled != null ? kbEnabled : false);
             row.setWebSearchEnabled(webSearchEnabled != null ? webSearchEnabled : true);
+            row.setWebProviderOrder(webProviderOrder != null ? webProviderOrder : DEFAULT_PROVIDER_ORDER);
             row.setDeleted(0);
         } else {
             if (kbEnabled != null) row.setKbEnabled(kbEnabled);
             if (webSearchEnabled != null) row.setWebSearchEnabled(webSearchEnabled);
+            if (webProviderOrder != null && !webProviderOrder.isBlank()) row.setWebProviderOrder(webProviderOrder);
         }
         row.setUpdatedBy(userId);
         row.setUpdatedAt(LocalDateTime.now());

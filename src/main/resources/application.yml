@@ -63,6 +63,9 @@ sparkora:
     tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)
     research-timeout-ms: ${DEEP_RESEARCH_TIMEOUT_MS:120000}    # 单子代理超时
     max-agents: ${DEEP_MAX_AGENTS:4}                            # 子代理数上限
+    # 外部搜索 provider 顺序(部署级默认;运行时由 ADMIN 在系统设置覆盖)
+    # TAVILY,SEARXNG=TAVILY_FIRST(默认,2026-09-25 反转);SEARXNG,TAVILY=SEARXNG_FIRST
+    web-provider-order: ${DEEP_WEB_PROVIDER_ORDER:TAVILY,SEARXNG}
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}

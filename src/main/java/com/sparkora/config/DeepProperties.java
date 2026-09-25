@@ -20,6 +20,12 @@ public class DeepProperties {
     private long researchTimeoutMs = 120000;
     /** 子代理数量上限(研究计划问题数超过时截断)。 */
     private int maxAgents = 4;
+    /**
+     * 外部搜索 provider 顺序(部署级默认;运行时由 ADMIN 在系统设置覆盖)。
+     * 逗号分隔,默认 {@code TAVILY,SEARXNG}(即 TAVILY_FIRST:Tavily 优先、SearxNG 兜底)。
+     * 2026-09-25 显式反转旧的「SEARXNG 优先」决策:Tavily 已配置却从未被调用,且 SearxNG 上游曾全部不可用。
+     */
+    private String webProviderOrder = "TAVILY,SEARXNG";
 
     /** 生效密钥:显式 DEEP_TAVILY_API_KEY 优先,否则读环境变量 TAVILY_API_KEY(.env)。 */
     public String effectiveTavilyKey() {

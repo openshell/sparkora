@@ -30,6 +30,13 @@
       <el-tag size="small" :type="healthView('TAVILY').type" effect="plain">
         Tavily {{ healthView('TAVILY').text }}
       </el-tag>
+      <el-tag size="small" type="info" effect="plain">
+        策略 {{ strategyText }}
+      </el-tag>
+    </div>
+    <div v-if="fallbackReasons.length" class="fallback-line">
+      <span class="fl">降级:</span>
+      <span v-for="(f, i) in fallbackReasons" :key="i" class="fl-item">agent{{ f.agentId }} · {{ f.provider }} · {{ reasonText(f.reason) }}</span>
     </div>
   </div>
 </template>
@@ -46,6 +53,8 @@ const route = useRoute()
 const agents = ref([])
 // 空对象=首次轮询返回前为未知态:不得乐观臆断「全部可用」(接口异常时轮询静默,恒绿会误导)
 const toolHealth = ref({})
+// 外部搜索策略(09-25):未知态渲染 --,不乐观显示可用
+const webStrategy = ref('')
 const polling = ref(false)
 let timer = null
 let doneEmitted = false
@@ -79,6 +88,35 @@ const healthView = (tool) => {
   return { type: 'success', text: '✓' }
 }
 
+// 策略标签(09-25):后端 webStrategy;未知态 --(不臆断)
+const strategyText = computed(() => {
+  const s = webStrategy.value
+  if (s === 'TAVILY_FIRST') return 'Tavily 优先'
+  if (s === 'SEARXNG_FIRST') return 'SearxNG 优先'
+  return '--'
+})
+
+// 每个 agent 的降级原因(来自 research_notes[].search.attempts)
+const fallbackReasons = computed(() => {
+  const out = []
+  for (const a of agents.value) {
+    const attempts = a.search && Array.isArray(a.search.attempts) ? a.search.attempts : []
+    for (const at of attempts) {
+      if (at && !at.ok && at.fallbackReason) {
+        out.push({ agentId: a.agentId, provider: at.provider, reason: at.fallbackReason })
+      }
+    }
+  }
+  return out
+})
+const reasonText = (r) => ({
+  UNCONFIGURED: '未配置已跳过',
+  EMPTY: '空结果已降级',
+  INVALID_URL: '无有效链接已降级',
+  ERROR: '调用异常已降级',
+  DISABLED: '已停用'
+}[r] || r)
+
 const finish = () => {
   if (doneEmitted) return
   doneEmitted = true
@@ -92,6 +130,7 @@ const poll = async () => {
     const res = await http.get(`/projects/${route.params.id}/deep/status?briefId=${props.briefId}`)
     const d = res.data || {}
     if (d.toolHealth) toolHealth.value = d.toolHealth
+    if (d.webStrategy) webStrategy.value = d.webStrategy
     if (d.agents) {
       const arr = typeof d.agents === 'string' ? JSON.parse(d.agents) : d.agents
       agents.value = arr.map(a => ({ ...a, status: a.status || 'PENDING' }))   // 保留后端真实状态
@@ -121,6 +160,8 @@ onUnmounted(() => clearInterval(timer))
 .a-meta { color: var(--faint); font-size: 12px; margin-top: 6px; }
 .a-meta.err { color: var(--el-color-danger); }
 .tool-health { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.fallback-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--faint); }
+.fl-item { padding: 1px 6px; border: 1px dashed var(--line); border-radius: 4px; }
 .spin-hint { color: var(--faint); font-size: 12px; }
 .spin { animation: r 1s linear infinite; }
 @keyframes r { to { transform: rotate(360deg); } }

@@ -1,0 +1,12 @@
+{"file": ".trellis/tasks/09-25-brief-web-search/prd.md", "reason": "本任务需求、约束与 AC 权威来源"}
+{"file": ".trellis/tasks/09-25-brief-web-search/design.md", "reason": "WebSearchRouter/规范化/快照/设置扩展的技术设计与兼容策略"}
+{"file": ".trellis/tasks/09-25-brief-web-search/implement.md", "reason": "有序实施清单、验证命令与回滚点"}
+{"file": "docs/spec/brief-generation.md", "reason": "工具层、WEB 顺序、webQuota、toolHealth 契约权威文档，需同步修改"}
+{"file": "docs/spec/settings.md", "reason": "设置单行表、双开关、写权限与生效点契约"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "SearchTool available/configured/lastCallOk 与 toolHealth 状态码红线"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "控制器错误映射、@Valid DTO、409 状态冲突与异步占位惯例"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "api/index.js 具名导出、http 响应形态、未知态展示等前端约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流与契约映射清单"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "改配置/常量前全局搜索与复用约束"}
+{"file": ".trellis/tasks/archive/2026-09/09-15-brief-research-flow-fixes/design.md", "reason": "去闩锁与 toolHealth 状态码先例"}
+{"file": ".trellis/tasks/archive/2026-09/09-04-deep-research/research/current-state.md", "reason": "SearxNG 引擎不可用实测与 Tavily 契约先例"}

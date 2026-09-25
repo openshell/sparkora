@@ -26,9 +26,23 @@ public interface SearchTool {
      */
     List<SearchHit> search(String query, int maxResults);
 
-    /** 单条搜索命中。type: KB/WEB;url 仅 WEB 有;modelName 复用为 WEB 工具名(TAVILY/SEARXNG)。 */
+    /**
+     * 单条搜索命中。type: KB/WEB;url 仅 WEB 有;modelName 复用为 WEB 工具名(TAVILY/SEARXNG)。
+     * 09-25-brief-web-search 增量:WEB 命中带稳定 {@code sourceId}(W1/W2…)与 {@code provider}(来源工具名),
+     * 供 LLM 事实引用与后验校验;KB 命中两者为空。
+     */
     record SearchHit(String type, String title, String url, String snippet,
-                     String modelName, Long docId, double score) {
+                     String modelName, Long docId, double score,
+                     String sourceId, String provider) {
+
+        /**
+         * 兼容构造器(7 参,sourceId/provider 为空):既有调用方(工具实现/测试)不受影响。
+         */
+        public SearchHit(String type, String title, String url, String snippet,
+                         String modelName, Long docId, double score) {
+            this(type, title, url, snippet, modelName, docId, score, null, null);
+        }
+
         public static SearchHit kb(String title, String modelName, Long docId, String snippet, double score) {
             return new SearchHit("KB", title, null, snippet, modelName, docId, score);
         }

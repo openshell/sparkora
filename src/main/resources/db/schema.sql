@@ -399,6 +399,11 @@ CREATE TABLE IF NOT EXISTS sparkora_setting (
     deleted            SMALLINT     NOT NULL DEFAULT 0       -- 逻辑删除(全局配置惯例:SMALLINT)
 );
 
+-- 外部搜索策略(09-25-brief-web-search):运行时全局 provider 顺序,ADMIN 在设置页调整。
+-- TAVILY,SEARXNG=TAVILY_FIRST(Tavily 优先、SearxNG 兜底,默认,2026-09-25 反转旧「SEARXNG 优先」);
+-- SEARXNG,TAVILY=SEARXNG_FIRST。幂等加列,旧行自动获得默认值;回滚保留列即可。
+ALTER TABLE sparkora_setting ADD COLUMN IF NOT EXISTS web_provider_order VARCHAR(20) NOT NULL DEFAULT 'TAVILY,SEARXNG';
+
 -- ============================================================================
 -- 文章仿写(09-09-article-imitation):项目级新模式 genSource=IMITATION。
 -- 原文/分析随 project 落库(1:1,不单设表);风格推荐随 brief 落库;

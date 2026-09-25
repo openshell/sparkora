@@ -108,15 +108,18 @@ public class DeepController {
         }
     }
 
-    /** ③④ 并行研究+事实手册(同步,耗时 = 子代理数 × 单代理时长)。body: {briefId}。 */
+    /** ③④ 并行研究+事实手册(异步,立即返回;前端轮询 /deep/status)。body: {briefId}。 */
     @PostMapping("/run")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> run(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
         try {
             Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
-            return R.ok(researchService.run(briefId));
+            return R.ok(researchService.run(projectId, briefId));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            // 运行互斥/计划未就绪:409
+            return R.fail(409, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, "研究执行失败: " + e.getMessage());
         }
@@ -204,6 +207,10 @@ public class DeepController {
             toolHealth.put("SEARXNG", webHealth(webAllowed, searxngTool.configured(), searxngTool.lastCallOk()));
             toolHealth.put("TAVILY", webHealth(webAllowed, tavilyTool.configured(), tavilyTool.lastCallOk()));
             out.put("toolHealth", toolHealth);
+            // 外部搜索策略(09-25):增量暴露有效策略(运行时设置优先 > 部署级默认),不改既有三键值域
+            var snap = researchService.resolveSnapshot(b.getId());
+            out.put("webStrategy", snap.strategyLabel());
+            out.put("webProviderOrder", snap.strategyRaw());
             if (b.getResearchPlan() != null) out.put("researchPlan", b.getResearchPlan());
             if (b.getClarifyQuestions() != null) out.put("questions", b.getClarifyQuestions());
             if (b.getClarifyAnswers() != null) out.put("answers", b.getClarifyAnswers());

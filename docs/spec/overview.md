@@ -14,7 +14,8 @@
 - **用途**：在真机上逐条打勾验收（S0 目标——能登录、能建项目、能看到生成入口）。
 - **修订历史（关键决策）**：
   - 2026-08-18 起**放弃若依**，规格按轻量栈重写。不再有 `sys_*` 复用、不再有 `@SaCheckPermission`/`v-hasPermi`，改用 Spring Security 原生。
-  - 2026-08-28 决策：原六步流程中的「校验」步骤**彻底取消**（不做事实核查步骤，SEARXNG/CRAWL4AI 联网核查不启用），流程改为五步：简报→版本→配图→预览→发布。
+  - 2026-08-28 决策：原六步流程中的「校验」步骤**彻底取消**（不设独立事实核查步骤，Crawl4AI 正文抓取不启用），流程改为五步：简报→版本→配图→预览→发布。
+  - 2026-09-25 补充：SearxNG/Tavily 作为深度研究子代理的 WEB 搜索来源启用（策略路由，默认 TAVILY_FIRST，见 [brief-generation.md](brief-generation.md)），与上面取消的「校验」步骤无关。
   - 2026-08-31 S5 决策：发布成功进入 **PUBLISHED_DRAFT**（公众号草稿箱已收），**可重发覆盖**（再次发布刷新 `media_id`/`published_at`），状态为终态、不再回退。
   - 2026-09-03 S6 决策：**配图并入预览步骤**，流程改为四步：简报→版本→预览→发布；**彻底移除 IMAGES_READY 状态**，`VERSIONS_READY` 后直接可预览/发布；预览内提供图库插入 + AI 生图配图能力。车型库图片接入**预留**（暂不开发）。
   - 2026-09-09 模式收敛：快速模式（FAST）下线，深度模式为唯一生成链路（见 [brief-generation.md](brief-generation.md)）。
@@ -178,7 +179,9 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 | `IMAGE_STORAGE_DIR` | 数据盘目录（S6 起图片不再落本地；仅 wenyan 渲染临时文件落位） | ✅ S3b 启用 |
 | `WECHAT_*` | 公众号草稿发布 | ⏸ **S5 经 wenyan-server 发布（微信凭据配在 server 端，Sparkora 不直连微信）** |
 | `WENYAN_MCP_*` | wenyan 预览/发布 | ✅ S5 启用（SERVER_URL/SERVER_API_KEY/PUBLISH_TIMEOUT_MS；发布通道 = 远程 wenyan-server） |
-| `SEARXNG_*` / `CRAWL4AI_*` | 搜索/抓取素材 | ✖ 随「校验」步骤取消（2026-08-28 决策），不启用 |
+| `SEARXNG_*` | 深度研究 WEB 搜索 provider（策略路由兜底/首选，见 [brief-generation.md](brief-generation.md)） | ✅ S9 启用（09-25 起默认 TAVILY_FIRST，SearxNG 可作首选） |
+| `DEEP_WEB_PROVIDER_ORDER` | 部署级默认 provider 顺序（运行时以设置页 `web_provider_order` 为准） | ✅ 09-25-brief-web-search 启用 |
+| `CRAWL4AI_*` | 正文抓取素材 | ✖ 随「校验」步骤取消（2026-08-28 决策），不启用 |
 
 > 各模块专属变量（`CAR_*` / `NEWS_*` / `DEEP_*` / `AI_ILLUSTRATION_*` / `QINIU_*` / `WENYAN_CLI_PATH` 等）见总览[配置总览](../README.md)与对应模块文档。
 

@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/09-25-brief-web-search/prd.md", "reason": "逐条核对 AC-01..AC-16"}
+{"file": ".trellis/tasks/09-25-brief-web-search/design.md", "reason": "核对路由/规范化/快照/设置设计落地"}
+{"file": ".trellis/tasks/09-25-brief-web-search/implement.md", "reason": "核对实施项与验证命令完成度"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对工具层与 WEB 顺序契约是否已同步"}
+{"file": "docs/spec/settings.md", "reason": "核对设置字段与权限契约是否已同步"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 SearchTool 健康契约红线与配置绑定自检"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证不得修改既有生产数据、契约级断言要求"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端 API 调用与未知态渲染约定"}
+{"file": ".trellis/spec/guides/index.md", "reason": "通用规范索引与变更前全局搜索要求"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "文档层级与三处同步、引用改前枚举"}

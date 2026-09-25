@@ -24,11 +24,25 @@
             <div class="setting-info">
               <div class="setting-name">外部搜索（SearxNG / Tavily）</div>
               <div class="setting-desc">
-                启用后，研究子代理可联网检索公开资料（SEARXNG 不可用时自动降级 Tavily）；
+                启用后，研究子代理可联网检索公开资料；按下方策略优先使用首选源，不可用时自动降级后备源；
                 单一来源的资料会标记「待核实」。
               </div>
             </div>
             <el-switch v-model="form.webSearchEnabled" :disabled="!canEdit" />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-name">外部搜索策略</div>
+              <div class="setting-desc">
+                决定子代理优先调用哪个搜索源：<b>Tavily 优先</b>使用 Tavily、不可用时降级 SearxNG（默认）；
+                <b>SearxNG 优先</b>则相反。MVP 不做双源聚合，首选源命中即停止，不重复调用付费源。
+              </div>
+            </div>
+            <el-select v-model="form.webProviderOrder" :disabled="!canEdit || !form.webSearchEnabled" style="min-width: 160px">
+              <el-option label="Tavily 优先" value="TAVILY,SEARXNG" />
+              <el-option label="SearxNG 优先" value="SEARXNG,TAVILY" />
+            </el-select>
           </div>
 
           <el-alert v-if="!form.kbEnabled && !form.webSearchEnabled" type="warning" :closable="false" show-icon
@@ -60,7 +74,7 @@ const canEdit = computed(() => user.isAdmin)
 const loading = ref(true)
 const saving = ref(false)
 const updatedAt = ref('')
-const form = reactive({ kbEnabled: false, webSearchEnabled: true })
+const form = reactive({ kbEnabled: false, webSearchEnabled: true, webProviderOrder: 'TAVILY,SEARXNG' })
 
 onMounted(async () => {
   try {
@@ -68,6 +82,8 @@ onMounted(async () => {
     if (res.data) {
       form.kbEnabled = !!res.data.kbEnabled
       form.webSearchEnabled = !!res.data.webSearchEnabled
+      // 兼容历史行:webProviderOrder 为空时保持默认 Tavily 优先
+      form.webProviderOrder = res.data.webProviderOrder || 'TAVILY,SEARXNG'
       updatedAt.value = res.data.updatedAt ? String(res.data.updatedAt).replace('T', ' ').slice(0, 19) : ''
     }
   } catch { /* 拦截器统一提示 */ } finally { loading.value = false }
@@ -76,7 +92,11 @@ onMounted(async () => {
 const onSave = async () => {
   saving.value = true
   try {
-    const res = await settingApi.update({ kbEnabled: form.kbEnabled, webSearchEnabled: form.webSearchEnabled })
+    const res = await settingApi.update({
+      kbEnabled: form.kbEnabled,
+      webSearchEnabled: form.webSearchEnabled,
+      webProviderOrder: form.webProviderOrder
+    })
     if (res.code === 0 && res.data) {
       updatedAt.value = res.data.updatedAt ? String(res.data.updatedAt).replace('T', ' ').slice(0, 19) : ''
       ElMessage.success('设置已保存')

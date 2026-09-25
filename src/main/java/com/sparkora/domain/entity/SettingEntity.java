@@ -21,6 +21,11 @@ public class SettingEntity {
     private Boolean kbEnabled;
     /** 外部搜索启用(默认启用) */
     private Boolean webSearchEnabled;
+    /**
+     * 外部搜索 provider 顺序(运行时全局策略;逗号分隔,TAVILY,SEARXNG=TAVILY_FIRST)。
+     * 09-25-brief-web-search:ADMIN 系统设置调整;空则回退部署级 DEEP_WEB_PROVIDER_ORDER。
+     */
+    private String webProviderOrder;
     /** 最近修改人用户 id */
     private Long updatedBy;
     private LocalDateTime updatedAt;

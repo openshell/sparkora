@@ -20,7 +20,8 @@
 | 列 | 类型/默认 | 语义 |
 |---|---|---|
 | `kb_enabled` | `BOOLEAN NOT NULL DEFAULT FALSE` | 内部知识库（CAR 车型域 + KB 通用域）启用；**默认停用**（知识库数据质量治理中，停用期间优先外部搜索资料） |
-| `web_search_enabled` | `BOOLEAN NOT NULL DEFAULT TRUE` | 外部搜索（SEARXNG→Tavily 降级链）启用 |
+| `web_search_enabled` | `BOOLEAN NOT NULL DEFAULT TRUE` | 外部搜索（策略路由的 Tavily/SearxNG）启用 |
+| `web_provider_order` | `VARCHAR(20) NOT NULL DEFAULT 'TAVILY,SEARXNG'` | 外部搜索 provider 顺序（09-25）；`TAVILY,SEARXNG`=TAVILY_FIRST / `SEARXNG,TAVILY`=SEARXNG_FIRST。运行时全局策略，优先于部署级 `DEEP_WEB_PROVIDER_ORDER`；空回退部署级默认 |
 | `updated_by` / `updated_at` / `deleted` | `BIGINT` / `TIMESTAMP NOT NULL DEFAULT now()` / `SMALLINT NOT NULL DEFAULT 0` | 审计（手工赋值）/逻辑删除惯例 |
 
 - 实体 `com.sparkora.domain.entity.SettingEntity`（`@TableName("sparkora_setting")`）、`SettingService`。
@@ -34,8 +35,8 @@
 
 | 接口 | 方法 | 角色 | 请求/响应 |
 |---|---|---|---|
-| `/settings` | GET | ADMIN, EDITOR | `data: {id, kbEnabled, webSearchEnabled, updatedBy, updatedAt, deleted}`（首次访问自动插默认行） |
-| `/settings` | PUT | **仅 ADMIN** | `@Valid {kbEnabled?, webSearchEnabled?}`（null 不改）；响应同 GET（写后刷缓存） |
+| `/settings` | GET | ADMIN, EDITOR | `data: {id, kbEnabled, webSearchEnabled, webProviderOrder, updatedBy, updatedAt, deleted}`（首次访问自动插默认行） |
+| `/settings` | PUT | **仅 ADMIN** | `@Valid {kbEnabled?, webSearchEnabled?, webProviderOrder?}`（null/空不改；`webProviderOrder` 仅允许 `TAVILY`/`SEARXNG` 的顺序组合，其余 400 中文提示）；响应同 GET（写后刷缓存） |
 
 ---
 
@@ -44,7 +45,8 @@
 | 开关 | 生效行为 |
 |---|---|
 | `kbEnabled=false` | `DeepResearchService.applySettingGates` 剔除 KB 工具（子代理不装配本地检索）；产物 `rag_status=DISABLED`；锚点车型仅保留写作偏好语义，不触发本地检索 |
-| `webSearchEnabled=false` | 剔除 WEB 工具（SEARXNG/Tavily 不调用） |
+| `webSearchEnabled=false` | 剔除 WEB 工具（SEARXNG/Tavily 不调用）；`toolHealth.SEARXNG/TAVILY=DISABLED` |
+| `webProviderOrder` | 深度研究启动时进入 `WebSearchSnapshot`（与开关一起解析一次），决定 `WebSearchRouter` 尝试顺序；启动后改设置不改变已启动批次（策略为全局层，非项目级/用户级） |
 | 双关 | 子代理无资料工具，LLM prompt 注入「未检索任何外部资料,不得编造,数据未核实」；生成继续不阻断（沿用不硬阻断决策），`factRisks`/`gaps` 标注 |
 | 两者全开 | 维持 S9 现状：KB 优先（R2 冲突裁决 KB>WEB），WEB 单源 0.4 进 warnings |
 
@@ -55,7 +57,7 @@
 
 ## 5. 前端
 
-- `/settings` 路由（TopBar「设置」，EDITOR 及以上可见）；双 `el-switch` + 说明文案 + 双关警示；写入口仅 ADMIN（`user.isAdmin` 隐藏保存按钮，后端 `@PreAuthorize` 兜底）。
+- `/settings` 路由（TopBar「设置」，EDITOR 及以上可见）；双 `el-switch` + **策略 `el-select`（Tavily 优先 / SearxNG 优先）** + 说明文案 + 双关警示；写入口仅 ADMIN（`user.isAdmin` 隐藏保存按钮，后端 `@PreAuthorize` 兜底）。
 - 前端文件：`views/SettingsView.vue`、`layouts/TopBar.vue`、`api/index.js`（`settingApi`）。
 
 ---
@@ -63,7 +65,8 @@
 ## 6. 与 `.env` 的关系
 
 - `AI_RAG_KB_ENABLED`（部署级）仅在本地统一检索通道内继续生效（`kbEnabled=true` 时）；深度链路的工具装配以设置页为准。
-- `SEARCH_WEB_ENABLED`（`sparkora.deep.search-web-enabled`）同理仅作 SEARXNG/Tavily 的部署级可用性控制。
+- `SEARCH_WEB_ENABLED`（`sparkora.deep.search-web-enabled`）同理仅作 SEARXNG/Tavily 的部署级可用性控制；与运行时 `web_search_enabled` **相与**（任一关闭即不发起外部请求）。
+- `DEEP_WEB_PROVIDER_ORDER`（`sparkora.deep.web-provider-order`）为部署级默认策略；运行时 `web_provider_order` 非空时优先。
 - 浏览/问答**不受** `kb_enabled` 控制（见 [knowledge/qa.md](knowledge/qa.md)）。
 
 ---

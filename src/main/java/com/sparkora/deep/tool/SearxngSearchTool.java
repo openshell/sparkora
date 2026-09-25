@@ -75,7 +75,8 @@ public class SearxngSearchTool implements SearchTool {
             lastCallHadResults = !out.isEmpty();
             return out;
         } catch (Exception e) {
-            log.warn("SEARXNG 搜索失败(降级): {}", e.getMessage());
+            // R12:异常文本可能回显含凭据的 SEARXNG_BASE_URL,仅记类型化原因,不写 e.getMessage()
+            log.warn("SEARXNG 搜索失败(降级): {}", e.getClass().getSimpleName());
             lastCallHadResults = false;
             return List.of();
         }

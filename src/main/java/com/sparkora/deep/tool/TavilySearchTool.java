@@ -78,7 +78,8 @@ public class TavilySearchTool implements SearchTool {
             lastOk = true;
             return out;
         } catch (Exception e) {
-            log.warn("Tavily 搜索失败(降级): {}", e.getMessage());
+            // R12:异常文本可能回显含 api_key 的请求上下文,仅记类型化原因,不写 e.getMessage()
+            log.warn("Tavily 搜索失败(降级): {}", e.getClass().getSimpleName());
             lastOk = false;
             return List.of();
         }

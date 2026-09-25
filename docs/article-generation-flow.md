@@ -16,7 +16,7 @@ graph TD
     D1 --> D1b["前端 StepBrief 轮询 /deep/status<br/>stage=PLANNING 显示「研究计划生成中」<br/>就绪后自动展开 ClarifyForm"]
     D1b --> D2["用户填 ClarifyForm<br/>POST /deep/clarify-answer<br/>锁定 clarify_answers"]
     D2 --> D3["③ POST /deep/run<br/>落占位后立即返回（后台 @Async runAsync 执行）"]
-    D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（SEARXNG→Tavily 降级）<br/>逐 agent 落 research_notes<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
+    D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（策略路由，默认 TAVILY_FIRST）<br/>逐 agent 落 research_notes<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
     D4 --> D5["④ FactSheetService.merge()<br/>汇总事实手册 fact_sheet"]
     D5 --> D6["⑤ 自动 BriefService.generateFromFactSheet()<br/>手册为唯一事实来源生成简报字段<br/>复用同一条 DEEP brief<br/>status = READY<br/>（简报页引用面板:rag_citations + 手册 WEB/MULTI 条目合并）"]
     D6 -.自动简报失败不回滚研究产物.-> D7["POST /deep/brief 手动重试"]

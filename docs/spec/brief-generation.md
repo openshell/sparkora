@@ -20,7 +20,7 @@ graph TD
     D1 --> D1b["前端 StepBrief 轮询 /deep/status<br/>stage=PLANNING 显示「研究计划生成中」<br/>就绪后自动展开 ClarifyForm"]
     D1b --> D2["② 用户填 ClarifyForm<br/>POST /deep/clarify-answer<br/>锁定 clarify_answers → CLARIFIED"]
     D2 --> D3["③ POST /deep/run<br/>落 PENDING 占位后后台 @Async runAsync 执行"]
-    D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（SEARXNG→Tavily 降级）<br/>逐 agent 落 research_notes<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
+    D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（策略路由，默认 TAVILY_FIRST）<br/>逐 agent 落 research_notes<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
     D4 --> D5["④ FactSheetService.merge()<br/>汇总 fact_sheet（按 claim 去重聚合）"]
     D5 --> D6["⑤ 自动 BriefService.generateFromFactSheet()<br/>手册为唯一事实来源生成简报字段<br/>复用同一条 DEEP brief<br/>status = READY<br/>（简报页引用面板：rag_citations + 手册 WEB/MULTI 条目合并）"]
     D6 -->|"自动简报失败不回滚研究产物"| D7["POST /deep/brief 手动重试"]
@@ -52,16 +52,17 @@ graph TD
 |---|---|---|---|---|
 | POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | **2026-09-11 异步化**：`{briefId, stage:"PLANNING"}`，毫秒级返回（不再携带计划内容）；同步落 PLANNING 占位 brief(`gen_mode=DEEP`)，后台 `@Async` 生成研究计划与澄清问题，成功回写 plan/questions + `plan_status=READY`；失败删除占位行 + 写 `project.last_brief_error`。并发/陈旧冲突 → `R.fail(409,...)` |
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
-| POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, done}`（同步阻塞；前端轮询 status） |
+| POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, started:true, strategy, webProviderOrder}`（同步校验 + 落 PENDING 占位后立即返回；后台 `@Async` 执行，前端轮询 status。前置：brief 存在且属于路径 projectId、`gen_mode=DEEP`、`clarify_answers` 已锁定，否则 400；`plan_status=PLANNING`（计划生成中）或研究计划无关键问题 → 409；同一 brief 已在研究中 → 409「该 brief 正在研究中，请勿重复触发」） |
 | POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, styleId?}`（09-10-style-library-enhance：`styleId` 优先，后端回查风格表取 `toneGuidance`/`name` 注入 system prompt；查无 → 400「风格不存在或已删除」；旧 `stylePrompt`/`styleName` 保留兼容，deprecated） | `{versionId}`（版本 `fact_risks` 落库；09-10-versions-page-fix：落版本补齐 `title`/`version_label`/`style_tag`/`word_count`，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
 | POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突） |
-| GET | `/deep/status` | 三角色 | `?briefId`（缺省取最新 DEEP brief） | `{briefId, genMode, stage, planStatus, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}}` |
+| GET | `/deep/status` | 三角色 | `?briefId`（缺省取最新 DEEP brief） | `{briefId, genMode, stage, planStatus, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}, webStrategy, webProviderOrder}` |
 
 - stage 判定（brief 层展示态）：`PLANNING`（`plan_status=PLANNING`，clarify 占位生成中，2026-09-11 新增，优先于其余判定）> `RESEARCH_DONE`（`fact_sheet` 非空）> `RESEARCHING`（`research_notes` 非空）> `CLARIFIED`（`answers` 非空）> `CLARIFYING`（`questions` 非空）> `NONE`。
 - toolHealth（2026-09-15 契约升级，值由布尔改状态码 `OK|DISABLED|UNCONFIGURED|FAILED`）：
   - `KB` = `kb_enabled ? OK : DISABLED`（反映设置页运行时门控，不再恒 true）。见 [settings.md](settings.md)。
   - `SEARXNG`/`TAVILY` 先判 `SEARCH_WEB_ENABLED && webSearchEnabled`（false → `DISABLED`），再按 `configured()`（密钥/地址就绪）→ `UNCONFIGURED`、`lastCallOk()`（最近一次调用健康态，初值乐观）→ `FAILED`/`OK`。
   - 优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。前端未拿到该字段时渲染 `--`（未知态，不谎报可用）。
+  - `webStrategy`（09-25 增量）：有效策略标签 `TAVILY_FIRST`/`SEARXNG_FIRST`（运行时全局设置优先 → 部署级默认）；`webProviderOrder` 为规范化 provider 串。**配置就绪不等于已验证可用**——是否真的命中以 agents[].search 的实际调用结果为准。
 - 权限冒烟：viewer 访问写接口 403（`hasAnyRole('ADMIN','EDITOR')`）。
 
 > 轮询注意：前端轮询必须携带**本次启动返回的 briefId** 精确定位（占位行失败被删后按 projectId 取最新会回退到更早旧行，误判状态）。
@@ -76,7 +77,11 @@ graph TD
 | SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + `lastCallOk()=false`（仅供健康展示）；`available()` 仅判地址就绪，失败不闩锁 |
 | TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}` | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试 |
 
-- WEB 选择顺序：SEARXNG → Tavily（拿到结果即止）；每子代理 `webQuota=max(1, 8/n)`，`SEARCH_WEB_ENABLED=false` 时为 0（纯 KB）。
+- **WEB 策略路由（09-25，取代旧硬编码 SEARXNG→Tavily）**：`WebSearchRouter`（`com.sparkora.deep.search`）按快照策略顺序逐个尝试 provider，首个产出**有效命中**即采信并停止；provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源。每次研究启动时解析一次 `WebSearchSnapshot`（策略 + 双开关），同批次全部子代理共用，启动后设置变更不影响。MVP 仅两策略：`TAVILY_FIRST`（默认，`TAVILY,SEARXNG`）/ `SEARXNG_FIRST`（`SEARXNG,TAVILY`）；不支持 BOTH 双源聚合。**默认反转**显式推翻 2026-09-15「SEARXNG 优先」决策（Tavily 已配置却从未被调用、SearxNG 上游曾全部不可用）。
+- **WEB 结果治理（R8/R9）**：`WebResultNormalizer` 在子代理/LLM 之前完成协议校验（仅 http/https 绝对 URL）、URL 规范化（去 fragment、小写 scheme/host）、按规范化 URL 去重、截断，并分配稳定 `sourceId`（`W1,W2…` 按本次输入顺序）。`SearchHit` 增量带 `sourceId`/`provider`（旧 7 参构造器保留兼容）。
+- **事实后验校验（R9）**：`SubAgentRunner.validateFacts` 只接受引用本次输入 `sourceId` 且 URL/provider 匹配的 WEB 事实；未知 sourceId / URL 或 provider 不匹配 → 从 facts 剔除并转为 gap（不整条 agent 失败）。模型生成的 URL 不作为可信证据——**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**（即使模型漏标/误标 `type`），通过后 `type` 归一为 `WEB`（防 FactSheet 默认按 KB 0.9 采信）；仅缺 `type` 且无 `url`/`sourceId` 的 KB 事实沿用既有行为。
+- **WEB query 构造（R7）**：项目主题 + 研究问题 + **已锁定**澄清答案（`clarify_answers` 中非空 `a`，去重）；未锁定答案绝不进入 query。
+- 每子代理 `webQuota=max(1, 8/n)` = **单 provider 返回条数上限**（不是全程调用预算）；`SEARCH_WEB_ENABLED=false` 或运行时 `webSearchEnabled=false` 时为 0（纯 KB）。
 - **KB 锚点感知检索（R1，2026-09-06）**：`KnowledgeSearchTool.search(query, maxResults, anchors)` 委托 `retrieveForGeneration`（锚点加权 + 参数级子查询 + 核心块/权益块分层配额）；锚点由 `DeepResearchService.resolveAnchors` 解析（项目关联车型为准 → `CarModelMatcherService` 按主题识别兜底，失败不阻断）；子代理 KB 检索 query 用「主题 + 问题」复合语料（纯问题如「价格对比」缺车型上下文相似度必散）。非 OK 状态返回空列表归 gaps（行为同旧）。
 - **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块（命中含 MODEL_INFO/价格区间文本）时跳过 WEB 补查——WEB 只补 KB 缺口，不与 KB 平行全问题重搜、不得覆盖 KB 结论。
 - **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB 来源 → **KB 胜出**（不比较相似度/置信度，量纲不同不可比；按来源身份定优先级：本系统知识库（比亚迪同步清洗）> 外部 WEB）。WEB 条目降级为该条目 `alternatives`（URL 列表）留证据，并写 warnings「以知识库为准；外部来源(N 条)有异说,未采用」。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
@@ -87,7 +92,7 @@ graph TD
 
 ## 5. 研究笔记 / 事实手册结构
 
-- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount}]`；`factsJson`=`{facts:[{claim,value,source:{type:"KB|WEB",url,modelName,docId},confidence}],gaps:[...]}`。
+- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok}]}`——**不含任何密钥**；`webCount` 语义改为实际接受的 WEB 结果数。
 - `fact_sheet`（`FactSheetService.merge`，按 claim 去重聚合）：`{entries:[{key,claim,value,sources:{type,url,modelName,docId},crossCount,confidence}],gaps:[...],warnings:[...]}`。
 - 置信度规则：多源交叉(≥2) 0.85 交叉标注 / KB 0.9 / 单一 WEB 0.4 + warnings「仅单一 WEB 源,待核实」/ 冲突 0.3。
 - 已知限制：WEB 命中为摘要级（snippet），不做正文抓取；低置信条目以 warnings 提示人工核实。
@@ -119,7 +124,8 @@ graph TD
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `SEARCH_WEB_ENABLED` | `true` | WEB 搜索总开关（SEARXNG+Tavily） |
+| `SEARCH_WEB_ENABLED` | `true` | WEB 搜索部署级总开关（与运行时 `webSearchEnabled` 相与） |
+| `DEEP_WEB_PROVIDER_ORDER` | `TAVILY,SEARXNG` | 部署级默认 provider 顺序（运行时 ADMIN 设置优先）：`TAVILY,SEARXNG`=TAVILY_FIRST / `SEARXNG,TAVILY`=SEARXNG_FIRST |
 | `TAVILY_API_KEY` / `DEEP_TAVILY_API_KEY` | 空 | Tavily 密钥（`.env`；`DEEP_` 前缀可覆盖） |
 | `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署，2026-09-04 迁移至 192.168.3.108:5676） |
 | `CRAWL4AI_BASE_URL` | 空 | 预留：正文抓取工具未接入（摘要级搜索的后续增强） |

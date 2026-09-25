@@ -177,6 +177,79 @@ public boolean available() { return apiKey != null && !apiKey.isBlank() && lastO
 
 ---
 
+## Scenario: 外部搜索策略路由（WEB provider 顺序与证据治理）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改 WEB 搜索 provider 顺序、URL/sourceId 治理、搜索策略配置，或改动 `WebSearchRouter` / `WebResultNormalizer` / `WebProviderOrder`。
+
+### 2. Signatures
+```java
+// 策略值对象（解析失败明确拒绝,不静默）
+enum WebProvider { TAVILY, SEARXNG }
+record WebProviderOrder(List<WebProvider> providers) {
+    static WebProviderOrder parse(String csv);     // 空回退 TAVILY,SEARXNG;未知值抛 IllegalArgumentException
+    static WebProviderOrder defaults();
+    String raw();                                   // 规范化串(落库/日志/响应)
+    String strategyLabel();                         // TAVILY_FIRST / SEARXNG_FIRST
+}
+
+// 启动时解析一次的快照（同批次共享）
+record WebSearchSnapshot(WebProviderOrder order, boolean webAllowed, Long briefId, int maxResults)
+
+// 路由（@Component,注入 TavilySearchTool + SearxngSearchTool）
+WebSearchOutcome search(String query, int maxResults, WebSearchSnapshot snapshot)
+record WebSearchOutcome(List<WebHit> hits, WebProvider usedProvider, List<Attempt> attempts)
+record Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason, boolean ok)
+
+// 治理（纯静态,可单测）
+static List<WebHit> normalize(List<SearchHit> raw, int maxResults)   // 协议校验+规范化+去重+截断+sourceId
+static String normalizeUrl(String url)                                // 非法返回 null
+record WebHit(String sourceId, String title, String url, String snippet, String provider)
+```
+
+### 3. Contracts
+- **策略路由在子代理之前**：`WebSearchRouter` 逐个 provider 尝试，首个产出有效命中即停止；未配置跳过（`UNCONFIGURED`），异常/空/全部无效 URL 记 `fallbackReason` 后尝试后备。每 provider 每次最多调用一次——**不让付费 provider 无条件重复调用**（无 BOTH 聚合）。
+- **快照一次解析**：`DeepResearchService.run` 启动时解析策略与双开关（`SEARCH_WEB_ENABLED && web_search_enabled`），同批次全部子代理共用；启动后改设置不改变该批次。运行时设置非空优先于部署级 `DEEP_WEB_PROVIDER_ORDER`。
+- **sourceId 稳定且可回溯**：`W1,W2…` 按本次输入顺序；URL 规范化后去重（fragment 变体视为同条）。事实只能引用本次输入的 sourceId。
+- **后验校验**：WEB 事实的 sourceId 未知 / URL 不匹配 / provider 不匹配 → 剔除并转 gap，**不整条 agent 失败**；KB 事实不受此校验。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**（防模型漏标 `type` 而自造 URL 混入），通过后 `type` 归一为 `WEB`（否则 FactSheet 默认按 KB 0.9 采信）。
+- **降级原因不含异常原文/密钥**：异常路径只记类型化 `ERROR`，不回传 `e.getMessage()`（可能含密钥/URL）。
+- `webCount` = 实际接受的 WEB 结果数（不再用事实条数 `webCalls`）。
+- `available()` 语义不变（仅配置就绪，无失败闩锁）；`toolHealth` 三键值域不变，`webStrategy`/`webProviderOrder` 为增量字段。
+
+### 4. Validation & Error Matrix
+- provider 未配置 → 跳过，`fallbackReason=UNCONFIGURED`。
+- provider 异常/超时 → `ERROR`，尝试后备；异常文本不入 notes/响应/日志。
+- provider 返回空 → `EMPTY`；有结果但全部无有效 URL → `INVALID_URL`；两者都降级后备。
+- 两路均不可用 → 空 hits，研究笔记记 gaps，不生成无来源事实。
+- 策略串含未知值 → `IllegalArgumentException`（配置错误明确暴露）；空串回退默认。
+
+### 5. Good/Base/Bad Cases
+- Good: 默认 `TAVILY_FIRST`，Tavily 命中即 `usedProvider=TAVILY` 且 SearxNG 调用 0 次。
+- Base: Tavily 未配置 → 跳过，SearxNG 兜底。
+- Bad: 在 `SubAgentRunner` 里硬编码 provider 顺序；或把模型自由输出的 URL 当证据写入事实手册。
+
+### 6. Tests Required
+- 策略解析（默认/去重/大小写/未知值拒绝）；首源命中不调后备（`verify(never())`）；失败降级；开关门控（不发起请求）；URL 协议校验/规范化/去重/截断；sourceId 后验校验（合法/未知/URL 与 provider 不匹配）；降级原因不含异常文本；`rawFallback` JSON 转义完整。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+for (SearchTool webTool : List.of(searxngTool, tavilyTool)) {      // 硬编码顺序
+    if (!webTool.available()) continue;
+    List<SearchHit> web = webTool.search(question, quota);          // query 无锁定答案
+    if (!web.isEmpty()) { hits.addAll(web); break; }                // 不去重/无 sourceId
+}
+```
+#### Correct
+```java
+WebSearchOutcome outcome = webRouter.search(webQuery(topic, question, lockedAnswers),
+        Math.min(5, quota), snapshot);                              // 快照策略 + 主题/锁定答案
+for (WebHit wh : outcome.hits()) hits.add(wh.toSearchHit());        // 带稳定 sourceId/provider
+String factsJson = validateFacts(chat(system, ctx), outcome.hits()); // 后验校验,非法转 gap
+```
+
+---
+
 ## Scenario: 图片向量域（第四域，09-15 img-semantic-search）
 
 ### 1. Scope / Trigger
