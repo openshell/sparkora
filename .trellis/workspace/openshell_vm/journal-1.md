@@ -368,3 +368,27 @@ Session summary was not supplied.
 
 [OK] **Completed**
 
+
+
+## Session 14: Session 14: 简报外部搜索策略路由 + 事实手册近似归并
+<!-- trellis-session: v=2 fp=965aa3cf1ed4b0ad -->
+
+**Date**: 2026-09-26
+**Task**: Session 14: 简报外部搜索策略路由 + 事实手册近似归并
+**Branch**: `main`
+
+### Summary
+
+S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、密钥只在 .env)；修复 LLM 降级时 WEB 结果数口径并区分 LLM_FALLBACK；新增事实手册近似 claim 归并(数值签名硬门槛+无数字高阈值,修复 MULTI 类型未落 JSON 旧 bug)恢复多来源交叉验证；引用面板与手册展示 WEB 实际 provider。mvn test 285 全绿、npm run build 通过、后端容器 healthy。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `17b7f99` | feat(S9): 简报外部搜索改为策略路由并支持 Tavily 优先全局配置 |
+| `1fc81d5` | fix(deep): LLM 汇总降级时保留 WEB 结果数口径并区分 LLM_FALLBACK 原因 |
+| `deca60f` | fix(deep): 事实手册近似 claim 归并恢复来源交叉验证并展示 WEB provider |
+
+### Status
+
+[OK] **Completed**
