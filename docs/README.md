@@ -104,6 +104,7 @@ graph LR
 | [wenyan.md](wenyan.md) | wenyan 主题与发布机制深潜：双通道、15 主题目录、`--custom-theme` 用法与限制、新增主题步骤 |
 | [img.md](img.md) | 七牛图床接入（配置/签名/端点/key 策略；密钥只放 `.env`） |
 | [article-generation-flow.md](article-generation-flow.md) | 当前唯一深度链路的端到端流程图（含状态机与关键机制） |
+| [deploy.md](deploy.md) | Docker 容器化产线部署：镜像/compose 编排/端口与 `.env` 关系/持久化/排障（与 `dev.sh` 本地联调并存） |
 
 ---
 
@@ -159,6 +160,7 @@ graph TD
 命令以 [AGENTS.md「Commands」](../AGENTS.md#commands) 为准，本页不复述完整列表。要点：
 
 - 联调环境一键控制（推荐）：`./dev.sh start|stop|restart|status|logs`，目标 `backend|frontend|all`；日志在 `/tmp/sparkora-logs/`，探活 `/api/auth/me`。
+- 产线部署：`docker compose up -d --build`（前后端容器 + nginx 反代；端口读 `.env` 的 `BACKEND_PORT`/`FRONTEND_PORT`），详见 [deploy.md](deploy.md)。本地热重载联调仍用 `./dev.sh`。
 - 后端：`mvn -q -DskipTests compile`（验证改动至少跑此条）、`mvn spring-boot:run`（端口读 `.env` 的 `SERVER_PORT`）、`mvn test`。
 - 前端（`frontend/` 目录）：`npm run dev`（5173，代理 `/api` → 后端）、`npm run build`（产线构建，前端改动至少跑此条）。
 - 运行需要 PostgreSQL + 根目录 `.env`（模板 `.env.example`，**绝不提交真实 `.env`**）。
@@ -172,7 +174,7 @@ graph TD
 | 分组 | 变量 | 模块文档 |
 |---|---|---|
 | 数据库 | `SPARKORA_DB_HOST/PORT/NAME/USER/PASSWORD` | —（`schema.sql` 幂等建表） |
-| JWT / 端口 | `JWT_SECRET`、`JWT_EXPIRE_MINUTES`、`SERVER_PORT`（默认 8080） | [spec/overview.md](spec/overview.md) |
+| JWT / 端口 | `JWT_SECRET`、`JWT_EXPIRE_MINUTES`、`SERVER_PORT`（默认 8080）、`BACKEND_PORT`/`FRONTEND_PORT`（Docker 产线端口，见 [deploy.md](deploy.md)） | [spec/overview.md](spec/overview.md)、[deploy.md](deploy.md) |
 | AI 统一入口 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` / `AI_EMBEDDING_MODEL` / `AI_TIMEOUT_MS` / `AI_TEMPERATURE` | [spec/overview.md](spec/overview.md) |
 | AI 图像 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS`（多模型逗号分隔轮询，图生图）+ `AI_IMAGE_MIN_SCORE` | [spec/image.md](spec/image.md) |
 | 配图建议 | `AI_ILLUSTRATION_SUGGEST_ENABLED` / `AI_ILLUSTRATION_MAX_ANCHORS` / `AI_ILLUSTRATION_TOP_N` | [spec/image.md](spec/image.md) |

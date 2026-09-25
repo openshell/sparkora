@@ -4,4 +4,5 @@
 
 - **系统说明总入口**：[`docs/README.md`](docs/README.md)（架构 / 概念地图 / 模块索引表 / 全局约定 / 配置总览）。
 - **模块级权威契约**：[`docs/spec/**`](docs/spec/)（简报生成、版本、预览、发布、配图、检索、知识域、问答等）。
-- **开发与联调命令**：[`AGENTS.md`](AGENTS.md)。
+- **开发与联调命令**：[`AGENTS.md`](AGENTS.md)（本地热重载 `./dev.sh`；产线 `docker compose up -d`）。
+- **产线部署说明**：[`docs/deploy.md`](docs/deploy.md)（Docker 镜像 / compose 编排 / 端口 / 排障）。

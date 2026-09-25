@@ -1,0 +1,70 @@
+# =============================================================================
+#  Sparkora 产线部署编排（Docker Compose v2）
+#
+#  一键启动：docker compose up -d --build
+#  说明：
+#   - 本地热重载联调仍用 ./dev.sh（mvn spring-boot:run + vite dev），两者并存互不干扰。
+#   - PostgreSQL / axonhub / wenyan-server / searxng / 七牛图床均为**外部服务**，
+#     经 .env 中的地址访问，不随本 compose 部署（详见 docs/deploy.md）。
+#   - .env 由 env_file 运行时注入，绝不进镜像层；.dockerignore 已排除 .env。
+# =============================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sparkora-backend:local
+    container_name: sparkora-backend
+    env_file:
+      - .env
+    environment:
+      # 容器内监听端口单一来源：SERVER_PORT（默认与 .env 一致的部署值 5661）
+      # 前端容器同样注入该值，由 nginx 模板 envsubst 渲染反代端口，无需手工同步
+      - SERVER_PORT=${SERVER_PORT:-5661}
+      # 数据盘目录（wenyan 渲染临时文件 + 社区主题 CSS 物化），挂卷持久化
+      - IMAGE_STORAGE_DIR=/app/data/images
+      - WENYAN_CLI_PATH=wenyan
+      # 容器内统一时区（可选，便于日志可读）
+      - TZ=Asia/Shanghai
+    volumes:
+      # 宿主机 ./data 持久化：data/images、data/tmp/preview、data/tmp/wenyan-themes
+      - ./data:/app/data
+    ports:
+      - "${BACKEND_PORT:-5661}:${SERVER_PORT:-5661}"
+    restart: unless-stopped
+    healthcheck:
+      # 口径同 dev.sh:75：探活 /api/auth/me，401（鉴权生效）同样算「服务存活」。
+      # curl 不带 -f：任何 HTTP 响应（含 401/403）退出码为 0；连接失败/超时才是非 0。
+      # 故这里直接以 curl 退出码判定，状态码非 000 即健康（不能用 -f，遇 401 会误判为不健康）。
+      test: ["CMD-SHELL", "curl -s -o /dev/null --max-time 5 http://localhost:$$SERVER_PORT/api/auth/me"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 90s
+    networks:
+      - sparkora-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: sparkora-frontend:local
+    container_name: sparkora-frontend
+    environment:
+      # 传给 nginx 模板（envsubst 渲染 /api 反代端口）；与 backend 的 SERVER_PORT 同源
+      - SERVER_PORT=${SERVER_PORT:-5661}
+    ports:
+      # 对外访问端口经 .env 的 FRONTEND_PORT 控制（默认 8088）
+      - "${FRONTEND_PORT:-8088}:80"
+    depends_on:
+      backend:
+        # 启动顺序护栏：后端健康后再起前端（运行时 nginx 每请求动态解析 backend，无需重启前端）
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sparkora-net
+
+networks:
+  sparkora-net:
+    name: sparkora-net

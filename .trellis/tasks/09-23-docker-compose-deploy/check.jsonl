@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "验收 CLI 就绪与渲染契约(AC3)的权威依据"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端构建/无回归(AC7)"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "检查前端未改业务代码、vite build 与相对路径 /api 约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层一致性：nginx 反代端口/路径与后端 SERVER_PORT 对齐"}
+{"file": ".trellis/tasks/09-23-docker-compose-deploy/design.md", "reason": "逐条对照设计核对镜像/编排/安全/回滚形态"}
+{"file": "docs/spec/publish.md", "reason": "发布链路依赖外部 wenyan-server，容器网络下须确认可达性与超时口径不变"}

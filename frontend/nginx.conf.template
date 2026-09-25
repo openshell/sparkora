@@ -1,0 +1,54 @@
+# =============================================================================
+#  Sparkora 前端 nginx 站点配置模板（产线）
+#
+#  本文件是 nginx 官方镜像的 envsubst 模板（由 /docker-entrypoint.d/20-envsubst-on-templates.sh
+#  在容器启动时渲染为 /etc/nginx/conf.d/default.conf），因此可用 SERVER_PORT 变量占位符。
+#  注意：envsubst 只替换「已定义的环境变量」，nginx 运行时变量（$host/$remote_addr 等）原样保留。
+#
+#  两个职责：
+#  1. 托管 Vite build 产物（SPA，createWebHistory 需要 try_files 兜底）
+#  2. 反代 /api 到后端容器，替代生产态不可用的 vite dev proxy
+#
+#  端口约定：容器内后端监听端口 = .env 的 SERVER_PORT（compose 经 environment 传入本容器）。
+#            改 SERVER_PORT 时无需改本文件，重启容器即生效。
+# =============================================================================
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # 静态资源压缩（可选，无副作用）
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
+    gzip_min_length 1024;
+
+    # ----- 后端 API 反代 -----
+    # backend 为 compose 服务名，由 Docker 内嵌 DNS 解析；nginx 每请求动态解析，
+    # 后端重启换 IP 无需重启前端。端口取容器环境变量 SERVER_PORT（compose 注入）。
+    location /api/ {
+        proxy_pass http://backend:${SERVER_PORT};
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # AI 生成 / wenyan 渲染 / 发布等接口可能长耗时，读超时放宽
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+        proxy_connect_timeout 10s;
+
+        # 对齐后端 multipart 上限（application.yml: max-request-size 15MB）
+        client_max_body_size 15m;
+    }
+
+    # ----- SPA 路由兜底 -----
+    # 前端用 createWebHistory()，刷新 /projects/xxx 等子路由必须回落到 index.html，否则 404
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -168,6 +168,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 | `SPARKORA_DB_HOST/PORT/NAME/USER/PASSWORD` | 数据源（PostgreSQL） | ✅ 启用 |
 | `JWT_SECRET` / `JWT_EXPIRE_MINUTES` | JWT 签发与校验 | ✅ 启用 |
 | `SERVER_PORT` | 后端端口（默认 8080） | ✅ 启用 |
+| `BACKEND_PORT` / `FRONTEND_PORT` | Docker 产线部署映射到宿主机的端口（默认分别等于 `SERVER_PORT` / `8088`）；详见 [deploy.md](../deploy.md) | ✅ 启用 |
 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` | axonhub 统一入口 | ✅ 启用 |
 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS` | 文生图 / **图生图**（axonhub，多模型逗号分隔轮询） | ✅ S3b 启用 |
 | `AI_RAG_MIN_SCORE` / `AI_RAG_REJECT_SCORE` | 知识库 RAG 检索门槛（逐块/整体；契约见 [retrieval.md](retrieval.md)） | ✅ S6.1 启用 |

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "wenyan CLI 的调用/参数/资源物化契约，后端镜像内置 CLI 与可写数据目录必须满足此约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量门槛(编译/无回归)，确认新增部署文件不触碰业务代码"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层与编码约定索引"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层一致性检查：配置来源(.env)、端口、反代路径需前后端一致"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "新增 docs/deploy.md 的文档结构与写法约定"}
+{"file": "docs/spec/overview.md", "reason": "系统概览与部署相关约定，Phase 3 需同步产线部署章节"}
+{"file": "AGENTS.md", "reason": "Commands 段是部署命令的权威入口，需补 docker compose 用法"}
