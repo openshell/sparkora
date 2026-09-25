@@ -345,3 +345,26 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: Docker 容器化产线部署(compose)
+<!-- trellis-session: v=2 fp=6c1834f5b36413a8 -->
+
+**Date**: 2026-09-25
+**Task**: Docker 容器化产线部署(compose)
+**Branch**: `main`
+
+### Summary
+
+将产线部署从手写脚本改为 docker compose 一键起容器；新增后端多阶段镜像(Maven 构建 → JRE21+Node+@wenyan-md/cli 2.0.11，内置 CLI 支撑预览同核渲染)、前端 nginx 镜像(envsubst 模板反代 /api)、docker-compose.yml(端口单一来源 SERVER_PORT、env_file 注入 .env、./data 挂卷持久化、401 视为存活的健康检查)、双 .dockerignore、docs/deploy.md；同步 .env.example/文档。保留 dev.sh 本地热重载联调，零业务代码改动。AC1-AC7 全通过(compose 起停/nginx 反代 401/容器内 CLI 真实渲染/数据卷持久化/无密钥泄露/构建无回归)；并沉淀 .trellis/spec/backend/container-deployment.md。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `40f4a4b` | feat(deploy): Docker 容器化产线部署(backend+frontend compose) |
+
+### Status
+
+[OK] **Completed**
+
