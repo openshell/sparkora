@@ -20,7 +20,7 @@ graph TD
     D1 --> D1b["前端 StepBrief 轮询 /deep/status<br/>stage=PLANNING 显示「研究计划生成中」<br/>就绪后自动展开 ClarifyForm"]
     D1b --> D2["② 用户填 ClarifyForm<br/>POST /deep/clarify-answer<br/>锁定 clarify_answers → CLARIFIED"]
     D2 --> D3["③ POST /deep/run<br/>落 PENDING 占位后后台 @Async runAsync 执行"]
-    D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（策略路由，默认 TAVILY_FIRST）<br/>逐 agent 落 research_notes<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
+    D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（策略路由，默认 TAVILY_FIRST）<br/>启动即批量置全部 agent RUNNING<br/>各 agent 独立收集器「完成即回写」（乱序）<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
     D4 --> D5["④ FactSheetService.merge()<br/>汇总 fact_sheet（按 claim 近似归并聚合）"]
     D5 --> D6["⑤ 自动 BriefService.generateFromFactSheet()<br/>手册为唯一事实来源生成简报字段<br/>复用同一条 DEEP brief<br/>status = READY<br/>（简报页引用面板：rag_citations + 手册 WEB/MULTI 条目合并）"]
     D6 -->|"自动简报失败不回滚研究产物"| D7["POST /deep/brief 手动重试"]
@@ -98,6 +98,8 @@ graph TD
 ## 5. 研究笔记 / 事实手册结构
 
 - `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok}]}`——**不含任何密钥**；`webCount` 语义改为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 原始条目降级时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`（provider 层 `attempts` 原因保持原样，两类失败不混淆）。
+- **逐 agent 实时回写语义（2026-09-26 修复）**：`run()` 落 `PENDING` 占位后，`doRunAsync` 在 **submit 任何子代理之前**一次性把全部 N 个 agent 覆写为 `RUNNING`（AC-01）——首轮 2s 轮询即可见多 agent 并行 RUNNING，不再有「1 个 RUNNING + 其余 PENDING」假象。随后每个 agent 由一个**独立收集器**任务（同一虚拟线程池）驱动：其自身 `future.get(researchTimeoutMs)` 完成/超时/异常后**立即回写**该 agent 的 `status/factsJson/webCount/search`（AC-02）——谁先完成谁先落库，天然乱序，不再被慢的 `future[0]` 串行阻塞，消除 `PENDING→DONE` 集中瞬变。超时/异常仍 `cancel(true)` + `FAILED` + gap「子代理超时或失败」，失败隔离不回归（AC-04/AC-05）。全部收集器 join 后才执行 `FactSheetService.merge` 与自动简报，顺序不变（AC-06）。`/deep/status` 输出契约与 `status` 值域 `PENDING/RUNNING/DONE/FALLBACK/FAILED` 不变。
+  - **并发写安全**：收集器并发调用 `updateAgent` 为「读整段 JSON → 改指定 agentId → 写回」，无锁会丢失更新。以 per-brief 锁（`ConcurrentHashMap<Long,Object>` + `synchronized`）串行化同一 brief 的写入，不同 brief 互不阻塞；锁在批次结束（`runAsync` finally）清理，避免 map 无界增长。启动批量置 RUNNING 与收集器回写共用同一把锁。
 - `fact_sheet`（`FactSheetService.merge`，按 claim **近似**去重聚合）：`{entries:[{key,claim,value,sources:{type,url,modelName,docId},crossCount,confidence,sourcesList:[{type,sourceId,provider,url,modelName,docId}],sourceCount}],gaps:[...],warnings:[...]}`。`sources.type` 取值 `KB|WEB|MULTI`（`MULTI`＝多源交叉，代表来源基础上标注）。`sourcesList`/`sourceCount` 为 09-25 **增量字段**（保留全部来源证据含 provider，供引用面板/人工核对；前端旧逻辑不读也不报错）。`crossCount`/`sourceCount` 为**去重后来源数**（同 url+modelName 只计一次，不再等于原始 fact 条数）。
 - 置信度规则：多源交叉（去重来源 ≥2）0.85 交叉标注 / KB 0.9 / 单一 WEB 0.4 + warnings「仅单一 WEB 源,待核实」/ 同簇 KB+WEB 冲突时 KB 胜出（0.9，WEB 进 `alternatives`）。
 - 已知限制：WEB 命中为摘要级（snippet），不做正文抓取；低置信条目以 warnings 提示人工核实。

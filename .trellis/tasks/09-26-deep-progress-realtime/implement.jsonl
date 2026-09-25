@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/09-26-deep-progress-realtime/prd.md", "reason": "本任务需求 R1-R9 与验收标准 AC-01..AC-09(含乱序回写/并发安全/超时语义)"}
+{"file": ".trellis/tasks/09-26-deep-progress-realtime/design.md", "reason": "技术设计:独立收集器实现完成即回写、per-brief 锁保证并发写安全、与既有语义兼容表、取舍与回滚"}
+{"file": ".trellis/tasks/09-26-deep-progress-realtime/implement.md", "reason": "有序实施清单、验证命令、风险文件与完成前检查"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异步占位轮询/状态机/并发防护(409)既有约定;逐 agent 回写的并发防护需对齐"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线:测试不得触碰生产数据、并发/不可逆操作约束、契约级断言"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "深度研究链路与 research_notes 语义、启动期网络任务异步化约定"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引:定位 error-handling/quality/ai-rag 分册"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "后端逐 agent 回写→/deep/status→前端轮询展示的跨层一致性核对"}

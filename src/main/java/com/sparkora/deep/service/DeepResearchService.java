@@ -27,10 +27,12 @@ import java.util.concurrent.TimeUnit;
 /**
  * 深度研究编排(S9 ③④):并行派生子代理研究 → 汇总事实手册 → 落库 research_notes/fact_sheet。
  *
- * 异步 + 逐 agent 落库(设计 6.1/6.3):
+ * 异步 + 逐 agent 落库(设计 6.1/6.3,09-26 实时回写改造):
  *  - run() 同步校验 + 落全 PENDING 占位 research_notes → 立即返回(202 语义),后台 self.runAsync 执行;
- *  - runAsync() @Async 逐 agent 执行,每个完成时把 research_notes 对应条目更新为 RUNNING→DONE/FAILED,
- *    前端轮询 /deep/status 即可看到逐 agent 进度(而非一次性全量)。
+ *  - runAsync() 启动阶段一次性把全部 agent 置 RUNNING(早于 submit),随后每个 agent 由**独立收集器**
+ *    (虚拟线程)在各自 future 完成/超时/异常时立即回写 DONE/FALLBACK/FAILED——谁先完成谁先落库,天然乱序,
+ *    不再被慢的 future[0] 阻塞;前端 2s 轮询即可看到多 agent 交错推进,消除 PENDING→DONE 瞬变。
+ *  - 逐 agent 回写经 per-brief 锁串行化,保证并发收集器「读-改-写」不丢字段。
  *  - 单子代理超时/失败不阻断(缺口进手册);调用次数受 maxAgents 约束。
  */
 @Slf4j
@@ -53,6 +55,11 @@ public class DeepResearchService {
     private final com.sparkora.service.SettingService settingService;
     /** 同一 brief 运行互斥(09-25):重复 /run 返回 409,避免重复付费外部调用 */
     private final java.util.Set<Long> runningBriefs = ConcurrentHashMap.newKeySet();
+    /**
+     * research_notes 逐 agent 回写的 per-brief 锁(09-26 实时回写):收集器并发调用 updateAgent 时
+     * 串行化「读整段 JSON → 改指定 agentId → 写回」;不同 brief 互不阻塞。批次结束清理,避免无界增长。
+     */
+    private final java.util.Map<Long, Object> notesLocks = new ConcurrentHashMap<>();
     // 自注入代理,确保 @Async 生效(run 内 this.runAsync 不会走代理)
     @Autowired
     @Lazy
@@ -165,6 +172,9 @@ public class DeepResearchService {
         try {
             doRunAsync(briefId, snapshot);
         } finally {
+            // 先清锁再释放运行互斥:新批次必须等 runningBriefs 放行后才能注册并 createIfAbsent 新锁,
+            // 故此处顺序可保证旧批次的 remove 不会误删新批次刚创建的锁(否则两个写者各持不同锁 → 丢更新)。
+            notesLocks.remove(briefId);   // 批次结束清理 per-brief 锁,避免 map 无界增长
             runningBriefs.remove(briefId);
         }
     }
@@ -195,8 +205,6 @@ public class DeepResearchService {
             int n = Math.min(questions.size(), props.getMaxAgents());
             if (n == 0) return;
 
-            ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
-            List<Future<SubAgentRunner.Note>> futures = new ArrayList<>();
             // webQuota 语义:单 provider 返回条数上限(策略路由只采信首个有效 provider)
             int webQuotaPerAgent = snapshot.webAllowed() ? Math.max(1, 8 / n) : 0;
             // R1 锚点车型解析:项目关联为准;为空时按主题识别兜底(失败不阻断研究)
@@ -208,6 +216,22 @@ public class DeepResearchService {
             String lockedAnswers = b0 == null ? null : b0.getClarifyAnswers();
             log.info("深度研究启动 briefId={} projectId={} strategy={} webAllowed={} anchors={}",
                     briefId, projectId, snapshot.strategyLabel(), snapshot.webAllowed(), anchors);
+            // R1/AC-01:启动阶段一次性把全部 agent 置 RUNNING(早于任何 submit,前端首轮轮询即可见
+            // 多 agent 并行 RUNNING;消除「逐个到轮次才置 RUNNING → PENDING→DONE 瞬变」)
+            List<Map<String, Object>> running = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                Map<String, Object> note = new LinkedHashMap<>();
+                note.put("agentId", i + 1);
+                note.put("question", questions.get(i));
+                note.put("status", "RUNNING");
+                note.put("factsJson", "{\"facts\":[],\"gaps\":[]}");
+                note.put("webCount", 0);
+                running.add(note);
+            }
+            writeNotes(briefId, running);
+
+            ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+            List<Future<SubAgentRunner.Note>> futures = new ArrayList<>();
             for (int i = 0; i < n; i++) {
                 final int idx = i;
                 String q = questions.get(i);
@@ -218,33 +242,41 @@ public class DeepResearchService {
                 futures.add(pool.submit(() -> subAgent.research(q, tools, webQuotaPerAgent, anchors, topic,
                         lockedAnswers, snapshot)));
             }
-            int doneCount = 0;
-            int webTotal = 0;
+            // R2/AC-02:为每个 agent 提交**独立收集器**——谁的 future 先完成谁先回写,天然乱序,
+            // 不再被慢的 future[0] 阻塞后继 agent 的落库(消除集中 PENDING→DONE 瞬变)。
+            java.util.concurrent.atomic.AtomicInteger doneCount = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger webTotal = new java.util.concurrent.atomic.AtomicInteger();
+            List<Future<?>> collectors = new ArrayList<>();
             for (int i = 0; i < futures.size(); i++) {
-                Map<String, Object> note = new LinkedHashMap<>();
-                note.put("agentId", i + 1);
-                note.put("question", questions.get(i));
-                // 置 RUNNING(逐 agent 可见)
-                note.put("status", "RUNNING");
-                note.put("factsJson", "{\"facts\":[],\"gaps\":[]}");
-                note.put("webCount", 0);
-                updateAgent(briefId, i + 1, note);
-                try {
-                    SubAgentRunner.Note r = futures.get(i).get(props.getResearchTimeoutMs(), TimeUnit.MILLISECONDS);
-                    note.put("status", r.status());
-                    note.put("factsJson", r.factsJson());
-                    note.put("webCount", r.webCount());
-                    if (r.search() != null) note.put("search", r.search());
-                    doneCount++;
-                    webTotal += r.webCount();
-                } catch (Exception e) {
-                    // 超时/失败:取消该任务,避免后台继续产生外部调用(R10/超时 cancel)
-                    try { futures.get(i).cancel(true); } catch (Exception ignored) { }
-                    note.put("status", "FAILED");
-                    note.put("factsJson", "{\"facts\":[],\"gaps\":[\"子代理超时或失败\"]}");
-                    note.put("webCount", 0);
-                }
-                updateAgent(briefId, i + 1, note);
+                final int idx = i;
+                final String q = questions.get(i);
+                final Future<SubAgentRunner.Note> f = futures.get(i);
+                collectors.add(pool.submit(() -> {
+                    Map<String, Object> note = new LinkedHashMap<>();
+                    note.put("agentId", idx + 1);
+                    note.put("question", q);
+                    note.put("factsJson", "{\"facts\":[],\"gaps\":[]}");
+                    try {
+                        SubAgentRunner.Note r = f.get(props.getResearchTimeoutMs(), TimeUnit.MILLISECONDS);
+                        note.put("status", r.status());
+                        note.put("factsJson", r.factsJson());
+                        note.put("webCount", r.webCount());
+                        if (r.search() != null) note.put("search", r.search());
+                        doneCount.incrementAndGet();
+                        webTotal.addAndGet(r.webCount());
+                    } catch (Exception e) {
+                        // R4/R6:超时/失败:取消该任务,避免后台继续产生外部调用;其余 agent 不受影响
+                        try { f.cancel(true); } catch (Exception ignored) { }
+                        note.put("status", "FAILED");
+                        note.put("factsJson", "{\"facts\":[],\"gaps\":[\"子代理超时或失败\"]}");
+                        note.put("webCount", 0);
+                    }
+                    writeAgent(briefId, idx + 1, note);
+                }));
+            }
+            // 等待全部收集器落定(内部已带 researchTimeoutMs 兜底,故此处无超时;仅用于「全部 agent 已落库」判定)
+            for (Future<?> c : collectors) {
+                try { c.get(); } catch (Exception ignored) { }
             }
             pool.shutdown();
             // 汇总事实手册(基于最终 notes)
@@ -266,40 +298,74 @@ public class DeepResearchService {
                 }
             }
             log.info("深度研究完成 briefId={} strategy={} agents={} done={} webAccepted={}",
-                    briefId, snapshot.strategyLabel(), futures.size(), doneCount, webTotal);
+                    briefId, snapshot.strategyLabel(), futures.size(), doneCount.get(), webTotal.get());
         } catch (Exception e) {
             log.error("深度研究异步执行失败 briefId={}: {}", briefId, e.getMessage(), e);
         }
     }
 
-    /** 更新 research_notes 中指定 agentId 的条目(读改写,幂等)。 */
-    private void updateAgent(Long briefId, int agentId, Map<String, Object> note) {
-        try {
-            ArticleBriefEntity b = briefMapper.selectById(briefId);
-            if (b == null || b.getResearchNotes() == null) return;
-            JsonNode arr = json.readTree(b.getResearchNotes());
-            List<Map<String, Object>> notes = new ArrayList<>();
-            for (JsonNode n : arr) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("agentId", n.path("agentId").asInt());
-                m.put("question", n.path("question").asText());
-                m.put("status", n.path("status").asText());
-                m.put("factsJson", n.path("factsJson").asText());
-                m.put("webCount", n.path("webCount").asInt());
-                // 保留既有 search 元数据(读改写不丢字段:R10 可观测)
-                if (n.has("search") && !n.path("search").isNull()) m.put("search", json.convertValue(n.path("search"), Map.class));
-                if (n.path("agentId").asInt() == agentId) {
-                    m.put("status", note.get("status"));
-                    m.put("factsJson", note.get("factsJson"));
-                    m.put("webCount", note.get("webCount"));
-                    if (note.containsKey("search")) m.put("search", note.get("search"));
-                }
-                notes.add(m);
+    /**
+     * 整体覆写 research_notes(启动阶段一次性置 RUNNING 用)。
+     * 与 {@link #updateAgent} 共用同一 per-brief 锁,避免与并发收集器回写交错。
+     */
+    private void writeNotes(Long briefId, List<Map<String, Object>> notes) {
+        Object lock = notesLocks.computeIfAbsent(briefId, k -> new Object());
+        synchronized (lock) {
+            try {
+                ArticleBriefEntity b = briefMapper.selectById(briefId);
+                if (b == null) return;
+                b.setResearchNotes(json.writeValueAsString(notes));
+                briefMapper.updateById(b);
+            } catch (Exception e) {
+                log.warn("初始化 agent 状态失败 briefId={}: {}", briefId, e.getMessage());
             }
-            b.setResearchNotes(json.writeValueAsString(notes));
-            briefMapper.updateById(b);
-        } catch (Exception e) {
-            log.warn("更新 agent 状态失败 briefId={} agentId={}: {}", briefId, agentId, e.getMessage());
+        }
+    }
+
+    /**
+     * 回写单个 agent 结果(收集器完成即调用)。抽出便于复用并统一走 per-brief 锁。
+     */
+    private void writeAgent(Long briefId, int agentId, Map<String, Object> note) {
+        updateAgent(briefId, agentId, note);
+    }
+
+    /**
+     * 更新 research_notes 中指定 agentId 的条目(读改写,幂等)。
+     *
+     * <p>09-26 并发安全:多个收集器线程可能同时回写同一 brief,「读整段 JSON → 改一个 agentId → 写回」
+     * 若无锁会丢失更新(丢 status/factsJson/webCount/search)。以 per-brief 锁串行化:
+     * 同一 brief 的写入互斥,不同 brief 并行不受影响(同批次已由 runningBriefs 保证单批)。
+     */
+    private void updateAgent(Long briefId, int agentId, Map<String, Object> note) {
+        Object lock = notesLocks.computeIfAbsent(briefId, k -> new Object());
+        synchronized (lock) {
+            try {
+                ArticleBriefEntity b = briefMapper.selectById(briefId);
+                if (b == null || b.getResearchNotes() == null) return;
+                JsonNode arr = json.readTree(b.getResearchNotes());
+                List<Map<String, Object>> notes = new ArrayList<>();
+                for (JsonNode n : arr) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("agentId", n.path("agentId").asInt());
+                    m.put("question", n.path("question").asText());
+                    m.put("status", n.path("status").asText());
+                    m.put("factsJson", n.path("factsJson").asText());
+                    m.put("webCount", n.path("webCount").asInt());
+                    // 保留既有 search 元数据(读改写不丢字段:R10 可观测)
+                    if (n.has("search") && !n.path("search").isNull()) m.put("search", json.convertValue(n.path("search"), Map.class));
+                    if (n.path("agentId").asInt() == agentId) {
+                        m.put("status", note.get("status"));
+                        m.put("factsJson", note.get("factsJson"));
+                        m.put("webCount", note.get("webCount"));
+                        if (note.containsKey("search")) m.put("search", note.get("search"));
+                    }
+                    notes.add(m);
+                }
+                b.setResearchNotes(json.writeValueAsString(notes));
+                briefMapper.updateById(b);
+            } catch (Exception e) {
+                log.warn("更新 agent 状态失败 briefId={} agentId={}: {}", briefId, agentId, e.getMessage());
+            }
         }
     }
 

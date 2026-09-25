@@ -112,6 +112,16 @@ public R<Void> handleBind(BindException ex) {
 
 **Prevention**: 任何「落占位 → 异步生成 → 失败删占位」的链路，前端轮询一律带占位 id；后端 status 对「按 id 查无」返回 NONE 而非回退最新。
 
+### Common Mistake: 异步逐 agent 回写未加锁 → 丢失更新
+
+**Symptom**: 并行子代理「完成即回写」后，前端轮询看到某 agent 的 `DONE` 又变回 `RUNNING`/`PENDING`，或 `factsJson`/`webCount`/`search` 相互覆盖（多 agent 结果串味）。
+
+**Cause**: `updateAgent` 是「读整段 JSON → 改指定 agentId → 写回」的非原子读改写。改造为每个 agent 独立收集器后，多个收集器线程并发调用同一 brief 的 `updateAgent`，后写者基于**过期快照**覆盖先写者的结果（经典 lost update）。
+
+**Fix**: 对每个 briefId 加锁（`ConcurrentHashMap<Long,Object>` + `synchronized(lock)`），串行化同一 brief 的读改写；不同 brief 互不阻塞。启动阶段「批量置 RUNNING」整体覆写也走同一把锁。批次结束（`runAsync` finally）`notesLocks.remove(briefId)` 清理，避免 map 无界增长。
+
+**Prevention**: 任何「读整段 → 改局部 → 写回」的异步/并发更新（JSON 列表、聚合字段），默认按业务 id 加锁或改原子更新；新增并发回写链路时单测必须断言「各 agent 终值互不覆盖」（先例 `DeepResearchServiceProgressTest.并发回写不丢字段`）。
+
 ### Common Mistake: 异步生成成功后未清空 last_*_error
 
 **Symptom**: 失败后重试成功，页面仍显示红色「上次生成失败」横幅。

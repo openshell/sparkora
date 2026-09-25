@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-26-deep-progress-realtime/prd.md", "reason": "逐条核对 AC-01..AC-09:乱序回写、并发不丢字段、超时取消、失败隔离、契约不回归"}
+{"file": ".trellis/tasks/09-26-deep-progress-realtime/design.md", "reason": "核对独立收集器、per-brief 锁、汇总顺序、回滚点是否按设计落地"}
+{"file": ".trellis/tasks/09-26-deep-progress-realtime/implement.md", "reason": "核对实施清单与完成前检查项是否全部满足"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异步逐 agent 回写与状态机/并发防护约定一致性核对"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试未触碰生产数据、契约级断言与回归完整性核对"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "research_notes 状态语义在 status 接口/前端轮询的跨层兼容核对"}
+{"file": ".trellis/spec/guides/index.md", "reason": "AI 交叉审查假阳性核对规则"}
