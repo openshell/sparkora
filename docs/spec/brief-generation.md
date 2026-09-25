@@ -21,7 +21,7 @@ graph TD
     D1b --> D2["② 用户填 ClarifyForm<br/>POST /deep/clarify-answer<br/>锁定 clarify_answers → CLARIFIED"]
     D2 --> D3["③ POST /deep/run<br/>落 PENDING 占位后后台 @Async runAsync 执行"]
     D3 --> D4["并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（策略路由，默认 TAVILY_FIRST）<br/>逐 agent 落 research_notes<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
-    D4 --> D5["④ FactSheetService.merge()<br/>汇总 fact_sheet（按 claim 去重聚合）"]
+    D4 --> D5["④ FactSheetService.merge()<br/>汇总 fact_sheet（按 claim 近似归并聚合）"]
     D5 --> D6["⑤ 自动 BriefService.generateFromFactSheet()<br/>手册为唯一事实来源生成简报字段<br/>复用同一条 DEEP brief<br/>status = READY<br/>（简报页引用面板：rag_citations + 手册 WEB/MULTI 条目合并）"]
     D6 -->|"自动简报失败不回滚研究产物"| D7["POST /deep/brief 手动重试"]
     D5 -->|"跳过简报"| D8["⑥ POST /deep/generate<br/>DeepWriterService：手册+锁定需求 → 正文<br/>数值回查 verifyNumbers<br/>未收录数值 → fact_risks(high) 随版本落库"]
@@ -84,7 +84,12 @@ graph TD
 - 每子代理 `webQuota=max(1, 8/n)` = **单 provider 返回条数上限**（不是全程调用预算）；`SEARCH_WEB_ENABLED=false` 或运行时 `webSearchEnabled=false` 时为 0（纯 KB）。
 - **KB 锚点感知检索（R1，2026-09-06）**：`KnowledgeSearchTool.search(query, maxResults, anchors)` 委托 `retrieveForGeneration`（锚点加权 + 参数级子查询 + 核心块/权益块分层配额）；锚点由 `DeepResearchService.resolveAnchors` 解析（项目关联车型为准 → `CarModelMatcherService` 按主题识别兜底，失败不阻断）；子代理 KB 检索 query 用「主题 + 问题」复合语料（纯问题如「价格对比」缺车型上下文相似度必散）。非 OK 状态返回空列表归 gaps（行为同旧）。
 - **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块（命中含 MODEL_INFO/价格区间文本）时跳过 WEB 补查——WEB 只补 KB 缺口，不与 KB 平行全问题重搜、不得覆盖 KB 结论。
-- **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB 来源 → **KB 胜出**（不比较相似度/置信度，量纲不同不可比；按来源身份定优先级：本系统知识库（比亚迪同步清洗）> 外部 WEB）。WEB 条目降级为该条目 `alternatives`（URL 列表）留证据，并写 warnings「以知识库为准；外部来源(N 条)有异说,未采用」。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
+- **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB 来源 → **KB 胜出**（不比较相似度/置信度，量纲不同不可比；按来源身份定优先级：本系统知识库（比亚迪同步清洗）> 外部 WEB）。WEB 条目降级为该条目 `alternatives`（URL 列表）去重后留证据，并写 warnings「以知识库为准；外部来源(N 条)有异说,未采用」。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
+- **近似 claim 归并（09-25-fact-claim-merge，取代纯字符串精确匹配）**：`FactSheetService.merge` 用 `ClaimSimilarity` 贪心聚类——按事实出现顺序，与簇首条（代表 fact）满足 `sameClaim` 即归入，否则新开簇；代表 fact 决定条目 `key/claim/value`（「首条为准」，与旧精确匹配一致）。
+  - **数值签名硬前提**：`sameClaim` 先按 claim+value 抽出的数值集合（`numberValues`，去千分位、万×1e4、亿×1e8，`BigDecimal` 归一，使 `200000`≡`20万`）比较，**集合必须完全相等**；数值冲突（第2000座 vs 第1500座）或一侧有数值另一侧没有 → 直接不合并（绝不越过）。
+  - **旧精确匹配短路先于相似度、但晚于原文判等**：`claim` **原文 trim 后完全相同** → 直接同一事实（严格保留旧「按 claim 精确匹配分组」行为，含 KB+WEB 同 claim 冲突裁决路径——即便 value 有异也先聚成一条再走 KB 胜出）。注意**不能**用「规范化后相同」短路：`normalize` 丢弃小数点/千分位，`1.5万` 与 `15万`、`2.9米` 与 `29米` 规范化成同一串，先短路会把数值冲突误并；故非原样相同的 claim 一律走数值签名硬前提。
+  - **相似度阈值**（仅在硬前提通过后生效）：3-gram 重合率(Jaccard 风格)与最长公共片段占比取平均；有数值 `≥0.45`（数值已锁定同一事实），无数值定性 claim `≥0.70`（仅措辞级差异，误合并防护优先于召回）。常量 `ClaimSimilarity.TH_NUMERIC/TH_TEXT`。
+  - 纯本地、确定、可单测、不调 LLM、无新增依赖；不改变搜索路由/provider 策略与 `webCount`/`search` 观测口径。
 - `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 `modelName` 字段。
 - 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.deep.tavily-api-key`（`DeepProperties` 绑定前缀 `sparkora.deep`，2026-09-15 修正；dotenv 注入 System property，嵌套占位符 `${A:${B:}}` Spring 不支持，故 yml 只挂 `TAVILY_API_KEY`）。
 
@@ -93,8 +98,8 @@ graph TD
 ## 5. 研究笔记 / 事实手册结构
 
 - `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok}]}`——**不含任何密钥**；`webCount` 语义改为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 原始条目降级时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`（provider 层 `attempts` 原因保持原样，两类失败不混淆）。
-- `fact_sheet`（`FactSheetService.merge`，按 claim 去重聚合）：`{entries:[{key,claim,value,sources:{type,url,modelName,docId},crossCount,confidence}],gaps:[...],warnings:[...]}`。
-- 置信度规则：多源交叉(≥2) 0.85 交叉标注 / KB 0.9 / 单一 WEB 0.4 + warnings「仅单一 WEB 源,待核实」/ 冲突 0.3。
+- `fact_sheet`（`FactSheetService.merge`，按 claim **近似**去重聚合）：`{entries:[{key,claim,value,sources:{type,url,modelName,docId},crossCount,confidence,sourcesList:[{type,sourceId,provider,url,modelName,docId}],sourceCount}],gaps:[...],warnings:[...]}`。`sources.type` 取值 `KB|WEB|MULTI`（`MULTI`＝多源交叉，代表来源基础上标注）。`sourcesList`/`sourceCount` 为 09-25 **增量字段**（保留全部来源证据含 provider，供引用面板/人工核对；前端旧逻辑不读也不报错）。`crossCount`/`sourceCount` 为**去重后来源数**（同 url+modelName 只计一次，不再等于原始 fact 条数）。
+- 置信度规则：多源交叉（去重来源 ≥2）0.85 交叉标注 / KB 0.9 / 单一 WEB 0.4 + warnings「仅单一 WEB 源,待核实」/ 同簇 KB+WEB 冲突时 KB 胜出（0.9，WEB 进 `alternatives`）。
 - 已知限制：WEB 命中为摘要级（snippet），不做正文抓取；低置信条目以 warnings 提示人工核实。
 
 ---
@@ -113,7 +118,8 @@ graph TD
 - **反问必须基于车库名录（2026-09-05 修复）**：`ClarifyService` 注入 `CarModelService.list()` 名录（名称+价格区间）进 prompt；规则：车型/竞品/对比类问题的 options 只能从名录选、不得编造；主题指向某款/某系列车型时必须有一道 multi 锚点车型题（options 覆盖名录中含该系列词的全部车型）。车库获取失败降级为不注入并提示不编造车型。
 - **竞品对比题强制多选（R1，2026-09-05）**：prompt 明确「对比/竞品/比较/竞对类问题 `type=multi`（选项 2~4 个竞品 + 「不对比」兜底）」；后端 `ClarifyService.normalizeQuestions` 确定性归一化兜底（不依赖 LLM 遵守）：问题文本含竞品信号词（对比/竞品/比较/竞对/竞争）的选项题强制 `type=multi` 并补「不对比」选项（缺省时）；无选项的竞品题归 `input`（自由填写）；解析失败原样保留不阻断。
 - **「其他(自行填写)」（R2，2026-09-05）**：`ClarifyForm.vue` 对 single/multi 题渲染「其他(自行填写)」入口——single 选中后切文本框（提交取文本框内容），multi 勾选后文本并入答案（「、」拼接）；锁定回显时不在 options 中的答案自动归「其他」并回填。
-- 组件：`DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）。
+- 组件：`DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）/`CitationList`（引用明细）。
+- **WEB 来源展示 provider（R10，09-25）**：`CitationList.vue` 对 WEB 条目渲染「provider · 域名」（如 `Tavily · stnn.cc`），`FactSheetSummary.vue` 的 WEB 徽标渲染 `WEB·{provider}·{域名}`；provider 取自 `fact_sheet.entries[].sources.provider`（09-25 增量字段）。**历史 `fact_sheet` 可能缺 `provider` → 必须容错回退**为旧文案（仅域名）；纯展示层，不改请求/响应结构。
 - **研究完成 → 自动生成简报（2026-09-05 修复）**：`DeepResearchService.runAsync` 落 `fact_sheet` 后自动调 `BriefService.generateFromFactSheet`（LLM 一次，以事实手册为唯一事实来源 + 锁定需求 → 简报五字段落同一条 DEEP brief 行，`currentBriefId` 指向该行，状态机 GENERATING_BRIEF→READY）；失败不回滚研究产物（回 DRAFT + `lastBriefError`，深度面板可手动重试 `/deep/brief`，也可「跳过简报直接生成正文」）。修复「确定研究计划/研究完成后没有简报页面」的结构性缺陷。
 - `StepBrief.vue`（2026-09-11 单一状态机收敛，09-11-brief-gen-flow-refactor）：**无 FAST/DEEP 模式切换**——唯一生成路径为深度流程，无简报区间由唯一 `deepStage` 状态机驱动（值域 `NONE|PLANNING|CLARIFYING|CLARIFIED|RESEARCHING|RESEARCH_DONE`），同一状态恒渲染同一 UI，与进入路径（创建直发/重新进入/仅存草稿）无关；**删除 `deepMode` 路径意图布尔与 6s 有界重探测**。project 就位后 `syncDeepStatus()` 单次拉 `/deep/status` 断点恢复（PLANNING 则续起 2.5s 自轮询），不再依赖 `?gen=deep`。「重新研究生成」直接 `startDeep()` 进 PLANNING（`restarting` 标志跳过旧简报正文分支，新简报落库后恢复）。无简报区间只保留**一个**主操作「开始深度研究」，删除「开始深度研究→生成研究计划」两步链与裸生成按钮。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（`constants/project.js` 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。`ragStatus` 展示含 `DISABLED`（知识库已停用·全局设置，灰，见 [retrieval.md](retrieval.md)）。
 - 移动端：单列纵排、抽屉全屏、触控 ≥44px。

@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-25-fact-claim-merge/prd.md", "reason": "逐条核对 AC-01..AC-11、误合并反向用例与 Out of Scope 边界"}
+{"file": ".trellis/tasks/09-25-fact-claim-merge/design.md", "reason": "核对数值签名硬门槛、阈值、crossCount 语义与增量字段是否按设计落地"}
+{"file": ".trellis/tasks/09-25-fact-claim-merge/implement.md", "reason": "核对实施清单与完成前检查项是否全部满足"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "事实手册合并契约(签名/校验矩阵/测试点)一致性核对"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "契约级断言/不改既有生产行/回归测试完整性核对"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "fact_sheet 字段在写作回查与前端引用面板的跨层兼容核对"}
+{"file": ".trellis/spec/guides/index.md", "reason": "AI 交叉审查假阳性核对规则"}

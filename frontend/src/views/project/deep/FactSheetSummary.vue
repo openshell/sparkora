@@ -40,7 +40,13 @@ const srcType = (e) => {
   return t === 'WEB' ? 'warning' : t === 'MULTI' ? 'success' : 'primary'
 }
 const srcLabel = (e) => { const s = e.sources || {}; const t = s.type || 'KB'
-  return t === 'WEB' ? 'WEB·' + (s.url || '').replace(/^https?:\/\//, '').split('/')[0] : t === 'MULTI' ? '多源交叉' : '知识库' }
+  if (t === 'WEB') {
+    const host = (s.url || '').replace(/^https?:\/\//, '').split('/')[0]
+    // provider(09-25 增量字段)缺失/空白时回退旧文案「WEB·域名」
+    const provider = s.provider && String(s.provider).trim()
+    return provider ? `WEB·${provider}·${host}` : 'WEB·' + host
+  }
+  return t === 'MULTI' ? '多源交叉' : '知识库' }
 const confBar = (e) => '▮'.repeat(Math.round((e.confidence || 0) * 5)).padEnd(5, '▯')
 function safeParse(s) { try { return JSON.parse(s) } catch { return {} } }
 </script>

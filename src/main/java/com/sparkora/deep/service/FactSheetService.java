@@ -12,8 +12,12 @@ import java.util.Map;
 
 /**
  * 事实手册服务(S9 ④):合并子代理研究笔记 → 事实手册(正文数值唯一来源)。
- * 置信规则:KB 0.9;WEB 交叉≥2 源 0.7;单 WEB 0.4(进 warnings);冲突条目降 0.3 双源并列。
- * 相似条目去重按 claim 精确匹配(实现从简;LLM 辅助归类后续迭代)。
+ * 置信规则:KB 0.9;多源交叉(去重来源≥2) 0.85 并标 MULTI;单 WEB 0.4(进 warnings「待核实」);
+ * 同 cluster 同时含 KB 与 WEB 时 KB 胜出(0.9),WEB 降 alternatives 并警告「以知识库为准」。
+ *
+ * <p>相似条目归并(09-25-fact-claim-merge):按 claim 精确匹配升级为
+ * {@link ClaimSimilarity} 贪心聚类——「数值签名一致」为硬前提，措辞近似的不同来源 claim 归为一条，
+ * 从而恢复多来源交叉验证；数值冲突/一侧无数值一律不合并。详见 docs/spec/brief-generation.md。
  */
 @Slf4j
 @Service
@@ -31,28 +35,50 @@ public class FactSheetService {
      */
     public String merge(String notesJson) throws Exception {
         JsonNode notes = json.readTree(notesJson == null || notesJson.isBlank() ? "[]" : notesJson);
-        // claim → 条目聚合(同 claim 视为同一事实;来源不同交叉)
-        Map<String, List<JsonNode>> byClaim = new LinkedHashMap<>();
+        // 展开为有序 fact 列表(保持出现顺序;代表 fact = 簇首条,"首条为准"与旧精确匹配一致)
+        List<JsonNode> facts = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
         for (JsonNode note : notes) {
-            JsonNode facts = note.path("factsJson").isMissingNode()
+            JsonNode factsJson = note.path("factsJson").isMissingNode()
                     ? note.path("facts") : json.readTree(note.path("factsJson").asText("{}"));
-            for (JsonNode f : facts.path("facts")) {
+            for (JsonNode f : factsJson.path("facts")) {
                 String claim = f.path("claim").asText("").trim();
                 if (claim.isEmpty()) continue;
-                byClaim.computeIfAbsent(claim, k -> new ArrayList<>()).add(f);
+                facts.add(f);
             }
-            for (JsonNode g : facts.path("gaps")) {
+            for (JsonNode g : factsJson.path("gaps")) {
                 String g0 = g.asText("");
                 if (!g0.isBlank() && !gaps.contains(g0)) gaps.add(g0);
             }
         }
+        // 贪心簇:与已有簇的代表 fact 满足 sameClaim 则归入(近似 claim 合并),否则新开簇。
+        // O(n²),n 为单 brief fact 条数(实践中数十条),可接受。
+        List<List<JsonNode>> clusters = new ArrayList<>();
+        for (JsonNode f : facts) {
+            List<JsonNode> target = null;
+            for (List<JsonNode> cluster : clusters) {
+                JsonNode rep = cluster.get(0);
+                if (ClaimSimilarity.sameClaim(
+                        rep.path("claim").asText(""), rep.path("value").asText(""),
+                        f.path("claim").asText(""), f.path("value").asText(""))) {
+                    target = cluster;
+                    break;
+                }
+            }
+            if (target == null) {
+                target = new ArrayList<>();
+                clusters.add(target);
+            }
+            target.add(f);
+        }
         List<Map<String, Object>> entries = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
-        for (Map.Entry<String, List<JsonNode>> e : byClaim.entrySet()) {
-            List<JsonNode> list = e.getValue();
+        for (List<JsonNode> list : clusters) {
             JsonNode first = list.get(0);
             String type = first.path("source").path("type").asText("KB");
+            // 来源去重(沿用 sameSource 语义:url + modelName),crossCount = 去重来源数
+            List<JsonNode> distinctSources = distinctSources(list);
+            int sourceCount = distinctSources.size();
             double confidence;
             // R2 冲突裁决(2026-09-06):同 claim 同时含 KB 与 WEB 来源时 KB 胜出——
             // 不比较相似度/置信度(量纲不同不可比),按来源类型定优先级:
@@ -64,43 +90,36 @@ public class FactSheetService {
                 JsonNode kbFirst = list.stream()
                         .filter(f -> "KB".equals(f.path("source").path("type").asText()))
                         .findFirst().orElse(first);
+                // WEB 来源 URL 去重(近似 claim 合并后同一 URL 可能多次出现)
                 List<String> altUrls = new ArrayList<>();
-                for (JsonNode f : list) {
-                    String u = f.path("source").path("url").asText("");
-                    if ("WEB".equals(f.path("source").path("type").asText()) && !u.isBlank()) altUrls.add(u);
+                for (JsonNode s : distinctSources) {
+                    String u = s.path("url").asText("");
+                    if ("WEB".equals(s.path("type").asText()) && !u.isBlank() && !altUrls.contains(u)) {
+                        altUrls.add(u);
+                    }
                 }
                 confidence = kbFirst.path("confidence").asDouble(0.9);
-                Map<String, Object> entry = new LinkedHashMap<>();
-                entry.put("key", e.getKey());
-                entry.put("value", kbFirst.path("value").asText(""));
-                entry.put("claim", kbFirst.path("claim").asText(""));
-                entry.put("sources", kbFirst.path("source"));
-                entry.put("crossCount", list.size());
-                entry.put("confidence", confidence);
+                entries.add(entry(kbFirst.path("claim").asText(""),
+                        kbFirst.path("value").asText(""),
+                        kbFirst.path("source"), distinctSources, sourceCount, confidence,
+                        altUrls.isEmpty() ? null : altUrls));
                 if (!altUrls.isEmpty()) {
-                    entry.put("alternatives", altUrls);
-                    warnings.add("「" + truncate(e.getKey(), 30) + "」以知识库为准;外部来源(" + altUrls.size() + " 条)有异说,未采用");
+                    warnings.add("「" + truncate(kbFirst.path("claim").asText(""), 30)
+                            + "」以知识库为准;外部来源(" + altUrls.size() + " 条)有异说,未采用");
                 }
-                entries.add(entry);
                 continue;
             }
-            if (list.size() >= 2 && !sameSource(list)) {
-                confidence = 0.85;   // 多源交叉(不同来源,同类)
+            if (sourceCount >= 2) {
+                confidence = 0.85;   // 多源交叉(去重后不同来源,同类)
                 type = "MULTI";
             } else if ("KB".equals(type)) {
                 confidence = first.path("confidence").asDouble(0.9);
             } else {
                 confidence = 0.4;
-                warnings.add("「" + truncate(e.getKey(), 30) + "」仅单一 WEB 源,待核实");
+                warnings.add("「" + truncate(first.path("claim").asText(""), 30) + "」仅单一 WEB 源,待核实");
             }
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("key", e.getKey());
-            entry.put("value", first.path("value").asText(""));
-            entry.put("claim", first.path("claim").asText(""));
-            entry.put("sources", first.path("source"));
-            entry.put("crossCount", list.size());
-            entry.put("confidence", confidence);
-            entries.add(entry);
+            entries.add(entry(first.path("claim").asText(""), first.path("value").asText(""),
+                    sourceNode(first.path("source"), type), distinctSources, sourceCount, confidence, null));
         }
         Map<String, Object> sheet = new LinkedHashMap<>();
         sheet.put("entries", entries);
@@ -109,16 +128,62 @@ public class FactSheetService {
         return json.writeValueAsString(sheet);
     }
 
-    /** 条目列表来源是否全同(粗判:type+url)。 */
-    private boolean sameSource(List<JsonNode> list) {
-        String first = list.get(0).path("source").path("url").asText("")
-                + list.get(0).path("source").path("modelName").asText();
-        for (int i = 1; i < list.size(); i++) {
-            String u = list.get(i).path("source").path("url").asText("")
-                    + list.get(i).path("source").path("modelName").asText();
-            if (!u.equals(first)) return false;
+    /**
+     * 组装条目。主字段(key/claim/value/sources/crossCount/confidence)保持旧契约；
+     * sourcesList/sourceCount 为 09-25 增量字段(保留全部来源证据,前端旧逻辑不读也不报错)。
+     */
+    private static Map<String, Object> entry(String claim, String value, JsonNode source,
+                                             List<JsonNode> distinctSources, int sourceCount,
+                                             double confidence, List<String> alternatives) {
+        Map<String, Object> e = new LinkedHashMap<>();
+        // key 沿用旧语义:代表 fact 的 claim(旧实现 byClaim 的 key 即 claim)
+        e.put("key", claim);
+        e.put("value", value);
+        e.put("claim", claim);
+        e.put("sources", source);
+        e.put("crossCount", sourceCount);
+        e.put("confidence", confidence);
+        e.put("sourcesList", distinctSources);
+        e.put("sourceCount", sourceCount);
+        if (alternatives != null && !alternatives.isEmpty()) e.put("alternatives", alternatives);
+        return e;
+    }
+
+    /**
+     * 条目 sources 主字段:多源交叉时把 type 标为 {@code MULTI}(前端据此渲染「多源交叉」,
+     * 旧实现仅赋值局部变量未落 JSON → 前端 MULTI 分支从未命中);其余情形原样保留代表来源。
+     * 代表来源缺失/非对象时兜底造一个带 type 的对象,避免 deepCopy 强转异常。
+     */
+    private static JsonNode sourceNode(JsonNode source, String effectiveType) {
+        if (!"MULTI".equals(effectiveType)) return source;
+        if (source != null && source.isObject()) {
+            com.fasterxml.jackson.databind.node.ObjectNode copy =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) source.deepCopy();
+            copy.put("type", "MULTI");
+            return copy;
         }
-        return true;
+        com.fasterxml.jackson.databind.node.ObjectNode fallback =
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        fallback.put("type", "MULTI");
+        return fallback;
+    }
+
+    /** 来源去重(保持出现顺序;同 url+modelName 视为同一来源,crossCount 不重复计)。 */
+    private static List<JsonNode> distinctSources(List<JsonNode> facts) {
+        List<JsonNode> out = new ArrayList<>();
+        for (JsonNode f : facts) {
+            JsonNode s = f.path("source");
+            boolean dup = out.stream().anyMatch(existing -> sameSource(existing, s));
+            if (!dup) out.add(s);
+        }
+        return out;
+    }
+
+    /** 两个来源是否同一(沿用旧 sameSource 语义:url + modelName 粗判)。 */
+    private static boolean sameSource(JsonNode a, JsonNode b) {
+        String ka = a.path("url").asText("") + a.path("modelName").asText();
+        String kb2 = b.path("url").asText("") + b.path("modelName").asText();
+        return ka.equals(kb2);
     }
 
     private static String truncate(String s, int n) { return s.length() <= n ? s : s.substring(0, n) + "…"; }

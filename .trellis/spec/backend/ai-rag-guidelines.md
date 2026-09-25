@@ -250,6 +250,68 @@ String factsJson = validateFacts(chat(system, ctx), outcome.hits()); // 后验�
 
 ---
 
+## Scenario: 事实手册近似 claim 归并（09-25-fact-claim-merge）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改事实手册汇总（`FactSheetService.merge`）、claim 相似度判定，或改动 `fact_sheet` 条目的来源聚合/`crossCount`/`confidence` 语义。
+
+### 2. Signatures
+```java
+// ClaimSimilarity（纯静态、无状态、无依赖、不调 LLM，包级可见）
+static String normalize(String raw)                       // 去 Markdown/HTML/标点空白，小写，仅留字母+数字
+static List<String> numberValues(String... texts)         // 数值签名：去千分位/万/亿 → BigDecimal 归一，去重稳定排序
+static double similarity(String a, String b)              // ((3-gram 重合率) + (最长公共片段/min(len))) / 2
+static boolean sameClaim(String c1, String v1,
+                         String c2, String v2)            // 硬前提(数值签名相等) + 阈值(0.45/0.70)
+static final double TH_NUMERIC = 0.45;                    // 有数值：数值已锁定同一事实
+static final double TH_TEXT    = 0.70;                    // 无数值定性：仅措辞级差异
+
+// FactSheetService.merge(String notesJson) → JSON 字符串（签名不变）
+// entry 增量字段：sourcesList:[{type,sourceId,provider,url,modelName,docId}]、sourceCount:int
+```
+
+### 3. Contracts
+- **数值签名是硬前提，短路优先于相似度**：`sameClaim` 对 claim **原文（trim 后）完全相同**的直接判同一事实（严格保留旧精确匹配行为，KB+WEB 同 claim 冲突裁决不回归）；其余一概先比较两侧 `numberValues` 集合，**不相等立即 false**——数值冲突（第2000座 vs 第1500座）与「一侧有数值另一侧没有」都绝不合并。相似度阈值仅在同数值前提下生效。
+- **不得用「规范化后相同」短路（踩坑）**：`normalize` 丢弃小数点/千分位，`1.5万`≡`15万`、`2.9米`≡`29米` 规范化成同一串 → 若在数值签名前先按规范化相同短路，会把数值冲突误并（违反 R2）。原样判等必须基于**原文 trim**，近似分支必须落到数值签名硬前提。回归用例：`ClaimSimilarityTest.sameClaim_规范化后相同但小数点致数值冲突_绝不合并`。
+- **误合并防护优先于召回**：无数值定性 claim 用高阈值 `0.70`（仅措辞级差异才并）；相似度取「3-gram 重合率 + 最长公共片段占比」的**平均**而非 max——只取 max 会让单条共享长片段主导、把语义相反的 claim 误并。
+- **`crossCount`/`sourceCount` = 去重后来源数**（同 `url+modelName` 只计一次），不再是原始 fact 条数；同一 URL 的重复命中**不计**交叉来源（沿用旧 `sameSource` 语义），故不产生 0.85。
+- **类型/置信优先级不变**：同簇同时含 KB 与 WEB → KB 胜出（0.9）+ WEB 进 `alternatives` + 警告「以知识库为准」；否则去重来源 ≥2 → `MULTI` 0.85；纯 KB → 0.9；单一 WEB → 0.4 + 「待核实」。合并只改聚类，不绕过冲突裁决路径。
+- **`MULTI` 必须落进 `sources.type`**：旧实现仅在局部变量赋值、从未写回 JSON，前端 `sources.type==='MULTI'` 分支永不命中——多源交叉须显式改写序列化来源的 `type`。
+- **JSON 主结构向后兼容**：`entries[{key,claim,value,sources,crossCount,confidence}]` 不变；`sourcesList`/`sourceCount` 为增量字段，旧前端不读也不报错。
+- **归并不得破坏数值回查**：代表 fact 的 `key/value/claim` 覆盖全部被并 claim 的数值（数值签名相等保证），`DeepWriterService.verifyNumbers` 以 `sheet.toString()` 为 haystack 仍命中。
+
+### 4. Validation & Error Matrix
+- 数值解析失败 → 回退原 token 字符串比较，绝不抛异常（`normalizeNumber` 内 try/catch）。
+- 规范化后过短（<4 字）→ 相似度 0，不合并。
+- claim 为空/空白 → 不进入聚类（既有 skip 行为）。
+- 一侧有数值、一侧无数值 → 数值签名不等 → 不合并。
+- 异 URL 同义 → 合并 + `MULTI` 0.85；同 URL 同义 → 合并但 `crossCount=1`、保持 0.4。
+
+### 5. Good/Base/Bad Cases
+- Good: 真实样本「比亚迪第2000座…落成」(stnn.cc) 与「…第 2000 座…落成 - IT之家」(ithome) 合并为 `MULTI` 0.85、`crossCount=2`。
+- Base: 单 KB / 单 WEB 行为不变；KB+WEB 同义仍 KB 胜出。
+- Bad: 只按字符串精确匹配分组（同义被拆成三条单 WEB 全「待核实」）；或放宽阈值把「续航 700km」与「起售价 200000」并成一条。
+
+### 6. Tests Required
+- `ClaimSimilarityTest`：normalize；数值签名（千分位/万/亿等价、去重排序、无数字空集、解析异常不抛出）；相似度过短为 0；`sameClaim` 数值冲突/一侧无数值/空 claim 不合并、同值近义合并、定性高阈值。
+- `FactSheetServiceTest`（AC-01..AC-09）：同 URL 近义合并为一条；异 URL 近义 → `MULTI` 0.85 + `crossCount`/`sourceCount`=2 + `sourcesList` 两条；数值冲突保持两条；语义不同共享文字不合并；同 URL 不产生交叉；KB+WEB 仍 KB 胜出、WEB 进 alternatives、不标待核实、`sourcesList` 保 URL；归并后 `verifyNumbers` 不回归；**既有 6 用例向后兼容**。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 只按 claim 精确字符串分组：措辞不同 → 同义拆成多条单一 WEB 源(0.4+待核实)，交叉验证失效
+Map<String, List<JsonNode>> byClaim = new LinkedHashMap<>();
+byClaim.computeIfAbsent(claim, k -> new ArrayList<>()).add(f);
+```
+#### Correct
+```java
+// 贪心簇 + 数值签名硬前提：同义归并 → 去重来源 ≥2 得 MULTI 0.85；数值冲突/一侧无数值不合并
+if (ClaimSimilarity.sameClaim(rep.path("claim").asText(""), rep.path("value").asText(""),
+        f.path("claim").asText(""), f.path("value").asText(""))) target = cluster;
+```
+
+---
+
 ## Scenario: 图片向量域（第四域，09-15 img-semantic-search）
 
 ### 1. Scope / Trigger

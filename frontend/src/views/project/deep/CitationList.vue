@@ -51,8 +51,8 @@ const sheetEntries = computed(() => {
     if (t !== 'KB' && t !== 'WEB' && t !== 'MULTI') continue
     out.push({
       source: t,
-      // KB:条目名(车型/知识标题);WEB:域名;MULTI:多源交叉
-      modelName: t === 'WEB' ? hostOf(e?.sources?.url) : (t === 'MULTI' ? '多源交叉' : (e?.sources?.modelName || '（未标注）') ),
+      // KB:条目名(车型/知识标题);WEB:provider · 域名(provider 缺失回退域名);MULTI:多源交叉
+      modelName: t === 'WEB' ? webName(e) : (t === 'MULTI' ? '多源交叉' : (e?.sources?.modelName || '（未标注）') ),
       chunkType: t,
       score: typeof e?.confidence === 'number' ? e.confidence : 0,
       confidence: true,  // score 为置信度(区别于本地知识库的相似度)
@@ -61,6 +61,13 @@ const sheetEntries = computed(() => {
   }
   return out
 })
+
+/** WEB 条目名:provider · 域名(如 Tavily · stnn.cc);provider 缺失/空白回退纯域名(旧文案)。 */
+const webName = (e) => {
+  const host = hostOf(e?.sources?.url)
+  const provider = e?.sources?.provider
+  return provider && String(provider).trim() ? `${String(provider).trim()} · ${host}` : host
+}
 
 const list = computed(() => [...localList.value, ...sheetEntries.value])
 

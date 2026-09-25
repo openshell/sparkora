@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-25-fact-claim-merge/prd.md", "reason": "本任务需求 R1-R9 与验收标准 AC-01..AC-11(含真实样本与误合并反向用例)"}
+{"file": ".trellis/tasks/09-25-fact-claim-merge/design.md", "reason": "技术设计:ClaimSimilarity 数值签名硬门槛 + 阈值、FactSheetService 贪心簇聚类、增量字段、回滚"}
+{"file": ".trellis/tasks/09-25-fact-claim-merge/implement.md", "reason": "有序实施清单、验证命令、风险文件与完成前检查"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "事实手册合并/置信规则与外部搜索证据治理的既有 code-spec,需同步扩展"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线:不改既有生产行断言、不可逆副作用隔离、契约级断言"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引:定位 ai-rag/quality/error-handling 分册"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用前先全局搜索:ImitationService 相似度方法的跨包可见性与语义差异判定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "fact_sheet JSON 契约在合并层→写作回查→前端引用面板的跨层一致性"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "R10 provider 展示:CitationList/FactSheetSummary 改动遵循前端 API/展示契约与 anti-pattern"}
