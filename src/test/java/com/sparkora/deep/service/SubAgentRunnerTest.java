@@ -1,7 +1,14 @@
 package com.sparkora.deep.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.ai.AiClient;
+import com.sparkora.deep.search.WebProvider;
+import com.sparkora.deep.search.WebProviderOrder;
 import com.sparkora.deep.search.WebResultNormalizer;
+import com.sparkora.deep.search.WebSearchOutcome;
+import com.sparkora.deep.search.WebSearchRouter;
+import com.sparkora.deep.search.WebSearchSnapshot;
+import com.sparkora.deep.tool.KnowledgeSearchTool;
 import com.sparkora.deep.tool.SearchTool;
 import org.junit.jupiter.api.Test;
 
@@ -9,7 +16,13 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * SubAgentRunner 纯函数单测(09-25-brief-web-search R7/R9,AC-06/08/14):
@@ -157,5 +170,34 @@ class SubAgentRunnerTest {
         int c = 0, i = 0;
         while ((i = s.indexOf(sub, i)) >= 0) { c++; i += sub.length(); }
         return c;
+    }
+
+    // ===== R10/AC-11:LLM 汇总失败降级时,搜索结果数口径不归零 =====
+
+    @Test
+    void LLM降级_仍上报实际接受的WEB结果数与LLM_FALLBACK原因() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);   // KB 未装配(tools 无 KB)不会调用
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        WebResultNormalizer.WebHit h1 = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a", "s", "TAVILY");
+        WebResultNormalizer.WebHit h2 = new WebResultNormalizer.WebHit("W2", "t2", "https://x.com/b", "s", "TAVILY");
+        WebSearchOutcome outcome = new WebSearchOutcome(List.of(h1, h2), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 2, 120L, null, true)));
+        when(router.search(anyString(), anyInt(), any())).thenReturn(outcome);
+        AiClient ai = mock(AiClient.class);
+        // 两次 chatJson 都返回非法 JSON → 走 FALLBACK 原始条目降级
+        when(ai.chatJson(anyString(), anyString(), anyInt())).thenReturn(new AiClient.ChatResult("不是JSON", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.parse("TAVILY,SEARXNG"), true, 7L, 5);
+
+        SubAgentRunner.Note note = r.research("问题", List.of("WEB"), 2, List.of(), "主题", "[]", snap);
+
+        assertEquals("FALLBACK", note.status());
+        assertEquals(2, note.webCount(), "降级后仍应上报实际接受的 WEB 结果数");
+        assertNotNull(note.search(), "保留搜索元数据");
+        assertEquals(2, note.search().resultCount(), "search.resultCount 不得归零");
+        assertEquals("LLM_FALLBACK", note.search().fallbackReason(), "LLM 降级原因应与 provider 尝试区分");
+        assertEquals("TAVILY", note.search().provider());
+        // 原始条目仍带可溯源 sourceId
+        assertTrue(note.factsJson().contains("W1"));
     }
 }

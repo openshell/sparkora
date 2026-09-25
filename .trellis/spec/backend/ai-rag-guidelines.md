@@ -213,7 +213,7 @@ record WebHit(String sourceId, String title, String url, String snippet, String 
 - **sourceId 稳定且可回溯**：`W1,W2…` 按本次输入顺序；URL 规范化后去重（fragment 变体视为同条）。事实只能引用本次输入的 sourceId。
 - **后验校验**：WEB 事实的 sourceId 未知 / URL 不匹配 / provider 不匹配 → 剔除并转 gap，**不整条 agent 失败**；KB 事实不受此校验。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**（防模型漏标 `type` 而自造 URL 混入），通过后 `type` 归一为 `WEB`（否则 FactSheet 默认按 KB 0.9 采信）。
 - **降级原因不含异常原文/密钥**：异常路径只记类型化 `ERROR`，不回传 `e.getMessage()`（可能含密钥/URL）。
-- `webCount` = 实际接受的 WEB 结果数（不再用事实条数 `webCalls`）。
+- `webCount` = 实际接受的 WEB 结果数（不再用事实条数 `webCalls`）；`search.resultCount` 与之同口径，**LLM 汇总失败走 `rawFallback` 时不归零**（搜索发生的事实不变），此时 `search.fallbackReason=LLM_FALLBACK`，provider 层 `attempts` 的 `ok`/`fallbackReason` 保持原样，两类失败不混淆。
 - `available()` 语义不变（仅配置就绪，无失败闩锁）；`toolHealth` 三键值域不变，`webStrategy`/`webProviderOrder` 为增量字段。
 
 ### 4. Validation & Error Matrix

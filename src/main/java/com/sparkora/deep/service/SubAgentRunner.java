@@ -134,8 +134,11 @@ public class SubAgentRunner {
             return new Note(question, "DONE", factsJson, (int) webCount,
                     searchMeta(snapshot, outcome, appliedWebQuery, webHits.size()));
         } catch (Exception e) {
+            // LLM 汇总失败:降级为原始条目,但仍上报本次实际接受的 WEB 结果数(R10 口径一致:
+            // webCount/resultCount 描述搜索结果,不因下游 LLM 失败而清零;降级原因改标 LLM_FALLBACK)
             log.warn("研究子代理 LLM 汇总失败,降级为原始条目 question={}: {}", question, e.getMessage());
-            return new Note(question, "FALLBACK", rawFallback(hits), 0, searchMeta(snapshot, outcome, appliedWebQuery, 0));
+            return new Note(question, "FALLBACK", rawFallback(hits), webHits.size(),
+                    searchMeta(snapshot, outcome, appliedWebQuery, webHits.size(), true));
         }
     }
 
@@ -147,6 +150,17 @@ public class SubAgentRunner {
 
     /** 搜索元数据组装(无 WEB 尝试时返回 null)。 */
     private static SearchMeta searchMeta(WebSearchSnapshot snapshot, WebSearchOutcome outcome, String query, int resultCount) {
+        return searchMeta(snapshot, outcome, query, resultCount, false);
+    }
+
+    /**
+     * 搜索元数据组装(无 WEB 尝试时返回 null)。
+     *
+     * @param llmFallback 下游 LLM 汇总是否失败降级(原始条目);true 时 search 层降级原因标 {@code LLM_FALLBACK}
+     *                    (provider 层 attempts 保持原样,两者失败原因不混淆)
+     */
+    private static SearchMeta searchMeta(WebSearchSnapshot snapshot, WebSearchOutcome outcome, String query,
+                                         int resultCount, boolean llmFallback) {
         if (outcome == null) return null;
         List<Map<String, Object>> attempts = new ArrayList<>();
         for (WebSearchOutcome.Attempt a : outcome.attempts()) {
@@ -159,9 +173,10 @@ public class SubAgentRunner {
             attempts.add(m);
         }
         long latency = outcome.attempts().stream().mapToLong(WebSearchOutcome.Attempt::latencyMs).sum();
+        String reason = llmFallback ? "LLM_FALLBACK" : outcome.fallbackReason();
         return new SearchMeta(snapshot == null ? null : snapshot.strategyLabel(),
                 outcome.usedProvider() == null ? null : outcome.usedProvider().name(),
-                query, resultCount, latency, outcome.fallbackReason(), attempts);
+                query, resultCount, latency, reason, attempts);
     }
 
     /**
