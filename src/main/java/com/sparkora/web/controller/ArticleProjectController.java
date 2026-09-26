@@ -199,12 +199,13 @@ public class ArticleProjectController {
     // ==================== 文章仿写（09-09-article-imitation，字段级契约见 docs/spec/imitation.md）====================
 
     /**
-     * 分析原文 + 风格推荐(ADMIN/EDITOR)。同步调用,前端 loading 等待(AI 耗时较长,前端单独放宽超时)。
+     * 分析原文 + 风格推荐(ADMIN/EDITOR)。09-27-gen-async 异步化:同步毫秒级返回占位标记,
+     * 后台 @Async 执行 AI 分析;前端靠项目状态轮询(GENERATING_BRIEF→READY)翻转刷新。
      * 状态机 DRAFT/READY→GENERATING_BRIEF→READY;失败回 DRAFT 写 lastBriefError;生成中重触发 409。
      */
     @PostMapping("/{id}/imitation/analyze")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<ArticleBriefEntity> analyzeImitation(@PathVariable Long id) {
+    public R<java.util.Map<String, Object>> analyzeImitation(@PathVariable Long id) {
         try {
             return R.ok(imitationService.analyze(id));
         } catch (IllegalArgumentException ex) {
@@ -227,14 +228,15 @@ public class ArticleProjectController {
 
     /**
      * 生成多版本正文（基于当前 brief + 用户选择的风格）。body: {"styleIds":[1,2]}（风格库 id 列表）。
-     * 每选一个风格生成一版。同步调用，前端 loading 等待（AI 耗时较长，前端单独放宽超时）。
+     * 每选一个风格生成一版。09-27-gen-async 异步化:同步毫秒级返回占位标记,后台 @Async 执行 AI;
+     * 前端靠项目状态轮询(GENERATING_VERSIONS→VERSIONS_READY)翻转刷新。
      * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目封死(深度版本走 POST /api/deep/{id}/generate);
      * 文章仿写(09-09-article-imitation，docs/spec/imitation.md)例外:genSource=IMITATION 时本接口复用为仿写生成
      * (多风格一次生成,产出仿写正文+相似度自检,状态机同 docs/spec/overview.md)。
      */
     @PostMapping("/{id}/generate/versions")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<List<ArticleVersionEntity>> generateVersions(@PathVariable Long id,
+    public R<java.util.Map<String, Object>> generateVersions(@PathVariable Long id,
                                                           @RequestBody java.util.Map<String, java.util.List<Long>> body) {
         // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目恒 410(深度单版走 /deep/generate);
         // 文章仿写(09-09-article-imitation，docs/spec/imitation.md)例外放行:复用本接口多风格一次生成(仿写 prompt+去图+相似度自检)。

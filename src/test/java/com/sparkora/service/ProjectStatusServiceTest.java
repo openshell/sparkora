@@ -215,24 +215,18 @@ class ProjectStatusServiceTest {
     }
 
     @Test
-    void 深度单版成功_白名单READY_DRAFT_首版两拆分() {
-        service.advanceVersionsReadyFromReady(PROJECT_ID, VERSION_ID);
+    void 深度版本抢占_白名单READY_DRAFT_VERSIONS_READY_清last_version_error() {
+        service.claimDeepVersionsGenerating(PROJECT_ID, project("DRAFT"), "生成版本");
 
-        UpdateWrapper<ArticleProjectEntity> first = capturedWrapper(0);
-        String seg = first.getSqlSegment();
-        assertTrue(seg.contains("current_version_id"), "第一条含 isNull(current_version_id)");
-        var values = first.getParamNameValuePairs().values();
+        UpdateWrapper<ArticleProjectEntity> uw = capturedWrapper(0);
+        assertTrue(uw.getSqlSet().contains("last_version_error"), "set 含 last_version_error(抢占时清空)");
+        var values = uw.getParamNameValuePairs().values();
+        assertTrue(values.contains("GENERATING_VERSIONS"), "抢占置 GENERATING_VERSIONS");
         assertTrue(values.contains("READY"), "白名单含 READY");
-        assertTrue(values.contains("DRAFT"), "白名单含 DRAFT");
-        assertTrue(values.contains(VERSION_ID), "首版 id 写入 current");
-        verify(projectMapper, times(1)).update(isNull(), any(Wrapper.class));   // 命中首条即返回
-
-        // 未命中分支:第二条只推状态,无 last_version_error(深度单版链路本就无该列写入)
-        when(projectMapper.update(isNull(), any(Wrapper.class))).thenReturn(0, 1);
-        service.advanceVersionsReadyFromReady(PROJECT_ID, VERSION_ID);
-        UpdateWrapper<ArticleProjectEntity> second = capturedWrapper(2);
-        assertFalse(second.getSqlSet().contains("current_version_id"), "第二条不覆盖用户已选 current");
-        assertFalse(second.getSqlSet().contains("last_version_error"), "第二条不写 last_version_error(原语义)");
+        assertTrue(values.contains("DRAFT"), "白名单含 DRAFT(跳过简报直接生成)");
+        assertTrue(values.contains("VERSIONS_READY"), "白名单含 VERSIONS_READY(追加)");
+        assertTrue(values.stream().anyMatch(v -> v instanceof String s && s.startsWith("GENERATING")),
+                "陈旧自愈分支限定生成中状态");
     }
 
     @Test

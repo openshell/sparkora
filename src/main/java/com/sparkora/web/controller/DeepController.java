@@ -10,7 +10,9 @@ import com.sparkora.mapper.ArticleBriefMapper;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -18,7 +20,7 @@ import java.util.Map;
  * POST /deep/clarify           ①② 研究计划+澄清问题生成(落 brief,gen_mode=DEEP)
  * POST /deep/clarify-answer    锁定用户答案
  * POST /deep/run               ③④ 并行研究+事实手册(同步阻塞,前端轮询 /deep/status)
- * POST /deep/generate          ⑤⑥ 深度写作+数值回查(落 version)
+ * POST /deep/generate          ⑤⑥ 深度写作+数值回查(批量异步:落版本,前端轮询状态翻转)
  * GET  /deep/status            断点/进度查询(研究计划/逐 agent 状态/手册摘要)
  */
 @RestController
@@ -31,36 +33,28 @@ public class DeepController {
     private final ArticleBriefMapper briefMapper;
     /** 深度简报生成(手动重试 /deep/brief) */
     private final com.sparkora.service.BriefService briefService;
-    /** 风格表回查(09-10-style-library-enhance:/deep/generate 支持按 styleId 后端回查风格,不再由前端传 toneGuidance) */
-    private final com.sparkora.mapper.StyleProfileMapper styleMapper;
     private final com.sparkora.deep.tool.SearxngSearchTool searxngTool;
     private final com.sparkora.deep.tool.TavilySearchTool tavilyTool;
     private final com.sparkora.config.DeepProperties deepProps;
     /** 系统检索设置(09-15:toolHealth 反映真实 KB/WEB 运行时门控) */
     private final com.sparkora.service.SettingService settingService;
-    /** 项目状态机唯一写权持有者(09-10-versions-page-fix 推状态 + 09-27-state-machine-service 收敛)。 */
-    private final com.sparkora.service.ProjectStatusService statusService;
 
     public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
                           com.sparkora.service.BriefService briefService,
-                          com.sparkora.mapper.StyleProfileMapper styleMapper,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
                           com.sparkora.config.DeepProperties deepProps,
-                          com.sparkora.service.SettingService settingService,
-                          com.sparkora.service.ProjectStatusService statusService) {
+                          com.sparkora.service.SettingService settingService) {
         this.clarifyService = clarifyService;
         this.researchService = researchService;
         this.writerService = writerService;
         this.briefMapper = briefMapper;
         this.briefService = briefService;
-        this.styleMapper = styleMapper;
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
         this.deepProps = deepProps;
         this.settingService = settingService;
-        this.statusService = statusService;
     }
 
     /** ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。body: {topic?, extraInfo?}。 */
@@ -122,41 +116,51 @@ public class DeepController {
     }
 
     /**
-     * ⑤⑥ 深度写作+数值回查。
-     * body: {briefId, styleId?}(09-10-style-library-enhance 新参数,优先;旧 stylePrompt/styleName 兼容保留,deprecated)
+     * ⑤⑥ 深度写作+数值回查(09-27-gen-async 批量异步化):同步毫秒级返回占位标记,后台 @Async 逐风格生成;
+     * 前端靠项目状态轮询(GENERATING_VERSIONS→VERSIONS_READY)翻转刷新。
+     * body: {briefId, styleIds:[...]}(批量,首选);兼容单 styleId(数组化)与旧 stylePrompt/styleName(deprecated)。
      */
     @PostMapping("/generate")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> generate(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
         try {
             Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
-            String stylePrompt;
-            String styleName;
-            Object styleIdRaw = body.get("styleId");
-            if (styleIdRaw != null && !String.valueOf(styleIdRaw).isBlank()) {
-                // 新参 styleId 优先:后端回查风格表(用户显式选了风格,查无不静默降级),忽略旧参数
-                com.sparkora.domain.entity.StyleProfileEntity style = styleMapper.selectById(Long.valueOf(String.valueOf(styleIdRaw)));
-                if (style == null) return R.fail(400, "风格不存在或已删除");
-                stylePrompt = style.getToneGuidance();
-                styleName = style.getName();
-            } else {
-                // deprecated:兼容旧前端(直接传风格画像字符串)
-                stylePrompt = body.get("stylePrompt") == null ? "" : String.valueOf(body.get("stylePrompt"));
-                // 09-10-versions-page-fix:风格名随 body 传入,落版本 style_tag(空回退「深度」)
-                styleName = body.get("styleName") == null ? "" : String.valueOf(body.get("styleName"));
+            List<Long> styleIds = parseStyleIds(body);
+            if (!styleIds.isEmpty()) {
+                return R.ok(writerService.startBatch(projectId, briefId, styleIds));
             }
-            Long versionId = writerService.write(projectId, briefId, stylePrompt, styleName);
-            // 09-10-versions-page-fix:对齐多版本链路(VersionService.generate 成功分支)语义——
-            // 成功后推进状态机(仅 READY/DRAFT → VERSIONS_READY,PUBLISHED_DRAFT 追加不回退),
-            // 首版设默认当前,追加生成不覆盖用户已选的 current。
-            // 条件更新语义与首版两拆分已收敛到 ProjectStatusService(09-27-state-machine-service)。
-            statusService.advanceVersionsReadyFromReady(projectId, versionId);
-            return R.ok(Map.of("versionId", versionId));
+            // deprecated:兼容旧前端(直接传风格画像字符串);新前端恒传 styleIds[]
+            String stylePrompt = body.get("stylePrompt") == null ? "" : String.valueOf(body.get("stylePrompt"));
+            String styleName = body.get("styleName") == null ? "" : String.valueOf(body.get("styleName"));
+            return R.ok(writerService.startBatchLegacy(projectId, briefId, stylePrompt, styleName));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, "深度写作失败: " + e.getMessage());
         }
+    }
+
+    /** 解析批量风格 id:styleIds[] 优先;兼容单 styleId(包装为单元素列表);两者均缺省返回空列表。 */
+    private static List<Long> parseStyleIds(Map<String, Object> body) {
+        List<Long> ids = new ArrayList<>();
+        Object arr = body.get("styleIds");
+        if (arr instanceof List<?> list) {
+            for (Object o : list) {
+                if (o == null || String.valueOf(o).isBlank()) continue;
+                ids.add(Long.valueOf(String.valueOf(o)));
+            }
+        } else if (arr != null && !String.valueOf(arr).isBlank()) {
+            ids.add(Long.valueOf(String.valueOf(arr)));
+        }
+        if (ids.isEmpty()) {
+            Object single = body.get("styleId");
+            if (single != null && !String.valueOf(single).isBlank()) {
+                ids.add(Long.valueOf(String.valueOf(single)));
+            }
+        }
+        return ids;
     }
 
     /** 基于事实手册生成简报(手动重试入口;研究完成后后端也会自动触发一次)。body: {briefId}。 */

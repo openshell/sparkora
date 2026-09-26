@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
-import com.sparkora.ai.AiException;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.StyleProfileEntity;
@@ -12,6 +11,9 @@ import com.sparkora.mapper.ArticleBriefMapper;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.StyleProfileMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -25,8 +27,10 @@ import java.util.Set;
 /**
  * 文章仿写服务(09-09-article-imitation)。
  *
- * analyze:对参考原文做一次 AI 分析(题材/结构骨架/句式特征 → brief,gen_mode=IMITATION)
- *   并推荐风格库中 ≤3 个 enabled 风格(附理由 → brief.styleRecommendations)。
+ * analyze/runAnalyze(09-27-gen-async 异步化,对齐 ClarifyService 范式):
+ *   同步 analyze() 毫秒级:校验 + 原子抢占 GENERATING_BRIEF + self.runAnalyze 后台生成 → 返回占位标记;
+ *   @Async runAnalyze() 调 AI 分析 → brief insert → 状态服务 advanceReady(extraCols=imitation_analysis);
+ *   失败在异步体内 catch,状态服务 failBriefToDraft 回 DRAFT 写 last_brief_error,不再外抛(无调用方接收)。
  *   状态守护与原子抢占完全仿 BriefService(DRAFT/READY 放行,失败回 DRAFT 写 last_brief_error)。
  *   状态推进已收敛到 ProjectStatusService(09-27-state-machine-service),本服务纯委托。
  *   仿写不做 RAG 检索(任意题材原文与车型库强行匹配会注入无关数据约束,污染仿写)。
@@ -58,6 +62,11 @@ public class ImitationService {
     /** 分析送 AI 的原文截断上限(全文仍入库;沿用 StyleService.extract 先例)。 */
     private static final int ANALYZE_TEXT_LIMIT = 8000;
 
+    // 自注入代理,确保 @Async 生效(analyze 内 this.runAnalyze 不会走代理)
+    @Autowired
+    @Lazy
+    private ImitationService self;
+
     public ImitationService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
                              StyleProfileMapper styleMapper, AiClient aiClient, ObjectMapper json,
                              ProjectStatusService statusService) {
@@ -70,11 +79,12 @@ public class ImitationService {
     }
 
     /**
-     * 分析原文 + 风格推荐(一次 AI 调用产出双结果)。
-     * 状态机:DRAFT/READY → GENERATING_BRIEF → READY;失败回 DRAFT 写 last_brief_error。
-     * @return 新生成的 brief(含分析与 styleRecommendations)
+     * 启动原文分析(同步毫秒级,占位语义):校验前置 + 原子抢占 GENERATING_BRIEF 后立即返回,
+     * 后台 self.runAnalyze 执行 AI 分析;前端靠项目状态轮询(GENERATING_BRIEF→READY)翻转刷新。
+     * 状态机:DRAFT/READY → GENERATING_BRIEF → READY;失败回 DRAFT 写 last_brief_error;生成中重触发 409。
+     * @return 占位标记 {status:"GENERATING_BRIEF"}
      */
-    public ArticleBriefEntity analyze(Long projectId) {
+    public Map<String, Object> analyze(Long projectId) {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
         if (!"IMITATION".equals(p.getGenSource()))
@@ -87,8 +97,25 @@ public class ImitationService {
         }
         // 原子抢占置 GENERATING_BRIEF:仅 DRAFT/READY 或陈旧生成中可成功,claimed==0 抛 409 守卫提示
         statusService.claimBriefGenerating(projectId, p, "分析原文");
-        p.setStatus("GENERATING_BRIEF");
 
+        // 后台异步生成(经自注入代理确保 @Async 生效)
+        (self == null ? this : self).runAnalyze(projectId);
+        return Map.of("status", "GENERATING_BRIEF");
+    }
+
+    /**
+     * 异步执行原文分析(由 self 代理调用)。
+     * 成功:插 brief + advanceReady(projectId, briefId, imitation_analysis);
+     * 失败:catch 内 failBriefToDraft(落 last_brief_error),不向外抛异常(异步线程无调用方)。
+     */
+    @Async
+    public void runAnalyze(Long projectId) {
+        // 重取项目:同步阶段快照可能已变(异步体不复用旧快照)
+        ArticleProjectEntity p = projectMapper.selectById(projectId);
+        if (p == null) {
+            log.warn("原文分析异步体:项目已不存在 project={}", projectId);
+            return;
+        }
         try {
             // enabled 风格列表喂给 AI 做推荐(风格库为空则推荐为空数组,前端引导去风格库,不阻断)
             List<StyleProfileEntity> enabledStyles = styleMapper.selectList(
@@ -132,14 +159,12 @@ public class ImitationService {
             // 条件更新:仅当仍处于本次抢占置的 GENERATING_BRIEF 才推进(并发已推进下游状态时不回退);
             // imitation_analysis 为业务列,经 extraCols 同条 UPDATE 写入(保持原子性)。
             statusService.advanceReady(projectId, b.getId(), Map.of("imitation_analysis", json.writeValueAsString(analysis)));
-            return b;
+            log.info("原文分析完成 project={} briefId={}", projectId, b.getId());
         } catch (Exception e) {
-            // 失败回 DRAFT 并记录原因(截断收在状态服务);项目已被删除时无需回退,保留原始异常。
+            // 异步体无调用方,异常只落状态(失败回 DRAFT + last_brief_error),不再外抛。
             // 回退限定生成中状态:并发已推进(VERSIONS_READY 及之后)时不覆盖,保守安全。
             log.warn("原文分析失败 project={}: {}", projectId, e.getMessage(), e);
             statusService.failBriefToDraft(projectId, e.getMessage());
-            if (e instanceof AiException ae) throw ae;
-            throw new AiException("原文分析失败: " + e.getMessage(), e);
         }
     }
 

@@ -75,7 +75,7 @@ class FactSheetServiceTest {
 
     @Test
     void 数值回查_手册外数值_被标() throws Exception {
-        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null, null);
+        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null, null, null, null);
         String sheet = "{\"entries\":[{\"key\":\"海狮08EV起售价\",\"value\":\"239900\",\"confidence\":0.9}]}";
         String content = "海狮08EV 起售价 239,900 元,续航 610km,竞品卖 258000。";
         var unknown = w.verifyNumbers(content, sheet);
@@ -86,7 +86,7 @@ class FactSheetServiceTest {
 
     @Test
     void 数值回查_手册内数值_不标() throws Exception {
-        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null, null);
+        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null, null, null, null);
         String sheet = "{\"entries\":[{\"key\":\"起售价\",\"value\":\"239900\",\"confidence\":0.9}]}";
         var unknown = w.verifyNumbers("起售价 239,900 元", sheet);
         assertTrue(unknown.isEmpty(), () -> "手册内数值不应被标: " + unknown);
@@ -204,7 +204,7 @@ class FactSheetServiceTest {
                 "{\"facts\":[{\"claim\":\"比亚迪第2000座高速闪充站已正式落成\",\"source\":{\"type\":\"WEB\",\"url\":\"http://www.stnn.cc/x\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}",
                 "{\"facts\":[{\"claim\":\"比亚迪第 2000 座闪充高速站正式落成 - IT之家\",\"source\":{\"type\":\"WEB\",\"url\":\"https://www.ithome.com/y\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}");
         String merged = svc.merge(notes);
-        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null, null);
+        DeepWriterService w = new DeepWriterService(null, new ObjectMapper(), null, null, null, null, null, null);
         var unknown = w.verifyNumbers("比亚迪第 2000 座闪充高速站正式落成。", merged);
         assertTrue(unknown.isEmpty(), () -> "合并条目数值应仍被覆盖: " + unknown);
     }

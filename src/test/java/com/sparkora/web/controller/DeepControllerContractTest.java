@@ -10,9 +10,7 @@ import com.sparkora.deep.tool.SearxngSearchTool;
 import com.sparkora.deep.tool.TavilySearchTool;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
-import com.sparkora.mapper.StyleProfileMapper;
 import com.sparkora.service.BriefService;
-import com.sparkora.service.ProjectStatusService;
 import com.sparkora.service.SettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,11 +48,9 @@ class DeepControllerContractTest {
     @Mock DeepWriterService writerService;
     @Mock ArticleBriefMapper briefMapper;
     @Mock BriefService briefService;
-    @Mock StyleProfileMapper styleMapper;
     @Mock SearxngSearchTool searxngTool;
     @Mock TavilySearchTool tavilyTool;
     @Mock SettingService settingService;
-    @Mock ProjectStatusService statusService;
 
     private MockMvc mvc;
     private DeepProperties props;
@@ -63,8 +59,8 @@ class DeepControllerContractTest {
     void setUp() {
         props = new DeepProperties();
         DeepController controller = new DeepController(clarifyService, researchService, writerService,
-                briefMapper, briefService, styleMapper, searxngTool, tavilyTool,
-                props, settingService, statusService);
+                briefMapper, briefService, searxngTool, tavilyTool,
+                props, settingService);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
@@ -140,5 +136,78 @@ class DeepControllerContractTest {
                 .andExpect(jsonPath("$.data.toolHealth.SEARXNG").value("DISABLED"))
                 .andExpect(jsonPath("$.data.toolHealth.TAVILY").value("DISABLED"));
         verify(tavilyTool, never()).search(any(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    // ==================== 09-27-gen-async: /deep/generate 批量异步契约 ====================
+
+    @Test
+    void generate_批量styleIds_委托startBatch并返回占位标记() throws Exception {
+        when(writerService.startBatch(eq(3L), eq(9L), eq(java.util.List.of(1L, 2L))))
+                .thenReturn(Map.of("status", "GENERATING_VERSIONS", "styleCount", 2));
+
+        mvc.perform(post("/api/projects/3/deep/generate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"styleIds\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.status").value("GENERATING_VERSIONS"))
+                .andExpect(jsonPath("$.data.styleCount").value(2));
+
+        verify(writerService, never()).startBatchLegacy(any(), any(), any(), any());
+    }
+
+    @Test
+    void generate_单styleId兼容_数组化委托() throws Exception {
+        when(writerService.startBatch(eq(3L), eq(9L), eq(java.util.List.of(5L))))
+                .thenReturn(Map.of("status", "GENERATING_VERSIONS", "styleCount", 1));
+
+        mvc.perform(post("/api/projects/3/deep/generate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"styleId\":5}"))
+                .andExpect(jsonPath("$.code").value(0));
+        verify(writerService).startBatch(eq(3L), eq(9L), eq(java.util.List.of(5L)));
+    }
+
+    @Test
+    void generate_旧stylePrompt兼容_走legacy入口() throws Exception {
+        when(writerService.startBatchLegacy(eq(3L), eq(9L), eq("语气活泼"), eq("活泼")))
+                .thenReturn(Map.of("status", "GENERATING_VERSIONS", "styleCount", 1));
+
+        mvc.perform(post("/api/projects/3/deep/generate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"stylePrompt\":\"语气活泼\",\"styleName\":\"活泼\"}"))
+                .andExpect(jsonPath("$.code").value(0));
+        verify(writerService).startBatchLegacy(eq(3L), eq(9L), eq("语气活泼"), eq("活泼"));
+    }
+
+    @Test
+    void generate_重复触发_409() throws Exception {
+        when(writerService.startBatch(any(), any(), any()))
+                .thenThrow(new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）"));
+
+        mvc.perform(post("/api/projects/3/deep/generate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"styleIds\":[1]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(409));
+    }
+
+    @Test
+    void generate_风格查无_400() throws Exception {
+        when(writerService.startBatch(any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("风格不存在或已删除"));
+
+        mvc.perform(post("/api/projects/3/deep/generate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"styleIds\":[99]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.msg").value("风格不存在或已删除"));
+    }
+
+    @Test
+    void generate_未预期异常_500() throws Exception {
+        when(writerService.startBatch(any(), any(), any()))
+                .thenThrow(new RuntimeException("下游炸了"));
+
+        mvc.perform(post("/api/projects/3/deep/generate").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"styleIds\":[1]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(500));
     }
 }

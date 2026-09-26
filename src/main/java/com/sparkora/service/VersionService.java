@@ -15,11 +15,15 @@ import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.StyleProfileMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 文章多版本生成服务。基于 brief + 用户从风格库选择的若干风格，每选一个风格生成一版正文。
@@ -30,6 +34,9 @@ import java.util.List;
  * 状态机：READY(brief就绪) → GENERATING_VERSIONS → VERSIONS_READY
  *  失败回 READY 并写 lastVersionError（任一版都没生成成功才算整体失败）。
  *
+ * 09-27-gen-async 异步化(对齐 ClarifyService 范式):同步 generate() 毫秒级校验 + 原子抢占后返回占位,
+ *  @Async runGenerate() 执行 RAG + 逐风格生成 + advanceVersionsReady/failVersionsToReady;
+ *  失败在异步体内 catch 落 last_version_error,不再向控制器抛异常。
  * 事务边界同 BriefService：置状态短事务先提交，AI 调用无事务，最后写版本+置状态再提交。
  */
 @Slf4j
@@ -51,6 +58,11 @@ public class VersionService {
 
     private static final String LABELS = "ABCDEFGHIJ";
 
+    // 自注入代理,确保 @Async 生效(generate 内 this.runGenerate 不会走代理)
+    @Autowired
+    @Lazy
+    private VersionService self;
+
     public VersionService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
                            ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
                            AiClient aiClient, CarRagService ragService,
@@ -69,11 +81,12 @@ public class VersionService {
     }
 
     /**
-     * 按用户选中的风格生成多版正文。每选一个风格生成一版（风格 toneGuidance 作为 system prompt 片段）。
+     * 启动多版本生成(同步毫秒级,占位语义):校验 + 原子抢占 GENERATING_VERSIONS 后立即返回,
+     * 后台 self.runGenerate 执行 AI;前端靠项目状态轮询(GENERATING_VERSIONS→VERSIONS_READY)翻转刷新。
      * @param styleIds 用户从风格库选中的风格 id 列表（至少 1 个，最多 10 个）
-     * @return 生成的版本列表（可能少于 styleIds 数，若某版失败则跳过）
+     * @return 占位标记 {status:"GENERATING_VERSIONS", styleCount:N}
      */
-    public List<ArticleVersionEntity> generate(Long projectId, List<Long> styleIds) {
+    public Map<String, Object> generate(Long projectId, List<Long> styleIds) {
         if (styleIds == null || styleIds.isEmpty())
             throw new IllegalArgumentException("至少选择一个风格");
         if (styleIds.size() > LABELS.length())
@@ -89,23 +102,47 @@ public class VersionService {
         ArticleBriefEntity brief = briefMapper.selectById(p.getCurrentBriefId());
         if (brief == null) throw new NotReadyException("brief 不存在");
 
+        // 校验（含 styles 存在性）保留在同步阶段(400 语义在触发时即时反馈);异步体重取
         List<StyleProfileEntity> styles = styleMapper.selectBatchIds(styleIds);
         if (styles.isEmpty()) throw new IllegalArgumentException("所选风格不存在");
 
         // 1) 原子抢占置进行中(消除 check-then-set 竞态):仅当「READY/VERSIONS_READY(首生成或追加)」
         //    或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效,claimed==0 抛 409 守卫提示(含状态机回退拒绝)。
         statusService.claimVersionsGenerating(projectId, p, "生成版本");
-        p.setStatus("GENERATING_VERSIONS");
 
-        List<ArticleVersionEntity> created = new ArrayList<>();
-        List<String> perVersionErrors = new ArrayList<>();
-        boolean imitation = "IMITATION".equals(p.getGenSource());
-        // S8 统一检索:modelIds 降为写作锚点(加权),未关联也全库检索。
-        // 仿写模式跳过 RAG(任意题材原文与车型库强行匹配会注入无关数据约束,污染仿写;ragStatus 记 NO_KNOWLEDGE)
-        List<Long> modelIds = imitation ? List.of() : carService.listModelIds(projectId);
-        CarRagService.RagResult rag = imitation ? CarRagService.RagResult.EMPTY
-                : ragService.retrieveForGeneration(p.getTopic(), 8, modelIds);
+        // 后台异步生成(经自注入代理确保 @Async 生效)
+        (self == null ? this : self).runGenerate(projectId, styleIds);
+        return Map.of("status", "GENERATING_VERSIONS", "styleCount", styleIds.size());
+    }
+
+    /**
+     * 异步执行多版本生成(由 self 代理调用)。
+     * 成功:advanceVersionsReady(projectId, firstId, partialErrors);全失败/异常:failVersionsToReady(落 last_version_error)。
+     * 异步线程无调用方,异常只落状态不外抛。
+     */
+    @Async
+    public void runGenerate(Long projectId, List<Long> styleIds) {
+        // 重取实体:同步阶段快照可能已变(异步体不复用旧快照)
+        ArticleProjectEntity p = projectMapper.selectById(projectId);
+        if (p == null) {
+            log.warn("版本生成异步体:项目已不存在 project={}", projectId);
+            return;
+        }
         try {
+            if (p.getCurrentBriefId() == null) throw new NotReadyException("尚未生成 brief，无法生成版本");
+            ArticleBriefEntity brief = briefMapper.selectById(p.getCurrentBriefId());
+            if (brief == null) throw new NotReadyException("brief 不存在");
+            List<StyleProfileEntity> styles = styleMapper.selectBatchIds(styleIds);
+
+            List<ArticleVersionEntity> created = new ArrayList<>();
+            List<String> perVersionErrors = new ArrayList<>();
+            boolean imitation = "IMITATION".equals(p.getGenSource());
+            // S8 统一检索:modelIds 降为写作锚点(加权),未关联也全库检索。
+            // 仿写模式跳过 RAG(任意题材原文与车型库强行匹配会注入无关数据约束,污染仿写;ragStatus 记 NO_KNOWLEDGE)
+            List<Long> modelIds = imitation ? List.of() : carService.listModelIds(projectId);
+            CarRagService.RagResult rag = imitation ? CarRagService.RagResult.EMPTY
+                    : ragService.retrieveForGeneration(p.getTopic(), 8, modelIds);
+
             // 2) 每个选中风格生成一版
             int i = 0;
             for (StyleProfileEntity style : styles) {
@@ -128,12 +165,11 @@ public class VersionService {
             ArticleVersionEntity first = created.get(0);
             String lastVersionError = perVersionErrors.isEmpty() ? null : "部分版本失败: " + String.join("; ", perVersionErrors);
             statusService.advanceVersionsReady(projectId, first.getId(), lastVersionError);
-            return created;
-
+            log.info("版本生成完成 project={} created={} failed={}", projectId, created.size(), perVersionErrors.size());
         } catch (Exception e) {
-            // 失败回退(仅生成中状态,防覆盖并发推进;截断收在状态服务)
+            // 异步体无调用方,异常只落状态。失败回退(仅生成中状态,防覆盖并发推进;截断收在状态服务)
+            log.warn("版本生成失败 project={}: {}", projectId, e.getMessage(), e);
             statusService.failVersionsToReady(projectId, e.getMessage());
-            throw new AiException("版本生成失败: " + e.getMessage(), e);
         }
     }
 

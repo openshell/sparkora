@@ -94,6 +94,25 @@ public class ProjectStatusService {
         if (claimed == 0) throw new IllegalStateException(guardMsg(p, action));
     }
 
+    /**
+     * 深度写作域原子抢占(09-27-gen-async):仅 READY/DRAFT/VERSIONS_READY 或「生成中且已陈旧」置 GENERATING_VERSIONS。
+     * 与 {@link #claimVersionsGenerating} 的源态白名单不同,语义不同不合并:
+     * 深度链路可从 DRAFT 触发(「跳过简报直接生成正文」,brief 侧 RESEARCH_DONE 但创作简报未生成),
+     * 亦可从 READY(首次生成)或 VERSIONS_READY(追加)触发。claimed==0 抛 IllegalStateException(409 语义)。
+     */
+    public void claimDeepVersionsGenerating(Long projectId, ArticleProjectEntity p, String action) {
+        LocalDateTime staleCutoff = LocalDateTime.now().minus(Duration.ofMillis(STALE_GENERATING_MS));
+        int claimed = projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+                .eq("id", projectId)
+                .and(w -> w.in("status", "READY", "DRAFT", "VERSIONS_READY")
+                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                                .lt("updated_at", staleCutoff)))
+                .set("status", "GENERATING_VERSIONS")
+                .set("last_version_error", null)
+                .set("updated_at", LocalDateTime.now()));
+        if (claimed == 0) throw new IllegalStateException(guardMsg(p, action));
+    }
+
     // ==================== 成功推进(条件更新,防回退) ====================
 
     /**
@@ -137,28 +156,6 @@ public class ProjectStatusService {
                     .eq("status", "GENERATING_VERSIONS")
                     .set("status", "VERSIONS_READY")
                     .set("last_version_error", partialErrors)
-                    .set("updated_at", nowTs));
-        }
-    }
-
-    /**
-     * 深度单版成功:仅 READY/DRAFT → VERSIONS_READY(源态白名单与多版本链路不同,语义不同不合并);
-     * PUBLISHED_DRAFT 追加不回退。首版两拆分同 {@link #advanceVersionsReady}。
-     */
-    public void advanceVersionsReadyFromReady(Long projectId, Long versionId) {
-        LocalDateTime nowTs = LocalDateTime.now();
-        int advanced = projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                .eq("id", projectId)
-                .in("status", "READY", "DRAFT")
-                .isNull("current_version_id")
-                .set("current_version_id", versionId)
-                .set("status", "VERSIONS_READY")
-                .set("updated_at", nowTs));
-        if (advanced == 0) {
-            projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .in("status", "READY", "DRAFT")
-                    .set("status", "VERSIONS_READY")
                     .set("updated_at", nowTs));
         }
     }

@@ -4,14 +4,20 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
+import com.sparkora.ai.AiException;
 import com.sparkora.car.service.CarRagService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
+import com.sparkora.domain.entity.StyleProfileEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
+import com.sparkora.mapper.StyleProfileMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -27,6 +33,12 @@ import java.util.regex.Pattern;
  * ⑤ 写作:风格画像 + 事实手册 + 锁定需求 → 正文;约束「所有数值必须出自事实手册」。
  * ⑥ 数值回查:正则抽取正文数值,与手册比对;未收录 → factRisks(high) 随版本落库。
  * 产物复用 version 表(gen_mode=DEEP 标记在 brief 侧)。
+ *
+ * 09-27-gen-async 批量异步化(对齐 ClarifyService 范式):
+ *  原「单风格单版」同步调用改为 {@link #startBatch} 一次触发多风格:
+ *  同步毫秒级:校验 brief/风格 + claim GENERATING_VERSIONS + self.runBatch + 返回占位;
+ *  @Async runBatch 循环 {@link #write} → 汇总 advanceVersionsReady / 失败 failVersionsToReady。
+ *  批量改造根因:前端串行多次调用会撞第 2 次 claim 的 409;批量也顺带简化前端编排。
  */
 @Slf4j
 @Service
@@ -40,17 +52,30 @@ public class DeepWriterService {
     private final ArticleProjectMapper projectMapper;
     /** 系统检索设置(09-09-brief-gen-redesign R3):知识库停用时 rag_status=DISABLED */
     private final com.sparkora.service.SettingService settingService;
+    /** 风格表回查(09-27-gen-async 批量:由 service 按 styleIds 解析 toneGuidance/name) */
+    private final StyleProfileMapper styleMapper;
+    /** 项目状态机唯一写权持有者(批量链路的抢占/推进/回退)。 */
+    private final com.sparkora.service.ProjectStatusService statusService;
+
+    // 自注入代理,确保 @Async 生效(startBatch 内 this.runBatch 不会走代理)
+    @Autowired
+    @Lazy
+    private DeepWriterService self;
 
     public DeepWriterService(AiClient aiClient, ObjectMapper json,
                              ArticleBriefMapper briefMapper, ArticleVersionMapper versionMapper,
                              ArticleProjectMapper projectMapper,
-                             com.sparkora.service.SettingService settingService) {
+                             com.sparkora.service.SettingService settingService,
+                             StyleProfileMapper styleMapper,
+                             com.sparkora.service.ProjectStatusService statusService) {
         this.aiClient = aiClient;
         this.json = json;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
         this.projectMapper = projectMapper;
         this.settingService = settingService;
+        this.styleMapper = styleMapper;
+        this.statusService = statusService;
     }
 
     /** 版本标签序列(与 VersionService.LABELS 同口径:A/B/C…按项目内已有版本数续编) */
@@ -59,11 +84,109 @@ public class DeepWriterService {
     /** 09-10-style-library-enhance:风格强化句(与 VersionService.generateOne 同款文案,要求特征充分体现) */
     private static final String STYLE_ENFORCE = "以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
 
+    /** 批量生成单条风格选择(已解析:prompt/name 直接喂 {@link #write};legacy 路径 name/prompt 可为空)。 */
+    public record StyleSpec(String prompt, String name) {}
+
+    /**
+     * 启动批量深度写作(同步毫秒级,占位语义):校验 brief/风格 + 原子抢占 GENERATING_VERSIONS 后立即返回,
+     * 后台 self.runBatch 逐风格生成;前端靠项目状态轮询(GENERATING_VERSIONS→VERSIONS_READY)翻转刷新。
+     *
+     * @param styleIds 用户选中的风格 id 列表;空/缺省时按「无风格」生成一版(默认 tag「深度」)
+     * @return 占位标记 {status:"GENERATING_VERSIONS", styleCount:N}
+     */
+    public Map<String, Object> startBatch(Long projectId, Long briefId, List<Long> styleIds) {
+        ArticleBriefEntity b = requireBrief(projectId, briefId);
+        List<StyleSpec> specs = new ArrayList<>();
+        if (styleIds != null && !styleIds.isEmpty()) {
+            if (styleIds.size() > LABELS.length())
+                throw new IllegalArgumentException("一次最多生成 " + LABELS.length() + " 版");
+            // 逐 id 回查并保序:用户显式选了风格,查无不静默降级(沿用原 /deep/generate 单风格口径)
+            List<StyleProfileEntity> styles = styleMapper.selectBatchIds(styleIds);
+            Map<Long, StyleProfileEntity> byId = new LinkedHashMap<>();
+            for (StyleProfileEntity s : styles) byId.put(s.getId(), s);
+            for (Long id : styleIds) {
+                StyleProfileEntity s = byId.get(id);
+                if (s == null) throw new IllegalArgumentException("风格不存在或已删除");
+                specs.add(new StyleSpec(s.getToneGuidance() == null ? "" : s.getToneGuidance(), s.getName()));
+            }
+        } else {
+            specs.add(new StyleSpec("", ""));   // 无风格:单版默认(style_tag 回退「深度」)
+        }
+        return startWithSpecs(projectId, b, specs);
+    }
+
+    /**
+     * deprecated 兼容入口:旧前端直接传风格画像字符串(stylePrompt/styleName),已无前端调用;
+     * 与 {@link #startBatch} 共用同一 claim/异步编排。
+     */
+    public Map<String, Object> startBatchLegacy(Long projectId, Long briefId, String stylePrompt, String styleName) {
+        ArticleBriefEntity b = requireBrief(projectId, briefId);
+        StyleSpec spec = new StyleSpec(stylePrompt == null ? "" : stylePrompt, styleName == null ? "" : styleName);
+        return startWithSpecs(projectId, b, List.of(spec));
+    }
+
+    /** 公共编排:项目校验 + 陈旧判定 + 原子抢占 + 触发异步 + 返回占位。 */
+    private Map<String, Object> startWithSpecs(Long projectId, ArticleBriefEntity b, List<StyleSpec> specs) {
+        ArticleProjectEntity p = projectMapper.selectById(projectId);
+        if (p == null) throw new IllegalArgumentException("项目不存在");
+        if (statusService.stuckGenerating(p)) {
+            throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
+        }
+        // 原子抢占:深度源态 READY/DRAFT/VERSIONS_READY 或陈旧生成中;claimed==0 抛 409
+        statusService.claimDeepVersionsGenerating(projectId, p, "生成版本");
+        // 后台异步生成(经自注入代理确保 @Async 生效)
+        (self == null ? this : self).runBatch(projectId, b.getId(), specs);
+        return Map.of("status", "GENERATING_VERSIONS", "styleCount", specs.size());
+    }
+
+    private ArticleBriefEntity requireBrief(Long projectId, Long briefId) {
+        ArticleBriefEntity b = briefMapper.selectById(briefId);
+        if (b == null) throw new IllegalArgumentException("brief 不存在");
+        if (projectId != null && !projectId.equals(b.getProjectId()))
+            throw new IllegalArgumentException("brief 不属于该项目");
+        return b;
+    }
+
+    /**
+     * 异步批量写作(由 self 代理调用):逐风格 {@link #write} 落版本,汇总部分失败;
+     * 全部失败 → failVersionsToReady 落 last_version_error;成功 → advanceVersionsReady(firstId, partialErrors)。
+     * 异步线程无调用方,顶层 catch 必调 fail* 回写(避免卡 GENERATING_VERSIONS 到 10min 自愈)。
+     */
+    @Async
+    public void runBatch(Long projectId, Long briefId, List<StyleSpec> specs) {
+        List<Long> created = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        try {
+            int i = 0;
+            for (StyleSpec spec : specs) {
+                String label = i < LABELS.length() ? String.valueOf(LABELS.charAt(i)) : "A";
+                i++;
+                String name = spec.name() == null || spec.name().isBlank() ? "深度" : spec.name();
+                try {
+                    created.add(write(projectId, briefId, spec.prompt(), spec.name()));
+                } catch (Exception e) {
+                    log.warn("深度版本 {}({}) 生成失败 project={}: {}", label, name, projectId, e.getMessage());
+                    errors.add("[" + label + ":" + name + "] " + e.getMessage());
+                }
+            }
+            if (created.isEmpty()) {
+                throw new AiException("全部版本生成失败: " + String.join("; ", errors), null);
+            }
+            String partial = errors.isEmpty() ? null : "部分版本失败: " + String.join("; ", errors);
+            statusService.advanceVersionsReady(projectId, created.get(0), partial);
+            log.info("深度批量生成完成 project={} created={} failed={}", projectId, created.size(), errors.size());
+        } catch (Exception e) {
+            // 异步体无调用方,异常只落状态。失败回退(仅生成中状态,防覆盖并发推进;截断收在状态服务)
+            log.warn("深度批量生成失败 project={}: {}", projectId, e.getMessage(), e);
+            statusService.failVersionsToReady(projectId, e.getMessage());
+        }
+    }
+
     /**
      * ⑤ 深度写作并落版本(⑥ 回查结果进 factRisks)。
      * @param briefId  含 fact_sheet 的 brief
-     * @param stylePrompt 风格画像 toneGuidance(调用方传入;深度链路 09-10-style-library-enhance 起由 DeepController 按 styleId 回查后注入)
-     * @param styleName 风格名(落版本 style_tag;空回退「深度」;09-10-versions-page-fix 新增)
+     * @param stylePrompt 风格画像 toneGuidance(由 {@link #startBatch} 按 styleIds 回查后注入)
+     * @param styleName 风格名(落版本 style_tag;空回退「深度」)
      * @return 落库的版本 id
      */
     public Long write(Long projectId, Long briefId, String stylePrompt, String styleName) throws Exception {
