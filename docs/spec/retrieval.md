@@ -45,7 +45,7 @@
 ```
 
 - `docId` 为 09-15 qa-auto-illustrate 起的可空域内块 id：`CAR=car_doc.id` / `KB=kb_chunk.id` / `NEWS=news_doc.id`。
-- 检索 `OK` 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。
+- 检索 `OK` 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。**版本链路由 `VersionService` 写入；`brief.rag_citations` 的写入方（FAST 简报 `BriefService.generate`）已于 2026-09-26（R6）删除，深度简报链路不写该列（引用面板改由 `fact_sheet` 派生，见下条）**。
 - 前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 `ragStatus` 显示降级文案（**前端不读 `docId`，纯增量不影响展示**）。
 - **WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 `fact_sheet`，行为不变（**2026-09-09 注：快速模式已下线，本句仅存量语义**）。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
 
@@ -106,6 +106,6 @@
 
 ## 8. 关键实现路径
 
-- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarDocService` 切块/配额/子查询/覆盖度）、`mapper.CarDocEmbeddingMapper.searchTopKUnified`、`ai.EmbeddingClient`、`ai.RagStatus`、`service.BriefService`/`service.VersionService`（写入 `rag_status`/`rag_citations`）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。
+- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarDocService` 切块/配额/子查询/覆盖度）、`mapper.CarDocEmbeddingMapper.searchTopKUnified`、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。
 - 前端：`views/project/deep/CitationList.vue`（引用面板，CAR/KB/NEWS/WEB/MULTI 分支）、`views/project/StepVersions.vue`（版本卡片「引用 N」/降级提示）。
 - 表：`sparkora_article_brief.rag_status/rag_citations`、`sparkora_article_version.rag_status/rag_citations`。

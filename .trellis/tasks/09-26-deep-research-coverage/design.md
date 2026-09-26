@@ -83,3 +83,26 @@
 - R5 agent 数上升 → LLM 汇总次数与 Tavily 调用上升(受 `maxAgents` 与 `8/n` 预算约束)。
 - R4 提额 4096 在异常时仅发生 1 次/agent,成本可控。
 - snippet 200 字可能不足以覆盖长背景;后续可评估提升上限或抽取式压缩(Out of Scope)。
+
+## 11. R6 深度简报截断容错 + 只保留深度链路(09-26 追加)
+
+### 11.1 背景
+R5 放大事实手册(project 52 / brief 66 实测 17 条 / 10294 字，旧链 4486 字)，`BriefService.generateFromFactSheet` 的 `chatJson(...,2048)` 在「3 标题 + 观点 + 大纲 + factRisks」一次产出时被 `finish_reason=length` 截断 → project 52 回 DRAFT + lastBriefError。
+
+### 11.2 契约
+- `generateFromFactSheet`:`chatJson(...,8192)`;失败(截断/空/非法 JSON)时 `16384` **重试一次**;仍失败才回 DRAFT + lastBriefError(截断 1000)。
+- 重试**独立实现**于 `BriefService`(不抽公共 helper、不共用 FAST 路径);范式对齐 `SubAgentRunner.chat`(R4):失败→提额重试一次→再失败才抛出。
+- 首次解析仍走 `AiClient.sanitizeAiJson` 后再 `readValue`。
+
+### 11.3 仅保留深度链路(死代码清理)
+- 删除 `BriefService.generate(Long)`(FAST 简报,全仓无调用方)及其专用私有方法 `buildSystemPrompt()`/`buildUserPrompt(ArticleProjectEntity, RagResult)`。
+- 删除因此不再使用的字段/依赖:`CarRagService ragService`、`ArticleProjectCarService carService`(仅 FAST generate 使用;`generateFromFactSheet` 不依赖 RAG)。
+- 保留 `generateFromFactSheet`、`currentBrief`、`claimGenerating`、`projectStatusGuardMsg`、`citationsJson`、`stuckGenerating`(被 VersionService/ImitationService 复用)与 `STALE_GENERATING_MS`。
+- 构造函数随之收窄(移除 ragService/carService 形参),Spring 注入自动适配。
+
+### 11.4 兼容与回滚
+- 无 schema 变更。删除公开方法 `generate` 属源码级不兼容,但全仓(含 src/test)无引用 —— 已核实;`currentBrief` 仍被 `ArticleProjectController` 使用。
+- 回滚:恢复 `generate` 与依赖即可;提额/重试可回退为 2048 单次。
+
+### 11.5 测试
+- 新增 `BriefServiceTest`(Mock AiClient/mapper):① 首次截断(AiException)→ 第二次 16384 成功 → 简报字段落库 + 项目 READY;② 两次均失败 → DRAFT + lastBriefError 且第二次用 16384;③ 首次即成功用 8192(断言额度)。

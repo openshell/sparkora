@@ -370,6 +370,59 @@ raw.append("{\"claim\":\"").append(esc(h.title()))
 
 ---
 
+## Scenario: 长手册深度简报输出提额 + 失败重试一次（09-26-deep-research-coverage R6）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改深度简报生成（`BriefService.generateFromFactSheet`）的 `max_tokens` 额度、失败重试语义，或事实手册体积显著变化。
+
+### 2. Signatures
+```java
+// BriefService（签名不变；内部额度/重试变更）
+public ArticleBriefEntity generateFromFactSheet(Long projectId, Long briefId)
+// 首次 aiClient.chatJson(buildDeepBriefSystemPrompt(), buildDeepBriefUserPrompt(p,b), 8192)
+// 失败时 aiClient.chatJson(同上 + 纠错说明, 16384) 一次
+```
+
+### 3. Contracts
+- **额度随手册体积扩容**：R5 放大事实手册后（实测 17 条 / 10294 字）旧 `2048` 会被 `finish_reason=length` 截断 → 项目回 DRAFT。深度简报首次调用固定 `8192`。
+- **任何失败翻倍重试一次**：截断（`AiException`）/ 空内容 / 非法 JSON / `readValue` 失败均触发 `16384` 重试一次（附纠错说明提示只输出完整合法 JSON），仅两次均失败才落 DRAFT + `lastBriefError`（截断 1000）。净调用上限 2 次。
+- **重试独立实现**：`BriefService` 内联实现，**不抽公共 helper、不与已删除的 FAST 路径共用**（FAST `generate` 已随模式收敛删除）。
+- **不改红线**：`/deep/*` 响应主结构、`research_notes` 字段集、`SearchTool.available()`/`toolHealth` 均不变；无 schema 变更。
+- **失败回退语义不变**：失败 `p.status=DRAFT` + `p.lastBriefError`，brief 行不写简报字段（前端保留深度面板可重试）；成功 `status=READY` + `currentBriefId` 指向该行 + 清空旧错误。
+
+### 4. Validation & Error Matrix
+- 首次成功 → 仅一次调用（8192），不触发 16384。
+- 首次截断/空/非法 JSON → 16384 重试；重试成功 → 字段落库 + READY。
+- 两次均失败 → 抛 `AiException`、项目回 DRAFT + `lastBriefError`、brief 行不动。
+- `fact_sheet` 空/非 DEEP brief → 前置 `IllegalArgumentException`/`IllegalStateException`，不进入 AI 调用。
+
+### 5. Good/Base/Bad Cases
+- Good: 10294 字手册在 8192 内产出完整简报（字段齐全、项目 READY）。
+- Base: 首次截断 → 16384 重试成功（净 2 次调用）。
+- Bad: 沿用 `2048`（长手册必截断）；或失败不重试直接落 DRAFT。
+
+### 6. Tests Required
+- `BriefServiceTest`（Mock AiClient/mapper，无 DB）：① 首次截断 → 断言第二次 16384 且字段落库 + READY + `currentBriefId`；② 两次均失败 → DRAFT + `lastBriefError` 且第二次 16384；③ 首次成功 → 断言只用 8192、无 16384 调用。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 长手册固定 2048：R5 放大手册后必然 finish_reason=length → 项目回 DRAFT
+aiClient.chatJson(buildDeepBriefSystemPrompt(), buildDeepBriefUserPrompt(p, b), 2048);
+```
+#### Correct
+```java
+try {
+    cr = aiClient.chatJson(system, user, 8192);          // 首次提额
+    dto = json.readValue(AiClient.sanitizeAiJson(cr.content()), BriefDto.class);
+} catch (Exception first) {
+    cr = aiClient.chatJson(system, user + 纠错说明, 16384); // 失败翻倍重试一次
+    dto = json.readValue(AiClient.sanitizeAiJson(cr.content()), BriefDto.class);
+}
+```
+
+---
+
 ## Scenario: 图片向量域（第四域，09-15 img-semantic-search）
 
 ### 1. Scope / Trigger

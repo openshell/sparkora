@@ -52,6 +52,15 @@
 - [ ] 派发 `trellis-check` 复核 R1-R5 + 红线。
 - [ ] `git status`/`git diff` 审阅;不提交(除非用户明确要求)。
 
+### 步骤 9 — R6 深度简报截断容错 + 只保留深度链路(09-26 追加)
+- [x] `BriefService.generateFromFactSheet`:`chatJson(...,8192)`;失败(截断/空/非法 JSON)提额 `16384` 重试一次;仍失败才回 DRAFT + lastBriefError。重试独立实现(不抽 helper)。
+- [x] 删除死掉的 FAST 简报路径:`generate(Long)` + 私有 `buildSystemPrompt()`/`buildUserPrompt(ArticleProjectEntity, RagResult)`;移除仅其使用的依赖字段 `ragService`/`carService` 并收窄构造函数。
+- [x] 保留 `generateFromFactSheet`/`currentBrief`/`claimGenerating`/`projectStatusGuardMsg`/`citationsJson`/`stuckGenerating`/`STALE_GENERATING_MS`(被 VersionService/ImitationService 复用)。
+- [x] 新增 `BriefServiceTest`:① 首次截断→16384 重试成功→字段落库+READY;② 两次均失败→DRAFT+lastBriefError 且第二次 16384;③ 首次成功用 8192。
+- [x] `docs/spec/brief-generation.md`:记录深度简报 `8192`/失败 `16384` 重试一次;删除 FAST 简报描述。
+- [x] `.trellis/spec/backend/ai-rag-guidelines.md`:在「降级必须保真原始证据(snippet)」或新增条目中记录「长手册简报输出提额 + 失败重试」。若 `docs/spec/brief-generation.md §10` 仍有 FAST 历史快照,标注已删除。
+- [x] `mvn -q -DskipTests compile` / `mvn test` 全绿。
+
 ## 风险文件
 
 - `src/main/java/com/sparkora/deep/service/SubAgentRunner.java`(降级+重试,核心)

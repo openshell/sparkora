@@ -54,7 +54,7 @@ graph TD
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
 | POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, started:true, strategy, webProviderOrder}`（同步校验 + 落 PENDING 占位后立即返回；后台 `@Async` 执行，前端轮询 status。前置：brief 存在且属于路径 projectId、`gen_mode=DEEP`、`clarify_answers` 已锁定，否则 400；`plan_status=PLANNING`（计划生成中）或研究计划无关键问题 → 409；同一 brief 已在研究中 → 409「该 brief 正在研究中，请勿重复触发」） |
 | POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, styleId?}`（09-10-style-library-enhance：`styleId` 优先，后端回查风格表取 `toneGuidance`/`name` 注入 system prompt；查无 → 400「风格不存在或已删除」；旧 `stylePrompt`/`styleName` 保留兼容，deprecated） | `{versionId}`（版本 `fact_risks` 落库；09-10-versions-page-fix：落版本补齐 `title`/`version_label`/`style_tag`/`word_count`，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
-| POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突） |
+| POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突。**R6 09-26**：`generateFromFactSheet` 首次 `chatJson(...,8192)`，截断/空内容/非法 JSON 时翻倍 `16384` 重试一次，仅两次均失败才回 DRAFT + `lastBriefError`） |
 | GET | `/deep/status` | 三角色 | `?briefId`（缺省取最新 DEEP brief） | `{briefId, genMode, stage, planStatus, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}, webStrategy, webProviderOrder}` |
 
 - stage 判定（brief 层展示态）：`PLANNING`（`plan_status=PLANNING`，clarify 占位生成中，2026-09-11 新增，优先于其余判定）> `RESEARCH_DONE`（`fact_sheet` 非空）> `RESEARCHING`（`research_notes` 非空）> `CLARIFIED`（`answers` 非空）> `CLARIFYING`（`questions` 非空）> `NONE`。
@@ -127,6 +127,7 @@ graph TD
 - **降级原因可见（R3，09-26）**：`ResearchProgress` 的降级行数据源为 `search.fallbackReason`（非空）∪ `attempts[].ok===false && fallbackReason`；`reasonText` 含 `LLM_FALLBACK: '汇总降级(已用原始条目)'`。修复旧实现只读 attempts（LLM 降级时 attempts 全 ok=true，进度页对 3/4 降级不显示任何原因）。**避免错标**：`search.fallbackReason` 的 provider 字段是**成功采信**的 provider，故仅当 `attempts` 中无同一原因的失败项时才补该行（`LLM_FALLBACK` 时 attempts 全 ok 必补；provider 层原因由 attempts 行展示，不重复不错挂）。
 - **WEB 来源展示 provider（R10，09-25）**：`CitationList.vue` 对 WEB 条目渲染「provider · 域名」（如 `Tavily · stnn.cc`），`FactSheetSummary.vue` 的 WEB 徽标渲染 `WEB·{provider}·{域名}`；provider 取自 `fact_sheet.entries[].sources.provider`（09-25 增量字段）。**历史 `fact_sheet` 可能缺 `provider` → 必须容错回退**为旧文案（仅域名）；纯展示层，不改请求/响应结构。
 - **研究完成 → 自动生成简报（2026-09-05 修复）**：`DeepResearchService.runAsync` 落 `fact_sheet` 后自动调 `BriefService.generateFromFactSheet`（LLM 一次，以事实手册为唯一事实来源 + 锁定需求 → 简报五字段落同一条 DEEP brief 行，`currentBriefId` 指向该行，状态机 GENERATING_BRIEF→READY）；失败不回滚研究产物（回 DRAFT + `lastBriefError`，深度面板可手动重试 `/deep/brief`，也可「跳过简报直接生成正文」）。修复「确定研究计划/研究完成后没有简报页面」的结构性缺陷。
+- **深度简报截断容错（R6，09-26）**：R5 放大事实手册（project 52 / brief 66 实测 17 条 / 10294 字）后旧 `chatJson(...,2048)` 系统性不足（`finish_reason=length` 截断 → 项目回 DRAFT）。现 `generateFromFactSheet` 首次 `chatJson(...,8192)`；**任何失败**（截断 / 空内容 / 非法 JSON / readValue 失败）翻倍提额 `16384` **重试一次**（附纠错说明），仅重试仍失败才落 DRAFT + `lastBriefError`。重试**独立实现**于 `BriefService`（不抽公共 helper、不与已删除的 FAST 路径共用），范式对齐 `SubAgentRunner.chat`（R4）。同时删除已死的 FAST 简报路径（`generate(Long)` / `buildSystemPrompt` / `buildUserPrompt(p,RagResult)` 及仅其使用的 `ragService`/`carService` 依赖）；`generateFromFactSheet`/`currentBrief` 行为不变。
 - `StepBrief.vue`（2026-09-11 单一状态机收敛，09-11-brief-gen-flow-refactor）：**无 FAST/DEEP 模式切换**——唯一生成路径为深度流程，无简报区间由唯一 `deepStage` 状态机驱动（值域 `NONE|PLANNING|CLARIFYING|CLARIFIED|RESEARCHING|RESEARCH_DONE`），同一状态恒渲染同一 UI，与进入路径（创建直发/重新进入/仅存草稿）无关；**删除 `deepMode` 路径意图布尔与 6s 有界重探测**。project 就位后 `syncDeepStatus()` 单次拉 `/deep/status` 断点恢复（PLANNING 则续起 2.5s 自轮询），不再依赖 `?gen=deep`。「重新研究生成」直接 `startDeep()` 进 PLANNING（`restarting` 标志跳过旧简报正文分支，新简报落库后恢复）。无简报区间只保留**一个**主操作「开始深度研究」，删除「开始深度研究→生成研究计划」两步链与裸生成按钮。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（`constants/project.js` 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。`ragStatus` 展示含 `DISABLED`（知识库已停用·全局设置，灰，见 [retrieval.md](retrieval.md)）。
 - 移动端：单列纵排、抽屉全屏、触控 ≥44px。
 
@@ -156,11 +157,13 @@ graph TD
 
 ## 10. 验收状态（2026-09-04）
 
+> 历史快照：下列 AC5/AC6 涉及快速模式（FAST）的条目，其 FAST 简报生成代码已于 2026-09-26（R6）删除，仅作历史记录保留。
+
 - [x] AC1 深度模式端到端（项目20/briefId=18：clarify 5 问→锁定→run agents=4 done=4→fact_sheet→generate versionId=16）
 - [x] AC2 并行研究：4 虚拟线程子代理并行，全部 DONE（首次 run 因 toolHints 序列化 bug 全 KB，修复后 webCalls=5/6）
 - [x] AC3 WEB 来源进手册：fact_sheet 6 条含 2 条 WEB（海狮08 22.99万起/海狮06 12.99-19.98万），置信度 4×0.9+2×0.4，warnings 4 条
 - [x] AC4 写作+数值回查：version 1917 字符；fact_risks 捕获手册外「25万」riskLevel=high
-- [x] AC5 快速模式回归：项目21（FAST brief id=19 + version id=17/18）全通过，深度/快速互不影响（**注：快速模式已于 2026-09-09 下线，此条为历史快照**）
+- [x] AC5 快速模式回归：项目21（FAST brief id=19 + version id=17/18）全通过，深度/快速互不影响（**注：快速模式已于 2026-09-09 下线，FAST 简报生成代码已于 2026-09-26 删除，此条为历史快照**）
 - [x] AC6 `mvn test-compile surefire:test` 44 全绿；`npx vite build` 绿（48s）
 - [ ] AC7 研究过程可视化 UI 真机走查（计划→表单→进度→手册→生成）→ **留用户浏览器验收**
 
@@ -170,4 +173,5 @@ graph TD
 
 - WEB 命中为摘要级（snippet），不做正文抓取（`CRAWL4AI_*` 未接入）。
 - 低置信条目以 `warnings` 提示人工核实，不自动剔除。
-- 快速模式已下线，其回归条目仅为历史记录。
+- 快速模式已下线（FAST 简报生成代码已于 2026-09-26 删除），其回归条目仅为历史记录。
+- 深度简报重试上限固定 16384 且仅一次；手册长度再显著增长时可能仍需进一步提额（当前实测 10294 字手册在 8192 内可完成）。

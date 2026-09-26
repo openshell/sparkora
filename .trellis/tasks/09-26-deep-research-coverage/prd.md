@@ -30,6 +30,10 @@
 - R5(已纳入，决策 D 已批准) 检索广度来自**动态数量的独立子代理**:计划按主题复杂度产出问题数(3-7),每个问题一个独立子代理各自搜索+总结,汇总时天然可跨源交叉验证;`maxAgents` 由固定上限 4 放宽为可配护栏(默认 6)。
   - 不做每子代理多 query 变体(方案 A/A+D 未选);不做固定 4 子代理。
   - 成本护栏:总检索预算仍约 8(`webQuotaPerAgent = max(1, 8/n)`),agent 增多时每 agent 减量;LLM 汇总次数随 agent 数上升,受 `maxAgents` 约束。
+- R6(P0，09-26 追加，决策 A 已批准) 深度简报必须容忍更长事实手册,不再因 `max_tokens` 截断失败:
+  - 现象/证据:project 52 / brief 66 于 2026-09-26 15:49 报「AI 输出被 max_tokens 截断」，`title_candidates/outline` 为空、项目回 DRAFT；brief 66 手册 17 条 / 10294 字（R5 放大手册后 2048 token 系统性不足）。
+  - 落点:`BriefService.generateFromFactSheet` 的 `chatJson` 由 `2048` 提额到 `8192`;失败(截断/空内容/非法 JSON)时**翻倍提额重试一次**(8192→16384),仅重试仍失败才回 DRAFT + `lastBriefError`。重试范式对齐 `SubAgentRunner.chat`(R4),但**独立实现,不与 FAST 路径共用/抽象**。
+  - 同时**删除已死的 FAST 简报路径**(`BriefService.generate` 及其 `buildSystemPrompt/buildUserPrompt`、RAG 依赖),仅保留深度链路(`generateFromFactSheet` + `currentBrief`)。证据:`generate()` 全仓无调用方;`currentBrief` 仍被 `ArticleProjectController` 使用。
 
 ## Acceptance Criteria
 
@@ -40,6 +44,8 @@
 - [ ] AC-05 既有契约不回归:`available()` 无闩锁、`toolHealth` 三键与优先级、`/deep/*` 响应结构、`research_notes` 字段集。
 - [ ] AC-06 `mvn -q -DskipTests compile` / `mvn test` 全绿;前端改动 `npm run build` 通过。
 - [ ] AC-07 文档同步:`docs/spec/brief-generation.md`、`.trellis/spec/backend/ai-rag-guidelines.md`、必要时 `docs/spec/settings.md`。
+- [ ] AC-08 深度简报截断容错:`generateFromFactSheet` 首次 `chatJson(...,8192)`;截断/空/非法 JSON 时翻倍(16384)重试一次且仅一次;两次均失败才回 DRAFT + `lastBriefError`。构造「首次抛截断 AiException、第二次成功」→ 简报落字段且项目 READY;「两次均失败」→ DRAFT(单测 Mock AiClient)。
+- [ ] AC-09 FAST 简报路径已删除:`BriefService.generate` 及其私有 `buildSystemPrompt/buildUserPrompt` 不再存在;`generateFromFactSheet`/`currentBrief` 保留且行为不变;`mvn test` 全绿(确认无悬挂引用)。
 
 ## Out of Scope
 
@@ -52,6 +58,7 @@
 
 - R2 背景维度:决策 A —— LLM 判断为主 + 确定性信号词兜底(不强制所有主题)。
 - R5 检索广度/子代理数:决策 D —— 动态子代理数(计划产出 3-7 个独立问题),`maxAgents` 默认放宽到 6。
+- R6 简报截断:决策 A —— 深度简报提额 8192 + 失败翻倍重试一次;只保留深度链路(删死掉的 FAST 简报路径)。
 
 ## Open Questions
 
