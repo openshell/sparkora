@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "原子抢占范式/UpdateWrapper 显式 set/部分更新陷阱是 ProjectStatusService 全部方法的权威模式来源"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "状态机生成类服务五步结构(前置/并发防护/抢占/失败回退/异常映射)与 409/400 语义是新服务必须保持的契约"}
+{"file": "docs/README.md", "reason": "4.2 状态机总览(6 态/状态守护/陈旧自愈/PUBLISHED_DRAFT 可重发)是新服务的语义权威"}
+{"file": ".trellis/tasks/09-27-p1-arch-consistency/prd.md", "reason": "父任务任务映射与依赖顺序(⑤先行,④⑨ 依赖本任务接口定型)"}

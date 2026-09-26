@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/09-27-state-machine-service/prd.md", "reason": "AC1-AC6 验收清单与 Out of Scope 边界(schema 回填/plan_status/job 状态机/前端 constants 均不动)"}
+{"file": ".trellis/tasks/09-27-state-machine-service/design.md", "reason": "「保持不变」清单与调用方改造表逐项对照;两拆分等价实现核查"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对全部 UPDATE 符合 UpdateWrapper 显式 set/条件更新权威模式,无 updateById 回潮"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对异常类型→业务码映射与提示语未变(400/409/500)"}
+{"file": "src/main/java/com/sparkora/service/ProjectStatusService.java", "reason": "逐字等价审计:全部 10 转换 WHERE/SET 与 ecc3445 基线逐项比对通过(claim 双白名单+陈旧分支限定生成中/advance 单态白名单/两拆分顺序/失败回退生成中白名单/markPublished 无状态条件/markPublishFailure 990+吞异常/writeBriefError isNotNull 清空优化)"}
+{"file": "src/main/java/com/sparkora/web/controller/DeepController.java", "reason": "check 修复:删除死导入 SecurityUtil(ecc3445 起即未使用,非本次重构引入)"}
+{"file": "src/main/java/com/sparkora/service/PublishService.java", "reason": "check 修复:L109 全限定 java.time.LocalDateTime 改用已 import 的 LocalDateTime,消除冗余"}
+{"file": "AC 验证", "reason": "AC1 grep set(\"status\" 仅 ProjectStatusService+CarSyncJob/NewsSyncJob;AC2 STALE_GENERATING_MS 唯一定义(ClarifyService 为引用);AC3 mvn compile+test 345 全绿;AC5 ProjectStatusServiceTest 20 用例断言 WHERE/SET/两拆分/截断;AC6 docs/README.md 4.2+error-handling.md+database-guidelines.md 已同步;前端 npm run build 通过(零改动回归)"}
