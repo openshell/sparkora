@@ -1,6 +1,7 @@
 package com.sparkora.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
 import com.sparkora.car.service.CarRagService;
@@ -143,23 +144,40 @@ public class VersionService {
                 throw new AiException("全部版本生成失败: " + String.join("; ", perVersionErrors), null);
             }
 
-            // 3) 默认选第一版为当前
+            // 3) 默认选第一版为当前 + 推进状态机。
+            //    条件更新:仅当仍处于本次抢占置的 GENERATING_VERSIONS 才推进(并发已改为 VERSIONS_READY/PUBLISHED_DRAFT 时不回退);
+            //    current_version_id 保留「仅首版设值」语义——先条件 set(当前为 null),未命中则只推进状态不覆盖用户已选 current。
             ArticleVersionEntity first = created.get(0);
-            p.setCurrentVersionId(first.getId());
-            p.setStatus("VERSIONS_READY");
-            p.setLastVersionError(perVersionErrors.isEmpty() ? null : "部分版本失败: " + String.join("; ", perVersionErrors));
-            p.setUpdatedAt(LocalDateTime.now());
-            projectMapper.updateById(p);
+            String lastVersionError = perVersionErrors.isEmpty() ? null : "部分版本失败: " + String.join("; ", perVersionErrors);
+            LocalDateTime nowTs = LocalDateTime.now();
+            int advanced = projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .eq("status", "GENERATING_VERSIONS")
+                    .isNull("current_version_id")
+                    .set("current_version_id", first.getId())
+                    .set("status", "VERSIONS_READY")
+                    .set("last_version_error", lastVersionError)
+                    .set("updated_at", nowTs));
+            if (advanced == 0) {
+                projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+                        .eq("id", projectId)
+                        .eq("status", "GENERATING_VERSIONS")
+                        .set("status", "VERSIONS_READY")
+                        .set("last_version_error", lastVersionError)
+                        .set("updated_at", nowTs));
+            }
             return created;
 
         } catch (Exception e) {
             String reason = e.getMessage();
             if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
-            p = projectMapper.selectById(projectId);
-            p.setStatus("READY");
-            p.setLastVersionError(reason);
-            p.setUpdatedAt(LocalDateTime.now());
-            projectMapper.updateById(p);
+            // 失败回退条件更新:仅生成中状态回退,状态已被并发推进到 VERSIONS_READY 及之后则不覆盖(保守安全)
+            projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .in("status", "GENERATING_VERSIONS", "GENERATING_BRIEF")
+                    .set("status", "READY")
+                    .set("last_version_error", reason)
+                    .set("updated_at", LocalDateTime.now()));
             throw new AiException("版本生成失败: " + reason, e);
         }
     }
@@ -327,9 +345,11 @@ public class VersionService {
         ArticleVersionEntity v = versionMapper.selectById(versionId);
         if (v == null || !v.getProjectId().equals(projectId))
             throw new IllegalArgumentException("版本不存在或不属于该项目");
-        p.setCurrentVersionId(versionId);
-        p.setUpdatedAt(LocalDateTime.now());
-        projectMapper.updateById(p);
+        // 单列显式 set:避免 updateById 全字段覆盖并发写入的状态列
+        projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+                .eq("id", projectId)
+                .set("current_version_id", versionId)
+                .set("updated_at", LocalDateTime.now()));
     }
 
     /**

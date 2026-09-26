@@ -139,25 +139,28 @@ public class ImitationService {
             analysis.put("genre", node.path("genre").asText(""));
             analysis.put("structure", node.path("structure").asText(""));
             analysis.put("sentenceFeatures", node.path("sentenceFeatures").asText(""));
-            p.setCurrentBriefId(b.getId());
-            p.setImitationAnalysis(json.writeValueAsString(analysis));
-            p.setStatus("READY");
-            p.setLastBriefError(null);
-            p.setUpdatedAt(LocalDateTime.now());
-            projectMapper.updateById(p);
+            // 条件更新:仅当仍处于本次抢占置的 GENERATING_BRIEF 才推进(并发已推进下游状态时不回退)
+            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .eq("status", "GENERATING_BRIEF")
+                    .set("current_brief_id", b.getId())
+                    .set("imitation_analysis", json.writeValueAsString(analysis))
+                    .set("status", "READY")
+                    .set("last_brief_error", null)
+                    .set("updated_at", LocalDateTime.now()));
             return b;
         } catch (Exception e) {
-            // 失败回 DRAFT 并记录原因(截断防超列,同 BriefService);项目已被删除时跳过回退,保留原始异常
+            // 失败回 DRAFT 并记录原因(截断防超列,同 BriefService);项目已被删除时无需回退,保留原始异常。
+            // 条件更新限定生成中状态:并发已推进(VERSIONS_READY 及之后)时不覆盖,保守安全。
             String reason = e.getMessage();
             if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
             log.warn("原文分析失败 project={}: {}", projectId, reason, e);
-            ArticleProjectEntity fresh = projectMapper.selectById(projectId);
-            if (fresh != null) {
-                fresh.setStatus("DRAFT");
-                fresh.setLastBriefError(reason);
-                fresh.setUpdatedAt(LocalDateTime.now());
-                projectMapper.updateById(fresh);
-            }
+            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                    .set("status", "DRAFT")
+                    .set("last_brief_error", reason)
+                    .set("updated_at", LocalDateTime.now()));
             if (e instanceof AiException ae) throw ae;
             throw new AiException("原文分析失败: " + reason, e);
         }

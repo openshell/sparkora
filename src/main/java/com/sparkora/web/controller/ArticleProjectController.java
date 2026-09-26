@@ -146,16 +146,20 @@ public class ArticleProjectController {
     public R<Void> update(@PathVariable Long id, @Valid @RequestBody ProjectRequest req) {
         ArticleProjectEntity e = mapper.selectById(id);
         if (e == null) return R.fail(404, "项目不存在");
-        e.setTopic(req.getTopic());
-        e.setKeywords(req.getKeywords());
-        e.setAudience(req.getAudience());
-        e.setWordCountTarget(req.getWordCountTarget());
-        e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
-        e.setExtraInfo(req.getExtraInfo());
-        e.setSelectedTitle(req.getSelectedTitle());
-        e.setRemark(req.getRemark());
-        e.setUpdatedAt(LocalDateTime.now());
-        mapper.updateById(e);
+        // 白名单列显式 set:绝不触碰 status/current_*/publish_*/last_*_error 等服务端状态列。
+        // updateById 全字段回写会用旧快照把并发推进的状态(生成中/已发布)覆盖回去。
+        UpdateWrapper<ArticleProjectEntity> uw = new UpdateWrapper<>();
+        uw.eq("id", id)
+                .set("topic", req.getTopic())
+                .set("keywords", req.getKeywords())
+                .set("audience", req.getAudience())
+                .set("word_count_target", req.getWordCountTarget())
+                .set("brand_voice_profile_id", req.getBrandVoiceProfileId())
+                .set("extra_info", req.getExtraInfo())
+                .set("selected_title", req.getSelectedTitle())
+                .set("remark", req.getRemark())
+                .set("updated_at", LocalDateTime.now());
+        mapper.update(null, uw);
         // S6 多车型:覆盖式写入关联车型
         carService.replace(id, req.getCarModelIds());
         return R.ok();
@@ -309,9 +313,11 @@ public class ArticleProjectController {
         if (e == null) return R.fail(404, "项目不存在");
         String title = body.get("title");
         if (title != null && title.length() > 200) return R.fail(400, "标题不能超过 200 字");
-        e.setSelectedTitle(title == null || title.isBlank() ? null : title);
-        e.setUpdatedAt(LocalDateTime.now());
-        mapper.updateById(e);
+        // 单列显式 set:避免 updateById 全字段覆盖并发写入的状态列
+        mapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
+                .eq("id", id)
+                .set("selected_title", title == null || title.isBlank() ? null : title)
+                .set("updated_at", LocalDateTime.now()));
         return R.ok();
     }
 

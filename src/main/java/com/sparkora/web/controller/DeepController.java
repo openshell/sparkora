@@ -153,12 +153,22 @@ public class DeepController {
             // 09-10-versions-page-fix:对齐多版本链路(VersionService.generate 成功分支)语义——
             // 成功后推进状态机(仅 READY/DRAFT → VERSIONS_READY,PUBLISHED_DRAFT 追加不回退),
             // 首版设默认当前,追加生成不覆盖用户已选的 current。
-            ArticleProjectEntity p = projectMapper.selectById(projectId);
-            if (p != null) {
-                if (p.getCurrentVersionId() == null) p.setCurrentVersionId(versionId);
-                if ("READY".equals(p.getStatus()) || "DRAFT".equals(p.getStatus())) p.setStatus("VERSIONS_READY");
-                p.setUpdatedAt(LocalDateTime.now());
-                projectMapper.updateById(p);
+            // 条件更新(非 select→updateById 全字段回写):并发推进的状态不被旧快照覆盖。
+            // current_version_id 保留「仅首版设值」语义——先条件 set(当前为 null),未命中则只推进状态。
+            LocalDateTime nowTs = LocalDateTime.now();
+            int advanced = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .in("status", "READY", "DRAFT")
+                    .isNull("current_version_id")
+                    .set("current_version_id", versionId)
+                    .set("status", "VERSIONS_READY")
+                    .set("updated_at", nowTs));
+            if (advanced == 0) {
+                projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                        .eq("id", projectId)
+                        .in("status", "READY", "DRAFT")
+                        .set("status", "VERSIONS_READY")
+                        .set("updated_at", nowTs));
             }
             return R.ok(Map.of("versionId", versionId));
         } catch (IllegalArgumentException e) {

@@ -108,14 +108,14 @@ public class ClarifyService {
             b.setTokenUsage(r.totalTokens());
             b.setPlanStatus("READY");
             briefMapper.updateById(b);
-            // 成功后清空 last_brief_error(与 BriefService 一致:失败原因成功后清空,避免重试成功后仍显示旧错误)
+            // 成功后清空 last_brief_error(与 BriefService 一致:失败原因成功后清空,避免重试成功后仍显示旧错误)。
+            // 单列显式 set:避免 updateById 全字段覆盖并发写入的状态列。
             try {
-                ArticleProjectEntity fresh = projectMapper.selectById(b.getProjectId());
-                if (fresh != null && fresh.getLastBriefError() != null) {
-                    fresh.setLastBriefError(null);
-                    fresh.setUpdatedAt(LocalDateTime.now());
-                    projectMapper.updateById(fresh);
-                }
+                projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                        .eq("id", b.getProjectId())
+                        .isNotNull("last_brief_error")
+                        .set("last_brief_error", null)
+                        .set("updated_at", LocalDateTime.now()));
             } catch (Exception pe) {
                 log.warn("清空 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());
             }
@@ -135,13 +135,14 @@ public class ClarifyService {
             } catch (Exception de) {
                 log.warn("清理研究计划占位行失败 briefId={}: {}", briefId, de.getMessage());
             }
-            // 失败原因落项目(重取 + 判 null,防覆盖生成期间其他字段变更/项目被并发删除)
+            // 失败原因落项目(按 id 单列显式 set:避免 updateById 全字段覆盖/依赖陈旧快照;
+            // projectId==null 表示占位行已被并发清理,此时无需写)
             try {
-                ArticleProjectEntity fresh = projectId == null ? null : projectMapper.selectById(projectId);
-                if (fresh != null) {
-                    fresh.setLastBriefError(reason);
-                    fresh.setUpdatedAt(LocalDateTime.now());
-                    projectMapper.updateById(fresh);
+                if (projectId != null) {
+                    projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                            .eq("id", projectId)
+                            .set("last_brief_error", reason)
+                            .set("updated_at", LocalDateTime.now()));
                 }
             } catch (Exception pe) {
                 log.warn("写入 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());

@@ -127,21 +127,27 @@ public class BriefService {
             b.setTokenUsage(cr.totalTokens());
             briefMapper.updateById(b);
 
-            p.setCurrentBriefId(b.getId());
-            p.setStatus("READY");
-            p.setLastBriefError(null);
-            p.setUpdatedAt(LocalDateTime.now());
-            projectMapper.updateById(p);
+            // 条件更新:仅当仍处于本次抢占置的 GENERATING_BRIEF 才推进(并发已推进下游状态时不回退)
+            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .eq("status", "GENERATING_BRIEF")
+                    .set("current_brief_id", b.getId())
+                    .set("status", "READY")
+                    .set("last_brief_error", null)
+                    .set("updated_at", LocalDateTime.now()));
             return b;
         } catch (Exception e) {
-            // 失败回 DRAFT 并记录原因；brief 行不动（无简报字段，前端保留深度面板可重试）
+            // 失败回 DRAFT 并记录原因；brief 行不动（无简报字段，前端保留深度面板可重试）。
+            // 条件更新限定生成中状态:并发已推进(VERSIONS_READY 及之后)时不覆盖,保守安全。
             String reason = e.getMessage();
             if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
             log.warn("深度简报生成失败 project={} brief={}: {}", projectId, briefId, reason, e);
-            p.setStatus("DRAFT");
-            p.setLastBriefError(reason);
-            p.setUpdatedAt(LocalDateTime.now());
-            projectMapper.updateById(p);
+            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
+                    .eq("id", projectId)
+                    .in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
+                    .set("status", "DRAFT")
+                    .set("last_brief_error", reason)
+                    .set("updated_at", LocalDateTime.now()));
             throw new AiException("深度简报生成失败: " + reason, e);
         }
     }
