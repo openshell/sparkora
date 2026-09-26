@@ -1,6 +1,5 @@
 package com.sparkora.service;
 
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
@@ -21,7 +20,8 @@ import java.util.Map;
  *  2. 校验渲染未降级(降级 HTML 不进公众号);
  *  3. 组 gzhContent JSON(title + content=渲染 HTML + cover=封面图床 URL)→ wenyan-server /upload → /publish(fileId)
  *     → {media_id}(上传后立即发布,远低于 server 端 10 分钟 TTL);
- *  4. 原子落库:status=PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error。
+ *  4. 原子落库:PUBLISHED_DRAFT + publish_media_id/publish_theme/published_at,清 last_publish_error
+ *     (状态推进与失败记录已收敛到 ProjectStatusService,09-27-state-machine-service)。
  *
  * 失败语义:任何一步失败抛异常(中文原因),控制器捕获后调 markFailure 写 last_publish_error;
  * 状态推进只发生在全部成功之后,失败状态原样保留,可重试(可重发覆盖草稿)。
@@ -35,15 +35,18 @@ public class PublishService {
     private final PreviewService previewService;
     private final WenyanServerService serverService;
     private final ObjectMapper json;
+    /** 项目状态机唯一写权持有者(发布终态落库/失败错误列)。 */
+    private final ProjectStatusService statusService;
 
     public PublishService(ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
                           PreviewService previewService, WenyanServerService serverService,
-                          ObjectMapper json) {
+                          ObjectMapper json, ProjectStatusService statusService) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.previewService = previewService;
         this.serverService = serverService;
         this.json = json;
+        this.statusService = statusService;
     }
 
     /** 发布(重发)到公众号草稿箱。参数与预览一致(theme/highlight/macStyle/footnote)。 */
@@ -102,16 +105,9 @@ public class PublishService {
                 fileId, gzhJson.length() / 1024, System.currentTimeMillis() - startAt);
         String mediaId = serverService.publish(fileId);
 
-        // 4) 原子落库:PUBLISHED_DRAFT(可重发) + media_id/主题/时间,清错误
-        java.time.LocalDateTime now = java.time.LocalDateTime.now();
-        projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                .eq("id", projectId)
-                .set("status", "PUBLISHED_DRAFT")
-                .set("publish_media_id", mediaId)
-                .set("publish_theme", usedTheme)
-                .set("published_at", now)
-                .set("last_publish_error", null)
-                .set("updated_at", now));
+        // 4) 原子落库:PUBLISHED_DRAFT(可重发) + media_id/主题/时间,清错误(委托状态服务)
+        LocalDateTime now = LocalDateTime.now();
+        statusService.markPublished(projectId, mediaId, usedTheme, now);
         log.info("项目 {} 已发布到公众号草稿箱 media_id={} theme={} (总耗时 {} ms)",
                 projectId, mediaId, usedTheme, System.currentTimeMillis() - startAt);
 
@@ -122,18 +118,8 @@ public class PublishService {
         return result;
     }
 
-    /** 发布失败:写 last_publish_error(不动状态,可重试),并在后端日志留完整错误。 */
+    /** 发布失败门面:委托状态服务(压缩/截断/日志/吞异常口径自 09-27-state-machine-service 起收在服务内,控制器契约不变)。 */
     public void markFailure(Long projectId, String message) {
-        String msg = message == null ? "未知错误" : message.replaceAll("\\s+", " ").trim();
-        if (msg.length() > 990) msg = msg.substring(0, 990) + "…";
-        log.error("发布失败 project={} 原因: {}", projectId, msg);
-        try {
-            projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .set("last_publish_error", msg)
-                    .set("updated_at", java.time.LocalDateTime.now()));
-        } catch (Exception e) {
-            log.warn("发布失败原因落库失败 project={}: {}", projectId, e.getMessage());
-        }
+        statusService.markPublishFailure(projectId, message);
     }
 }

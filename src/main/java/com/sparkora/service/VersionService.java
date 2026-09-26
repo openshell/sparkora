@@ -46,14 +46,16 @@ public class VersionService {
     private final ObjectMapper json;
     /** 文章仿写(09-09-article-imitation):仿写 prompt 与相似度自检。 */
     private final ImitationService imitationService;
+    /** 项目状态机唯一写权持有者(抢占/推进/回退/错误列,09-27-state-machine-service)。 */
+    private final ProjectStatusService statusService;
 
     private static final String LABELS = "ABCDEFGHIJ";
 
     public VersionService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
-                          ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
-                          AiClient aiClient, CarRagService ragService,
-                          ArticleProjectCarService carService, ObjectMapper json,
-                          ImitationService imitationService) {
+                           ArticleVersionMapper versionMapper, StyleProfileMapper styleMapper,
+                           AiClient aiClient, CarRagService ragService,
+                           ArticleProjectCarService carService, ObjectMapper json,
+                           ImitationService imitationService, ProjectStatusService statusService) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.versionMapper = versionMapper;
@@ -63,6 +65,7 @@ public class VersionService {
         this.carService = carService;
         this.json = json;
         this.imitationService = imitationService;
+        this.statusService = statusService;
     }
 
     /**
@@ -70,18 +73,6 @@ public class VersionService {
      * @param styleIds 用户从风格库选中的风格 id 列表（至少 1 个，最多 10 个）
      * @return 生成的版本列表（可能少于 styleIds 数，若某版失败则跳过）
      */
-    /** 生成中状态超过该时长视为陈旧（JVM 中途死亡/重启残留），允许重新触发以自愈。 */
-    private static final long STALE_GENERATING_MS = 10 * 60 * 1000L;
-
-    /** 项目是否卡在生成中状态（未过期）。 */
-    private boolean stuckGenerating(ArticleProjectEntity p) {
-        String s = p.getStatus();
-        boolean generating = "GENERATING_BRIEF".equals(s) || "GENERATING_VERSIONS".equals(s);
-        if (!generating) return false;
-        return p.getUpdatedAt() != null
-                && p.getUpdatedAt().isAfter(LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS)));
-    }
-
     public List<ArticleVersionEntity> generate(Long projectId, List<Long> styleIds) {
         if (styleIds == null || styleIds.isEmpty())
             throw new IllegalArgumentException("至少选择一个风格");
@@ -91,7 +82,7 @@ public class VersionService {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
         // 并发防护:正在生成中（未过期）时拒绝重复触发;陈旧状态(超 10 分钟,进程已死)放行自愈
-        if (stuckGenerating(p)) {
+        if (statusService.stuckGenerating(p)) {
             throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
         }
         if (p.getCurrentBriefId() == null) throw new NotReadyException("尚未生成 brief，无法生成版本");
@@ -101,20 +92,9 @@ public class VersionService {
         List<StyleProfileEntity> styles = styleMapper.selectBatchIds(styleIds);
         if (styles.isEmpty()) throw new IllegalArgumentException("所选风格不存在");
 
-        // 1) 条件更新置进行中（原子抢占,消除 check-then-set 竞态）:
-        //    仅当「READY/VERSIONS_READY(首生成或追加)」或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效;
-        //    陈旧分支必须限定生成中状态,否则任何 updated_at 较旧的下游状态都会被误放行、状态机回退。
-        //    状态守护:VERSIONS_READY 之后(PUBLISHED_DRAFT)已触发下一步,再生成版本会把状态机拉回 VERSIONS_READY,拒绝。
-        java.time.LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
-        int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                .eq("id", projectId)
-                .and(w -> w.in("status", "READY", "VERSIONS_READY")
-                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                                .lt("updated_at", staleCutoff)))
-                .set("status", "GENERATING_VERSIONS")
-                .set("last_version_error", null)
-                .set("updated_at", LocalDateTime.now()));
-        if (claimed == 0) throw new IllegalStateException(BriefService.projectStatusGuardMsg(p, "生成版本"));
+        // 1) 原子抢占置进行中(消除 check-then-set 竞态):仅当「READY/VERSIONS_READY(首生成或追加)」
+        //    或「生成中且已陈旧(超阈值,进程已死,自愈)」才生效,claimed==0 抛 409 守卫提示(含状态机回退拒绝)。
+        statusService.claimVersionsGenerating(projectId, p, "生成版本");
         p.setStatus("GENERATING_VERSIONS");
 
         List<ArticleVersionEntity> created = new ArrayList<>();
@@ -144,41 +124,16 @@ public class VersionService {
                 throw new AiException("全部版本生成失败: " + String.join("; ", perVersionErrors), null);
             }
 
-            // 3) 默认选第一版为当前 + 推进状态机。
-            //    条件更新:仅当仍处于本次抢占置的 GENERATING_VERSIONS 才推进(并发已改为 VERSIONS_READY/PUBLISHED_DRAFT 时不回退);
-            //    current_version_id 保留「仅首版设值」语义——先条件 set(当前为 null),未命中则只推进状态不覆盖用户已选 current。
+            // 3) 默认选第一版为当前 + 推进状态机(委托状态服务,条件更新防回退 + 首版两拆分)。
             ArticleVersionEntity first = created.get(0);
             String lastVersionError = perVersionErrors.isEmpty() ? null : "部分版本失败: " + String.join("; ", perVersionErrors);
-            LocalDateTime nowTs = LocalDateTime.now();
-            int advanced = projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .eq("status", "GENERATING_VERSIONS")
-                    .isNull("current_version_id")
-                    .set("current_version_id", first.getId())
-                    .set("status", "VERSIONS_READY")
-                    .set("last_version_error", lastVersionError)
-                    .set("updated_at", nowTs));
-            if (advanced == 0) {
-                projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                        .eq("id", projectId)
-                        .eq("status", "GENERATING_VERSIONS")
-                        .set("status", "VERSIONS_READY")
-                        .set("last_version_error", lastVersionError)
-                        .set("updated_at", nowTs));
-            }
+            statusService.advanceVersionsReady(projectId, first.getId(), lastVersionError);
             return created;
 
         } catch (Exception e) {
-            String reason = e.getMessage();
-            if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
-            // 失败回退条件更新:仅生成中状态回退,状态已被并发推进到 VERSIONS_READY 及之后则不覆盖(保守安全)
-            projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .in("status", "GENERATING_VERSIONS", "GENERATING_BRIEF")
-                    .set("status", "READY")
-                    .set("last_version_error", reason)
-                    .set("updated_at", LocalDateTime.now()));
-            throw new AiException("版本生成失败: " + reason, e);
+            // 失败回退(仅生成中状态,防覆盖并发推进;截断收在状态服务)
+            statusService.failVersionsToReady(projectId, e.getMessage());
+            throw new AiException("版本生成失败: " + e.getMessage(), e);
         }
     }
 

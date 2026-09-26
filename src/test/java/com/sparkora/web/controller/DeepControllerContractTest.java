@@ -10,9 +10,9 @@ import com.sparkora.deep.tool.SearxngSearchTool;
 import com.sparkora.deep.tool.TavilySearchTool;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
-import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.StyleProfileMapper;
 import com.sparkora.service.BriefService;
+import com.sparkora.service.ProjectStatusService;
 import com.sparkora.service.SettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,12 +49,12 @@ class DeepControllerContractTest {
     @Mock DeepResearchService researchService;
     @Mock DeepWriterService writerService;
     @Mock ArticleBriefMapper briefMapper;
-    @Mock ArticleProjectMapper projectMapper;
     @Mock BriefService briefService;
     @Mock StyleProfileMapper styleMapper;
     @Mock SearxngSearchTool searxngTool;
     @Mock TavilySearchTool tavilyTool;
     @Mock SettingService settingService;
+    @Mock ProjectStatusService statusService;
 
     private MockMvc mvc;
     private DeepProperties props;
@@ -63,8 +63,8 @@ class DeepControllerContractTest {
     void setUp() {
         props = new DeepProperties();
         DeepController controller = new DeepController(clarifyService, researchService, writerService,
-                briefMapper, projectMapper, briefService, styleMapper, searxngTool, tavilyTool,
-                props, settingService);
+                briefMapper, briefService, styleMapper, searxngTool, tavilyTool,
+                props, settingService, statusService);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
     }
 

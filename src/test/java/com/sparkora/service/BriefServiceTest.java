@@ -1,7 +1,6 @@
 package com.sparkora.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
@@ -25,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -39,6 +38,9 @@ import static org.mockito.Mockito.when;
  *  ① 首次失败(截断 AiException)→ 提额 16384 重试成功 → 简报字段落库 + 项目 READY + currentBriefId；
  *  ② 两次均失败 → 项目回 DRAFT + lastBriefError,且第二次确实用 16384；
  *  ③ 首次即成功 → 只用 8192,不触发 16384 重试。
+ *
+ * 状态推进自 09-27-state-machine-service 起委托 ProjectStatusService(状态写权收敛):
+ * 项目状态断言改为 verify 委托调用与参数,WHERE/SET 逐项等价断言在 ProjectStatusServiceTest。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -50,6 +52,7 @@ class BriefServiceTest {
     @Mock ArticleProjectMapper projectMapper;
     @Mock ArticleBriefMapper briefMapper;
     @Mock AiClient aiClient;
+    @Mock ProjectStatusService statusService;
 
     BriefService service;
 
@@ -66,7 +69,7 @@ class BriefServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new BriefService(projectMapper, briefMapper, aiClient, new ObjectMapper());
+        service = new BriefService(projectMapper, briefMapper, aiClient, new ObjectMapper(), statusService);
     }
 
     private ArticleProjectEntity project() {
@@ -90,11 +93,10 @@ class BriefServiceTest {
         return new AiClient.ChatResult(VALID_BRIEF_JSON, "glm-5.2", 321);
     }
 
-    /** 公共桩：项目/简报可查,原子抢占成功。 */
+    /** 公共桩：项目/简报可查(状态服务 mock 默认无操作即视为抢占/推进成功)。 */
     private void stubHappyPath(ArticleProjectEntity p, ArticleBriefEntity b) {
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
         when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
-        when(projectMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
     }
 
     /** ① 首次截断(8192 抛 AiException)→ 提额 16384 重试成功 → 字段落库 + READY。 */
@@ -125,19 +127,10 @@ class BriefServiceTest {
         assertEquals(321, saved.getTokenUsage());
         assertEquals(BRIEF_ID, out.getId());
 
-        // 项目状态机推到 READY + currentBriefId 指向该行 + 清空旧错误。
-        // R2(09-27-p0-hardening):由 updateById 全字段回写改为 UpdateWrapper 条件更新,断言 set 列与取值。
-        // 项目表共 2 次 update:第 1 次原子抢占置 GENERATING_BRIEF,第 2 次(本断言)推进 READY。
-        ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> uwCaptor = updateWrapperCaptor();
-        verify(projectMapper, times(2)).update(isNull(), uwCaptor.capture());
-        UpdateWrapper<ArticleProjectEntity> uw = uwCaptor.getAllValues().get(1);
-        assertTrue(uw.getSqlSet().contains("status"), "set 含 status");
-        assertTrue(uw.getSqlSet().contains("current_brief_id"), "set 含 current_brief_id");
-        assertTrue(uw.getSqlSet().contains("last_brief_error"), "set 含 last_brief_error");
-        assertTrue(uw.getSqlSegment().contains("status"), "WHERE 带状态白名单");
-        assertTrue(uw.getParamNameValuePairs().values().contains("READY"), "推进到 READY");
-        assertTrue(uw.getParamNameValuePairs().values().contains(BRIEF_ID), "currentBriefId 指向该行");
-        assertTrue(uw.getParamNameValuePairs().values().contains("GENERATING_BRIEF"), "仅从生成中状态推进");
+        // 委托状态服务:原子抢占 + 成功推进(仅 GENERATING_BRIEF → READY,current 指向该行)
+        verify(statusService).claimBriefGenerating(PROJECT_ID, p, "生成简报");
+        verify(statusService).advanceReady(eq(PROJECT_ID), eq(BRIEF_ID), anyMap());
+        verify(statusService, never()).failBriefToDraft(any(), anyString());
     }
 
     /** ② 两次均失败 → 项目回 DRAFT + lastBriefError,且第二次确实用 16384。 */
@@ -161,20 +154,10 @@ class BriefServiceTest {
         // 简报行不动(失败时不写简报字段)
         verify(briefMapper, never()).updateById(any(ArticleBriefEntity.class));
 
-        // 项目回 DRAFT + 记录失败原因（R2: 条件更新,断言 set 取值;2 次 update 的第 2 次为失败回退）
-        ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> uwCaptor = updateWrapperCaptor();
-        verify(projectMapper, times(2)).update(isNull(), uwCaptor.capture());
-        UpdateWrapper<ArticleProjectEntity> uw = uwCaptor.getAllValues().get(1);
-        String sqlSet = uw.getSqlSet();
-        String sqlSegment = uw.getSqlSegment();  // 先物化 WHERE,paramNameValuePairs 才含条件值
-        assertTrue(sqlSet.contains("status"), "set 含 status");
-        assertTrue(sqlSet.contains("last_brief_error"), "set 含 last_brief_error");
-        assertTrue(sqlSegment.contains("status"), "WHERE 限定状态");
-        assertTrue(uw.getParamNameValuePairs().values().contains("DRAFT"), "回退到 DRAFT");
-        assertTrue(uw.getParamNameValuePairs().values().stream()
-                .anyMatch(v -> v instanceof String s && s.contains("截断")), "失败原因已落库");
-        assertTrue(uw.getParamNameValuePairs().values().stream()
-                .anyMatch(v -> v instanceof String s && s.startsWith("GENERATING")), "失败回退限定生成中状态");
+        // 委托状态服务:抢占成功后失败回退 DRAFT + 记录原因(错误列写入与生成中白名单断言在 ProjectStatusServiceTest)
+        verify(statusService).claimBriefGenerating(PROJECT_ID, p, "生成简报");
+        verify(statusService).failBriefToDraft(eq(PROJECT_ID), anyString());
+        verify(statusService, never()).advanceReady(any(), any(), any());
     }
 
     /** ③ 首次即成功 → 只用 8192,不触发 16384 重试。 */
@@ -192,11 +175,6 @@ class BriefServiceTest {
         verify(aiClient, never()).chatJson(anyString(), anyString(), eq(16384));
         verify(aiClient, times(1)).chatJson(anyString(), anyString(), anyInt());
         verify(briefMapper).updateById(any(ArticleBriefEntity.class));
-    }
-
-    /** 捕获项目表 UpdateWrapper（R2 起项目写入一律走 UpdateWrapper 条件更新,不再 updateById 全字段回写）。 */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> updateWrapperCaptor() {
-        return (ArgumentCaptor) ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(statusService).advanceReady(eq(PROJECT_ID), eq(BRIEF_ID), anyMap());
     }
 }

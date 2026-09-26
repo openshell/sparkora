@@ -6,14 +6,10 @@ import com.sparkora.deep.service.ClarifyService;
 import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
-import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
-import com.sparkora.mapper.ArticleProjectMapper;
-import com.sparkora.security.SecurityUtil;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -33,8 +29,6 @@ public class DeepController {
     private final DeepResearchService researchService;
     private final DeepWriterService writerService;
     private final ArticleBriefMapper briefMapper;
-    /** 项目 mapper(09-10-versions-page-fix:深度生成成功后推进状态机 + 首版设 current) */
-    private final ArticleProjectMapper projectMapper;
     /** 深度简报生成(手动重试 /deep/brief) */
     private final com.sparkora.service.BriefService briefService;
     /** 风格表回查(09-10-style-library-enhance:/deep/generate 支持按 styleId 后端回查风格,不再由前端传 toneGuidance) */
@@ -44,27 +38,29 @@ public class DeepController {
     private final com.sparkora.config.DeepProperties deepProps;
     /** 系统检索设置(09-15:toolHealth 反映真实 KB/WEB 运行时门控) */
     private final com.sparkora.service.SettingService settingService;
+    /** 项目状态机唯一写权持有者(09-10-versions-page-fix 推状态 + 09-27-state-machine-service 收敛)。 */
+    private final com.sparkora.service.ProjectStatusService statusService;
 
     public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
-                          ArticleProjectMapper projectMapper,
                           com.sparkora.service.BriefService briefService,
                           com.sparkora.mapper.StyleProfileMapper styleMapper,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
                           com.sparkora.config.DeepProperties deepProps,
-                          com.sparkora.service.SettingService settingService) {
+                          com.sparkora.service.SettingService settingService,
+                          com.sparkora.service.ProjectStatusService statusService) {
         this.clarifyService = clarifyService;
         this.researchService = researchService;
         this.writerService = writerService;
         this.briefMapper = briefMapper;
-        this.projectMapper = projectMapper;
         this.briefService = briefService;
         this.styleMapper = styleMapper;
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
         this.deepProps = deepProps;
         this.settingService = settingService;
+        this.statusService = statusService;
     }
 
     /** ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。body: {topic?, extraInfo?}。 */
@@ -153,23 +149,8 @@ public class DeepController {
             // 09-10-versions-page-fix:对齐多版本链路(VersionService.generate 成功分支)语义——
             // 成功后推进状态机(仅 READY/DRAFT → VERSIONS_READY,PUBLISHED_DRAFT 追加不回退),
             // 首版设默认当前,追加生成不覆盖用户已选的 current。
-            // 条件更新(非 select→updateById 全字段回写):并发推进的状态不被旧快照覆盖。
-            // current_version_id 保留「仅首版设值」语义——先条件 set(当前为 null),未命中则只推进状态。
-            LocalDateTime nowTs = LocalDateTime.now();
-            int advanced = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .in("status", "READY", "DRAFT")
-                    .isNull("current_version_id")
-                    .set("current_version_id", versionId)
-                    .set("status", "VERSIONS_READY")
-                    .set("updated_at", nowTs));
-            if (advanced == 0) {
-                projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                        .eq("id", projectId)
-                        .in("status", "READY", "DRAFT")
-                        .set("status", "VERSIONS_READY")
-                        .set("updated_at", nowTs));
-            }
+            // 条件更新语义与首版两拆分已收敛到 ProjectStatusService(09-27-state-machine-service)。
+            statusService.advanceVersionsReadyFromReady(projectId, versionId);
             return R.ok(Map.of("versionId", versionId));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());

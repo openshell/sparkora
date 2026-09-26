@@ -35,15 +35,16 @@ import java.util.Map;
 @Service
 public class ClarifyService {
 
-    /** 生成中状态超过该时长视为陈旧(JVM 中途死亡/重启残留),允许重新触发以自愈。 */
-    private static final long STALE_GENERATING_MS = 10 * 60 * 1000L;
-
     private final AiClient aiClient;
     private final ObjectMapper json;
     private final ArticleBriefMapper briefMapper;
     private final ArticleProjectMapper projectMapper;
     /** 车型知识库名录(S9 修复):反问问题必须基于真实车库车型,而非模型凭主题猜测。 */
     private final com.sparkora.car.service.CarModelService carModelService;
+    /** 项目状态机唯一写权持有者(异步链路 last_brief_error 写入/清空,09-27-state-machine-service)。 */
+    private final com.sparkora.service.ProjectStatusService statusService;
+    /** 陈旧占位清理阈值(与状态服务 STALE_GENERATING_MS 同款口径,brief 侧 plan_status 自愈)。 */
+    private static final long STALE_PLANNING_MS = com.sparkora.service.ProjectStatusService.STALE_GENERATING_MS;
     // 自注入代理,确保 @Async 生效(start 内 this.runAsync 不会走代理)
     @Autowired
     @Lazy
@@ -51,12 +52,14 @@ public class ClarifyService {
 
     public ClarifyService(AiClient aiClient, ObjectMapper json,
                           ArticleBriefMapper briefMapper, ArticleProjectMapper projectMapper,
-                          com.sparkora.car.service.CarModelService carModelService) {
+                          com.sparkora.car.service.CarModelService carModelService,
+                          com.sparkora.service.ProjectStatusService statusService) {
         this.aiClient = aiClient;
         this.json = json;
         this.briefMapper = briefMapper;
         this.projectMapper = projectMapper;
         this.carModelService = carModelService;
+        this.statusService = statusService;
     }
 
     /**
@@ -72,7 +75,7 @@ public class ClarifyService {
         briefMapper.delete(new QueryWrapper<ArticleBriefEntity>()
                 .eq("project_id", projectId)
                 .eq("plan_status", "PLANNING")
-                .lt("created_at", LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS))));
+                .lt("created_at", LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_PLANNING_MS))));
 
         ArticleBriefEntity b = new ArticleBriefEntity();
         b.setProjectId(projectId);
@@ -109,13 +112,9 @@ public class ClarifyService {
             b.setPlanStatus("READY");
             briefMapper.updateById(b);
             // 成功后清空 last_brief_error(与 BriefService 一致:失败原因成功后清空,避免重试成功后仍显示旧错误)。
-            // 单列显式 set:避免 updateById 全字段覆盖并发写入的状态列。
+            // 单列写入已收敛到 ProjectStatusService(清空分支带 isNotNull 优化,避免无谓刷新 updated_at)。
             try {
-                projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                        .eq("id", b.getProjectId())
-                        .isNotNull("last_brief_error")
-                        .set("last_brief_error", null)
-                        .set("updated_at", LocalDateTime.now()));
+                statusService.writeBriefError(b.getProjectId(), null);
             } catch (Exception pe) {
                 log.warn("清空 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());
             }
@@ -135,14 +134,10 @@ public class ClarifyService {
             } catch (Exception de) {
                 log.warn("清理研究计划占位行失败 briefId={}: {}", briefId, de.getMessage());
             }
-            // 失败原因落项目(按 id 单列显式 set:避免 updateById 全字段覆盖/依赖陈旧快照;
-            // projectId==null 表示占位行已被并发清理,此时无需写)
+            // 失败原因落项目(单列显式 set,委托状态服务;projectId==null 表示占位行已被并发清理,此时无需写)
             try {
                 if (projectId != null) {
-                    projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                            .eq("id", projectId)
-                            .set("last_brief_error", reason)
-                            .set("updated_at", LocalDateTime.now()));
+                    statusService.writeBriefError(projectId, reason);
                 }
             } catch (Exception pe) {
                 log.warn("写入 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());

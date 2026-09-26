@@ -509,3 +509,27 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: P0 加固:超时对齐+并发回写修复+JWT查库校验
+<!-- trellis-session: v=2 fp=9ef74e1de7f53701 -->
+
+**Date**: 2026-09-27
+**Task**: P0 加固:超时对齐+并发回写修复+JWT查库校验
+**Branch**: `main`
+
+### Summary
+
+修复设计评审 P0 三项:nginx 反代超时 180s→300s 对齐前端最长 axios;8 处项目表 updateById 全字段回写改 UpdateWrapper 条件更新(状态白名单防回退,首版 current 两拆分);JwtAuthenticationFilter 查库校验 enabled/role(60s 缓存,fail-closed)。325 测试通过,新增 JWT 5 用例。spec 四处同步
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9e2eb5c` | fix(security): JWT 查库校验 + 产线反代超时对齐 300s |
+| `ecc3445` | fix(s2): 项目状态推进改 UpdateWrapper 条件更新,消除全字段回写覆盖 |
+| `410f960` | docs(spec): 同步 JWT 查库校验与反代超时契约 |
+
+### Status
+
+[OK] **Completed**

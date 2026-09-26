@@ -28,6 +28,7 @@ import java.util.Set;
  * analyze:对参考原文做一次 AI 分析(题材/结构骨架/句式特征 → brief,gen_mode=IMITATION)
  *   并推荐风格库中 ≤3 个 enabled 风格(附理由 → brief.styleRecommendations)。
  *   状态守护与原子抢占完全仿 BriefService(DRAFT/READY 放行,失败回 DRAFT 写 last_brief_error)。
+ *   状态推进已收敛到 ProjectStatusService(09-27-state-machine-service),本服务纯委托。
  *   仿写不做 RAG 检索(任意题材原文与车型库强行匹配会注入无关数据约束,污染仿写)。
  *
  * similarityCheck:纯本地相似度自检(不调 AI):
@@ -45,6 +46,8 @@ public class ImitationService {
     private final StyleProfileMapper styleMapper;
     private final AiClient aiClient;
     private final ObjectMapper json;
+    /** 项目状态机唯一写权持有者(抢占/推进/回退/错误列)。 */
+    private final ProjectStatusService statusService;
 
     /** 相似度警示阈值:0.40~0.60 黄色提示,≥0.60 红色警示。 */
     public static final double SIM_WARN = 0.40;
@@ -52,19 +55,18 @@ public class ImitationService {
     /** 最长重复片段超此长度(字符)时在报告中标高。 */
     public static final int RUN_WARN = 13;
 
-    /** 生成中状态超过该时长视为陈旧(JVM 中途死亡/重启残留),允许重新触发以自愈。 */
-    private static final long STALE_GENERATING_MS = 10 * 60 * 1000L;
-
     /** 分析送 AI 的原文截断上限(全文仍入库;沿用 StyleService.extract 先例)。 */
     private static final int ANALYZE_TEXT_LIMIT = 8000;
 
     public ImitationService(ArticleProjectMapper projectMapper, ArticleBriefMapper briefMapper,
-                            StyleProfileMapper styleMapper, AiClient aiClient, ObjectMapper json) {
+                             StyleProfileMapper styleMapper, AiClient aiClient, ObjectMapper json,
+                             ProjectStatusService statusService) {
         this.projectMapper = projectMapper;
         this.briefMapper = briefMapper;
         this.styleMapper = styleMapper;
         this.aiClient = aiClient;
         this.json = json;
+        this.statusService = statusService;
     }
 
     /**
@@ -80,23 +82,11 @@ public class ImitationService {
         if (p.getImitationText() == null || p.getImitationText().isBlank())
             throw new IllegalArgumentException("项目缺少参考原文,无法分析");
         // 并发防护:正在生成中(未过期)拒绝重复触发;陈旧状态放行自愈(与 BriefService 相同)
-        String s = p.getStatus();
-        boolean generating = "GENERATING_BRIEF".equals(s) || "GENERATING_VERSIONS".equals(s);
-        if (generating && p.getUpdatedAt() != null
-                && p.getUpdatedAt().isAfter(LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS)))) {
+        if (statusService.stuckGenerating(p)) {
             throw new IllegalStateException("该项目正在生成中,请稍候(刷新页面可查看进度)");
         }
-        // 原子抢占置 GENERATING_BRIEF:仅 DRAFT/READY 或陈旧生成中可成功(仿 BriefService.claimGenerating)
-        LocalDateTime staleCutoff = LocalDateTime.now().minus(java.time.Duration.ofMillis(STALE_GENERATING_MS));
-        int claimed = projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                .eq("id", projectId)
-                .and(w -> w.in("status", "DRAFT", "READY")
-                        .or(w2 -> w2.in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                                .lt("updated_at", staleCutoff)))
-                .set("status", "GENERATING_BRIEF")
-                .set("last_brief_error", null)
-                .set("updated_at", LocalDateTime.now()));
-        if (claimed == 0) throw new IllegalStateException(BriefService.projectStatusGuardMsg(p, "分析原文"));
+        // 原子抢占置 GENERATING_BRIEF:仅 DRAFT/READY 或陈旧生成中可成功,claimed==0 抛 409 守卫提示
+        statusService.claimBriefGenerating(projectId, p, "分析原文");
         p.setStatus("GENERATING_BRIEF");
 
         try {
@@ -134,35 +124,22 @@ public class ImitationService {
             b.setCreatedAt(LocalDateTime.now());
             briefMapper.insert(b);
 
-            // 分析结果冗余存 project(前端 GET /imitation 直读,免查 brief)
+            // 分析结果冗余存 project(前端 GET /imitation 直读,免查 brief)。
             Map<String, Object> analysis = new LinkedHashMap<>();
             analysis.put("genre", node.path("genre").asText(""));
             analysis.put("structure", node.path("structure").asText(""));
             analysis.put("sentenceFeatures", node.path("sentenceFeatures").asText(""));
-            // 条件更新:仅当仍处于本次抢占置的 GENERATING_BRIEF 才推进(并发已推进下游状态时不回退)
-            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .eq("status", "GENERATING_BRIEF")
-                    .set("current_brief_id", b.getId())
-                    .set("imitation_analysis", json.writeValueAsString(analysis))
-                    .set("status", "READY")
-                    .set("last_brief_error", null)
-                    .set("updated_at", LocalDateTime.now()));
+            // 条件更新:仅当仍处于本次抢占置的 GENERATING_BRIEF 才推进(并发已推进下游状态时不回退);
+            // imitation_analysis 为业务列,经 extraCols 同条 UPDATE 写入(保持原子性)。
+            statusService.advanceReady(projectId, b.getId(), Map.of("imitation_analysis", json.writeValueAsString(analysis)));
             return b;
         } catch (Exception e) {
-            // 失败回 DRAFT 并记录原因(截断防超列,同 BriefService);项目已被删除时无需回退,保留原始异常。
-            // 条件更新限定生成中状态:并发已推进(VERSIONS_READY 及之后)时不覆盖,保守安全。
-            String reason = e.getMessage();
-            if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
-            log.warn("原文分析失败 project={}: {}", projectId, reason, e);
-            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ArticleProjectEntity>()
-                    .eq("id", projectId)
-                    .in("status", "GENERATING_BRIEF", "GENERATING_VERSIONS")
-                    .set("status", "DRAFT")
-                    .set("last_brief_error", reason)
-                    .set("updated_at", LocalDateTime.now()));
+            // 失败回 DRAFT 并记录原因(截断收在状态服务);项目已被删除时无需回退,保留原始异常。
+            // 回退限定生成中状态:并发已推进(VERSIONS_READY 及之后)时不覆盖,保守安全。
+            log.warn("原文分析失败 project={}: {}", projectId, e.getMessage(), e);
+            statusService.failBriefToDraft(projectId, e.getMessage());
             if (e instanceof AiException ae) throw ae;
-            throw new AiException("原文分析失败: " + reason, e);
+            throw new AiException("原文分析失败: " + e.getMessage(), e);
         }
     }
 
