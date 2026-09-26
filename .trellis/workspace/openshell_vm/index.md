@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 14
+- **Total Sessions**: 15
 - **Last Active**: 2026-09-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~394 | Active |
+| `journal-1.md` | ~416 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-09-26 | Session 15: 修复并行子代理研究进度实时回写 | `7870156` | `main` |
 | 14 | 2026-09-26 | Session 14: 简报外部搜索策略路由 + 事实手册近似归并 | `17b7f99`, `1fc81d5`, `deca60f` | `main` |
 | 13 | 2026-09-25 | Docker 容器化产线部署(compose) | `40f4a4b` | `main` |
 | 12 | 2026-09-20 | 系统说明文档重构:总览+模块结构,删除 s0-spec | `ce67176`, `247efdb`, `e7c47fe` | `main` |

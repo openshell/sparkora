@@ -392,3 +392,25 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: Session 15: 修复并行子代理研究进度实时回写
+<!-- trellis-session: v=2 fp=b63ccab5ee140731 -->
+
+**Date**: 2026-09-26
+**Task**: Session 15: 修复并行子代理研究进度实时回写
+**Branch**: `main`
+
+### Summary
+
+定位进度页「首个问题耗时、其余瞬过」根因:DeepResearchService.doRunAsync 并行 submit 但按收集顺序串行回写,慢的 future[0] 阻塞后继 agent 落库。改为 submit 前批量置全部 agent RUNNING + 每 agent 独立收集器完成即回写(真乱序),updateAgent/writeNotes 加 per-brief 锁防并发丢更新;保留超时 cancel(true)+FAILED、失败隔离、汇总顺序。新增 DeepResearchServiceProgressTest(6 用例),mvn test 291 全绿,后端容器 healthy。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7870156` | fix(deep): 子代理研究进度改为完成即回写并保证并发写安全 |
+
+### Status
+
+[OK] **Completed**
