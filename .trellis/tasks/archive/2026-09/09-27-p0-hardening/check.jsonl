@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-p0-hardening/prd.md", "reason": "AC1-AC7 验收清单与 Out of Scope 边界(不越界改安全加固/P1 项)"}
+{"file": ".trellis/tasks/09-27-p0-hardening/design.md", "reason": "「保持不变」清单(已修先例/抢占分支)与三类改写模式一一对照核查"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对改写后代码符合 UpdateWrapper 显式 set/条件更新权威模式,无 updateById 残留"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对异常类型→业务码映射未被改坏(400/409/500)"}

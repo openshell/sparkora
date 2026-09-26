@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "UpdateWrapper 部分更新/原子抢占/置空陷阱是 R2 全部 6 文件改写的权威模式来源"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R2 状态推进/失败回退抛点须维持 IllegalArgumentException=400 / IllegalStateException=409 映射惯例"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/多步写入失败顺序约束,条件更新 claimed=0 分支不得误触发"}
+{"file": "docs/README.md", "reason": "4.2 状态机总览(6 态+陈旧自愈 10min+状态守护)是 R2 条件更新白名单的语义依据"}
