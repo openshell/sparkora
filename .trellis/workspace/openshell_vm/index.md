@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~535 | Active |
+| `journal-1.md` | ~558 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-09-27 | P1-⑤ 状态机推进收敛到 ProjectStatusService | `dcedf49`, `05900ae` | `main` |
 | 20 | 2026-09-27 | P0 加固:超时对齐+并发回写修复+JWT查库校验 | `9e2eb5c`, `ecc3445`, `410f960` | `main` |
 | 19 | 2026-09-27 | 图生图多参考图（≤4，混合来源）+ 405 部署修复验证 | `0699a25`, `02c0b78`, `fc2f6d7`, `4311f21`, `3ef655a` | `main` |
 | 18 | 2026-09-26 | AI 生图体验改进：粘贴/本地参考图 + 抽屉共用组件 | `cdc1ecf`, `1a991e8`, `482c677` | `main` |

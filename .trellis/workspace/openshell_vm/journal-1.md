@@ -533,3 +533,26 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: P1-⑤ 状态机推进收敛到 ProjectStatusService
+<!-- trellis-session: v=2 fp=dca57e4b22add40f -->
+
+**Date**: 2026-09-27
+**Task**: P1-⑤ 状态机推进收敛到 ProjectStatusService
+**Branch**: `main`
+
+### Summary
+
+把散落 5 类+schema.sql 的项目状态推进逻辑收敛到唯一 ProjectStatusService:抢占/成功推进(首版两拆分)/失败回退/发布终态/错误列/陈旧自愈常量/409守卫提示语全部单点;6 调用方纯委托;语义逐字等价(P0 修复基线),345 测试全绿(新增 20),前端零改动。P1 父任务第五项完成。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dcedf49` | refactor(s2): 项目状态机推进收敛到 ProjectStatusService |
+| `05900ae` | docs(spec): 状态机写权收敛契约同步 |
+
+### Status
+
+[OK] **Completed**
