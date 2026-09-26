@@ -208,6 +208,23 @@ if (raw != null) for (String v : raw)
 - 单值 JSON body（`ImageGenDTO.tags`）与 multipart 两条入口的校验/落库语义必须一致，否则「上传能打标、AI 生图报 400」这类不一致。
 - JSON 数组里的元素**不保证是字符串**（前端可能传数字）：用 `String.valueOf` 归一，避免 `(List<String>)` 强转 `ClassCastException` 直接 500。
 
+### 文件/ID 集合参数直接绑定 `List`（09-26 img2img-multi-ref 先例）
+
+`FormData.append('files', f)` 逐项追加同名文件、`FormData.append('refImageIds', id)` 逐项追加同名数字时，Spring 可直接把 `@RequestParam` 绑成集合，**不必手工 `getParameterValues`**：
+
+```java
+@PostMapping("/generate-from-image-upload")
+public R<...> generate(
+    @RequestParam(value = "files", required = false) List<MultipartFile> files,
+    @RequestParam(value = "refImageIds", required = false) List<Long> refImageIds, ...)
+```
+
+- **`required = false` + 集合类型**：参数缺失时绑定为 `null`（不是空集合）→ 服务层必须先做 `null` 过滤再计数，否则 `[null]` 会绕过「0 张」校验，且 `null` 元素触发 NPE。
+- **数量校验要用「过滤后」的计数**：`files.size()+refImageIds.size()` 须在剔除 `null`/空项之后再判定 1~4（0 → 400，超限 → 400）。
+- **顺序契约**：多来源合并（如「先上传文件、后图库 id」）必须由服务层按固定顺序拼接，**不得重排**，前端展示顺序 == 提交顺序 == AI 收到的顺序。
+- 类型不匹配（如 `refImageIds` 传非数字）由全局 `ApiExceptionHandler` 落 400，无需接口内手工兜。
+- 先例：`ImageController.generateFromImageUpload` + `ImageService.generateImage2ImageFromUpload`（多参考图：`files[]` + `refImageIds[]`，上限 4）。
+
 ## Migrations
 
 - 全部写进 `schema.sql`（幂等写法，启动自动执行），不引入独立迁移工具。
