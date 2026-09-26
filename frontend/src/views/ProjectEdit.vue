@@ -197,8 +197,10 @@ const onSaveAndGenerate = async () => {
     if (imitation) {
       router.push(`/projects/${id}?gen=imitation`)
       try {
+        // 09-27-gen-async 异步化:接口毫秒级返回(置 GENERATING_BRIEF),分析由后台执行;
+        // 详情页据 project.status 展示进度(布局层 4s 轮询),READY 翻转后展示分析与推荐。
         await projectApi.analyzeImitation(id)
-        ElMessage.success('原文分析完成，请在简报页查看分析与风格推荐')
+        ElMessage.success('已开始分析原文，请在简报页查看进度')
       } catch (e) {
         // 发起失败:已跳详情页,状态/lastBriefError 可见,由用户在页面内重试
       }

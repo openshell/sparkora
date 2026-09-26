@@ -19,8 +19,9 @@ export const projectApi = {
   // AI 生成耗时可达数十秒，单独放宽超时（覆盖 http.js 默认 30s）
   generateBrief: (id) => http.post(`/projects/${id}/generate/brief`, null, { timeout: 120000 }),
   getBrief: (id) => http.get(`/projects/${id}/brief`),
-  // 版本生成：body={styleIds:[...]}，每选一个风格生成一版；耗时较长放宽超时
-  generateVersions: (id, styleIds) => http.post(`/projects/${id}/generate/versions`, { styleIds }, { timeout: 300000 }),
+  // 版本生成：body={styleIds:[...]}，每选一个风格生成一版。09-27-gen-async 起接口异步化(毫秒级返回占位),
+  // 生成由后台执行,前端靠项目状态轮询翻转刷新,超时收紧为默认量级。
+  generateVersions: (id, styleIds) => http.post(`/projects/${id}/generate/versions`, { styleIds }, { timeout: 30000 }),
   listVersions: (id) => http.get(`/projects/${id}/versions`),
   setCurrentVersion: (id, versionId) => http.put(`/projects/${id}/current-version`, null, { params: { versionId } }),
   // S5 发布:参数清单(主题/高亮/默认值 + 通道就绪度 + 历史发布信息)
@@ -41,13 +42,15 @@ export const projectApi = {
     http.post(`/projects/${id}/deep/clarify-answer`, { briefId, answers }),
   // S9 深度模式:锁定答案并立即开跑多代理研究(前端轮询 status 展示进度)
   runDeep: (id, briefId) => http.post(`/projects/${id}/deep/run`, { briefId }),
-  // S9 深度模式:基于事实手册生成深度正文(styleId 由后端回查风格表注入 system prompt,09-10-style-library-enhance)
-  generateDeep: (id, briefId, styleId = null) =>
-    http.post(`/projects/${id}/deep/generate`, { briefId, styleId }, { timeout: 300000 }),
+  // S9 深度模式:批量生成深度正文(styleIds[] 一次提交,后端一次 claim + 后台逐风格生成,
+  // 09-27-gen-async 异步化——毫秒级返回占位,前端靠轮询状态翻转刷新;timeout 收紧为默认量级)
+  generateDeep: (id, briefId, styleIds = []) =>
+    http.post(`/projects/${id}/deep/generate`, { briefId, styleIds }, { timeout: 30000 }),
   // S9 深度模式:基于事实手册生成简报(自动生成失败后的手动重试;约十几秒,放宽超时)
   generateDeepBrief: (id, briefId) => http.post(`/projects/${id}/deep/brief`, { briefId }, { timeout: 120000 }),
-  // 文章仿写(09-09-article-imitation):分析原文+风格推荐(一次 AI 调用,约 10~30s,放宽超时)
-  analyzeImitation: (id) => http.post(`/projects/${id}/imitation/analyze`, null, { timeout: 120000 }),
+  // 文章仿写(09-09-article-imitation):分析原文+风格推荐。09-27-gen-async 异步化:毫秒级返回占位,
+  // 后台 AI 分析,前端据 project.status(GENERATING_BRIEF→READY)轮询翻转刷新。
+  analyzeImitation: (id) => http.post(`/projects/${id}/imitation/analyze`, null, { timeout: 30000 }),
   // 文章仿写:取分析+风格推荐(无则 data=null)
   getImitation: (id) => http.get(`/projects/${id}/imitation`),
   // 09-11-preview-publish-bridge:保存预览页样式(主题/高亮/Mac/脚注,项目级);body={theme?,highlight?,macStyle?,footnote?}

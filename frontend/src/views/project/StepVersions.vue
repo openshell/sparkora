@@ -226,9 +226,9 @@ const simMaxRun = (v) => parseReport(v)?.maxRunLength || 0
 const generatingVersions = computed(() => isGeneratingVersions(props.project?.status))
 
 // 生成进度提示(按风格数粗估:每版约 1 分钟,总时长 = 版数 × 1 分钟;追加模式同样按本次所选风格数估;
-// 预选兜底推荐风格,避免生成成功清空 selectedStyleIds 后重进页面显示陈旧数字)
+// 09-27-gen-async:触发即清空 selectedStyleIds,生成中改用 lastStyleIds 兜底,避免骨架屏显示陈旧版数)
 const estVersions = computed(() =>
-  selectedStyleIds.value.length || recommendedIds.value.length || 1)
+  selectedStyleIds.value.length || lastStyleIds.value.length || recommendedIds.value.length || 1)
 const estMinutes = computed(() => Math.max(1, estVersions.value))
 
 // 头部「当前:」meta(09-10-versions-page-fix:label/styleTag 空值兜底,不再渲染 undefined/null)
@@ -261,56 +261,43 @@ const doGenerate = async (styleIds) => {
     // 仿写模式(09-09-article-imitation):复用 POST /generate/versions(多版一次生成,
     // VersionService IMITATION 分支产出仿写正文+相似度自检),不走深度单版接口
     if (isImitation.value) {
+      // 09-27-gen-async 异步化:接口毫秒级返回占位标记,后台逐版生成;
+      // ensureProject 拉回 GENERATING_VERSIONS → 布局层 watch(status) 启轮询,
+      // VERSIONS_READY 翻转时 store.startPolling 统一 ensureVersions(版本列表含相似度数据)。
       const res = await projectApi.generateVersions(route.params.id, styleIds)
       if (res.code === 0) {
-        // AC4:留在本页展示版本对比与相似度自检,不自动跳预览
-        ElMessage.success(`已生成 ${res.data?.length || 0} 版,请查看相似度自检结果`)
-        await loadVersions()
-        await store.ensureProject(route.params.id, { force: true })
-        selectedStyleIds.value = []
+        ElMessage.success(`已开始生成 ${styleIds.length} 版，生成完成后自动刷新`)
         lastStyleIds.value = [...styleIds]   // 记录本次风格,供追加面板预选
+        selectedStyleIds.value = []
+        await store.ensureProject(route.params.id, { force: true })
       } else {
         ElMessage.error(res.msg || '仿写生成失败')
+        openAppendWith([...styleIds])   // 失败(含 claim 409/400):预选本次风格便于重试
         await store.ensureProject(route.params.id, { force: true })
       }
       return
     }
     // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速多版本接口已封死,
-    // 深度版本生成逐风格调用 /deep/generate(单风格单版;后端按 styleId 回查风格表,09-10-style-library-enhance)
+    // 深度版本批量生成走 /deep/generate(09-27-gen-async 由逐风格串行改为单次传 styleIds[],
+    // 后端一次 claim + 后台逐风格生成,避免串行多次撞 409)。
     const entry = store._entryOf(route.params.id)
     const briefId = entry?.brief?.id
     if (!briefId) { ElMessage.error('未找到当前简报,请先完成深度研究'); submitting.value = false; return }
-    const allStyles = entry?.styles || []
-    const okIds = []      // 生成成功的风格 id
-    const failedNames = []   // 失败风格名(汇总提示)
-    for (const styleId of styleIds) {
-      const style = allStyles.find(s => s.id === styleId)
-      try {
-        // 09-10-style-library-enhance:改传 styleId,后端回查风格表取 toneGuidance/name(style_tag 同步落库)
-        const res = await projectApi.generateDeep(route.params.id, briefId, styleId)
-        if (res.code === 0) okIds.push(styleId)
-        else { failedNames.push(style?.name || String(styleId)); ElMessage.error(res.msg || `风格「${style?.name || styleId}」生成失败`) }
-      } catch (e) {
-        failedNames.push(style?.name || String(styleId))
-        ElMessage.error(`风格「${style?.name || styleId}」生成失败:` + (e.response?.data?.msg || e.message || '网络异常或超时'))
-      }
-    }
-    // 以服务器全量列表为准(本次返回仅含新增,追加时直接拼会漏失败重试的历史)
-    if (okIds.length) await loadVersions()
-    lastStyleIds.value = okIds.length ? [...okIds] : [...styleIds]
-    if (okIds.length) {
-      await store.ensureProject(route.params.id, { force: true })
+    const res = await projectApi.generateDeep(route.params.id, briefId, styleIds)
+    if (res.code === 0) {
+      ElMessage.success(`已开始生成 ${styleIds.length} 版，生成完成后自动刷新`)
+      lastStyleIds.value = [...styleIds]
       selectedStyleIds.value = []
-      // 统一留在版本页(规格 12:删除 gotoPreview 自动跳转,用户经步骤条自行去预览)
-      if (failedNames.length) ElMessage.success(`成功 ${okIds.length} 版,失败 ${failedNames.length} 个风格:${failedNames.join('、')}`)
-      else ElMessage.success(`已生成 ${okIds.length} 版,默认选中最新一版,可重新设定`)
-      // 部分失败:失败风格预选进追加面板,便于一键重试(把失败 ids 赋给 selectedStyleIds)
-      if (failedNames.length) openAppendWith([...styleIds.filter(id => !okIds.includes(id))])
-    } else {
       await store.ensureProject(route.params.id, { force: true })
-      // 全部失败:同样把失败风格(=本次全部)预选进追加面板,便于重试
-      openAppendWith([...styleIds])
+    } else {
+      ElMessage.error(res.msg || '深度写作失败')
+      openAppendWith([...styleIds])   // 失败(含 claim 409/400):预选本次风格便于重试
+      await store.ensureProject(route.params.id, { force: true })
     }
+  } catch (e) {
+    ElMessage.error('生成启动失败：' + (e?.response?.data?.msg || e.message || '网络异常'))
+    openAppendWith([...styleIds])
+    await store.ensureProject(route.params.id, { force: true })
   } finally { submitting.value = false }
 }
 const onGenerate = () => {

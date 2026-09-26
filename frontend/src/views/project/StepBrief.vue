@@ -288,10 +288,10 @@ const onAnalyze = async () => {
   try {
     const res = await projectApi.analyzeImitation(route.params.id)
     if (res.code !== 0) throw new Error(res.msg)
-    ElMessage.success('分析完成')
-    // 同步 API,无轮询翻转:必须手动刷分析结果与项目详情各一次(状态已翻转 READY,
-    // 简报由状态迁移 watch 的兜底回调覆盖,这里不重复 loadBrief)
-    await store.ensureImitation(route.params.id, { force: true })
+    // 09-27-gen-async 异步化:接口毫秒级返回占位标记,分析由后台执行;
+    // 状态已置 GENERATING_BRIEF → 布局层 watch(status) 自动 startPolling,
+    // READY 翻转时由 store 统一 ensureBrief + ensureImitation(IMITATION 分支),这里无需手动刷新。
+    ElMessage.success('已开始分析原文')
     await store.ensureProject(route.params.id, { force: true })
   } catch (e) {
     ElMessage.error(e?.response?.data?.msg || e.message || '原文分析失败')
@@ -542,10 +542,11 @@ const onDeepBriefRetry = async () => {
 const onDeepGenerate = async () => {
   deepBusy.value = true
   try {
-    const res = await http.post(`/projects/${route.params.id}/deep/generate`,
-      { briefId: deepBriefId.value })
+    // 09-27-gen-async 异步化:毫秒级返回占位,后台逐风格生成;跳版本页后由布局层轮询状态翻转刷新。
+    // styleIds 缺省 = 无风格单版默认(后端 startBatchLegacy 语义,style_tag 回退「深度」)
+    const res = await projectApi.generateDeep(route.params.id, deepBriefId.value)
     if (res.code !== 0) throw new Error(res.msg)
-    ElMessage.success('深度正文已生成')
+    ElMessage.success('已开始生成正文，生成完成后自动刷新')
     await store.ensureProject(route.params.id, { force: true })
     router.push({ name: 'project-versions', params: { id: route.params.id } })
   } catch (e) { ElMessage.error(e?.response?.data?.msg || '深度写作失败') }
