@@ -59,9 +59,9 @@ public R<Void> handleBind(BindException ex) {
 2. 并发防护：生成中未过期（`updated_at` 距今 < 10 分钟 `STALE_GENERATING_MS`）抛 `IllegalStateException`；陈旧自愈放行。
 3. 原子抢占：`UpdateWrapper` 条件更新（WHERE 状态白名单 + 陈旧分支限定生成中状态），`claimed == 0` 抛 `IllegalStateException`（409）。
 4. AI 调用失败：**状态回退 DRAFT + 写 last_*_error（截断 1000 字符）**，再抛异常给控制器映射 500/200+fail。
-5. 失败回退时用 `fresh = mapper.selectById(projectId)` 重取再改（防覆盖生成期间其他字段变更）；**fresh 需判 null**（项目被并发删除时不得 NPE 掩盖原始异常）。
+5. 失败回退与成功推进一律用 `UpdateWrapper` **条件更新**（`WHERE id + 状态白名单`）精确 set 目标列，不 `selectById` 再 `updateById`（后者全字段写回会覆盖并发推进的状态/其他列，`fresh` 重取也仍有窗口）。失败分支限定「仅生成中状态可回退」；项目被并发删除时 `update` 影响 0 行，天然幂等、无需判 null。
 
-> **Warning**: 失败回退若直接复用方法开头的 `p` 对象，可能把生成期间被其他请求更新的字段覆盖回去。必须重查。
+> **Warning**: 失败回退不得复用方法开头的 `p` 对象做 `updateById` 全字段回写，也不得再走 `fresh = selectById` + `updateById`——两者都会用旧快照覆盖生成期间其他请求更新的列。条件 `UpdateWrapper`（`eq("id", …).in("status", 生成中状态…).set(...)`）是唯一安全写法，先例：`BriefService`/`ImitationService`/`VersionService`（09-27-p0-hardening R2）。
 
 ---
 

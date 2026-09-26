@@ -87,6 +87,7 @@ docker compose restart backend
 - `compose` 端口映射写法：`"${BACKEND_PORT:-5661}:${SERVER_PORT:-5661}"`、`"${FRONTEND_PORT:-8088}:80"`。
 - **改 `SERVER_PORT` 无需改 nginx**：`frontend/nginx.conf.template` 用 `${SERVER_PORT}` 占位符，compose 经 `environment` 把该值传入前端容器，nginx 官方镜像的 envsubst 在容器启动时渲染出 `proxy_pass http://backend:<SERVER_PORT>`；改端口后 `docker compose up -d` 重启即生效。
 - 前端请求走相对路径 `/api`（`frontend/src/api/http.js`），产线由 nginx 反代，前端代码无需改动。
+- **反代超时须 ≥ 前端最长 axios 超时**：`frontend/nginx.conf.template` 的 `proxy_read_timeout`/`proxy_send_timeout` 当前为 `300s`，对齐 `frontend/src/api/index.js` 中最长超时（300000ms，AI 生图/深度写作/多版本生成等）。调任一侧须联动检查，否则长耗时接口会被 nginx 先掐断返回 504，而前端仍在等待。
 
 ---
 

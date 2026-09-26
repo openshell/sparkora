@@ -46,8 +46,8 @@ S0 是从零搭骨架，以下能力**全部自建**（不引入若依等重型�
 
 - 前端 `/login` → 后端 `POST /api/auth/login`（用户名/密码）。
 - 登录成功签发 **JWT**（密钥 `JWT_SECRET`、过期 `JWT_EXPIRE_MINUTES` 从 `.env` 读），返回 token + 当前用户信息。
-- 前端后续请求带 `Authorization: Bearer <token>`；后端 `JwtAuthenticationFilter` 校验。
-- 验收：未登录访问 `/api/**` → 401（已注册 `AuthenticationEntryPoint`，实测通过；已认证但角色不足仍 403）；前端未登录访问受保护路由 → 跳 `/login`；登出（前端丢弃 token）后再次访问需重新登录。
+- 前端后续请求带 `Authorization: Bearer <token>`；后端 `JwtAuthenticationFilter` 校验签名/过期，**并查库校验用户状态**：用户存在且 `enabled=true` 才注入 SecurityContext，**角色以库为准**（token 内 role 仅参考）；查库异常 fail-closed（视为未认证，不影响 `POST /api/auth/login`）。用户禁用/角色变更最多 **60s** 后生效（本地 `ConcurrentHashMap` 缓存 TTL，含负缓存，见 `security/JwtAuthenticationFilter`）。
+- 验收：未登录访问 `/api/**` → 401（已注册 `AuthenticationEntryPoint`，实测通过；已认证但角色不足仍 403）；前端未登录访问受保护路由 → 跳 `/login`；登出（前端丢弃 token，服务端无黑名单，维持现状）后再次访问需重新登录；禁用用户的存量 token 在缓存 TTL 内转为 401。
 
 ---
 
@@ -71,7 +71,7 @@ S0 是从零搭骨架，以下能力**全部自建**（不引入若依等重型�
 
 后端 API（/api 前缀，Spring Security；接口清单截至 S3b，后续模块章节各自登记新增接口）
 POST /api/auth/login           登录（permitAll）
-POST /api/auth/logout          登出（JWT 无状态，前端丢弃 token）
+POST /api/auth/logout          登出（JWT 无状态，前端丢弃 token，无服务端黑名单）
 GET  /api/auth/me              当前用户
 GET   /api/projects            列表（分页）          权限 ADMIN/EDITOR/VIEWER
 GET   /api/projects/{id}       详情                  权限 ADMIN/EDITOR/VIEWER

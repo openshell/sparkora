@@ -20,6 +20,7 @@
 
 - `docker-compose.yml` 端口映射：`"${BACKEND_PORT:-5661}:${SERVER_PORT:-5661}"`（backend）、`"${FRONTEND_PORT:-8088}:80"`（frontend）。
 - `frontend/nginx.conf.template`：`proxy_pass http://backend:${SERVER_PORT};`
+- `frontend/nginx.conf.template`：`proxy_read_timeout` / `proxy_send_timeout` = `300s`（须 ≥ `frontend/src/api/index.js` 最长 axios 超时 300000ms）
 
 ### 3. Contracts
 
@@ -38,6 +39,7 @@
 | 改 `SERVER_PORT` 未重启容器 | 仍用旧端口（envsubst 只在容器启动时渲染） |
 | 仅给 backend 注入 `SERVER_PORT`、漏给 frontend | nginx `proxy_pass` 端口为空/错 → 502 |
 | `frontend/nginx.conf.template` 写成 `nginx.conf`（无 `.template` 后缀） | nginx 官方 entrypoint 不渲染 → `${SERVER_PORT}` 字面量进配置 |
+| nginx `proxy_read_timeout` < 前端 axios 最长 timeout（当前 300s） | 长耗时接口 nginx 先掐断 504，前端仍等待；调任一侧须联动 |
 
 ### 5. Good/Base/Bad Cases
 
