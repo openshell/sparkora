@@ -103,6 +103,31 @@ public class ImageService {
     public ImageAssetEntity upload(Long projectId, MultipartFile file, List<String> tags, String operator) {
         if (projectId != null) ensureProject(projectId);
         if (file == null || file.isEmpty()) throw new IllegalArgumentException("请选择要上传的图片");
+        String ext = extOf(file.getOriginalFilename());
+        byte[] bytes = readValidatedImage(file);
+
+        ImageAssetEntity preset = new ImageAssetEntity();
+        preset.setProjectId(projectId);
+        preset.setFileName(safeName(file.getOriginalFilename(), "upload.png"));
+        preset.setSource("upload");
+        preset.setCreatedBy(operator);
+        preset.setTags(tagService.normalize(tags));   // 预选标签随 preset 走统一管线落标
+        ImageAssetEntity e = persistOrReuse(bytes, ext, preset);
+        if (Boolean.TRUE.equals(e.getDedupeHit())) {
+            log.info("上传去重复用已有记录 id={} file={}（{}KB）", e.getId(), e.getFileName(), file.getSize() / 1024);
+        } else {
+            log.info("上传配图 project={} id={} file={}（{}KB）", projectId, e.getId(), e.getFileName(), file.getSize() / 1024);
+        }
+        return e;
+    }
+
+    /**
+     * 图片 multipart 校验（{@link #upload} 与图生图参考图直传 {@link #generateImage2ImageFromUpload} 共用，
+     * 提取自 upload，行为/文案零改动）：大小 ≤ IMAGE_MAX_UPLOAD_MB → 扩展名白名单 → 读字节 → 魔数嗅探。
+     * 空文件判定留调用方（两处文案不同：图片 vs 参考图）。
+     * @return 图片字节（内存中；upload 用于入库转存，参考图直传用于直传 AI——均不在此方法落库）
+     */
+    private byte[] readValidatedImage(MultipartFile file) {
         long maxBytes = imageProps.getMaxUploadMb() * 1024L * 1024L;
         if (file.getSize() > maxBytes)
             throw new IllegalArgumentException("图片超过大小上限 " + imageProps.getMaxUploadMb() + "MB");
@@ -121,20 +146,7 @@ public class ImageService {
         boolean ok = sniffed != null
                 && (sniffed.equals(ext) || ("jpg".equals(sniffed) && "jpeg".equals(ext)));
         if (!ok) throw new IllegalArgumentException("文件内容不是有效的 png/jpg/webp 图片");
-
-        ImageAssetEntity preset = new ImageAssetEntity();
-        preset.setProjectId(projectId);
-        preset.setFileName(safeName(file.getOriginalFilename(), "upload.png"));
-        preset.setSource("upload");
-        preset.setCreatedBy(operator);
-        preset.setTags(tagService.normalize(tags));   // 预选标签随 preset 走统一管线落标
-        ImageAssetEntity e = persistOrReuse(bytes, ext, preset);
-        if (Boolean.TRUE.equals(e.getDedupeHit())) {
-            log.info("上传去重复用已有记录 id={} file={}（{}KB）", e.getId(), e.getFileName(), file.getSize() / 1024);
-        } else {
-            log.info("上传配图 project={} id={} file={}（{}KB）", projectId, e.getId(), e.getFileName(), file.getSize() / 1024);
-        }
-        return e;
+        return bytes;
     }
 
     // ==================== 文生图 / 图生图 ====================
@@ -185,6 +197,37 @@ public class ImageService {
                 out.add(saveGenerated(projectId, g.url(), prompt, refImageId, "ai-img2img", operator, g.model(), normSize, normTags));
             } catch (Exception e) {
                 log.warn("图生图第 {} 张失败（跳过）: {}", i + 1, e.getMessage());
+                errs.append("第").append(i + 1).append("张: ").append(e.getMessage()).append("; ");
+            }
+        }
+        if (out.isEmpty()) throw new AiException("图生图全部失败: " + errs, null);
+        return out;
+    }
+
+    /**
+     * 图生图（参考图文件字节直传，09-26 img2img-ref-upload）：参考图**不落图库**——仅在内存校验后
+     * 字节直传 AI（/v1/images/edits），不上传图床、不 insert、不嵌向量；生成结果照旧走统一入库管线。
+     * 因参考图未入库，结果的 ref_image_id 落 NULL（无法自引用），故该来源图不走后端 /regenerate。
+     */
+    public List<ImageAssetEntity> generateImage2ImageFromUpload(Long projectId, MultipartFile file, String prompt,
+                                                                String size, int n, List<String> tags, String operator) {
+        if (projectId != null) ensureProject(projectId);
+        if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("请输入生成提示词（prompt）");
+        if (file == null || file.isEmpty()) throw new IllegalArgumentException("请选择要上传的参考图");
+        byte[] refBytes = readValidatedImage(file);
+        // 传给 multipart 的文件名扩展名以魔数嗅探为准（防 .jpg 装 webp 内容），沿用 ensureExt 语义
+        String refName = ensureExt(safeName(file.getOriginalFilename(), "reference.png"), sniffExt(refBytes));
+        int count = n < 1 ? 1 : Math.min(n, 4);
+        String normSize = normalizeSize(size);
+        List<String> normTags = tagService.normalize(tags);
+        List<ImageAssetEntity> out = new ArrayList<>();
+        StringBuilder errs = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            try {
+                AiImageClient.GenResult g = aiImageClient.generateImage2Image(prompt, refBytes, refName, normSize);
+                out.add(saveGenerated(projectId, g.url(), prompt, null, "ai-img2img", operator, g.model(), normSize, normTags));
+            } catch (Exception e) {
+                log.warn("图生图(参考图直传)第 {} 张失败（跳过）: {}", i + 1, e.getMessage());
                 errs.append("第").append(i + 1).append("张: ").append(e.getMessage()).append("; ");
             }
         }

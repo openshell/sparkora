@@ -185,6 +185,30 @@ public class ImageController {
         }
     }
 
+    /** 图生图（参考图文件字节直传，09-26 img2img-ref-upload）：multipart file + prompt + projectId?/size?/n?/tags?[]。
+     *  参考图**不落图库**——校验后字节直传 AI（/v1/images/edits）；生成结果照旧走统一入库管线（source=ai-img2img，
+     *  ref_image_id 落 null：参考图未入库无法自引用，该来源图不走后端 /regenerate）。异常映射与既有生成接口一致。 */
+    @PostMapping("/generate-from-image-upload")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<List<ImageAssetEntity>> generateFromImageUpload(@RequestParam(value = "file", required = false) MultipartFile file,
+                                                               @RequestParam(value = "prompt", required = false) String prompt,
+                                                               @RequestParam(required = false) Long projectId,
+                                                               @RequestParam(required = false) String size,
+                                                               @RequestParam(defaultValue = "1") Integer n,
+                                                               @RequestParam(required = false) List<String> tags) {
+        try {
+            CurrentUser cu = SecurityUtil.require();
+            return R.ok(service.generateImage2ImageFromUpload(projectId, file, prompt, size, n, splitTags(tags), cu.getUsername()));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (org.springframework.web.multipart.MultipartException ex) {
+            Throwable root = ex.getRootCause() != null ? ex.getRootCause() : ex;
+            return R.fail(400, "上传失败: " + root.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, ex.getMessage());
+        }
+    }
+
     /** 重新生成（S10）：同源图 prompt/gen_size 产新图（不覆盖源图）。09-13 起新图继承源图标签。 */
     @PostMapping("/{id}/regenerate")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
