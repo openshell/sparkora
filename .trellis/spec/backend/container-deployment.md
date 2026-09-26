@@ -195,3 +195,13 @@ COPY --from=build /build/target/*.jar /app/app.jar   # 仅产物
 **Fix**：`./data:/app/data` 命名挂载；`down` 只删容器不删宿主 `./data`。
 
 **Prevention**：验证 `down && up -d` 后 `data/tmp/wenyan-themes` 仍在。
+
+### Common Mistake: 代码变动后未重建容器，仍跑旧代码
+
+**Symptom**：改了后端/前端代码（或已提交），但产线容器行为不变，像是改动没生效。
+
+**Cause**：compose 只挂载 `./data`，**源码烘焙进镜像**（`Dockerfile` / `frontend/Dockerfile`），无源码卷。`docker compose restart` 或裸 `docker compose up -d` **不重新构建**，容器继续跑镜像里的旧代码。
+
+**Fix**：代码变动后 `docker compose up -d --build` 重建并滚动替换（`--build` 不可省）。
+
+**Prevention**：把「代码变动后主动 `--build`」作为默认动作——已固化于仓库根 `AGENTS.md`（Commands 段，每会话注入 agent 上下文）与 `docs/deploy.md`（§6 更新镜像、§3 启动、§8 产线）。AI/开发者完成代码改动后应主动执行，无需等用户提醒。

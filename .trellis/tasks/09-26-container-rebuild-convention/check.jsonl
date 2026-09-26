@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "验收两处文档表述一致、无矛盾引用"}
+{"file": "docs/deploy.md", "reason": "核对 §6 是否把 --build 列为代码变动后默认动作并对比 restart"}
+{"file": "AGENTS.md", "reason": "核对产线部署命令块是否含代码变动后主动重建的明确说明"}

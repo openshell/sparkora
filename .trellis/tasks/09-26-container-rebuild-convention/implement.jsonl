@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "文档改动与引用约定：确认 AGENTS.md/docs/deploy.md 的表述与既有层级/引用规则一致"}
+{"file": "docs/deploy.md", "reason": "改动目标之一，§6 更新镜像需把 --build 明确为代码变动后默认动作"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "容器化部署权威约定：确认新增表述与端口/构建/镜像内置代码的契约不冲突"}

@@ -55,7 +55,7 @@
 ## 3. 一键启动 / 停止
 
 ```bash
-# 构建并后台启动（首次或改动 Dockerfile 后加 --build）
+# 构建并后台启动（代码变动后必须加 --build，见 §6）
 docker compose up -d --build
 
 # 查看状态（backend 应 healthy，frontend running）
@@ -108,15 +108,18 @@ docker compose restart backend
 
 ## 6. 更新镜像
 
+**代码变动后的默认动作**：本地改完后端/前端代码（或拉取最新代码）后，主动执行下面命令重建并滚动替换。compose 只挂载 `./data`，代码**烘焙进镜像**，不重建就不会应用新代码。
+
 ```bash
-# 拉取最新代码后重建并滚动替换
+# 代码变动后重建并滚动替换(默认动作,--build 不可省)
 docker compose up -d --build
 
 # 仅重建某一服务
 docker compose build backend && docker compose up -d backend
 ```
 
-`schema.sql` 幂等（`spring.sql.init.mode: always`），容器每次启动都会执行建表/回填，无需手工迁移。
+- `docker compose restart backend` 与裸 `docker compose up -d` **不会重新构建镜像**，仍跑旧代码——改代码后必须带 `--build`。
+- `schema.sql` 幂等（`spring.sql.init.mode: always`），容器每次启动都会执行建表/回填，无需手工迁移。
 
 ---
 
@@ -135,7 +138,7 @@ docker compose build backend && docker compose up -d backend
 
 ## 8. 与本地联调的关系
 
-- **产线**：`docker compose up -d`（本文件）。
+- **产线**：`docker compose up -d --build`（本文件；代码变动后必须重建）。
 - **本地热重载联调**：`./dev.sh start|stop|restart|status|logs`（见 [AGENTS.md「Commands」](../AGENTS.md)），行为与容器化改造前完全一致。
 - 两者端口独立、互不干扰；本任务未改动 `dev.sh` / `application.yml` / `frontend/vite.config.js` / 任何 Java、Vue 源码。
 
