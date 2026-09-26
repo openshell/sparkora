@@ -483,3 +483,29 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: 图生图多参考图（≤4，混合来源）+ 405 部署修复验证
+<!-- trellis-session: v=2 fp=00db1bef6ff46ef0 -->
+
+**Date**: 2026-09-27
+**Task**: 图生图多参考图（≤4，混合来源）+ 405 部署修复验证
+**Branch**: `main`
+
+### Summary
+
+父任务 09-26-img2img-multi-ref 收口：①后端子任务新增多 image part 客户端（AiImageClient.generateImage2Image 收 List<byte[]>+List<String>，保序，空/不匹配抛 AiException）+ 统一多图接口 generate-from-image-upload（files[] + refImageIds[]，保序 files 前 refs 后，总数 1~4，逐张校验，ref_image_id 仅单张图库来源落 id 否则 NULL）；新增 IMAGE_MAX_REQUEST_MB(45)。②前端子任务：AiImageDrawer 参考图区由单张改有序 refs[]（local/library，REF_MAX=4，可粘贴多文件/本地多选/图库多选/混合、逐张移除、n/4 计数），统一走多图 multipart；imageRefCache 扩展为整组 {files[],refImageIds[],names[],previewUrls[]}；两宿主重生成同口径（缓存命中复用整组，仅单图库来源走后端 /regenerate，刷新后本地来源置灰）。check 修复：条目内重复 File 的 ObjectURL 泄漏、图库弹窗重复选图占用名额。③父任务：docs/spec/image.md 多图契约同步（§1 ref_image_id 规则、§6 接口行、§8 页面职责、§10 已知限制）。集成验证：mvn compile + 320 单测 + npm build 全绿；docker compose up -d --build 后实测 405→400（0 张「请至少选择 1 张参考图」/ 5 张「最多支持 4 张参考图」/ 不存在 id「参考图不存在」），真实多图端到端通过（2 本地图→refImageId null；本地+图库混合→null；单图库→refImageId=208；图库双选→null；对单图库结果调 /regenerate 成功），测试图 7 张已精确删除、图库总数恢复 168 基线。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0699a25` | feat(img2img): 图生图支持多张参考图（多 image part + files[]/refImageIds[] 集合接口） |
+| `02c0b78` | docs(spec): 固化 multipart 集合参数绑定与顺序/计数约定 |
+| `fc2f6d7` | feat(ui): 图生图抽屉支持多张参考图(粘贴/本地/图库,上限4)与统一多图提交 |
+| `4311f21` | docs(spec): 固化会话缓存 ObjectURL 按 File 引用去重约定 |
+| `3ef655a` | docs(image): 图生图多参考图契约同步（files[]/refImageIds[]、上限4、ref_image_id 规则） |
+
+### Status
+
+[OK] **Completed**
