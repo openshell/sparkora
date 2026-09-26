@@ -144,6 +144,7 @@ graph TD
   - 后端：`generate/brief` 仅在 DRAFT/READY、`generate/versions` 仅在 READY/VERSIONS_READY 放行（条件更新 WHERE 白名单；「生成中且陈旧超 10 分钟」分支自愈但同样限定生成中状态）；违反返回 `R.fail(409, "…下游步骤已触发，不支持回退重做")`。
   - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见。
 - **并发防护（S2a 补）**：项目处于 GENERATING_BRIEF/GENERATING_VERSIONS 时再次触发返回 `R.fail(409, "该项目正在生成中…")`，不重复调 AI；生成中状态陈旧（`updated_at` 超 10 分钟，如 JVM 中途死亡）时原子条件更新放行重新生成以自愈。brief 未就绪时触发版本生成返回 `R.fail(400)`。
+- **状态写权收敛（09-27-state-machine-service）**：项目 status / last_brief_error / last_version_error / last_publish_error 的写入全部收敛到 `com.sparkora.service.ProjectStatusService`（抢占/成功推进/失败回退/发布终态/错误列写入清空），BriefService/ImitationService/VersionService/DeepController/PublishService/ClarifyService 均为纯委托。唯二例外：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）、`schema.sql` 启动回填（存量修复，随 Flyway 子任务处置）。各转换的 WHERE 白名单/SET 列语义不变（单测 `ProjectStatusServiceTest` 逐项断言）。
 - 深度模式的 `CLARIFYING`/`RESEARCHING`/`PLANNING` 等是 **brief 侧展示态**（`/deep/status`），不改项目状态机。
 
 ### 4.3 权限角色

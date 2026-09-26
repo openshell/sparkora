@@ -63,6 +63,31 @@ public R<Void> handleBind(BindException ex) {
 
 > **Warning**: 失败回退不得复用方法开头的 `p` 对象做 `updateById` 全字段回写，也不得再走 `fresh = selectById` + `updateById`——两者都会用旧快照覆盖生成期间其他请求更新的列。条件 `UpdateWrapper`（`eq("id", …).in("status", 生成中状态…).set(...)`）是唯一安全写法，先例：`BriefService`/`ImitationService`/`VersionService`（09-27-p0-hardening R2）。
 
+### 状态机写权收敛（09-27-state-machine-service 先例：ProjectStatusService）
+
+项目 `status` / `last_brief_error` / `last_version_error` / `last_publish_error` 的**全部写入收敛到 `com.sparkora.service.ProjectStatusService` 单一服务**（`.trellis` P1-⑤ 整改）。生成链路服务（BriefService/ImitationService/VersionService/DeepController/PublishService/ClarifyService）**纯委托**，不得再手写状态 `UpdateWrapper`：
+
+```java
+// 抢占(claimed==0 服务内抛 409 语义,提示语用调用方刚读的 p 快照保证不变)
+statusService.claimBriefGenerating(projectId, p, "生成简报");
+// 成功推进(extraCols 业务列同条 UPDATE 写入,如 imitation_analysis,保持原子性)
+statusService.advanceReady(projectId, b.getId(), Map.of("imitation_analysis", json));
+// 首版两拆分/失败回退/发布终态同理:
+statusService.advanceVersionsReady(projectId, first.getId(), partialErrors);   // 源态 GENERATING_VERSIONS
+statusService.advanceVersionsReadyFromReady(projectId, versionId);             // 深度单版,源态 READY/DRAFT
+statusService.failBriefToDraft(projectId, reason);     // 截断 1000 收在服务内
+statusService.failVersionsToReady(projectId, reason);
+statusService.markPublished(projectId, mediaId, theme, now);
+statusService.markPublishFailure(projectId, message);  // 压缩空白+截断 990+吞异常口径收在服务内
+statusService.writeBriefError(projectId, reasonOrNull); // 单列写入/清空(ClarifyService 异步链路)
+```
+
+- **唯二例外**（不走状态服务）：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）；`schema.sql` 启动回填（存量数据修复，随 Flyway 子任务处置）。
+- **常量与判定收编**：`STALE_GENERATING_MS`（10 分钟）唯一定义在状态服务；`stuckGenerating(p)` / `guardMsg(p, action)`（409 守卫提示语）由服务持有，调用方不再各自复制。
+- **语义不变契约**：各转换的 WHERE 状态白名单、SET 列、两拆分顺序、截断口径（1000/990）、409 提示语与 P0 修复后实现逐字等价——新增/修改转换时必须在 `ProjectStatusServiceTest` 补对应断言（WHERE 白名单/两拆分/截断）。
+- **源态白名单不同的转换不合并**：多版本链路源态 `GENERATING_VERSIONS`，深度单版源态 `READY/DRAFT`——语义不同，显式化为两个方法。
+- 历史教训：状态推进逻辑散落多处曾产出 09-10-versions-page-fix（深度链路漏推状态机）与 P0-②（8 处 updateById 并发回写）两类缺陷；收敛后新链路只做委托，落库语义单点维护。
+
 ---
 
 ## API Error Responses

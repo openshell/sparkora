@@ -14,7 +14,7 @@
 ## Query Patterns
 
 - 单表 CRUD 用 mapper 直调；条件查询 `QueryWrapper` / `UpdateWrapper`。
-- **原子抢占**（消除 check-then-set 竞态）：条件更新返回影响行数判定：
+- **原子抢占**（消除 check-then-set 竞态）：条件更新返回影响行数判定（项目状态机的抢占/推进/回退已收敛到 `ProjectStatusService` 单一写权持有者，见 error-handling.md「状态机写权收敛」；新链路只做委托，不手写状态 UpdateWrapper）：
 
 ```java
 int claimed = projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
