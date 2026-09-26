@@ -459,3 +459,27 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: AI 生图体验改进：粘贴/本地参考图 + 抽屉共用组件
+<!-- trellis-session: v=2 fp=9d5cd6ed52c57977 -->
+
+**Date**: 2026-09-26
+**Task**: AI 生图体验改进：粘贴/本地参考图 + 抽屉共用组件
+**Branch**: `main`
+
+### Summary
+
+父任务 09-26-image-gen-ux-paste 收口：①后端子任务 img2img-ref-upload 新增 multipart 接口 POST /api/images/generate-from-image-upload（参考图字节直传 AI、不落图库、结果 ref_image_id=NULL），提取 ImageService.readValidatedImage 复用校验；②前端子任务 image-gen-drawer-ux 抽取共用组件 frontend/src/components/AiImageDrawer.vue（library/preview 双模式，props/emits 契约），支持粘贴(Ctrl/⌘+V)/本地文件/图库三来源参考图，新增 utils/imageRefCache.js 会话缓存(LRU 20, 不持久化)支撑本地来源重生成，缓存失效置灰+tooltip；图库页与预览页两入口统一，消除重复模板。check 修复 4 处缺陷：粘贴文件名无扩展名导致后端 400、图库页缓存重生成 projectId 回退、语义搜索模式误置灰、缓存参数快照漂移。docs/spec/image.md §1/§6/§8/§10 与 .trellis/spec/frontend/index.md（上传须补扩展名、动态 :is 须显式 import）同步。验证：mvn compile + 313 单测 + npm run build 全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cdc1ecf` | feat(img2img): 新增参考图直传的图生图接口（不落图库） |
+| `1a991e8` | feat(ui): AI 生图抽屉共用组件 + 粘贴/本地参考图与界面重构 |
+| `482c677` | docs(image): 同步图生图直传接口与生图抽屉规格 |
+
+### Status
+
+[OK] **Completed**

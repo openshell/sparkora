@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-09-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~461 | Active |
+| `journal-1.md` | ~485 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-09-26 | AI 生图体验改进：粘贴/本地参考图 + 抽屉共用组件 | `cdc1ecf`, `1a991e8`, `482c677` | `main` |
 | 17 | 2026-09-26 | Session 17: 深度研究素材覆盖与降级补齐（snippet保真/背景维度/动态子代理/简报提额） | `3342d63`, `7dbb0c5` | `main` |
 | 16 | 2026-09-26 | 固化容器化约定:代码变动后主动重建 | `6fa516e` | `main` |
 | 15 | 2026-09-26 | Session 15: 修复并行子代理研究进度实时回写 | `7870156` | `main` |
