@@ -1,5 +1,9 @@
 import http from './http'
 
+// 超时联动:本文件最长的 axios 超时为 300000ms(300s)。产线 nginx 反代的
+// proxy_read_timeout/proxy_send_timeout 必须 >= 该值(见 frontend/nginx.conf.template,当前 300s),
+// 否则长耗时 AI 接口会被 nginx 先掐断返回 504(前端仍傻等到自身超时)。调整任一侧须联动检查两处。
+
 export const authApi = {
   login: (data) => http.post('/auth/login', data),
   logout: () => http.post('/auth/logout'),
