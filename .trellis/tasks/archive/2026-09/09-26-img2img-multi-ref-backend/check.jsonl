@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "质量核对基准：R<T>/错误映射/权限/参数校验一致性"}
+{"file": "docs/spec/image.md", "reason": "字段级契约核对：files[]/refImageIds[]/上限/顺序/ref_image_id 规则"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/不可逆副作用隔离——多图校验与 AI 失败跳过路径核对"}

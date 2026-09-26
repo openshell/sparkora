@@ -1,0 +1,2 @@
+{"file": "docs/spec/image.md", "reason": "父任务集成收口：图生图多图契约与 UI 职责的权威同步目标"}
+{"file": "AGENTS.md", "reason": "部署约定：代码烘焙进镜像，改动后须 docker compose up -d --build（AC-7 405 验证依据）"}

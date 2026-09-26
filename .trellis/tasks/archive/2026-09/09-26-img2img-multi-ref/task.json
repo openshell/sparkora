@@ -1,0 +1,29 @@
+{
+  "id": "img2img-multi-ref",
+  "name": "img2img-multi-ref",
+  "title": "图生图多参考图支持",
+  "description": "图生图支持多张参考图（后端契约+前端交互），并验证部署重建修复 405",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-09-26",
+  "completedAt": "2026-09-27",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-26-img2img-multi-ref-backend",
+    "09-26-img2img-multi-ref-frontend"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
