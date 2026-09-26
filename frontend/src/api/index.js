@@ -170,6 +170,19 @@ export const imageApi = {
         refImageId: refImageId == null ? null : Number(refImageId), prompt,
         size, n: n == null ? 1 : n, tags: tags?.length ? tags : undefined },
       { timeout: 300000 }),
+  // 图生图（参考图文件直传，09-26 img2img-ref-upload）：multipart file + prompt + projectId? + size? + n? + tags?
+  // 参考图不落图库（后端内存校验后字节直传 AI）；字段名须与后端 @RequestParam 完全一致。
+  // 不要手工设 Content-Type——交给 axios 生成 multipart boundary。
+  generateFromImageUpload: (projectId, file, prompt, size, n, tags) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('prompt', prompt)
+    if (projectId != null && projectId !== '') fd.append('projectId', Number(projectId))
+    if (size) fd.append('size', size)
+    fd.append('n', n == null ? 1 : n)
+    ;(tags || []).forEach(t => { const v = String(t || '').trim(); if (v) fd.append('tags', v) })
+    return http.post('/images/generate-from-image-upload', fd, { timeout: 300000 })
+  },
   // 单图标签全量覆盖（09-13 image-tags）：body={tags:[]}，空数组=清空
   updateTags: (imageId, tags) => http.put(`/images/${imageId}/tags`, { tags: tags || [] }),
   // 批量打标/移除（09-13 image-tags）：action=add(补打) / remove(移除)，逐张幂等

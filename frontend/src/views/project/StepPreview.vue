@@ -153,18 +153,7 @@
       </div>
     </template>
 
-    <!-- 参考图选择弹窗（图生图；S10 走图库分页检索） -->
-    <el-dialog v-model="refDialog" title="选择参考图" width="720px" class="ref-dialog">
-      <div v-if="!libraryImages.length" class="img-pop-empty">图库为空，请先到「图库」上传或用 AI 生成</div>
-      <div v-else class="ref-grid">
-        <div v-for="img in libraryImages" :key="img.id" class="ref-cell" @click="chooseRef(img)">
-          <el-image :src="imgUrl(img)" fit="cover" class="ref-cell-thumb" />
-          <span class="ref-cell-name">#{{ img.id }} {{ img.fileName }}</span>
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- 配图抽屉:图库选用 + AI 生图 -->
+    <!-- 配图抽屉:图库选用 + AI 生图（AI 生图 UI/逻辑见共用组件 AiImageDrawer，参考图弹窗随其内联） -->
     <el-drawer v-model="imgDrawer" title="配图" size="420px" class="img-drawer" :with-header="true">
       <el-tabs v-model="imgTab" class="img-tabs">
         <!-- 图库:全量图库选用(插入正文 / 设封面) -->
@@ -203,69 +192,12 @@
             <div v-else-if="!libHasMore" class="lib-loading">已加载全部 {{ libTotal }} 张</div>
           </template>
         </el-tab-pane>
-        <!-- AI 生图:文生图 / 图生图,产物进图库后插入(S10:n 张候选逐张选用) -->
+        <!-- AI 生图（09-26 image-gen-drawer-ux：共用 AiImageDrawer，preview 模式 → 插入正文/设封面）
+             `model-value` 传「抽屉打开且停在 AI tab」：粘贴监听只在 AI 生图 tab 可见时生效。 -->
         <el-tab-pane label="AI 生图" name="ai">
-          <el-tabs v-model="aiTab" class="ai-tabs">
-            <el-tab-pane label="文生图" name="text2img">
-              <el-input v-model="t2iPrompt" type="textarea" :rows="2"
-                        placeholder="例：俯瞰一杯咖啡与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
-              <div class="ai-row">
-                <el-select v-model="genSize" class="size-select">
-                  <el-option label="方图 1024×1024" value="1024x1024" />
-                  <el-option label="横图 1536×1024" value="1536x1024" />
-                  <el-option label="竖图 1024×1536" value="1024x1536" />
-                </el-select>
-                <el-select v-model="genCount" class="n-select">
-                  <el-option label="1 张" :value="1" />
-                  <el-option label="2 张" :value="2" />
-                  <el-option label="4 张" :value="4" />
-                </el-select>
-                <el-button type="primary" :loading="generating" @click="onGenerateText">
-                  {{ generating ? '生成中…' : '生成候选' }}
-                </el-button>
-              </div>
-            </el-tab-pane>
-            <el-tab-pane label="图生图" name="img2img">
-              <div v-if="refImage" class="ref-pick">
-                <img :src="imgUrl(refImage)" class="ref-thumb" alt="参考图" />
-                <el-button size="small" text type="primary" @click="refDialog = true">重新选择</el-button>
-              </div>
-              <el-button v-else plain size="small" @click="refDialog = true">从图库选择参考图</el-button>
-              <el-input v-model="i2iPrompt" type="textarea" :rows="2"
-                        placeholder="例：保持构图，改为蓝灰色科技感色调" />
-              <div class="ai-row">
-                <el-select v-model="genSize" class="size-select">
-                  <el-option label="方图 1024×1024" value="1024x1024" />
-                  <el-option label="横图 1536×1024" value="1536x1024" />
-                  <el-option label="竖图 1024×1536" value="1024x1536" />
-                </el-select>
-                <el-select v-model="genCount" class="n-select">
-                  <el-option label="1 张" :value="1" />
-                  <el-option label="2 张" :value="2" />
-                  <el-option label="4 张" :value="4" />
-                </el-select>
-                <el-button type="primary" :disabled="!refImage" :loading="generating" @click="onGenerateFromImage">
-                  {{ generating ? '生成中…' : '生成候选' }}
-                </el-button>
-              </div>
-            </el-tab-pane>
-          </el-tabs>
-          <!-- S10:生成候选列表(逐张可插入/设封面/重生成;n=1 时自动插入不再展示) -->
-          <div v-if="candidates.length" class="cand-list">
-            <div class="cand-tip">本次生成 {{ candidates.length }} 张候选：点击插入正文，或设为封面</div>
-            <div class="cand-grid">
-              <div v-for="img in candidates" :key="img.id" class="cand-cell">
-                <el-image :src="imgUrl(img)" fit="cover" class="cand-thumb" :preview-src-list="[originUrl(img)]"
-                          preview-teleported hide-on-click-modal />
-                <div class="cand-actions">
-                  <el-button size="small" type="primary" plain @click="insertBodyImage(img)">插入正文</el-button>
-                  <el-button size="small" @click="onSetCover(img.id)">设为封面</el-button>
-                  <el-button size="small" text type="primary" :loading="regeneratingId === img.id"
-                             @click="onRegenerate(img)">重生成</el-button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <AiImageDrawer :model-value="imgDrawer && imgTab === 'ai'" mode="preview" :project-id="projectId"
+                         show-cover-action
+                         @insert="insertBodyImage" @set-cover="onSetCover" @generated="onGenerated" />
         </el-tab-pane>
         <!-- 智能建议(09-15 article-auto-illustrate 子C):按段落锚点语义检索图库,产出**建议**。
              系统只给建议,点「插入到此段」/「全部采用」才会写入正文(无自动插入开关)。 -->
@@ -340,6 +272,7 @@ import { projectApi, imageApi } from '../../api'
 import { useProjectDetailStore } from '../../store/project-detail'
 import { renderMarkdownHtml, applyPreviewTheme, buildWechatHtml, sanitizeWenyanHtml } from '../../utils/wenyanRender'
 import MarkdownEditor from '../../components/MarkdownEditor.vue'
+import AiImageDrawer from '../../components/AiImageDrawer.vue'
 import { ElMessage } from 'element-plus'
 import { DocumentCopy, Loading, WarningFilled, Check, Picture, Plus } from '@element-plus/icons-vue'
 
@@ -380,19 +313,9 @@ const previewWidth = ref('phone') // 预览宽度档位:phone | tablet | full(�
 const previewBody = ref(null)
 const copying = ref(false)
 
-// ==== 配图面板状态(图库插入 + AI 生图) ====
+// ==== 配图面板状态(图库插入 + AI 生图——生图 UI/逻辑在共用组件 AiImageDrawer.vue) ====
 const imgDrawer = ref(false)        // 配图抽屉开关
-const imgTab = ref('library')       // 配图面板 tab:library | ai
-const aiTab = ref('text2img')       // AI 生图子 tab:text2img | img2img
-const t2iPrompt = ref('')
-const i2iPrompt = ref('')
-const genSize = ref('1024x1024')
-const genCount = ref(1)              // S10:批量生成张数(1/2/4)
-const candidates = ref([])           // S10:本次生成候选(响应列表;全部已入库图库)
-const regeneratingId = ref(null)     // S10:重生成中的源图 id
-const refImage = ref(null)          // 图生图参考图
-const refDialog = ref(false)
-const generating = ref(false)       // AI 生成中
+const imgTab = ref('library')       // 配图面板 tab:library | ai | suggest
 const busy = ref(false)             // 封面操作中
 
 // ==== 智能配图建议(09-15 article-auto-illustrate 子C)====
@@ -720,51 +643,12 @@ const onSetCover = async (imageId) => {
   } finally { busy.value = false }
 }
 
-const onGenerateText = () => {
-  if (!t2iPrompt.value.trim()) { ElMessage.warning('请输入画面描述'); return }
-  doGenerate(imageApi.generateText(projectId.value, t2iPrompt.value.trim(), genSize.value, genCount.value))
+/** AI 生图完成（共用组件 emit generated）：刷新配图快照；**首次生成** n=1 沿用旧行为自动插入正文光标处
+ *  （重生成不自动插入——与既有 S10 行为一致，重生成结果由用户点「插入正文」）。 */
+const onGenerated = async (list, meta) => {
+  try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响生成结果展示 */ }
+  if (meta?.reason === 'generate' && list?.length === 1 && list[0]?.id) insertBodyImage(list[0])
 }
-const onGenerateFromImage = () => {
-  if (!refImage.value) { ElMessage.warning('请先选择参考图'); return }
-  if (!i2iPrompt.value.trim()) { ElMessage.warning('请输入画面描述'); return }
-  doGenerate(imageApi.generateFromImage(projectId.value, refImage.value.id, i2iPrompt.value.trim(), genSize.value, genCount.value))
-}
-/** S10:响应为候选列表(逐张入库);n=1 沿用旧行为自动插入,多张展示候选面板逐张选用。 */
-const doGenerate = async (req) => {
-  generating.value = true
-  try {
-    const res = await req
-    if (res.code === 0) {
-      const list = res.data || []
-      const reused = list.some(img => img.dedupeHit)
-      ElMessage.success(reused ? '生成完成（部分图与图库重复，已复用）' : '生成成功，已进图库')
-      candidates.value = list
-      await refreshImgSnapshot()
-      // 单张候选沿旧行为:直接插入正文光标处;多张候选由面板逐张选用
-      if (list.length === 1 && list[0]?.id) insertBodyImage(list[0])
-    } else ElMessage.error(res.msg || '生成失败')
-  } catch (e) {
-    ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
-  } finally { generating.value = false }
-}
-
-/** S10:同 prompt/尺寸一键重生成(产新图不覆盖源图);候选列表替换为新候选。 */
-const onRegenerate = async (img) => {
-  regeneratingId.value = img.id
-  try {
-    const res = await imageApi.regenerate(img.id)
-    if (res.code === 0) {
-      const list = res.data || []
-      ElMessage.success(list.length ? '已重新生成' : '生成失败')
-      candidates.value = list
-      await refreshImgSnapshot()
-    } else ElMessage.error(res.msg || '重新生成失败')
-  } catch (e) {
-    ElMessage.error('重新生成失败：' + (e.response?.data?.msg || e.message || '网络异常'))
-  } finally { regeneratingId.value = null }
-}
-
-const chooseRef = (img) => { refImage.value = img; refDialog.value = false }
 
 // ==== 智能配图建议(09-15 article-auto-illustrate 子C)====
 // 生成建议 = 只读检索(零副作用);采用 = 唯一写入路径(用户显式点击)。
@@ -934,11 +818,10 @@ watch(() => props.project, (p) => {
 })
 
 watch(previewable, (ok) => { if (ok && !loaded.value && !loadError.value) loadContent() })
-// S10:抽屉/参考图弹窗首次打开时拉图库分页(后续打开仅在空态时重拉,避免打断滚动位置)
+// S10:抽屉首次打开时拉图库分页(后续打开仅在空态时重拉,避免打断滚动位置)
 watch(imgDrawer, (open) => { if (open && !libraryImages.value.length) reloadLibrary() })
 // 智能建议 tab 首次进入时拉标签清单(仅可选预过滤;建议由用户点按钮触发生成,不自动请求)
 watch(imgTab, (t) => { if (t === 'suggest') loadSugTags() })
-watch(refDialog, (open) => { if (open && !libraryImages.value.length) reloadLibrary() })
 onBeforeUnmount(() => { clearTimeout(renderTimer); clearTimeout(libKwTimer); flushSavePreviewStyle() })
 </script>
 
@@ -955,26 +838,17 @@ onBeforeUnmount(() => { clearTimeout(renderTimer); clearTimeout(libKwTimer); flu
 .state-title { font-weight: 700; margin: 8px 0 4px; }
 .state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
 
-/* 配图抽屉(图库插入 + AI 生图) */
+/* 配图抽屉(图库插入 + AI 生图——AI 生图样式见 components/AiImageDrawer.vue) */
 .img-drawer :deep(.el-drawer__body) { padding: 0 16px 16px; }
 .img-pop-tip { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; }
 .img-pop-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
 .img-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
 .img-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
-.ai-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
-.ai-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
 .img-pop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-height: 60vh; overflow-y: auto; }
 .lib-filter-row { display: flex; gap: 8px; margin-bottom: 10px; }
 .lib-src { width: 110px; flex: none; }
 .lib-kw { flex: 1; }
 .lib-loading { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0; }
-.n-select { width: 90px; }
-.cand-list { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
-.cand-tip { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-.cand-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.cand-cell { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; }
-.cand-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); }
-.cand-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 .img-pop-cell { position: relative; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color .2s, box-shadow .2s; background: var(--card); }
 .img-pop-cell:hover { border-color: var(--brand, var(--el-color-primary)); }
 .img-pop-cell.inserted { border-color: var(--ok, #67c23a); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #67c23a) 18%, transparent); }
@@ -993,15 +867,6 @@ onBeforeUnmount(() => { clearTimeout(renderTimer); clearTimeout(libKwTimer); flu
   text-align: center; font-size: 11px; border-radius: 8px; background: var(--ok, #67c23a); color: #fff; }
 .img-pop-actions { padding: 6px; }
 .img-pop-actions .el-button { width: 100%; min-height: 30px; margin: 0; }
-.ai-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
-.ai-row .size-select { width: 180px; }
-.ref-pick { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.ref-thumb { width: 56px; height: 56px; border-radius: var(--radius-sm, 6px); object-fit: cover; border: 1px solid var(--line); }
-.ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 60vh; overflow-y: auto; }
-.ref-cell { cursor: pointer; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; text-align: center; }
-.ref-cell:hover { border-color: var(--brand); }
-.ref-cell-thumb { width: 100%; aspect-ratio: 1; border-radius: var(--radius-sm); }
-.ref-cell-name { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 智能配图建议(09-15 article-auto-illustrate 子C):只给建议,点采用才写入 */
 .sug-head { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
