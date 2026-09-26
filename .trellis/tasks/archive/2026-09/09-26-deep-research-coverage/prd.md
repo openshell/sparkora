@@ -37,15 +37,15 @@
 
 ## Acceptance Criteria
 
-- [ ] AC-01 构造 `rawFallback` 命中含 snippet 时,产出的事实/证据包含该 snippet 正文(非仅标题);含小数/引号/换行的 snippet 仍产出合法 JSON。
-- [ ] AC-02 新研究计划至少包含一条背景/战略/长期目标型 keyQuestion(或等价 `backgroundQuestion` 字段)。
-- [ ] AC-03 进度页对 `search.fallbackReason=LLM_FALLBACK` 的 agent 显示降级原因(文案明确为「汇总降级」)。
-- [ ] AC-04 LLM 汇总 `finish_reason=length` 时触发一次提额/重试;仅重试仍失败才落 FALLBACK。
-- [ ] AC-05 既有契约不回归:`available()` 无闩锁、`toolHealth` 三键与优先级、`/deep/*` 响应结构、`research_notes` 字段集。
-- [ ] AC-06 `mvn -q -DskipTests compile` / `mvn test` 全绿;前端改动 `npm run build` 通过。
-- [ ] AC-07 文档同步:`docs/spec/brief-generation.md`、`.trellis/spec/backend/ai-rag-guidelines.md`、必要时 `docs/spec/settings.md`。
-- [ ] AC-08 深度简报截断容错:`generateFromFactSheet` 首次 `chatJson(...,8192)`;截断/空/非法 JSON 时翻倍(16384)重试一次且仅一次;两次均失败才回 DRAFT + `lastBriefError`。构造「首次抛截断 AiException、第二次成功」→ 简报落字段且项目 READY;「两次均失败」→ DRAFT(单测 Mock AiClient)。
-- [ ] AC-09 FAST 简报路径已删除:`BriefService.generate` 及其私有 `buildSystemPrompt/buildUserPrompt` 不再存在;`generateFromFactSheet`/`currentBrief` 保留且行为不变;`mvn test` 全绿(确认无悬挂引用)。
+- [x] AC-01 构造 `rawFallback` 命中含 snippet 时,产出的事实/证据包含该 snippet 正文(非仅标题);含小数/引号/换行的 snippet 仍产出合法 JSON。
+- [x] AC-02 新研究计划至少包含一条背景/战略/长期目标型 keyQuestion(或等价 `backgroundQuestion` 字段)。
+- [x] AC-03 进度页对 `search.fallbackReason=LLM_FALLBACK` 的 agent 显示降级原因(文案明确为「汇总降级」)。
+- [x] AC-04 LLM 汇总 `finish_reason=length` 时触发一次提额/重试;仅重试仍失败才落 FALLBACK。
+- [x] AC-05 既有契约不回归:`available()` 无闩锁、`toolHealth` 三键与优先级、`/deep/*` 响应结构、`research_notes` 字段集。
+- [x] AC-06 `mvn -q -DskipTests compile` / `mvn test` 全绿;前端改动 `npm run build` 通过。
+- [x] AC-07 文档同步:`docs/spec/brief-generation.md`、`.trellis/spec/backend/ai-rag-guidelines.md`、必要时 `docs/spec/settings.md`。
+- [x] AC-08 深度简报截断容错:`generateFromFactSheet` 首次 `chatJson(...,8192)`;截断/空/非法 JSON 时翻倍(16384)重试一次且仅一次;两次均失败才回 DRAFT + `lastBriefError`。构造「首次抛截断 AiException、第二次成功」→ 简报落字段且项目 READY;「两次均失败」→ DRAFT(单测 Mock AiClient)。
+- [x] AC-09 FAST 简报路径已删除:`BriefService.generate` 及其私有 `buildSystemPrompt/buildUserPrompt` 不再存在;`generateFromFactSheet`/`currentBrief` 保留且行为不变;`mvn test` 全绿(确认无悬挂引用)。
 
 ## Out of Scope
 
