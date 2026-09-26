@@ -436,3 +436,26 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: Session 17: 深度研究素材覆盖与降级补齐（snippet保真/背景维度/动态子代理/简报提额）
+<!-- trellis-session: v=2 fp=c2b058017e9a005e -->
+
+**Date**: 2026-09-26
+**Task**: Session 17: 深度研究素材覆盖与降级补齐（snippet保真/背景维度/动态子代理/简报提额）
+**Branch**: `main`
+
+### Summary
+
+任务 09-26-deep-research-coverage：R1 降级保真 snippet（rawFallback+FactSheet+写作prompt）、R2 背景维度（LLM判断+信号词兜底）、R3 进度页展示 LLM_FALLBACK、R4 汇总截断提额4096重试、R5 maxAgents 4→6、R6 深度简报提额8192+失败16384重试并删除死FAST简报路径。新增/改测试 BriefServiceTest/SubAgentRunnerTest/FactSheetServiceTest/ClarifyServiceTest；mvn test 308 全绿。提交 3342d63、7dbb0c5，两次重建后端镜像均 healthy。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3342d63` | feat(S9): 深度研究降级保真 snippet 并补齐背景维度与动态子代理 |
+| `7dbb0c5` | fix(deep): 深度简报提额并失败重试一次，删除已下线的 FAST 简报路径 |
+
+### Status
+
+[OK] **Completed**
