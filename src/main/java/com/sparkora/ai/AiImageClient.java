@@ -77,16 +77,23 @@ public class AiImageClient {
     }
 
     /**
-     * 图生图：multipart POST /v1/images/edits，按序轮询候选模型（S3b 实现）。
-     * S10 起返回 URL + 实际命中模型名（留档 gen_model）。
-     * @param refImageBytes 参考图字节
-     * @param refFileName   参考图文件名（供 multipart 的 filename；png/jpg/webp）
+     * 图生图（多参考图，09-26 img2img-multi-ref）：multipart POST /v1/images/edits，
+     * 对每张参考图追加一个重复的 {@code image} part（**保序**；网关实测支持重复 image part），
+     * 再按序轮询候选模型。S10 起返回 URL + 实际命中模型名（留档 gen_model）。
+     * @param refImageBytesList 参考图字节列表（保序，1~4 张；空集合抛 AiException）
+     * @param refFileNames      参考图文件名列表（与字节**一一对应**同长；长度不匹配抛 AiException；null/空白回退 reference.png）
      */
-    public GenResult generateImage2Image(String prompt, byte[] refImageBytes, String refFileName, String size) {
+    public GenResult generateImage2Image(String prompt, List<byte[]> refImageBytesList,
+                                         List<String> refFileNames, String size) {
         List<String> models = props.imageModelList();
         if (models.isEmpty()) throw new AiException("AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置", null);
-        if (refImageBytes == null || refImageBytes.length == 0)
+        if (refImageBytesList == null || refImageBytesList.isEmpty())
             throw new AiException("图生图参考图为空", null);
+        if (refFileNames == null || refFileNames.size() != refImageBytesList.size())
+            throw new AiException("图生图参考图与文件名数量不匹配", null);
+        for (byte[] bytes : refImageBytesList) {
+            if (bytes == null || bytes.length == 0) throw new AiException("图生图参考图为空", null);
+        }
         StringBuilder errs = new StringBuilder();
         for (String model : models) {
             try {
@@ -95,14 +102,19 @@ public class AiImageClient {
                 body.add("prompt", prompt);
                 if (size != null && !size.isBlank()) body.add("size", size);
                 body.add("n", 1);
-                body.add("image", new ByteArrayResource(refImageBytes) {
-                    @Override public String getFilename() {
-                        return refFileName == null || refFileName.isBlank() ? "reference.png" : refFileName;
-                    }
-                });
+                // 保序重复 image part：第 i 张参考图对应第 i 个 part
+                for (int i = 0; i < refImageBytesList.size(); i++) {
+                    byte[] bytes = refImageBytesList.get(i);
+                    String name = refFileNames.get(i);
+                    body.add("image", new ByteArrayResource(bytes) {
+                        @Override public String getFilename() {
+                            return name == null || name.isBlank() ? "reference.png" : name;
+                        }
+                    });
+                }
                 String resp = postMultipartForJsonText("/v1/images/edits", body);
                 String url = parseFirstUrl(resp);
-                log.info("图生图成功 model={} refSize={}B url={}", model, refImageBytes.length, shorten(url));
+                log.info("图生图成功 model={} refCount={} url={}", model, refImageBytesList.size(), shorten(url));
                 return new GenResult(url, model);
             } catch (Exception e) {
                 log.warn("图生图模型 {} 失败，尝试下一个: {}", model, e.getMessage());

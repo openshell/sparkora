@@ -13,7 +13,8 @@ spring:
     multipart:
       # S3b:配图上传放开 Spring 默认 1MB 限制(对齐 IMAGE_MAX_UPLOAD_MB,略放宽头开销)
       max-file-size: ${IMAGE_MAX_UPLOAD_MB:10}MB
-      max-request-size: 15MB
+      # 09-26 img2img-multi-ref:图生图多参考图(≤4 张)请求体上限,须 >= 4×单张 + 表单开销
+      max-request-size: ${IMAGE_MAX_REQUEST_MB:45}MB
   sql:
     init:
       mode: always

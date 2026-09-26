@@ -185,12 +185,15 @@ public class ImageController {
         }
     }
 
-    /** 图生图（参考图文件字节直传，09-26 img2img-ref-upload）：multipart file + prompt + projectId?/size?/n?/tags?[]。
-     *  参考图**不落图库**——校验后字节直传 AI（/v1/images/edits）；生成结果照旧走统一入库管线（source=ai-img2img，
-     *  ref_image_id 落 null：参考图未入库无法自引用，该来源图不走后端 /regenerate）。异常映射与既有生成接口一致。 */
+    /** 图生图（多参考图，09-26 img2img-multi-ref）：multipart `files[]`（本地/粘贴参考图，≥1）+ `refImageIds[]`（图库参考图 id）
+     *  + prompt + projectId?/size?/n?/tags?[]。
+     *  参考图**不落图库**——校验后字节直传 AI（/v1/images/edits）；顺序为「先 files 后 refImageIds」，总数须 1~4。
+     *  生成结果照旧走统一入库管线（source=ai-img2img）；多图或仅文件来源时 `ref_image_id` 落 null（该来源图不走后端 /regenerate）。
+     *  异常映射与既有生成接口一致。 */
     @PostMapping("/generate-from-image-upload")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<List<ImageAssetEntity>> generateFromImageUpload(@RequestParam(value = "file", required = false) MultipartFile file,
+    public R<List<ImageAssetEntity>> generateFromImageUpload(@RequestParam(value = "files", required = false) List<MultipartFile> files,
+                                                               @RequestParam(value = "refImageIds", required = false) List<Long> refImageIds,
                                                                @RequestParam(value = "prompt", required = false) String prompt,
                                                                @RequestParam(required = false) Long projectId,
                                                                @RequestParam(required = false) String size,
@@ -198,7 +201,7 @@ public class ImageController {
                                                                @RequestParam(required = false) List<String> tags) {
         try {
             CurrentUser cu = SecurityUtil.require();
-            return R.ok(service.generateImage2ImageFromUpload(projectId, file, prompt, size, n, splitTags(tags), cu.getUsername()));
+            return R.ok(service.generateImage2ImageFromUpload(projectId, files, refImageIds, prompt, size, n, splitTags(tags), cu.getUsername()));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());
         } catch (org.springframework.web.multipart.MultipartException ex) {

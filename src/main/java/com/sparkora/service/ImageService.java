@@ -193,7 +193,9 @@ public class ImageService {
         StringBuilder errs = new StringBuilder();
         for (int i = 0; i < count; i++) {
             try {
-                AiImageClient.GenResult g = aiImageClient.generateImage2Image(prompt, refBytes, fileBaseName(ref.getFileName()), normSize);
+                // 09-26 img2img-multi-ref：单图图库路径同步传单元素列表，行为不变
+                AiImageClient.GenResult g = aiImageClient.generateImage2Image(prompt, List.of(refBytes),
+                        List.of(fileBaseName(ref.getFileName())), normSize);
                 out.add(saveGenerated(projectId, g.url(), prompt, refImageId, "ai-img2img", operator, g.model(), normSize, normTags));
             } catch (Exception e) {
                 log.warn("图生图第 {} 张失败（跳过）: {}", i + 1, e.getMessage());
@@ -205,18 +207,52 @@ public class ImageService {
     }
 
     /**
-     * 图生图（参考图文件字节直传，09-26 img2img-ref-upload）：参考图**不落图库**——仅在内存校验后
-     * 字节直传 AI（/v1/images/edits），不上传图床、不 insert、不嵌向量；生成结果照旧走统一入库管线。
-     * 因参考图未入库，结果的 ref_image_id 落 NULL（无法自引用），故该来源图不走后端 /regenerate。
+     * 图生图（参考图文件字节直传 + 图库参考图集合，09-26 img2img-multi-ref）：参考图**不落图库**——
+     * 上传文件仅在内存校验后字节直传 AI（/v1/images/edits）；图库参考图取字节后同样直传，不上图床、不 insert、不嵌向量。
+     * 生成结果照旧走统一入库管线（source=ai-img2img）。
+     *
+     * 参考图集合顺序：先上传文件（按请求顺序），后图库 id（按请求顺序），**后端不重排**；
+     * 总数须 1~4（0 → 400「请至少选择 1 张参考图」；>4 → 400「最多支持 4 张参考图」）。
+     * `ref_image_id` 落值：参考图数==1 且唯一来源为图库 → 落该 id；其余（多图 / 仅文件来源）→ NULL
+     * （列只能存一个，多图落 id 会误导重生成）。
+     *
+     * @param files       上传参考图（可空；逐张大小/扩展名/魔数校验）
+     * @param refImageIds 图库参考图 id（可空；不存在 → 400「参考图不存在」）
      */
-    public List<ImageAssetEntity> generateImage2ImageFromUpload(Long projectId, MultipartFile file, String prompt,
+    public List<ImageAssetEntity> generateImage2ImageFromUpload(Long projectId, List<MultipartFile> files,
+                                                                List<Long> refImageIds, String prompt,
                                                                 String size, int n, List<String> tags, String operator) {
         if (projectId != null) ensureProject(projectId);
         if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("请输入生成提示词（prompt）");
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("请选择要上传的参考图");
-        byte[] refBytes = readValidatedImage(file);
-        // 传给 multipart 的文件名扩展名以魔数嗅探为准（防 .jpg 装 webp 内容），沿用 ensureExt 语义
-        String refName = ensureExt(safeName(file.getOriginalFilename(), "reference.png"), sniffExt(refBytes));
+        List<MultipartFile> normFiles = files == null ? List.of()
+                : files.stream().filter(java.util.Objects::nonNull).toList();
+        List<Long> normIds = refImageIds == null ? List.of()
+                : refImageIds.stream().filter(java.util.Objects::nonNull).toList();
+        int refCount = normFiles.size() + normIds.size();
+        if (refCount == 0) throw new IllegalArgumentException("请至少选择 1 张参考图");
+        if (refCount > 4) throw new IllegalArgumentException("最多支持 4 张参考图");
+
+        // 保序合并参考图：先上传文件（逐张校验）→ 后图库 id（selectById + 图床下载），后端不重排
+        List<byte[]> refBytesList = new ArrayList<>();
+        List<String> refNameList = new ArrayList<>();
+        for (MultipartFile f : normFiles) {
+            if (f.isEmpty()) throw new IllegalArgumentException("请选择要上传的参考图");
+            byte[] refBytes = readValidatedImage(f);
+            refBytesList.add(refBytes);
+            // 传给 multipart 的文件名扩展名以魔数嗅探为准（防 .jpg 装 webp 内容），沿用 ensureExt 语义
+            refNameList.add(ensureExt(safeName(f.getOriginalFilename(), "reference.png"), sniffExt(refBytes)));
+        }
+        Long singleLibRefId = null;
+        for (Long id : normIds) {
+            ImageAssetEntity ref = imageMapper.selectById(id);
+            if (ref == null) throw new IllegalArgumentException("参考图不存在");
+            refBytesList.add(imageStorage.download(ref.getStorageKey()));
+            refNameList.add(fileBaseName(ref.getFileName()));
+            singleLibRefId = id;
+        }
+        // ref_image_id 规则：参考图数==1 且唯一来源为图库 → 该 id；否则 NULL（多图/仅文件来源无法自引用，不走 /regenerate）
+        Long resultRefImageId = (refCount == 1 && normFiles.isEmpty()) ? singleLibRefId : null;
+
         int count = n < 1 ? 1 : Math.min(n, 4);
         String normSize = normalizeSize(size);
         List<String> normTags = tagService.normalize(tags);
@@ -224,8 +260,8 @@ public class ImageService {
         StringBuilder errs = new StringBuilder();
         for (int i = 0; i < count; i++) {
             try {
-                AiImageClient.GenResult g = aiImageClient.generateImage2Image(prompt, refBytes, refName, normSize);
-                out.add(saveGenerated(projectId, g.url(), prompt, null, "ai-img2img", operator, g.model(), normSize, normTags));
+                AiImageClient.GenResult g = aiImageClient.generateImage2Image(prompt, refBytesList, refNameList, normSize);
+                out.add(saveGenerated(projectId, g.url(), prompt, resultRefImageId, "ai-img2img", operator, g.model(), normSize, normTags));
             } catch (Exception e) {
                 log.warn("图生图(参考图直传)第 {} 张失败（跳过）: {}", i + 1, e.getMessage());
                 errs.append("第").append(i + 1).append("张: ").append(e.getMessage()).append("; ");
