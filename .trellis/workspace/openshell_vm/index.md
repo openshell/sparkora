@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-09-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~416 | Active |
+| `journal-1.md` | ~438 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-09-26 | 固化容器化约定:代码变动后主动重建 | `6fa516e` | `main` |
 | 15 | 2026-09-26 | Session 15: 修复并行子代理研究进度实时回写 | `7870156` | `main` |
 | 14 | 2026-09-26 | Session 14: 简报外部搜索策略路由 + 事实手册近似归并 | `17b7f99`, `1fc81d5`, `deca60f` | `main` |
 | 13 | 2026-09-25 | Docker 容器化产线部署(compose) | `40f4a4b` | `main` |

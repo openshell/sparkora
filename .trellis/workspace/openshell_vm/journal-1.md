@@ -414,3 +414,25 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: 固化容器化约定:代码变动后主动重建
+<!-- trellis-session: v=2 fp=ce110f90fd809191 -->
+
+**Date**: 2026-09-26
+**Task**: 固化容器化约定:代码变动后主动重建
+**Branch**: `main`
+
+### Summary
+
+把「每次完成后端/前端代码变动后主动 docker compose up -d --build 重建容器」固化为跨会话约定,写入 AGENTS.md(Commands 段,gitignore 本地文件)与 docs/deploy.md(§3/§6/§8 三处一致);并沉淀进 .trellis/spec/backend/container-deployment.md 的 Common Mistakes。纯文档变更,无业务代码改动。质检发现并修复 docs/deploy.md 两处与新约定矛盾之处。根因:compose 仅挂载 ./data,源码烘焙进镜像,restart/裸 up -d 不重建。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6fa516e` | docs(deploy): 固化代码变动后主动重建容器约定 |
+
+### Status
+
+[OK] **Completed**
