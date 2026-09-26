@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端硬约定：API 层走 imageApi 具名导出、图片用原图URL预览、tab状态独立ref、弹窗独立数据源、防抖清理——重构与共用组件必须遵循"}
+{"file": "docs/spec/image.md", "reason": "配图模块页面职责（§8）与接口契约（§6）：两入口统一、粘贴/本地参考图、重生成策略的规格基准"}
+{"file": "frontend/src/views/ImageLibrary.vue", "reason": "现内联 AI 生图抽屉实现（模板+逻辑），抽取 AiImageDrawer 的原型来源"}
+{"file": "frontend/src/views/project/StepPreview.vue", "reason": "预览页 AI 生图 tab 与配图快照/插入/设封面宿主回调，改造接线依据"}

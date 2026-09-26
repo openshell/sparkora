@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对：无 http 直调、图片URL口径、防抖/卸载清理、tab独立状态、双写一致性"}
+{"file": "docs/spec/image.md", "reason": "核对两入口行为与接口契约一致、文档同步"}
+{"file": "frontend/src/api/index.js", "reason": "核对新接口 generateFromImageUpload 的参数/超时/FormData 构造与后端契约一致"}

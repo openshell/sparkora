@@ -1,0 +1,29 @@
+{
+  "id": "image-gen-ux-paste",
+  "name": "image-gen-ux-paste",
+  "title": "AI 生图体验改进与剪切板图生图支持",
+  "description": "改进当前 AI 生图体验：优化配图界面交互，支持从剪切板粘贴图片进行图生图（img2img）。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-09-26",
+  "completedAt": "2026-09-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-26-img2img-ref-upload",
+    "09-26-image-gen-drawer-ux"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
