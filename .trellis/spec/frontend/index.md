@@ -200,6 +200,23 @@ const listOf = (raw) => {
 <el-image :src="img.thumbUrl || img.url" :preview-src-list="[img.url]" preview-teleported hide-on-click-modal />
 ```
 
+### Convention: 上传类图片必须先补「文件名扩展名」，不能只验 MIME
+
+后端 multipart 上传/参考图校验（`ImageService.readValidatedImage`）**按 `file.getOriginalFilename()` 的扩展名**判断白名单（png/jpg/jpeg/webp）——剪切板与拖拽得到的 `File` 经常没有扩展名（`image` / `blob`，甚至名字为空），前端若只按 `file.type`（MIME）放行，后端会以「仅支持 png/jpg/webp 格式图片」400 拒绝。
+
+```js
+// AiImageDrawer.setLocalRef（09-26）：无有效扩展名时按 MIME 补名后再预览/提交
+const ext = extOfMime(file.type)            // image/png→png、image/jpeg→jpg、image/webp→webp
+const named = /\.[a-z0-9]+$/i.test(file.name || '')
+  ? file
+  : new File([file], `reference.${ext || 'png'}`, { type: file.type || 'image/png' })
+```
+
+- MIME 校验保留（快速反馈），但**不可替代**扩展名补全——两者是不同层、不同失败模式。
+- 大小上限（`IMAGE_MAX_UPLOAD_MB`，默认 10MB）也需前端前置校验，避免把大文件白传一遍。
+
+**Related**: `frontend/src/components/AiImageDrawer.vue`、`docs/spec/image.md` §6。
+
 ---
 
 ## Anti-patterns
@@ -221,6 +238,22 @@ const listOf = (raw) => {
 **Symptom**: 读 `res.data.data` 得到 `undefined`。
 **Cause**: 响应拦截器已 `return resp.data`，调用方拿到 `R<T>` 本体。
 **Fix**: 读 `res.data`（R 的 data 字段）；分页再进一层 `res.data.rows`。
+
+### Common Mistake: 动态组件 `:is` 用了自动引入的 Element Plus 组件
+
+**Symptom**: `<component :is="'ElDrawer'">` / `:is="ElDrawer"` 在运行时渲染不出组件或报未注册；构建可能通过。
+**Cause**: `unplugin-vue-components` 只改写**模板里的静态标签**（`<el-drawer>`），**不处理 `:is` 中的运行时值**——组件未进入作用域。
+**Fix**: 需要按条件切换的 Element Plus 组件必须**显式 import**（与图标同理）：
+
+```vue
+<script setup>
+import { ElDrawer } from 'element-plus'   // 动态 :is 用，不能依赖自动引入
+const isInline = computed(() => props.mode === 'preview')
+</script>
+<template><component :is="isInline ? 'div' : ElDrawer" v-bind="wrapperAttrs">…</component></template>
+```
+
+**Prevention**: 凡把组件名写进 `<component :is>`（或作为 prop/变量传递组件）的，一律显式 import 并核对构建后是否真的渲染。
 
 ---
 

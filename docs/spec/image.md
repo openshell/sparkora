@@ -26,7 +26,7 @@
 | file_name | String(255) | 原始文件名（生成图为 prompt 摘要命名） |
 | source | String(20) | `upload` / `ai-text2img` / `ai-img2img` / `byd`（车型介绍图）/ `byd-news`（新闻封面图，09-13 image-tags 新增） |
 | prompt_text | String | 生成 prompt（AI 来源时） |
-| ref_image_id | Long | **图生图**的参考图 id（自引用 `sparkora_image_asset.id`，可空） |
+| ref_image_id | Long | **图生图**的参考图 id（自引用 `sparkora_image_asset.id`，可空）。图库参考图路径（`generate-from-image`）落具体 id；参考图**直传**路径（`generate-from-image-upload`，09-26）参考图未入库，落 NULL |
 | width / height | Integer | 尺寸（px；取不到时为空） |
 | storage_key | String(300) | 图床 key（**入库即转存，非空**；URL 由图床域名实时拼） |
 | created_by | String(64) | 审计：上传/生成操作人 |
@@ -258,6 +258,7 @@
 | DELETE | `/api/images/{id}` | ADMIN/EDITOR | — | `{ok:true}`；被封面/插图引用时 `R.fail(400, 提示引用方)`；删记录 + 图床对象 + **标签行物理清** + **向量行物理清**（09-15 img-semantic-search：防残留向量命中已删图） |
 | POST | `/api/images/generate-text` | ADMIN/EDITOR | `{projectId?, prompt, size?, n?, tags?[]}`（`@Valid` DTO；n 1~4 默认 1） | **S10 起响应为数组** `{images[]}`：n 张候选逐张入库（后端循环 n 次单张调用，单张失败跳过，全部失败 `R.fail(500)` 含候选模型错误明细）；每张含 `genModel`/`genSize`/`dedupeHit`/`tags` |
 | POST | `/api/images/generate-from-image` | ADMIN/EDITOR | `{projectId?, refImageId, prompt, size?, n?, tags?[]}`（`@Valid` DTO） | **S10 起响应为数组** `{images[]}`（同上）；provider 不支持 edits 时 `R.fail(500, 明确提示)` |
+| POST | `/api/images/generate-from-image-upload` | ADMIN/EDITOR | multipart `file`（参考图，png/jpg/jpeg/webp ≤ `IMAGE_MAX_UPLOAD_MB`）+ `prompt`（必填）+ `projectId?` + `size?` + `n?`（1~4 默认 1，超限收敛不报错）+ `tags?`（多值/逗号分隔）（09-26 img2img-ref-upload 新增） | `{images[]}`（n 张候选逐张入库，同 `generate-from-image`）；**参考图不落图库**（仅内存校验后字节直传 `/v1/images/edits`，不上图床/不 insert/不嵌向量），结果的 `ref_image_id` 为 NULL（无法自引用，故不走后端 `/regenerate`）。缺 file/空文件 → 400「请选择要上传的参考图」；大小/格式/魔数/`size` 非法 → 400（与 `upload` 同口径）；prompt 空 → 400；全部模型失败 → 500（含候选模型错误明细） |
 | POST | `/api/images/{id}/regenerate` | ADMIN/EDITOR | —（S10 新增） | `{images[]}`（1 张）：用源图 prompt/gen_size 重新生成**新图**（不覆盖源图）。源图须 `source∈{ai-text2img,ai-img2img}` 且 prompt 非空，img2img 复用源图 `ref_image_id`（参考图已删则 400）；**09-13 起新图继承源图标签** |
 | PUT | `/api/images/{id}/tags` | ADMIN/EDITOR | `{tags:[...]}`（**全量覆盖**语义，空数组 = 清空；单项 1~50 字符，超长 400） | `{ok:true, tags[]}`；图片不存在 `R.fail(400)`（防写孤儿标签行） |
 | POST | `/api/images/tags/batch` | ADMIN/EDITOR | `{ids:[...], tags:[...], action:"add"\|"remove"}`（逐张执行，全部幂等） | `{ok:true}`；`ids` 空 `R.fail(400)`；`tags` 空 `R.fail(400)`；action 非 add/remove `R.fail(400)` |
@@ -335,14 +336,18 @@
 
 ---
 
-## 8. 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级；2026-09-13 image-tags 标签能力）
+## 8. 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级；2026-09-13 image-tags 标签能力；2026-09-26 image-gen-drawer-ux 生图抽屉共用组件 + 粘贴/本地参考图）
 
-- **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，`el-pagination` 翻页）；网格缩略图走 `thumbUrl`（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡提供**一键重生成**；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图从当前列表选参考图；n(1/2/4) 张候选生成，`projectId` 传空 = 全局图库，产物即进图库）。**UI 重设计（S10+）**：卡片瘦身——默认仅缩略图+来源小标，元数据/操作入 hover 浮层（移动端常显文件名行+「···」更多操作）；工具条两段式（主操作|浏览控制）；大图预览支持当前页连续浏览；筛选状态 chip 条（单独清除/一键全清）；批量选择模式（多选→单次确认删除，被引用图后端拒绝逐张提示）；舒适/紧凑密度切换（localStorage 记忆）。素材管理归图库，不在文章流程内。
+- **AI 生图界面共用组件 `components/AiImageDrawer.vue`（09-26 image-gen-drawer-ux）**：图库页与预览页的生图 UI/逻辑统一到同一组件，消除两套近乎重复的实现（AC-1）。props：`modelValue`(v-model)/`projectId`(空=全局图库)/`mode`(`library`|`preview`)/`presetTags`/`showCoverAction`；emits：`update:modelValue`/`generated(images,{reason})`/`insert(image)`/`set-cover(imageId)`/`locate(image)`。**宿主差异由 `mode` + emits 承担**：library 模式为独立抽屉（生成后「定位到列表」）、preview 模式内联在预览「配图」抽屉的 AI 生图 tab 内（生成后「插入正文 / 设为封面」）；组件不写宿主状态，宿主在 `generated` 回调里刷新列表/快照（预览页 `reason==='generate'` 且 n=1 时沿用自动插入正文行为）。`presetTags` 由图库页上传标签预选注入。
+  - **参考图三来源**：① 粘贴（Ctrl/⌘+V，window paste 监听，仅在抽屉打开时挂载）② 本地文件（`accept=.png,.jpg,.jpeg,.webp`）③ 图库选图（**组件自持独立数据源 + 页内搜索 300ms 防抖 + 分页**，不复用宿主主列表）。本地/粘贴来源用 `URL.createObjectURL` 即时预览，替换/移除/卸载时 `revokeObjectURL`；参考图**不落图库**。
+  - **提交路径分支**：图库来源 → `generateFromImage`（`refImageId`，旧 JSON 接口无回归）；粘贴/本地来源 → `generateFromImageUpload`（新 multipart，参考图字节直传）。
+  - **重生成缓存（`utils/imageRefCache.js`，模块级单例 Map，LRU 上限 20，不持久化）**：粘贴/本地来源生成成功时把**每张结果图 id** → `{file, fileName, prompt, size, tags, projectId}` 写入缓存（缓存自持 ObjectURL，淘汰/删除/清空时 revoke）。重生成分支：缓存命中 → 用缓存参考图 + prompt 走 multipart 产新图；图库图生图（`refImageId`）/文生图（prompt）→ 后端 `/{id}/regenerate`；本地来源且缓存失效（如刷新后）→ 按钮置灰 + tooltip「参考图未入库且会话缓存已失效，无法重生成」。图库页卡片重生成与组件内候选重生成**同口径**（`canRegenerate`）。
+- **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，`el-pagination` 翻页）；网格缩略图走 `thumbUrl`（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡提供**一键重生成**（缓存感知，见上）；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图三来源：粘贴/本地文件/图库选图；n(1/2/4) 张候选生成，`projectId` 传空 = 全局图库，产物即进图库）由共用组件 `AiImageDrawer` 渲染。**UI 重设计（S10+）**：卡片瘦身——默认仅缩略图+来源小标，元数据/操作入 hover 浮层（移动端常显文件名行+「···」更多操作）；工具条两段式（主操作|浏览控制）；大图预览支持当前页连续浏览；筛选状态 chip 条（单独清除/一键全清）；批量选择模式（多选→单次确认删除，被引用图后端拒绝逐张提示）；舒适/紧凑密度切换（localStorage 记忆）。素材管理归图库，不在文章流程内。
   - **标签能力（09-13 image-tags）**：工具条「上传标签」预选控件（multiple allow-create，上传与 AI 生图共读，不持久化）；工具条标签筛选下拉（数据源 `GET /api/images/tags`，与 chip 条联动，可与其他筛选组合）；卡片 hover 层/移动端常显区展示标签，**点标签直接触发筛选**；卡片 hover 操作区/移动端 ··· 菜单「编辑标签」→ 对话框全量覆盖（`PUT /{id}/tags`）；批量选择态「打标签」→ 对话框（标签多选 + add/remove 单选 → `POST /tags/batch`）。**R5 交互修复**：AI 抽屉文生图/图生图 prompt 拆为独立 ref（切换 tab 不再互相污染）；参考图选择弹窗独立数据源 + 页内搜索（300ms 防抖）+ 分页（不再只看主列表第一页）；来源标签补「比亚迪新闻」（`byd-news`，红色点）。
   - **主题分类筛选与来源展示（09-15 img-classify）**：标签筛选改 **multiple**（`tagFilter` 由字符串改数组，多标签 **AND**），chip 条**逐个展示可单独清除**（点已选标签再点即取消）；下拉按 `/` 前缀用 `el-option-group` **分组展示**（`主题` / `年份` / `其他`）；卡片 hover 层（移动端常显行）显示**来源行**「来源：<新闻标题> · <日期>」，点击跳新闻原文（走 `GET /api/images/{id}/source`，页内批查懒加载，非新闻图不显示）；支持外部入口 `/images?tag=主题/销量`（预置筛选，供新闻卡片点主题标签跳转）。**路由与筛选双向同步**：挂载时按 `route.query.tag` 预置筛选；chip 单独清除 / 全清 / 点卡片标签后 `router.replace` 把 URL 同步为当前选中（`syncRouteTag`）——否则清掉 chip 后 URL 仍留旧 tag，再次从新闻页点同一主题时 query 未变、vue-router 判定重复导航、watch 不触发，出现「点了没反应」。
   - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（`sparkora_image_embedding`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由配图建议/问答配图承载）。
 - **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。详见 [knowledge/news.md](knowledge/news.md)。
-- **预览步配图面板（项目向导预览步）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。详见 [preview.md](preview.md)。
+- **预览步配图面板（项目向导预览步）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；**09-26 起同一 `AiImageDrawer`（`mode="preview"`）渲染，图生图支持粘贴/本地文件/图库三来源参考图**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。详见 [preview.md](preview.md)。
 - **预览页「智能建议」tab（09-15 article-auto-illustrate 子C）**：配图抽屉第 3 个 tab（`imgTab='suggest'`）。顶部：相似度门槛（默认 0.3）+ 标签预过滤多选（AND，数据源 `GET /api/images/tags`）+「生成建议/重新生成」按钮 + 提示「系统只给建议，点采用才写入正文」。按锚点分组卡片：锚点标题（`headingPath` 或「开头段落」）+ 锚点文本摘要 + 候选网格（缩略图/相关度百分比/标签）。每张候选「插入到此段」；每组「全部采用」/「忽略此段」。**空态三态**：未生成（引导点生成）/ 生成后无候选（提示调低门槛、换标签或先去图库补图）/ 全部被忽略。**建议不自动触发**——须用户点「生成建议」（避免打开抽屉即产生 embedding 调用）。移动端单列、触控目标 ≥44px。
 
 ---
@@ -350,7 +355,7 @@
 ## 9. 关键实现路径
 
 - 后端：`web.controller.ImageController`、`service.ImageService`（入库/去重/派生/删图）、`service.ImageTagService`、`service.ImageEmbeddingService`、`service.IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`news.classify.NewsImageClassifier`、`storage.ImageStorage`（抽象）+ `service.QiniuService`（实现）、`mapper.ImageEmbeddingMapper`/`ImageTagMapper`、`ImageTagBackfillRunner`(`@Order(10)`)/`ImageEmbeddingBackfillRunner`(`@Order(20)`)。
-- 前端：`views/ImageLibrary.vue`、`views/project/StepPreview.vue`（配图面板 + 智能建议 tab）、`components/MarkdownEditor.vue`（`insertMd`/`insertMdAtAnchor`）、`api/index.js`（`imageApi`）。
+- 前端：`views/ImageLibrary.vue`、`views/project/StepPreview.vue`（配图面板 + 智能建议 tab）、`components/AiImageDrawer.vue`（共用 AI 生图面板；09-26）、`utils/imageRefCache.js`（参考图会话缓存；09-26）、`components/MarkdownEditor.vue`（`insertMd`/`insertMdAtAnchor`）、`api/index.js`（`imageApi`）。
 - 表：`sparkora_image_asset`、`sparkora_image_tag`、`sparkora_image_embedding`、`sparkora_illustration_dismiss`、`sparkora_article_version`（`cover_image_id`/`body_image_ids`）、`sparkora_news.cover_image_id`。
 
 ---
@@ -361,3 +366,4 @@
 - `body_image_ids` 不参与渲染 + 手动插图不登记（见「已知债务」）。
 - 车型库图片接入预留（暂不开发）。
 - 非七牛图床实现下 `thumbUrl` 降级为原图 URL。
+- **参考图直传来源不落库 + 重生成依赖前端会话缓存（09-26 image-gen-drawer-ux）**：粘贴/本地文件参考图仅用于本次生成（`ref_image_id` 为 NULL），「重生成」依赖前端 `utils/imageRefCache.js` 会话缓存复用同一参考图；缓存不持久化，**刷新页面后丢失 → 该来源图的重生成按钮置灰 + tooltip**（需重新粘贴/选图生成）。图库来源参考图不受影响（后端 `/{id}/regenerate` 复用 `ref_image_id`）。
