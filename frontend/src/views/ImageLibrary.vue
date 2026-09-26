@@ -651,7 +651,7 @@ const onDelete = (img) => {
     .catch(() => {})
 }
 /**
- * 重生成可用性（09-26）：会话缓存命中（粘贴/本地参考图可复用）／文生图（prompt 可复现）／
+ * 重生成可用性（09-26 multi-ref）：会话缓存命中（整组参考图可复用）／文生图（prompt 可复现）／
  * 图库图生图（refImageId 可复用）；本地来源且缓存失效 → 置灰（后端无参考图可复现）。
  * 与 AiImageDrawer 内 `canRegenerate` 同口径。
  */
@@ -668,24 +668,26 @@ const canRegenerate = (img) => {
   }
   return false
 }
+/** 缓存条目是否持有可复用参考图（本地 files 或图库 ids）。 */
+const cacheHasRefs = (cached) => !!cached && ((cached.files?.length || 0) > 0 || (cached.refImageIds?.length || 0) > 0)
 const onRegenerate = async (img) => {
   if (!canRegenerate(img)) return
   regenId.value = img.id
   try {
-    // 会话缓存命中（粘贴/本地参考图来源）→ 复用参考图 + prompt 走 multipart；
+    // 会话缓存命中（多参考图来源）→ 复用整组参考图 + prompt 走多图 multipart；
     // 否则图库/文生图来源走后端 /regenerate（复用 refImageId / prompt）。
     // projectId 用缓存里的原值（与后端 /regenerate 的 orphanFallback(src.projectId) 同口径，
     // 也与 AiImageDrawer 组件内重生成一致）；硬编码 null 会把项目内图重生成到全局图库。
     const cached = imageRefCache.get(img.id)
-    const res = cached?.file
-      ? await imageApi.generateFromImageUpload(cached.projectId ?? null, cached.file, cached.prompt, cached.size, 1, cached.tags)
+    const res = cacheHasRefs(cached)
+      ? await imageApi.generateFromImageUpload(cached.projectId ?? null, cached.files || [], cached.refImageIds || [], cached.prompt, cached.size, 1, cached.tags)
       : await imageApi.regenerate(img.id)
     if (res.code === 0) {
       const list = res.data || []
-      // 新图同样可用同一参考图再重生成
-      if (cached?.file) {
+      // 新图同样可用同一组参考图再重生成
+      if (cacheHasRefs(cached)) {
         for (const n of list) {
-          imageRefCache.put(n.id, { file: cached.file, fileName: cached.fileName, prompt: cached.prompt, size: cached.size, tags: cached.tags, projectId: cached.projectId })
+          imageRefCache.put(n.id, { files: cached.files, refImageIds: cached.refImageIds, names: cached.names, prompt: cached.prompt, size: cached.size, tags: cached.tags, projectId: cached.projectId })
         }
       }
       ElMessage.success(`已重新生成 ${list.length} 张（新图在列表最前）`)

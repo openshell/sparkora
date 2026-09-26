@@ -163,19 +163,22 @@ export const imageApi = {
     http.post('/images/generate-text',
       { projectId: projectId == null || projectId === '' ? null : Number(projectId), prompt, size, n: n == null ? 1 : n, tags: tags?.length ? tags : undefined },
       { timeout: 300000 }),
-  // 图生图：body={projectId?, refImageId, prompt, size?, n?, tags?[]}
+  // 图生图（单图库参考图 JSON 路径）：body={projectId?, refImageId, prompt, size?, n?, tags?[]}。
+  // 09-26 img2img-multi-ref 起图生图 UI 统一走多图 generateFromImageUpload；此导出保留 API 面，无 UI 调用方。
   generateFromImage: (projectId, refImageId, prompt, size, n, tags) =>
     http.post('/images/generate-from-image',
       { projectId: projectId == null || projectId === '' ? null : Number(projectId),
         refImageId: refImageId == null ? null : Number(refImageId), prompt,
         size, n: n == null ? 1 : n, tags: tags?.length ? tags : undefined },
       { timeout: 300000 }),
-  // 图生图（参考图文件直传，09-26 img2img-ref-upload）：multipart file + prompt + projectId? + size? + n? + tags?
-  // 参考图不落图库（后端内存校验后字节直传 AI）；字段名须与后端 @RequestParam 完全一致。
-  // 不要手工设 Content-Type——交给 axios 生成 multipart boundary。
-  generateFromImageUpload: (projectId, file, prompt, size, n, tags) => {
+  // 图生图（多参考图直传，09-26 img2img-multi-ref）：multipart files[]（本地/粘贴）+ refImageIds[]（图库）
+  //  + prompt + projectId? + size? + n? + tags?[]。
+  // 参考图不落图库（后端内存校验后字节直传 AI）；总数须 1~4，顺序为「先 files 后 refImageIds」，后端不重排。
+  // 字段名须与后端 @RequestParam 完全一致；不要手工设 Content-Type——交给 axios 生成 multipart boundary。
+  generateFromImageUpload: (projectId, files, refImageIds, prompt, size, n, tags) => {
     const fd = new FormData()
-    fd.append('file', file)
+    ;(files || []).forEach(f => { if (f) fd.append('files', f) })
+    ;(refImageIds || []).forEach(id => { if (id != null) fd.append('refImageIds', Number(id)) })
     fd.append('prompt', prompt)
     if (projectId != null && projectId !== '') fd.append('projectId', Number(projectId))
     if (size) fd.append('size', size)
