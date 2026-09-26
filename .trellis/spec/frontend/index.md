@@ -217,6 +217,27 @@ const named = /\.[a-z0-9]+$/i.test(file.name || '')
 
 **Related**: `frontend/src/components/AiImageDrawer.vue`、`docs/spec/image.md` §6。
 
+### Convention: 会话缓存持有 ObjectURL 时，同一 File 必须全局只建一个 URL
+
+模块级会话缓存（`imageRefCache`）为每个 `File` 创建 `blob:` 预览 URL 时，若「一个 File 出现在多个条目 / 同一条目的数组里多次」而各建各的 URL，删除/淘汰时只会 revoke 其中一个，其余成为**永久泄漏**（`blob:` 不会被 GC 回收）。规则：
+
+- 建 URL 前先按 **File 引用**（而非下标/文件名）查已存在的 URL 复用——**跨条目 + 条目内数组**两个维度都要去重（09-26 img2img-multi-ref check 修复先例：`files[]` 内重复 File 曾被各建一个 URL）。
+- revoke 前必须确认**没有任何其他条目仍引用该 File**（`otherEntryUsesFile`），否则会 revoke 掉别处仍在用的预览。
+- 覆盖写（同 key 换 File）、`deleteEntry`、`evictIfNeeded`、`clear` 四条路径都要走同一套「按 File 引用计数/查重」逻辑，缺一会泄漏或误删。
+- `onBeforeUnmount` 只负责 revoke **组件自身**创建的预览 URL；缓存持有的 URL 由缓存的删除/淘汰路径管，两者所有权分离。
+
+```js
+// 条目内 + 跨条目去重（先查已建 URL，命中即复用）
+const assigned = new Map()   // File -> url（本轮条目内）
+for (const f of info.files || []) {
+  let url = assigned.get(f) ?? urlForFile(f)   // urlForFile 内部再扫全部条目
+  assigned.set(f, url)
+  previewUrls.push(url)
+}
+```
+
+**Related**: `frontend/src/utils/imageRefCache.js`、`frontend/src/components/AiImageDrawer.vue`。
+
 ---
 
 ## Anti-patterns
