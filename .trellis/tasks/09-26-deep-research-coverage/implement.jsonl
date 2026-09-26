@@ -1,0 +1,7 @@
+{"file": "docs/spec/brief-generation.md", "reason": "深度研究链路权威契约:研究计划/keyQuestions、SubAgentRunner 检索与降级、事实手册字段、webQuota、配置表;本次 R1/R2/R4/R5 均改此契约,字段级同步依据"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "后端 AI/RAG 硬约束:SearchTool.available() 无闩锁、toolHealth 优先级、配置绑定自检流程、Common Mistake;R1(snippet 保真)与 R4/R5 的红线依据"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异步逐 agent 回写加锁与错误映射惯例;R4 重试与降级状态语义需对齐既有 409/状态机约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线:不得修改既有生产数据、契约级断言、不可逆副作用隔离;测试与验证方式依据"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端契约:api/index.js 具名导出、http.js 返回体、TEXT 列 JSON 字符串/数组双态兼容;R3 进度页展示改动依据"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流/契约映射清单;本次改动横跨 Clarify→Research→FactSheet→Brief→Writer→前端,用于核对边界"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "改配置/常量前先全局搜索、重复常量抽取;maxAgents 默认值三处同步与 ensureBackgroundQuestion 复用范式依据"}

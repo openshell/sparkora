@@ -312,6 +312,64 @@ if (ClaimSimilarity.sameClaim(rep.path("claim").asText(""), rep.path("value").as
 
 ---
 
+## Scenario: 降级必须保真原始证据（snippet；09-26-deep-research-coverage）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改子代理 LLM 汇总降级（`SubAgentRunner.rawFallback`）、研究笔记事实结构、或事实手册条目透传字段（`FactSheetService` entry）。
+
+### 2. Signatures
+```java
+// SubAgentRunner（降级 JSON 增量字段，不改签名）
+static String rawFallback(List<SearchTool.SearchHit> hits)
+// 每条 fact：{"claim":<title>,"snippet":<≤200 转义原文>,"source":{...},"confidence":0.4|0.6}
+static String snippet(String s)          // 复用：null→""，>200 截断
+
+// FactSheetService
+private static Map<String,Object> entry(..., List<String> alternatives, String snippet)  // snippet 增量参数
+private static String firstSnippet(List<JsonNode> facts)   // 簇内首个非空 snippet，均无→null
+
+// SubAgentRunner.chat（R4：失败先提额重试一次）
+private String chat(String system, String user)
+```
+
+### 3. Contracts
+- **降级不得丢失搜索命中正文**：LLM 汇总失败走 `rawFallback` 时，每条 fact 必须同时带 `claim`(title) 与 `snippet`(检索正文，≤200 字)——关键背景/长期目标常写在 snippet 而非标题；只取 title 会让「素材缺口」在降级路径人为放大。`snippet` 转义完整（引号/换行/小数/反斜杠），降级 JSON 仍合法。
+- **snippet 只保真、不替代抽取**：降级仍 `status=FALLBACK` + gap；snippet 是「素材可用」而非「已核验事实」。
+- **手册条目透传为可选增量字段**：`FactSheetService` 取簇内**首个非空** snippet 写入 `entry.snippet`；无则字段**完全不出现**（旧契约与既有消费方零回归，对齐 `sourcesList` 增量范式）。`DeepWriterService` 与 `BriefService` prompt 可见该证据（写作/简报阶段提取背景素材）。
+- **汇总失败先提额重试（R4）**：`chat` 首次 `chatJson(...,2048)`；任何失败（`finish_reason=length` 截断 / 空内容 / 非法 JSON）提额 `4096` 重试一次，仅仍失败才抛出 → FALLBACK。净调用 ≤2 次/agent。
+- **不改口径/不改红线**：`webCount`/`search.resultCount` 降级不归零、`search.fallbackReason=LLM_FALLBACK`；`available()` 无闩锁、`toolHealth` 三键与优先级、`research_notes` 主字段集与状态值域均不变。
+
+### 4. Validation & Error Matrix
+- snippet 为空/null → 写空串（字段仍在，不破坏结构）；>200 字 → 截断。
+- 簇内首条无 snippet、后续有 → 取首个非空，不因首条为空而丢证据。
+- 无任何 snippet → entry 不出现 `snippet` 字段（非 `null` 序列化）。
+- 首次 LLM 失败 → 提额 4096 重试；两次均失败 → `FALLBACK`（日志告警，不阻断其余 agent）。
+
+### 5. Good/Base/Bad Cases
+- Good: 真实样本「比亚迪计划2026年底前建成2万座闪充站,其中包含这2000座高速站」写在 snippet → 降级后仍进入 facts/manual，写作阶段可见。
+- Base: 有 title 无 snippet 的旧命中 → snippet 空串，行为与旧实现一致。
+- Bad: 降级 claim 只取 `h.title()`，丢弃 `h.snippet()`（关键背景永久丢失）；或把 snippet 当已核验事实提升置信。
+
+### 6. Tests Required
+- `SubAgentRunnerTest`：`rawFallback` 保留 snippet 正文；含引号/换行/小数/反斜杠的 snippet 产出合法 JSON；`chat` 首次截断（AiException）→ 第二次成功 → DONE；两次均失败 → FALLBACK（并断言第二次用 4096）。
+- `FactSheetServiceTest`：降级 fact 带 snippet → entry 透传；无 snippet → entry 不含该字段。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 降级只取标题：关键背景写在 snippet 里 → 永远进不了手册/正文
+raw.append("{\"claim\":\"").append(esc(h.title())).append("\",\"source\":{...");
+```
+#### Correct
+```java
+// 降级同时保留正文证据（≤200 转义），手册透传、写作可见
+raw.append("{\"claim\":\"").append(esc(h.title()))
+   .append("\",\"snippet\":\"").append(esc(snippet(h.snippet())))
+   .append("\",\"source\":{...");
+```
+
+---
+
 ## Scenario: 图片向量域（第四域，09-15 img-semantic-search）
 
 ### 1. Scope / Trigger

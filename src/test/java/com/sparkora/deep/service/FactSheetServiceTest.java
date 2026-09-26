@@ -209,6 +209,24 @@ class FactSheetServiceTest {
         assertTrue(unknown.isEmpty(), () -> "合并条目数值应仍被覆盖: " + unknown);
     }
 
+    /** R1/AC-01(09-26):降级 fact 带 snippet → entry 透传 snippet 正文。 */
+    @Test
+    void 降级fact带snippet_entry透传snippet() throws Exception {
+        String notes = notes("{\"facts\":[{\"claim\":\"比亚迪第2000座闪充站落成\",\"snippet\":\"比亚迪计划2026年底前建成2万座闪充站\",\"source\":{\"type\":\"WEB\",\"url\":\"https://a\"},\"confidence\":0.4}],\"gaps\":[]}");
+        JsonNode sheet = sheet(svc.merge(notes));
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals("比亚迪计划2026年底前建成2万座闪充站", e.path("snippet").asText(), "snippet 应透传到手册条目");
+    }
+
+    /** R1/AC-01:无 snippet 的 fact → entry 不含该字段(旧契约保持)。 */
+    @Test
+    void 无snippet_entry不含该字段() throws Exception {
+        String notes = notes("{\"facts\":[{\"claim\":\"海狮08EV起售价239900\",\"value\":\"239900\",\"source\":{\"type\":\"KB\"},\"confidence\":0.9}],\"gaps\":[]}");
+        JsonNode sheet = sheet(svc.merge(notes));
+        JsonNode e = sheet.path("entries").get(0);
+        assertFalse(e.has("snippet"), "无 snippet 时不得出现该字段");
+    }
+
     private void assertNotNullEntry(JsonNode sheet, String fragment) {
         for (JsonNode e : sheet.path("entries")) {
             if (e.path("claim").asText("").contains(fragment)) return;

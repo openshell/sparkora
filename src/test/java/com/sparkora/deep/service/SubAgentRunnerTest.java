@@ -2,6 +2,7 @@ package com.sparkora.deep.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
+import com.sparkora.ai.AiException;
 import com.sparkora.deep.search.WebProvider;
 import com.sparkora.deep.search.WebProviderOrder;
 import com.sparkora.deep.search.WebResultNormalizer;
@@ -164,6 +165,66 @@ class SubAgentRunnerTest {
         new ObjectMapper().readTree(raw);
         assertEquals(1, new ObjectMapper().readTree(raw).path("facts").size());
         assertEquals("W1", new ObjectMapper().readTree(raw).path("facts").get(0).path("source").path("sourceId").asText());
+    }
+
+    // ===== R1/AC-01:降级保留搜索命中正文 snippet =====
+
+    @Test
+    void rawFallback_保留snippet正文() throws Exception {
+        // 关键背景(年内2万座)常写在 snippet 而非 title;旧实现只取 title → 素材丢失
+        SearchTool.SearchHit h = new SearchTool.SearchHit("WEB", "比亚迪第2000座闪充站落成", "https://x.com/a",
+                "比亚迪计划2026年底前建成2万座闪充站,其中包含这2000座高速站", "TAVILY", null, 0, "W1", "TAVILY");
+        String raw = SubAgentRunner.rawFallback(List.of(h));
+        var fact = new ObjectMapper().readTree(raw).path("facts").get(0);
+        assertEquals("比亚迪计划2026年底前建成2万座闪充站,其中包含这2000座高速站", fact.path("snippet").asText(),
+                "降级事实必须保留 snippet 正文");
+    }
+
+    @Test
+    void rawFallback_snippet含引号换行小数_JSON仍合法() throws Exception {
+        SearchTool.SearchHit h = new SearchTool.SearchHit("WEB", "标题", "https://x.com/a",
+                "售价 \"2.99万\" 起\n续航 12.5km\t含反斜杠\\", "TAVILY", null, 0, "W1", "TAVILY");
+        String raw = SubAgentRunner.rawFallback(List.of(h));
+        var fact = new ObjectMapper().readTree(raw).path("facts").get(0);
+        assertEquals("售价 \"2.99万\" 起\n续航 12.5km\t含反斜杠\\", fact.path("snippet").asText(),
+                "含引号/换行/小数/反斜杠的 snippet 必须转义完整且可解析");
+    }
+
+    // ===== R4/AC-04:LLM 汇总失败(截断/空/非法 JSON)先提额重试一次 =====
+
+    @Test
+    void chat_首次截断_提额重试成功_最终DONE() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        AiClient ai = mock(AiClient.class);
+        String valid = "{\"facts\":[{\"claim\":\"事实\",\"source\":{\"type\":\"KB\"},\"confidence\":0.9}],\"gaps\":[]}";
+        // 首次模拟 finish_reason=length 截断(AiClient 抛 AiException);第二次 4096 成功
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenThrow(new AiException("AI 输出被 max_tokens 截断", null))
+                .thenReturn(new AiClient.ChatResult(valid, "m", 10));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
+
+        SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null,
+                WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
+
+        assertEquals("DONE", note.status(), "截断后提额重试成功应回到 DONE");
+        assertTrue(note.factsJson().contains("事实"));
+        // 第二次必须用 4096 额度
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), anyString(), org.mockito.ArgumentMatchers.eq(4096));
+    }
+
+    @Test
+    void chat_两次均失败_落FALLBACK() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenThrow(new AiException("截断", null))
+                .thenReturn(new AiClient.ChatResult("仍不是合法JSON", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
+
+        SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null,
+                WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
+
+        assertEquals("FALLBACK", note.status(), "两次失败才允许降级");
     }
 
     private static int count(String s, String sub) {

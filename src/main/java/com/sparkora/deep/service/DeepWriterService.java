@@ -76,7 +76,13 @@ public class DeepWriterService {
             String v = e.path("value").asText("");
             if (!v.isBlank()) factCtx.append(" = ").append(v);
             double c = e.path("confidence").asDouble(0);
-            factCtx.append("(置信 ").append(String.format("%.2f", c)).append(")\n");
+            factCtx.append("(置信 ").append(String.format("%.2f", c)).append(")");
+            // R1(09-26):条目可带降级保留的原始 snippet 证据(背景/来龙去脉素材),写作阶段可见
+            String snip = e.path("snippet").asText("");
+            if (!snip.isBlank()) {
+                factCtx.append(" | 证据:").append(snip.length() > 200 ? snip.substring(0, 200) : snip);
+            }
+            factCtx.append('\n');
         }
         String system = """
                 你是资深汽车内容作者。基于【事实手册】与用户锁定需求撰写文章正文。

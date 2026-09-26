@@ -302,18 +302,34 @@ public class SubAgentRunner {
         return t + ", " + q;
     }
 
+    /**
+     * LLM 汇总(R4,09-26):首次 2048;任何失败(截断 finish_reason=length / 空内容 / 非法 JSON)
+     * 均提额至 4096 重试一次,仅重试仍失败才向上抛出(→ research catch → FALLBACK)。
+     * 净调用上限仍为 2 次/agent(与原「非法 JSON 重试」同量),仅重试额度提高并覆盖截断场景。
+     */
     private String chat(String system, String user) throws Exception {
-        AiClient.ChatResult cr = aiClient.chatJson(system, user, 2048);
-        // 容错清洗后再校验:裸控制字符/代码围栏属可修复错误,不应触发重试(重试浪费一次 AI 调用)
+        try {
+            return parseOrThrow(aiClient.chatJson(system, user, 2048), null);
+        } catch (Exception first) {
+            log.warn("子代理汇总首次失败,提额重试(4096): {}", first.getMessage());
+            return parseOrThrow(aiClient.chatJson(system,
+                    user + "\n注意:上次输出失败(可能被截断或不是合法 JSON),请只输出一个完整、合法的 JSON 对象。", 4096),
+                    first);
+        }
+    }
+
+    /**
+     * 清洗+解析校验;失败抛 {@code AiException}(携带 cause 供上层定位)。清洗是必需步骤:
+     * 裸控制字符/代码围栏属可修复错误,不应直接触发重试。
+     */
+    private String parseOrThrow(AiClient.ChatResult cr, Exception cause) throws Exception {
         String clean = AiClient.sanitizeAiJson(cr.content());
         try {
             json.readTree(clean);
             return clean;
-        } catch (Exception retry) {
-            AiClient.ChatResult cr2 = aiClient.chatJson(system,
-                    user + "\n注意:上次输出不是合法 JSON,请只输出一个 JSON 对象。", 2048);
-            json.readTree(AiClient.sanitizeAiJson(cr2.content()));
-            return AiClient.sanitizeAiJson(cr2.content());
+        } catch (Exception e) {
+            throw new com.sparkora.ai.AiException("子代理汇总输出非法 JSON: " + e.getMessage(),
+                    cause == null ? e : cause);
         }
     }
 
@@ -324,7 +340,11 @@ public class SubAgentRunner {
         for (SearchTool.SearchHit h : hits) {
             if (!first) raw.append(',');
             first = false;
-            raw.append("{\"claim\":\"").append(esc(h.title())).append("\",\"source\":{\"type\":\"")
+            // R1(09-26):保留命中正文 snippet 作为该条目的证据——关键背景(如「年内 2 万座」)常写在
+            // snippet 里,旧实现只取 title 会让降级路径丢失素材。转义完整,JSON 仍合法。
+            raw.append("{\"claim\":\"").append(esc(h.title()))
+               .append("\",\"snippet\":\"").append(esc(snippet(h.snippet())))
+               .append("\",\"source\":{\"type\":\"")
                .append(h.type()).append("\",\"sourceId\":\"").append(esc(h.sourceId()))
                .append("\",\"url\":\"").append(esc(h.url()))
                .append("\",\"provider\":\"").append(esc(h.provider()))

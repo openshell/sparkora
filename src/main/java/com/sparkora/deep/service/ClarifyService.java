@@ -166,7 +166,7 @@ public class ClarifyService {
                 你是汽车内容创作的研究规划专家。根据文章主题,产出研究计划与用户澄清问题。
                 只输出 JSON 对象:
                 {
-                  "keyQuestions": ["需要研究的关键问题(3-4 条,每条具体可查)"],
+                  "keyQuestions": ["需要研究的关键问题(3-7 条,每条具体可查)"],
                   "dataNeeds": ["需要的数据(如:价格/尺寸/竞品参数)"],
                   "hypotheses": ["初步假设(可被研究推翻)"],
                   "toolHints": [{"question": "与 keyQuestions 一一对应", "tools": ["KB","WEB"]}],
@@ -174,6 +174,12 @@ public class ClarifyService {
                     {"q": "澄清问题", "type": "input|single|multi", "options": ["single/multi 时的选项"], "required": true}
                   ]
                 }
+                keyQuestions 规则:
+                - 数量 3~7 条,随主题复杂度伸缩:参数/对比型窄主题取少,事件/战略/政策型宽主题取多。
+                - 维度必须兼顾两类,并按主题取舍:
+                  ① 事实/参数型:价格、尺寸、参数、竞品对比等「点」型可查事实;
+                  ② 背景/来龙去脉型:行业背景、企业战略、长期目标、政策脉络、意义等「面」型背景。
+                - 窄参数主题可无背景题;但事件/发布/宣布/战略/政策/规划/里程碑类主题,**必须**至少包含一条背景/来龙去脉型问题。
                 questions 规则:
                 - 3~5 个,只问影响事实与立场的问题(目标读者/对比竞品/立场倾向/期望篇幅)
                 - 不问语气风格(风格库职责);type=single|multi 必须给 options;读者/篇幅可默认,竞品对比尽量问
@@ -195,6 +201,8 @@ public class ClarifyService {
         plan.put("dataNeeds", toArray(node.path("dataNeeds")));
         plan.put("hypotheses", toArray(node.path("hypotheses")));
         plan.put("toolHints", node.path("toolHints"));
+        // R2(09-26)确定性兜底:信号词命中且无背景型问题时自动补一条(LLM 判断为主,此处只兜底)
+        ensureBackgroundQuestion(plan, topic, extraInfo);
         String questions = node.path("questions").toString();
         String normalized = normalizeQuestions(questions);
         return new PlanResult(json.writeValueAsString(plan), normalized, cr.model(), cr.totalTokens());
@@ -202,6 +210,55 @@ public class ClarifyService {
 
     /** generatePlan 产物(计划 JSON / 归一化问题 JSON / 模型 / token)。 */
     private record PlanResult(String researchPlan, String questions, String model, int totalTokens) {}
+
+    /** R2 背景/来龙去脉型主题信号词:命中则主题应含至少一条背景型问题。 */
+    private static final String[] BACKGROUND_SIGNALS = {
+            "发布", "宣布", "建成", "落成", "完成", "启用", "战略", "计划", "规划", "政策",
+            "里程碑", "首个", "突破", "布局", "进军"};
+
+    /** R2 背景型问题检测词:现有 keyQuestions 命中任一即视为已覆盖背景维度(不重复补题)。 */
+    private static final String[] BACKGROUND_TERMS = {
+            "背景", "战略", "规划", "目标", "意义", "来龙去脉", "发展历程", "布局", "为什么", "如何演变"};
+
+    /**
+     * R2(09-26)确定性兜底:主题/补充信息命中背景信号词、且现有 keyQuestions 无背景型问题时,
+     * 追加一条背景/来龙去脉型问题,并同步追加对应 toolHints(保证问题与提示 1:1,避免落到 KB-only 默认)。
+     *
+     * <p>LLM 判断为主(prompt 已授权按主题取舍),此处仅在模型漏掉时兜底;幂等——已含背景题或未命中信号词则原样返回。
+     * 结构异常(非数组等)不抛异常,静默降级为不补。
+     */
+    static void ensureBackgroundQuestion(Map<String, Object> plan, String topic, String extraInfo) {
+        if (plan == null) return;
+        String probe = (topic == null ? "" : topic) + " " + (extraInfo == null ? "" : extraInfo);
+        boolean signal = java.util.Arrays.stream(BACKGROUND_SIGNALS).anyMatch(probe::contains);
+        if (!signal) return;
+        Object kq = plan.get("keyQuestions");
+        if (!(kq instanceof List<?> list)) return;
+        for (Object q : list) {
+            if (q instanceof String s && java.util.Arrays.stream(BACKGROUND_TERMS).anyMatch(s::contains)) {
+                return;   // 已有背景型问题,幂等不补
+            }
+        }
+        String t = topic == null || topic.isBlank() ? "" : topic.trim();
+        String question = t.isEmpty()
+                ? "该主题的行业背景、企业战略与长期目标是什么?"
+                : t + " 的行业背景、企业战略与长期目标是什么?";
+        @SuppressWarnings("unchecked")
+        List<String> questions = (List<String>) list;
+        questions.add(question);
+        // toolHints 仅在为数组时同步追加;非数组时不抛异常(降级为仅补问题)
+        Object hints = plan.get("toolHints");
+        if (hints instanceof com.fasterxml.jackson.databind.node.ArrayNode arr) {
+            com.fasterxml.jackson.databind.node.JsonNodeFactory nf =
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance;
+            com.fasterxml.jackson.databind.node.ObjectNode hint = nf.objectNode();
+            hint.put("question", question);
+            com.fasterxml.jackson.databind.node.ArrayNode tools = hint.putArray("tools");
+            tools.add("KB");
+            tools.add("WEB");
+            arr.add(hint);
+        }
+    }
 
     /** 竞品信号词:命中即视为对比竞品类问题(确定性归一化,不依赖 LLM 遵守 prompt)。 */
     private static final String[] COMPETITOR_TERMS = {"对比", "竞品", "比较", "竞对", "竞争"};

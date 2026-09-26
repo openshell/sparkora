@@ -18,8 +18,8 @@ public class DeepProperties {
     private String tavilyApiKey = "";   // 支持环境变量直读兜底
     /** 单子代理研究超时(ms)。 */
     private long researchTimeoutMs = 120000;
-    /** 子代理数量上限(研究计划问题数超过时截断)。 */
-    private int maxAgents = 4;
+    /** 子代理数量上限(研究计划问题数超过时截断);R5(09-26)由 4 放宽为 6,检索广度来自更多独立子代理。 */
+    private int maxAgents = 6;
     /**
      * 外部搜索 provider 顺序(部署级默认;运行时由 ADMIN 在系统设置覆盖)。
      * 逗号分隔,默认 {@code TAVILY,SEARXNG}(即 TAVILY_FIRST:Tavily 优先、SearxNG 兜底)。

@@ -36,7 +36,7 @@
     </div>
     <div v-if="fallbackReasons.length" class="fallback-line">
       <span class="fl">降级:</span>
-      <span v-for="(f, i) in fallbackReasons" :key="i" class="fl-item">agent{{ f.agentId }} · {{ f.provider }} · {{ reasonText(f.reason) }}</span>
+      <span v-for="(f, i) in fallbackReasons" :key="i" class="fl-item">agent{{ f.agentId }}<template v-if="f.provider"> · {{ f.provider }}</template> · {{ reasonText(f.reason) }}</span>
     </div>
   </div>
 </template>
@@ -96,15 +96,30 @@ const strategyText = computed(() => {
   return '--'
 })
 
-// 每个 agent 的降级原因(来自 research_notes[].search.attempts)
+// 每个 agent 的降级原因(R3 09-26:含 search 层汇总降级 LLM_FALLBACK,以及 attempts 层 provider 降级)
 const fallbackReasons = computed(() => {
   const out = []
+  const seen = new Set()
+  const push = (agentId, provider, reason) => {
+    const key = `${agentId}|${provider}|${reason}`
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push({ agentId, provider, reason })
+  }
   for (const a of agents.value) {
-    const attempts = a.search && Array.isArray(a.search.attempts) ? a.search.attempts : []
+    const search = a.search || {}
+    const attempts = Array.isArray(search.attempts) ? search.attempts : []
+    // 汇总降级(search.fallbackReason=LLM_FALLBACK):provider 层 attempts 全部 ok=true 时，
+    // attempts 分支捕获不到，必须在此展示。注意：provider 层原因(EMPTY/ERROR/…)由
+    // search.fallbackReason 也回传，但其 provider 字段是**成功采信**的 provider，
+    // 直接展示会把失败原因错挂到成功 provider 上(如 Tavily 未配置却标成 SearxNG)——
+    // 故仅当 attempts 中无同一原因的失败项时才补这条，避免重复且避免错标。
+    if (search.fallbackReason
+      && !attempts.some(at => at && !at.ok && at.fallbackReason === search.fallbackReason)) {
+      push(a.agentId, search.provider || '', search.fallbackReason)
+    }
     for (const at of attempts) {
-      if (at && !at.ok && at.fallbackReason) {
-        out.push({ agentId: a.agentId, provider: at.provider, reason: at.fallbackReason })
-      }
+      if (at && !at.ok && at.fallbackReason) push(a.agentId, at.provider, at.fallbackReason)
     }
   }
   return out
@@ -114,6 +129,7 @@ const reasonText = (r) => ({
   EMPTY: '空结果已降级',
   INVALID_URL: '无有效链接已降级',
   ERROR: '调用异常已降级',
+  LLM_FALLBACK: '汇总降级(已用原始条目)',
   DISABLED: '已停用'
 }[r] || r)
 

@@ -97,10 +97,12 @@ graph TD
 
 ## 5. 研究笔记 / 事实手册结构
 
-- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok}]}`——**不含任何密钥**；`webCount` 语义改为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 原始条目降级时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`（provider 层 `attempts` 原因保持原样，两类失败不混淆）。
+- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok}]}`——**不含任何密钥**；`webCount` 语义改为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 原始条目降级时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`（provider 层 `attempts` 原因保持原样，两类失败不混淆）。
+- **降级保真 snippet（R1，09-26）**：`SubAgentRunner.rawFallback` 每条降级 fact 在 `claim`(title) 之外增 `snippet`（≤200 字，转义完整）——关键背景（如「年内 2 万座、含这 2000 座」）常写在检索命中正文而非标题，旧实现只取 title 会让降级路径丢失素材。snippet 只为「素材可用」保真，不替代 LLM 抽取；降级仍标 `FALLBACK` + gap。`FactSheetService` 透传簇内首个非空 snippet 到 entry（增量可选字段，无则不出现，旧契约零回归）；写作/简报 prompt 可见该证据。
 - **逐 agent 实时回写语义（2026-09-26 修复）**：`run()` 落 `PENDING` 占位后，`doRunAsync` 在 **submit 任何子代理之前**一次性把全部 N 个 agent 覆写为 `RUNNING`（AC-01）——首轮 2s 轮询即可见多 agent 并行 RUNNING，不再有「1 个 RUNNING + 其余 PENDING」假象。随后每个 agent 由一个**独立收集器**任务（同一虚拟线程池）驱动：其自身 `future.get(researchTimeoutMs)` 完成/超时/异常后**立即回写**该 agent 的 `status/factsJson/webCount/search`（AC-02）——谁先完成谁先落库，天然乱序，不再被慢的 `future[0]` 串行阻塞，消除 `PENDING→DONE` 集中瞬变。超时/异常仍 `cancel(true)` + `FAILED` + gap「子代理超时或失败」，失败隔离不回归（AC-04/AC-05）。全部收集器 join 后才执行 `FactSheetService.merge` 与自动简报，顺序不变（AC-06）。`/deep/status` 输出契约与 `status` 值域 `PENDING/RUNNING/DONE/FALLBACK/FAILED` 不变。
+  - **LLM 汇总截断/失败重试（R4，09-26）**：`SubAgentRunner.chat` 首次 `chatJson(...,2048)`；任何失败（`finish_reason=length` 截断 / 空内容 / 非法 JSON）均**提额 `4096` 重试一次**（附纠错说明），仅重试仍失败才抛出 → `research` catch → `FALLBACK`。净调用上限仍 2 次/agent，仅重试额度提高并覆盖截断场景（旧实现仅在非法 JSON 时重试且额度仍 2048，截断直接冒泡降级）。
   - **并发写安全**：收集器并发调用 `updateAgent` 为「读整段 JSON → 改指定 agentId → 写回」，无锁会丢失更新。以 per-brief 锁（`ConcurrentHashMap<Long,Object>` + `synchronized`）串行化同一 brief 的写入，不同 brief 互不阻塞；锁在批次结束（`runAsync` finally）清理，避免 map 无界增长。启动批量置 RUNNING 与收集器回写共用同一把锁。
-- `fact_sheet`（`FactSheetService.merge`，按 claim **近似**去重聚合）：`{entries:[{key,claim,value,sources:{type,url,modelName,docId},crossCount,confidence,sourcesList:[{type,sourceId,provider,url,modelName,docId}],sourceCount}],gaps:[...],warnings:[...]}`。`sources.type` 取值 `KB|WEB|MULTI`（`MULTI`＝多源交叉，代表来源基础上标注）。`sourcesList`/`sourceCount` 为 09-25 **增量字段**（保留全部来源证据含 provider，供引用面板/人工核对；前端旧逻辑不读也不报错）。`crossCount`/`sourceCount` 为**去重后来源数**（同 url+modelName 只计一次，不再等于原始 fact 条数）。
+- `fact_sheet`（`FactSheetService.merge`，按 claim **近似**去重聚合）：`{entries:[{key,claim,value,snippet?,sources:{type,url,modelName,docId},crossCount,confidence,sourcesList:[{type,sourceId,provider,url,modelName,docId}],sourceCount}],gaps:[...],warnings:[...]}`。`sources.type` 取值 `KB|WEB|MULTI`（`MULTI`＝多源交叉，代表来源基础上标注）。`sourcesList`/`sourceCount` 为 09-25 **增量字段**（保留全部来源证据含 provider，供引用面板/人工核对；前端旧逻辑不读也不报错）。`snippet` 为 09-26 **增量字段**（R1：簇内首个非空降级 snippet，无则字段不出现）。`crossCount`/`sourceCount` 为**去重后来源数**（同 url+modelName 只计一次，不再等于原始 fact 条数）。
 - 置信度规则：多源交叉（去重来源 ≥2）0.85 交叉标注 / KB 0.9 / 单一 WEB 0.4 + warnings「仅单一 WEB 源,待核实」/ 同簇 KB+WEB 冲突时 KB 胜出（0.9，WEB 进 `alternatives`）。
 - 已知限制：WEB 命中为摘要级（snippet），不做正文抓取；低置信条目以 warnings 提示人工核实。
 
@@ -108,7 +110,7 @@ graph TD
 
 ## 6. 深度写作与数值回查
 
-- `DeepWriterService.write`：`fact_sheet` 条目进 prompt + 铁律「数值必须逐字出自手册」→ `AiClient.chat`（非 JSON 方法）→ 落 version（复用版本链路，见 [version-generation.md](version-generation.md)）。
+- `DeepWriterService.write`：`fact_sheet` 条目进 prompt（条目带 `snippet` 时追加 `| 证据:{snippet}`，≤200） + 铁律「数值必须逐字出自手册」→ `AiClient.chat`（非 JSON 方法）→ 落 version（复用版本链路，见 [version-generation.md](version-generation.md)）。
 - 数值回查（正则，0 次 LLM）：抽取正文数值（万/千分位/百分比/带单位 `km|kWh|kW|mm|L/100km|s`）与手册比对，手册外数值 → `fact_risks` `[{claim,riskLevel:"high",suggestion:"发布前必须人工核实或删除"}]` 落版本字段。
 - 2026-09-04 实测：version 1917 字符，捕获手册外「25万」high 1 条。
 
@@ -117,10 +119,12 @@ graph TD
 ## 7. 前端（`views/project/deep/` 四组件 + StepBrief 深度分支）
 
 - 反问题型：`input` / `single`（radio）/ `multi`（checkbox，车型锚点多选；提交时以「、」拼接、回显时按「、」还原数组）。`ClarifyForm` 支持全部三型（2026-09-05 增补 multi）。
+- **研究计划两类维度（R2，09-26）**：`keyQuestions` 数量 3~7 随主题复杂度伸缩；维度须兼顾「事实/参数型」（价格/尺寸/参数/对比）与「背景/来龙去脉型」（行业背景/企业战略/长期目标/政策脉络/意义）。LLM 判断为主（窄参数主题可无背景题；事件/发布/宣布/战略/政策/规划/里程碑类主题必须至少一条背景题），`ClarifyService.ensureBackgroundQuestion` 确定性兜底——主题/补充信息命中信号词（发布/宣布/建成/落成/完成/启用/战略/计划/规划/政策/里程碑/首个/突破/布局/进军）且现有问题无背景型检测词（背景/战略/规划/目标/意义/来龙去脉/发展历程/布局/为什么/如何演变）时，追加一条背景题并同步补 `toolHints`（保证问题:提示 1:1，避免落到 KB-only 默认）；幂等、异常静默降级。
 - **反问必须基于车库名录（2026-09-05 修复）**：`ClarifyService` 注入 `CarModelService.list()` 名录（名称+价格区间）进 prompt；规则：车型/竞品/对比类问题的 options 只能从名录选、不得编造；主题指向某款/某系列车型时必须有一道 multi 锚点车型题（options 覆盖名录中含该系列词的全部车型）。车库获取失败降级为不注入并提示不编造车型。
 - **竞品对比题强制多选（R1，2026-09-05）**：prompt 明确「对比/竞品/比较/竞对类问题 `type=multi`（选项 2~4 个竞品 + 「不对比」兜底）」；后端 `ClarifyService.normalizeQuestions` 确定性归一化兜底（不依赖 LLM 遵守）：问题文本含竞品信号词（对比/竞品/比较/竞对/竞争）的选项题强制 `type=multi` 并补「不对比」选项（缺省时）；无选项的竞品题归 `input`（自由填写）；解析失败原样保留不阻断。
 - **「其他(自行填写)」（R2，2026-09-05）**：`ClarifyForm.vue` 对 single/multi 题渲染「其他(自行填写)」入口——single 选中后切文本框（提交取文本框内容），multi 勾选后文本并入答案（「、」拼接）；锁定回显时不在 options 中的答案自动归「其他」并回填。
 - 组件：`DeepPlanCard`（研究计划）/`ClarifyForm`（生成↔锁定回显两态）/`ResearchProgress`（2s 轮询 status + 工具健康行 toolHealth 徽标）/`FactSheetSummary`（手册摘要 + 来源徽标 KB 蓝/WEB 紫 + 置信度条 + gaps/warnings）/`CitationList`（引用明细）。
+- **降级原因可见（R3，09-26）**：`ResearchProgress` 的降级行数据源为 `search.fallbackReason`（非空）∪ `attempts[].ok===false && fallbackReason`；`reasonText` 含 `LLM_FALLBACK: '汇总降级(已用原始条目)'`。修复旧实现只读 attempts（LLM 降级时 attempts 全 ok=true，进度页对 3/4 降级不显示任何原因）。**避免错标**：`search.fallbackReason` 的 provider 字段是**成功采信**的 provider，故仅当 `attempts` 中无同一原因的失败项时才补该行（`LLM_FALLBACK` 时 attempts 全 ok 必补；provider 层原因由 attempts 行展示，不重复不错挂）。
 - **WEB 来源展示 provider（R10，09-25）**：`CitationList.vue` 对 WEB 条目渲染「provider · 域名」（如 `Tavily · stnn.cc`），`FactSheetSummary.vue` 的 WEB 徽标渲染 `WEB·{provider}·{域名}`；provider 取自 `fact_sheet.entries[].sources.provider`（09-25 增量字段）。**历史 `fact_sheet` 可能缺 `provider` → 必须容错回退**为旧文案（仅域名）；纯展示层，不改请求/响应结构。
 - **研究完成 → 自动生成简报（2026-09-05 修复）**：`DeepResearchService.runAsync` 落 `fact_sheet` 后自动调 `BriefService.generateFromFactSheet`（LLM 一次，以事实手册为唯一事实来源 + 锁定需求 → 简报五字段落同一条 DEEP brief 行，`currentBriefId` 指向该行，状态机 GENERATING_BRIEF→READY）；失败不回滚研究产物（回 DRAFT + `lastBriefError`，深度面板可手动重试 `/deep/brief`，也可「跳过简报直接生成正文」）。修复「确定研究计划/研究完成后没有简报页面」的结构性缺陷。
 - `StepBrief.vue`（2026-09-11 单一状态机收敛，09-11-brief-gen-flow-refactor）：**无 FAST/DEEP 模式切换**——唯一生成路径为深度流程，无简报区间由唯一 `deepStage` 状态机驱动（值域 `NONE|PLANNING|CLARIFYING|CLARIFIED|RESEARCHING|RESEARCH_DONE`），同一状态恒渲染同一 UI，与进入路径（创建直发/重新进入/仅存草稿）无关；**删除 `deepMode` 路径意图布尔与 6s 有界重探测**。project 就位后 `syncDeepStatus()` 单次拉 `/deep/status` 断点恢复（PLANNING 则续起 2.5s 自轮询），不再依赖 `?gen=deep`。「重新研究生成」直接 `startDeep()` 进 PLANNING（`restarting` 标志跳过旧简报正文分支，新简报落库后恢复）。无简报区间只保留**一个**主操作「开始深度研究」，删除「开始深度研究→生成研究计划」两步链与裸生成按钮。CLARIFYING/RESEARCHING 仅 brief 展示态，项目状态机不变（`constants/project.js` 注释）。RESEARCH_DONE 态下简报正常展示（自动简报完成即 READY）；失败显示「重新生成简报」+「跳过简报,直接生成正文」。`ragStatus` 展示含 `DISABLED`（知识库已停用·全局设置，灰，见 [retrieval.md](retrieval.md)）。
@@ -138,7 +142,7 @@ graph TD
 | `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署，2026-09-04 迁移至 192.168.3.108:5676） |
 | `CRAWL4AI_BASE_URL` | 空 | 预留：正文抓取工具未接入（摘要级搜索的后续增强） |
 | `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap） |
-| `DEEP_MAX_AGENTS` | `4` | 子代理数上限（虚拟线程 per-task executor） |
+| `DEEP_MAX_AGENTS` | `6` | 子代理数上限（R5 09-26 由 4 放宽为 6；虚拟线程 per-task executor；计划问题数超过时按前 N 条截断，总检索预算约 8 → `webQuota=max(1,8/n)`） |
 
 ---
 

@@ -102,7 +102,7 @@ public class FactSheetService {
                 entries.add(entry(kbFirst.path("claim").asText(""),
                         kbFirst.path("value").asText(""),
                         kbFirst.path("source"), distinctSources, sourceCount, confidence,
-                        altUrls.isEmpty() ? null : altUrls));
+                        altUrls.isEmpty() ? null : altUrls, firstSnippet(list)));
                 if (!altUrls.isEmpty()) {
                     warnings.add("「" + truncate(kbFirst.path("claim").asText(""), 30)
                             + "」以知识库为准;外部来源(" + altUrls.size() + " 条)有异说,未采用");
@@ -119,7 +119,8 @@ public class FactSheetService {
                 warnings.add("「" + truncate(first.path("claim").asText(""), 30) + "」仅单一 WEB 源,待核实");
             }
             entries.add(entry(first.path("claim").asText(""), first.path("value").asText(""),
-                    sourceNode(first.path("source"), type), distinctSources, sourceCount, confidence, null));
+                    sourceNode(first.path("source"), type), distinctSources, sourceCount, confidence, null,
+                    firstSnippet(list)));
         }
         Map<String, Object> sheet = new LinkedHashMap<>();
         sheet.put("entries", entries);
@@ -131,10 +132,12 @@ public class FactSheetService {
     /**
      * 组装条目。主字段(key/claim/value/sources/crossCount/confidence)保持旧契约；
      * sourcesList/sourceCount 为 09-25 增量字段(保留全部来源证据,前端旧逻辑不读也不报错)。
+     * snippet 为 09-26 增量字段(R1 降级保真):仅当簇内首个非空 snippet 存在时写入,
+     * 无则完全不出现该字段(旧契约与既有消费方零回归)。
      */
     private static Map<String, Object> entry(String claim, String value, JsonNode source,
                                              List<JsonNode> distinctSources, int sourceCount,
-                                             double confidence, List<String> alternatives) {
+                                             double confidence, List<String> alternatives, String snippet) {
         Map<String, Object> e = new LinkedHashMap<>();
         // key 沿用旧语义:代表 fact 的 claim(旧实现 byClaim 的 key 即 claim)
         e.put("key", claim);
@@ -146,7 +149,17 @@ public class FactSheetService {
         e.put("sourcesList", distinctSources);
         e.put("sourceCount", sourceCount);
         if (alternatives != null && !alternatives.isEmpty()) e.put("alternatives", alternatives);
+        if (snippet != null && !snippet.isBlank()) e.put("snippet", snippet);
         return e;
+    }
+
+    /** 簇内首个非空 snippet(R1 降级保真);均无则返回 null(不写字段)。 */
+    private static String firstSnippet(List<JsonNode> facts) {
+        for (JsonNode f : facts) {
+            String s = f.path("snippet").asText("");
+            if (!s.isBlank()) return s;
+        }
+        return null;
     }
 
     /**

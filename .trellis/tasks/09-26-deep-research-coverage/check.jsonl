@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/09-26-deep-research-coverage/prd.md", "reason": "本次需求 R1-R5 与 AC-01..AC-07 的权威来源;逐条核对实现与验收"}
+{"file": ".trellis/tasks/09-26-deep-research-coverage/design.md", "reason": "技术设计:字段契约、边界、R2 确定性兜底、R5 默认值、兼容回滚;检查实现是否符合设计而非偏离"}
+{"file": ".trellis/tasks/09-26-deep-research-coverage/implement.md", "reason": "执行清单与验证命令;确认每步骤落地且验证命令已跑"}
+{"file": "docs/spec/brief-generation.md", "reason": "契约同步核对:研究计划/降级/手册字段是否与代码一致"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "红线核对:available() 无闩锁、toolHealth 三键与优先级、配置绑定自查"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线:不改生产数据、契约断言、测试充分性"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端展示改动合规性(接口/字段读取惯例)"}
+{"file": ".trellis/spec/guides/index.md", "reason": "指南索引:确认是否应把「降级保真原始证据」写入 thinking checklist"}
