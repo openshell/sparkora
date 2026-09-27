@@ -100,6 +100,8 @@ import PreviewPane from '../../components/preview/PreviewPane.vue'
 import PreviewImageDrawer from '../../components/preview/PreviewImageDrawer.vue'
 import { usePreviewStylePersist } from '../../composables/usePreviewStylePersist'
 import { usePreviewRender } from '../../composables/usePreviewRender'
+import { usePendingImageFlush } from '../../composables/usePendingImageFlush'
+import { clearProject, clearOthers } from '../../utils/pendingImageStore'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 
@@ -108,7 +110,7 @@ import { WarningFilled } from '@element-plus/icons-vue'
  * 渲染编排(对齐 @wenyan-md/ui):
  *  - 正文编辑(400ms 防抖)→ renderMarkdownHtml;主题/高亮/mac → applyPreviewTheme(共享 style 标签,不重渲染)。
  *  - 复制/保存快照 → buildWechatHtml(内联样式,与发布 server 同参)。
- * 左栏 CodeMirror 6;双栏百分比滚动同步;粘贴图片自动上传;草稿 localStorage 暂存。
+ * 左栏 CodeMirror 6;双栏百分比滚动同步;粘贴图片前端暂存(占位 token + 本地 blob 预览,去发布时才上传);草稿 localStorage 暂存。
  *
  * 09-27-split-monoliths：抽 PreviewToolbar/PreviewPane/PreviewImageDrawer + usePreviewStylePersist
  * （图库分页与智能建议分别收在 usePreviewLibrary/usePreviewSuggestions，由抽屉组件持有）。
@@ -170,6 +172,19 @@ const originUrl = (img) => img?.url || ''                 // 插入正文/大图
 // ==== 渲染:正文 400ms 防抖走纯渲染;首次/出错时同样入口 ====
 const { html, rendering, renderError, scheduleRender, renderMarkdown, dispose: disposeRender } =
   usePreviewRender(() => contentMd.value, () => loaded.value)
+
+// ==== 剪贴板暂存图:唯一上传触发点是「去发布」;复制/发布防呆 ====
+const { goPublish, hasPendingToken } = usePendingImageFlush({
+  projectId,
+  getContent: () => contentMd.value,
+  setContent: (md) => { contentMd.value = md },
+  isDirty: () => dirty.value,
+  // 以下用 getter 包装：目标 const 声明在本行之后，直接传值会触发 TDZ（调用时已初始化）
+  saveContent: () => saveContent(),
+  flushStyle: () => flushSavePreviewStyle(),
+  goNext: () => router.push({ name: 'project-publish', params: { id: projectId.value } }),
+  isSaving: () => saving.value
+})
 
 // ==== 预览样式落库(项目级,跨会话保持):防抖 400ms,失败仅 warn 不阻塞预览 ====
 const { schedule: scheduleSavePreviewStyle, flush: flushSavePreviewStyle, styleDefaults, applyEffectiveStyle, markApplied, isApplied } =
@@ -308,8 +323,13 @@ const saveContent = async () => {
   } finally { saving.value = false }
 }
 
-/** 复制排版:buildWechatHtml 内联输出(与发布同参),富文本进剪贴板。输入纯正文(不含 frontmatter)。 */
+/** 复制排版:buildWechatHtml 内联输出(与发布同参),富文本进剪贴板。输入纯正文(不含 frontmatter)。
+ *  含未上传暂存图(token)时拦截——否则复制出的 HTML 会带失效 src(09-27-preview-clipboard-image R4)。 */
 const copyRich = async () => {
+  if (hasPendingToken()) {
+    ElMessage.warning('正文含未上传的粘贴图,请先点「去发布」上传后再复制')
+    return
+  }
   copying.value = true
   try {
     const inline = await buildWechatHtml(contentMd.value || '', {
@@ -329,17 +349,7 @@ const copyRich = async () => {
   } finally { copying.value = false }
 }
 
-/** 跳发布步(S5 衔接):正文有未保存修改时先自动保存,成功才跳转;失败停留预览页。 */
-const goPublish = async () => {
-  if (saving.value) return
-  if (dirty.value) {
-    const ok = await saveContent()
-    if (!ok) return
-  }
-  // 样式防抖窗口内直接跳转会把「刚选的主题」丢掉;跳转前立即落库
-  await flushSavePreviewStyle()
-  router.push({ name: 'project-publish', params: { id: projectId.value } })
-}
+/** 跳发布步(S5 衔接):实现见 usePendingImageFlush.goPublish(暂存图转存 + 保存 + 跳转;失败停留预览页)。 */
 
 // ==== 配图面板:插入 / 设封面 / AI 生图 ====
 const insertBodyImage = (img) => {
@@ -381,6 +391,9 @@ watch(dirty, (d) => {
 })
 
 onMounted(async () => {
+  // 挂载即清掉「其他项目」的残留暂存条目(卸载重挂载路径下 watch(projectId) 拿不到旧 id,
+  // clearProject 覆盖不到 → blob URL 会话级泄漏;见 pendingImageStore.clearOthers)
+  clearOthers(projectId.value)
   try {
     const res = await imageApi.previewOptions()
     if (res.code === 0) {
@@ -407,6 +420,11 @@ watch(() => props.project, (p) => {
   markApplied()
   applyPreviewTheme({ theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value })
     .catch((e) => { renderError.value = '主题加载失败: ' + (e?.message || e) })
+})
+
+// 项目切换:释放旧项目的暂存条目与 blob URL(跨项目隔离,09-27-preview-clipboard-image R5.1)
+watch(projectId, (newId, oldId) => {
+  if (oldId != null && String(oldId) !== String(newId)) clearProject(oldId)
 })
 
 watch(previewable, (ok) => { if (ok && !loaded.value && !loadError.value) loadContent() })

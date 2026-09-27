@@ -1,0 +1,4 @@
+{"file": "docs/spec/preview.md", "reason": "预览渲染=前端 @wenyan-md/core、发布才走后端 PreviewService 的现状与接口契约；本任务改动预览链路与交互，须对齐其渲染/组装规则与已知限制"}
+{"file": "docs/spec/image.md", "reason": "配图全链路契约：上传接口返回 url、插图落点只由正文 markdown 决定、手插图不登记关联表的既有债务；暂存图不登记须与此口径一致"}
+{"file": "docs/spec/publish.md", "reason": "发布链路（PublishService→PreviewService→wenyan-server）与失败语义；后端 token 防呆插在该链路组装前，须对齐其错误/写 last_publish_error 约定"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端强制约定：所有后端调用走 api/index.js、上传 File 必须补扩展名、ObjectURL 同一 File 全局只建一个并正确 revoke、大组件拆分落位（composables/utils）——本任务新增暂存区/flush 直接受约束"}

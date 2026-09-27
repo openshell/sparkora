@@ -1,0 +1,5 @@
+{"file": "docs/spec/preview.md", "reason": "核对预览渲染改动未破坏『正文 markdown 为唯一渲染真值』与主题/滚动/复制等既有行为，且新交互与限制已同步文档"}
+{"file": "docs/spec/image.md", "reason": "核对未上传暂存图不进入图库/不登记关联表，且上传仍走既有契约；确认未引入与既有债务口径矛盾的登记行为"}
+{"file": "docs/spec/publish.md", "reason": "核对发布防呆（token 中止）符合发布失败语义（中文原因 + last_publish_error），且不改变正常发布链路"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "逐条核对前端规范：API 层集中、扩展名补全、ObjectURL 去重与 revoke、view 行数与拆分落位、防抖 timer 清理"}
+{"file": ".trellis/spec/backend/index.md", "reason": "核对 PublishService 改动符合后端分层/异常与校验约定（异常经控制器转 R.fail、写错误列）"}

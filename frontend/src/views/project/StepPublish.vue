@@ -138,6 +138,7 @@ import { useProjectDetailStore } from '../../store/project-detail'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { WarningFilled, SuccessFilled } from '@element-plus/icons-vue'
 import { isPublishable } from '../../constants/project'
+import { hasToken, hasAny } from '../../utils/pendingImageStore'
 
 /**
  * Step 4 · 发布(S5):同源渲染(与 Step3 preview 完全同参)→ wenyan-server(公众号草稿箱)。
@@ -308,6 +309,13 @@ const confirmPublish = () => {
 }
 
 const doPublish = async () => {
+  // 发布防呆(09-27-preview-clipboard-image R5.2):正文含 token 占位时阻止发布;摘要尚未加载完(shell 未知)
+  // 且本项目仍有暂存条目时也阻止(无法确认正文干净,宁可不发)。后端另有同口径兜底(R5.3)。
+  const pendingUnverified = !summaryLoaded.value && hasAny(projectId.value)
+  if (hasToken(contentMd.value) || pendingUnverified) {
+    ElMessage.warning('当前正文含未上传的粘贴图,请回到「预览」步骤点「去发布」完成上传后再发布')
+    return
+  }
   publishing.value = true
   try {
     // 发布元信息有未落库修改则先保存,保证发布读到的 author/source_url 与表单一致

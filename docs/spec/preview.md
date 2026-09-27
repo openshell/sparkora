@@ -73,17 +73,31 @@
 
 ---
 
+## 4.1 剪贴板传图暂存（09-27-preview-clipboard-image）
+
+预览页粘贴剪贴板图片**不再即时上传七牛**：先在前端会话暂存区登记（`frontend/src/utils/pendingImageStore.js`，模块级单例、**不持久化**），正文插入占位 token `![](sparkora-img:<id>)`；右侧预览把 HTML 中该 token 的 `src` 投影为本地 `blob:` URL **即时可见**（不落库）。
+
+- **上传唯一触发点 = 预览页「去发布 →」**（`composables/usePendingImageFlush.js`）：对正文**仍被引用**的暂存图逐张 `POST /api/images/upload`（复用既有上传接口，无新后端接口）→ 正文 token 精确替换为图床公网 URL → 保存最终正文 → 跳发布页。未被正文引用的暂存条目直接移除并 revoke（**不上传**）；任一张失败即中止跳转、保留条目可重试。
+- **前置校验**：粘贴时按 png/jpg/webp + ≤`IMAGE_MAX_UPLOAD_MB`（默认 10MB）过滤；无扩展名的剪贴板 File 按 MIME 补名（后端按文件名扩展名校验），沿用 `AiImageDrawer` 既有口径。
+- **复制排版拦截**：正文含 token 时点「复制排版」被拦截并提示先上传，不组装带失效引用的 HTML。
+- **跨项目隔离**：暂存按项目分组，项目切换时 `clearProject(旧 id)` 释放条目与 blob URL；进入预览页时另调 `clearOthers(当前 id)` 兜底——项目列表跳转走「卸载重挂载」，`watch(projectId)` 首帧拿不到旧 id，否则旧项目 blob URL 会话级泄漏。
+- **渲染时机（风险 R-a 实测）**：`@wenyan-md/core`(marked 15) 对 `![](sparkora-img:<id>)` 原样输出 `<img src="sparkora-img:<id>">`（未做协议过滤），故替换在**渲染后 HTML 侧**按 `src` 属性进行（`mapTokenSrc`），markdown 输入侧与落库正文保持不变。
+- **发布防呆**：发布页与后端 `PublishService` 均拒绝含 `sparkora-img:` 的正文（详见 [publish.md](publish.md)）。
+
+---
+
 ## 5. 已知限制与风险（登记）
 
 - `pic.caiqz.cn` 仅有 http（https 证书未配）：预览从 localhost 拉不成问题；公众号内显示的是微信端上传后的 URL，不受影响。后续可加 https。
 - wenyan-server 2.0.11 鉴权中间件对错误 key 挂起（不返回 401）：客户端超时不宜过长，且建议 server 升级。
 - theme 清单由后端 `WenyanThemeCatalog` 权威固定（15 个），不依赖 server 端注册：主题只在本机 CLI 渲染阶段应用，wenyan-server 只收渲染后的 HTML，不感知主题。`.env WENYAN_THEME_NAMES` 已废弃。
 - **社区主题 CSS 禁止外链图片（09-11-quanzhanlan-broken-image）**：发布时 wenyan-server 会下载渲染 HTML 中引用的所有图片，任一外链失效即整次发布失败（报错「下载图片失败 URL」）。新增/维护社区主题必须自检 `grep -nE "url\(https?://" src/main/resources/wenyan-themes/*.css frontend/src/assets/wenyan-themes/*.css` 为空；历史事故：全栈蓝 `quanzhanlan.css` 曾引用失效图壳图标（`imgkr.cn-bj.ufileos.com`，HTTP 400）致发布失败，已移除。详见 [wenyan.md](../wenyan.md)。
+- **剪贴板暂存图不持久化（09-27-preview-clipboard-image）**：刷新/关页/换设备后未上传的暂存图丢失，正文残留 `sparkora-img:<id>` token，预览显示破图；发布页/后端会拒绝带 token 的正文，需回预览页重新粘贴。暂存图**不登记** `sparkora_article_version_image`（沿用「markdown 为渲染真值、手动插图不登记」的既有口径）。
 
 ---
 
 ## 6. 关键实现路径
 
 - 后端：`com.sparkora.service.PreviewService`（渲染/降级/主题校验）、`com.sparkora.service.WenyanThemeCatalog`（15 主题权威目录 + CSS 物化）、`com.sparkora.wenyan.*`（CLI 调用）、`config.WenyanProperties`；控制器端点：`ProjectPreviewController#preview` / `#savePreviewStyle` / `#savePublishMeta` / `#publishOptions`、`ImageController#previewOptions`（09-27-split-monoliths 起预览相关端点自 `ArticleProjectController` 拆出，路径/鉴权不变）。
-- 前端：`views/project/StepPreview.vue`、`components/MarkdownEditor.vue`（`insertMd` / `insertMdAtAnchor`）、`utils/wenyanThemes.js`（浏览器预览 CSS 兜底）。
+- 前端：`views/project/StepPreview.vue`、`components/MarkdownEditor.vue`（`insertMd` / `insertMdAtAnchor`）、`utils/pendingImageStore.js`（剪贴板暂存区 + 占位 token 工具）、`composables/usePendingImageFlush.js`（发布前转存编排）、`utils/wenyanThemes.js`（浏览器预览 CSS 兜底）。
 - 表：`sparkora_article_project`（preview_* / author / source_url）、`sparkora_image_asset.storage_key`。

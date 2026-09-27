@@ -74,6 +74,10 @@ public class PublishService {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         ArticleVersionEntity v = versionMapper.selectById(p.getCurrentVersionId());
         if (v == null) throw new IllegalStateException("当前版本不存在，请重新选定");
+        // 1.6) 发布防呆(09-27-preview-clipboard-image):正文含未上传的粘贴图占位 token 时中止发布。
+        //      粘贴图仅在预览页暂存、点「去发布」时才上传替换;此处兜底防御绕过前端的路径(刷新后直发)。
+        if (v.getContentMd() != null && v.getContentMd().contains("sparkora-img:"))
+            throw new IllegalStateException("正文含未上传的粘贴图，请回到预览页点「去发布」上传后再发布");
         if (v.getCoverImageId() == null)
             throw new IllegalStateException("公众号要求文章至少要有封面图，请先在「预览」步骤为当前版本设置封面后再发布");
 

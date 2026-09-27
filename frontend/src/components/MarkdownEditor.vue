@@ -5,11 +5,13 @@
 <script setup>
 /**
  * MarkdownEditor(CodeMirror 6,原版 @wenyan-md/ui 的 MarkdownEditor 同款引擎)。
- * 仅在本组件挂载时动态 import CodeMirror chunk;粘贴图片 → imageApi.upload → 图床公网 URL markdown。
+ * 仅在本组件挂载时动态 import CodeMirror chunk;
+ * 粘贴图片(09-27-preview-clipboard-image)→ 前端会话暂存 + 插入占位 token `![](sparkora-img:<id>)`,
+ * 不再即时上传七牛;预览用本地 blob 投影,点预览页「去发布」时才统一上传替换(见 utils/pendingImageStore.js)。
  * 衍生自 wenyan 项目(caol64/wenyan-ui,Apache-2.0);本组件为 Vue 3 重写,视觉适配 sparkora 变量。
  */
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { imageApi } from '../api'
+import { add as addPendingImage } from '../utils/pendingImageStore'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -96,7 +98,22 @@ const makeScrollHandler = (EditorView, emit) => {
   })
 }
 
-/** 粘贴图片上传 → 图床公网 URL markdown(原版“粘贴即上传”行为)。 */
+/** 按 MIME 推导扩展名（后端按 multipart 文件名扩展名校验白名单）。 */
+const extOfMime = (mime) => {
+  const m = String(mime || '').toLowerCase()
+  if (m.includes('png')) return 'png'
+  if (m.includes('webp')) return 'webp'
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg'
+  return ''
+}
+
+/**
+ * 粘贴图片(09-27-preview-clipboard-image):**不再即时上传七牛**,改为前端会话暂存 + 正文插入占位 token。
+ * - 类型/大小前置校验(与后端 upload 同口径);剪贴板 File 常无扩展名,按 MIME 补名(否则后端 400);
+ * - 一次粘贴多张逐张登记并各自插入 `![](sparkora-img:<id>)`;
+ * - 本地即时预览由 usePreviewRender 把 token src 投影为 blob URL(不落库);
+ * - 上传唯一触发点 = 预览页「去发布」(见 composables/usePendingImageFlush.js)。
+ */
 const makePasteHandler = (EditorView) => {
   return EditorView.domEventHandlers({
     paste: (event) => {
@@ -107,29 +124,25 @@ const makePasteHandler = (EditorView) => {
       event.preventDefault()
       images.forEach(img => {
         if (props.projectId == null || props.projectId === '') {
-          ElMessage.warning('项目内才能上传图片,请先保存项目')
+          ElMessage.warning('项目内才能插入图片,请先保存项目')
           return
         }
-        const placeholder = `\n![上传中...](uploading-${Date.now()})\n`
-        insertAtCursor(placeholder)
-        imageApi.upload(props.projectId, img).then(res => {
-          if (res.code !== 0) throw new Error(res.msg || '上传失败')
-          // 后端返回图片实体（url 为图床公网 URL，入库即已转存）
-          const url = res.data?.url
-          if (!url) throw new Error('上传返回缺少 url')
-          const body = view.state.doc.toString()
-          const idx = body.indexOf(placeholder.trim())
-          if (idx >= 0) {
-            const md = `![](${url})`
-            view.dispatch({ changes: { from: idx, to: idx + placeholder.trim().length, insert: md } })
-          }
-          ElMessage.success('图片已上传并插入')
-        }).catch(e => {
-          ElMessage.error(e?.message || '图片上传失败')
-          const body = view.state.doc.toString()
-          const idx = body.indexOf(placeholder.trim())
-          if (idx >= 0) view.dispatch({ changes: { from: idx, to: idx + placeholder.trim().length } })
-        })
+        if (!/^image\/(png|jpe?g|pjpeg|webp)$/i.test(img.type)) {
+          ElMessage.error('仅支持 png/jpg/webp 格式图片')
+          return
+        }
+        if (img.size > 10 * 1024 * 1024) {
+          ElMessage.error('图片超过 10MB 上限')
+          return
+        }
+        // 无有效扩展名时按 MIME 补名(剪贴板 File 名字可能是 image/blob,后端按扩展名校验)
+        const hasValidExt = /\.(png|jpe?g|webp)$/i.test(img.name || '')
+        const file = hasValidExt
+          ? img
+          : new File([img], `paste.${extOfMime(img.type) || 'png'}`, { type: img.type || 'image/png' })
+        const entry = addPendingImage(props.projectId, file)
+        if (!entry) { ElMessage.error('图片暂存失败,请重试'); return }
+        insertAtCursor(`\n![](sparkora-img:${entry.id})\n`)
       })
       return true
     }

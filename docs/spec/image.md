@@ -385,3 +385,4 @@
 - 车型库图片接入预留（暂不开发）。
 - 非七牛图床实现下 `thumbUrl` 降级为原图 URL。
 - **参考图不落库 + 多图重生成依赖前端会话缓存（09-26 image-gen-drawer-ux / img2img-multi-ref）**：粘贴/本地文件参考图仅用于本次生成（参考图未入库，「重生成」依赖前端 `utils/imageRefCache.js` 会话缓存复用**整组**参考图）；缓存不持久化，**刷新页面后丢失 → 该来源图的重生成按钮置灰 + tooltip**（需重新粘贴/选图生成）。`ref_image_id` 为**单列**无法表达多对多：**多张参考图生成的结果一律 `ref_image_id=NULL`**（即便全来自图库），仅「单张且来自图库」保留 `ref_image_id` 走后端 `/{id}/regenerate`。multipart 请求体上限需满足 `IMAGE_MAX_REQUEST_MB ≥ 4 × IMAGE_MAX_UPLOAD_MB`（默认 45 ≥ 4×10，运维调整单张上限时须同步）。
+- **预览页剪贴板暂存图（09-27-preview-clipboard-image）**：预览页粘贴的图片先在前端会话暂存（`utils/pendingImageStore.js`，正文占位 `sparkora-img:<id>`），**点预览页「去发布」时才统一 `POST /api/images/upload`**，因此粘贴瞬间图库里并不存在该图，刷新未上传即丢失（沿用「markdown 为渲染真值」口径，暂存图**不登记** `sparkora_article_version_image`）。契约与防呆详见 [preview.md](preview.md) §4.1。

@@ -25,6 +25,7 @@ PublishService.publish
 - 封面与正文 `<img src="http(s)…">` 由 server 端 fetch 后转传微信（七牛 http URL 可用）；无封面时 `gzhContent` 不带 `cover`，草稿封面由 server 退化取正文首图（可能无封面图，不阻塞发布）。
 - 发布元信息（09-11-preview-publish-bridge）：`author`/`source_url` 由发布页手填、项目级落库（`preview-style`/`publish-meta` 端点），非空才进 `gzhContent`；留空不发送，行为与旧版一致。**风险登记**：远程 wenyan-server 2.0.11 是否透传 `author`/`source_url` 未实测（未知 JSON 键通常被忽略）；如实测被拒，降级为不发送这两键（保留落库与前端展示）。
 - 失败语义：任何一步失败 → `last_publish_error` 落库、状态原样保留、`R.fail(400|500, 中文原因)`；可重试整链。
+- **粘图占位防呆（09-27-preview-clipboard-image）**：组装 `gzhContent` 前若当前版本 `content_md` 含 `sparkora-img:`（预览页剪贴板暂存图占位 token，见 [preview.md](preview.md) §4.1），抛 `IllegalStateException("正文含未上传的粘贴图，请回到预览页点「去发布」上传后再发布")` → 控制器转 `R.fail(400)` 并写 `last_publish_error`；防御绕过前端的路径（如刷新后直接从发布页发布）。发布页前端另有同口径拦截。
 - 重发：再次 `POST /publish` 重新渲染并覆盖草稿，刷新 `publish_media_id`/`published_at`/`publish_theme`（`PUBLISHED_DRAFT` 为终态，不回退）。
 
 ---

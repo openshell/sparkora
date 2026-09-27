@@ -252,6 +252,22 @@ for (const f of info.files || []) {
 
 **Related**: `frontend/src/utils/imageRefCache.js`、`frontend/src/components/AiImageDrawer.vue`。
 
+### Convention: 前端暂存待上传资源用「正文占位 token + 会话暂存区」，上传延迟到显式动作
+
+**What**: 用户在前端产生、但**不应即时上传**的资源（09-27 先例：预览页剪贴板粘贴图，只在点「去发布」时才上传七牛），统一用**自定义 token 占位**表示，而不是把临时 URL（`blob:`/临时对象存储 URL）写进会落库的正文。
+
+- 正文（会落库）写 `![](sparkora-img:<id>)`，`<id>` 仅含 `[A-Za-z0-9_-]`；资源本体放**模块级会话暂存区**（`utils/pendingImageStore.js`，内存 Map、**不持久化**，同 `imageRefCache` 约定）。
+- **预览投影**与**落库内容**分离：渲染产物的展示层把 token 的 `src` 换成 `blob:` URL（`mapTokenSrc`，渲染后按属性精确匹配）；markdown 输入侧与落库正文**始终保留 token**。绝不在 markdown 阶段替换成 blob URL（会污染落库/草稿）。
+- 上传触发点收敛到**一个显式动作**（本例＝预览页「去发布」）；转存成功后把 token 精确替换为公网 `url`，再落库正文。
+- **token 替换必须带 id 边界断言**：`replaceToken` 用 `sparkora-img:<id>(?![A-Za-z0-9_-])`，否则 `i1` 会命中 `i12` 前缀，误改其他图的引用。
+- **防呆双保险**：前端（复制/发布前 `hasToken` 拦截）+ 后端（组装前 `content.contains("sparkora-img:")` 中止），防刷新丢失暂存后带失效占位发布。
+- **跨项目隔离 + 释放**：暂存按 `projectId` 分组；项目切换时清旧项目条目并 revoke；`watch(projectId)` 的 oldId 在「卸载重挂载」路径为 `undefined`，须额外在 `onMounted` 调 `clearOthers(currentProjectId)` 兜底，否则旧项目 blob URL 会话级泄漏。
+- **token 与渲染管线的兼容前提**：`@wenyan-md/core`(marked 15) 对非法 `src` 协议**原样保留**（实测 `![![](sparkora-img:x)` → `<img src="sparkora-img:x" alt="" title="">`），故 HTML 侧替换成立；若未来渲染器改为清洗未知协议，需回归此假设。
+
+**Why**: 会落库的正文若写入 `blob:`（刷新即失效、跨设备不可移植）或临时 URL，会产生死链且难以检测；自定义 token 可被前端、后端、测试一致识别，替换点单一可审计。
+
+**Related**: `frontend/src/utils/pendingImageStore.js`、`frontend/src/composables/usePendingImageFlush.js`、`frontend/src/components/MarkdownEditor.vue`、`docs/spec/preview.md` §4.1。
+
 ---
 
 ## Anti-patterns
