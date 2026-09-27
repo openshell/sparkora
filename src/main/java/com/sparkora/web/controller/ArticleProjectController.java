@@ -6,20 +6,12 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sparkora.car.service.CarModelMatcherService;
 import com.sparkora.common.R;
 import com.sparkora.domain.dto.PageResult;
-import com.sparkora.domain.dto.PreviewStyleRequest;
 import com.sparkora.domain.dto.ProjectRequest;
-import com.sparkora.domain.dto.PublishMetaRequest;
-import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
-import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.security.CurrentUser;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.service.ArticleProjectCarService;
-import com.sparkora.service.BriefService;
-import com.sparkora.service.ImitationService;
-import com.sparkora.service.NotReadyException;
-import com.sparkora.service.VersionService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -28,40 +20,26 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 创作项目 CRUD + 生成 brief（S1 起接真实 AI）。
+ * 创作项目 CRUD（S1 起接真实 AI）。
+ *
+ * 09-27-split-monoliths：按子域拆分为多个薄控制器后，本类只承载 Project CRUD。
+ * 其余子域：{@link ProjectBriefController}、{@link ProjectVersionController}、
+ * {@link ProjectImageController}、{@link ProjectPreviewController}、{@link ProjectPublishController}。
  */
 @RestController
 @RequestMapping("/api/projects")
 public class ArticleProjectController {
 
     private final ArticleProjectMapper mapper;
-    private final BriefService briefService;
-    private final VersionService versionService;
     private final ArticleProjectCarService carService;
     private final CarModelMatcherService matcherService;
-    private final com.sparkora.service.ImageService imageService;
-    private final com.sparkora.service.PreviewService previewService;
-    private final com.sparkora.service.PublishService publishService;
-    private final ImitationService imitationService;
-    private final com.sparkora.service.IllustrationSuggestionService suggestionService;
 
-    public ArticleProjectController(ArticleProjectMapper mapper, BriefService briefService, VersionService versionService,
-                                    ArticleProjectCarService carService, CarModelMatcherService matcherService,
-                                    com.sparkora.service.ImageService imageService,
-                                    com.sparkora.service.PreviewService previewService,
-                                    com.sparkora.service.PublishService publishService,
-                                    ImitationService imitationService,
-                                    com.sparkora.service.IllustrationSuggestionService suggestionService) {
+    public ArticleProjectController(ArticleProjectMapper mapper,
+                                    ArticleProjectCarService carService,
+                                    CarModelMatcherService matcherService) {
         this.mapper = mapper;
-        this.briefService = briefService;
-        this.versionService = versionService;
         this.carService = carService;
         this.matcherService = matcherService;
-        this.imageService = imageService;
-        this.previewService = previewService;
-        this.publishService = publishService;
-        this.imitationService = imitationService;
-        this.suggestionService = suggestionService;
     }
 
     @GetMapping
@@ -173,383 +151,5 @@ public class ArticleProjectController {
                 .map(Long::valueOf).toList();
         mapper.deleteBatchIds(idList);
         return R.ok();
-    }
-
-    /**
-     * 生成 brief（S1：接真实 AI）。同步调用，前端 loading 等待。
-     * 状态机 DRAFT→GENERATING_BRIEF→READY；失败回 DRAFT 并写 lastBriefError（可在 project 详情查看）。
-     * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速模式入口封死,
-     * 所有生成必走深度流程(POST /api/deep/{id}/clarify);存量 FAST 项目产物可读,重新生成走深度。
-     */
-    @PostMapping("/{id}/generate/brief")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<ArticleBriefEntity> generateBrief(@PathVariable Long id) {
-        return R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify)");
-    }
-
-    /**
-     * 取项目当前 brief（无则 data=null）。
-     */
-    @GetMapping("/{id}/brief")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<ArticleBriefEntity> currentBrief(@PathVariable Long id) {
-        return R.ok(briefService.currentBrief(id));
-    }
-
-    // ==================== 文章仿写（09-09-article-imitation，字段级契约见 docs/spec/imitation.md）====================
-
-    /**
-     * 分析原文 + 风格推荐(ADMIN/EDITOR)。09-27-gen-async 异步化:同步毫秒级返回占位标记,
-     * 后台 @Async 执行 AI 分析;前端靠项目状态轮询(GENERATING_BRIEF→READY)翻转刷新。
-     * 状态机 DRAFT/READY→GENERATING_BRIEF→READY;失败回 DRAFT 写 lastBriefError;生成中重触发 409。
-     */
-    @PostMapping("/{id}/imitation/analyze")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<java.util.Map<String, Object>> analyzeImitation(@PathVariable Long id) {
-        try {
-            return R.ok(imitationService.analyze(id));
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (IllegalStateException ex) {
-            return R.fail(409, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "原文分析失败: " + ex.getMessage());
-        }
-    }
-
-    /** 取仿写分析+风格推荐(三角色可读;无则 data=null)。 */
-    @GetMapping("/{id}/imitation")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<java.util.Map<String, Object>> imitationAnalysis(@PathVariable Long id) {
-        return R.ok(imitationService.currentAnalysis(id));
-    }
-
-    // ==================== 文章版本（S1b）====================
-
-    /**
-     * 生成多版本正文（基于当前 brief + 用户选择的风格）。body: {"styleIds":[1,2]}（风格库 id 列表）。
-     * 每选一个风格生成一版。09-27-gen-async 异步化:同步毫秒级返回占位标记,后台 @Async 执行 AI;
-     * 前端靠项目状态轮询(GENERATING_VERSIONS→VERSIONS_READY)翻转刷新。
-     * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目封死(深度版本走 POST /api/deep/{id}/generate);
-     * 文章仿写(09-09-article-imitation，docs/spec/imitation.md)例外:genSource=IMITATION 时本接口复用为仿写生成
-     * (多风格一次生成,产出仿写正文+相似度自检,状态机同 docs/spec/overview.md)。
-     */
-    @PostMapping("/{id}/generate/versions")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<java.util.Map<String, Object>> generateVersions(@PathVariable Long id,
-                                                          @RequestBody java.util.Map<String, java.util.List<Long>> body) {
-        // 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):主题创作项目恒 410(深度单版走 /deep/generate);
-        // 文章仿写(09-09-article-imitation，docs/spec/imitation.md)例外放行:复用本接口多风格一次生成(仿写 prompt+去图+相似度自检)。
-        ArticleProjectEntity p = mapper.selectById(id);
-        if (p == null) return R.fail(404, "项目不存在");
-        if (!"IMITATION".equals(p.getGenSource())) {
-            return R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)");
-        }
-        try {
-            return R.ok(versionService.generate(id, body.get("styleIds")));
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (IllegalStateException ex) {
-            return R.fail(409, ex.getMessage());
-        } catch (NotReadyException ex) {
-            return R.fail(409, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "仿写生成失败: " + ex.getMessage());
-        }
-    }
-
-    /** 列出项目全部版本。 */
-    @GetMapping("/{id}/versions")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<List<ArticleVersionEntity>> listVersions(@PathVariable Long id) {
-        return R.ok(versionService.list(id));
-    }
-
-    /** 设定当前版本（用于后续预览/发布）。 */
-    @PutMapping("/{id}/current-version")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> setCurrentVersion(@PathVariable Long id, @RequestParam Long versionId) {
-        try {
-            versionService.setCurrent(id, versionId);
-            return R.ok();
-        } catch (Exception ex) {
-            return R.fail(400, ex.getMessage());
-        }
-    }
-
-    /** 保存版本正文（S4 预览页左栏编辑;ADMIN/EDITOR）。 */
-    @PutMapping("/{id}/versions/{versionId}/content")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> updateVersionContent(@PathVariable Long id, @PathVariable Long versionId,
-                                        @RequestBody java.util.Map<String, String> body) {
-        try {
-            versionService.updateContent(id, versionId, body.get("contentMd"));
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "保存失败: " + ex.getMessage());
-        }
-    }
-
-    /** 编辑版本标题（S6;ADMIN/EDITOR）。body: {"title":"..."}。 */
-    @PutMapping("/{id}/versions/{versionId}/title")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> updateVersionTitle(@PathVariable Long id, @PathVariable Long versionId,
-                                       @RequestBody java.util.Map<String, String> body) {
-        try {
-            versionService.updateTitle(id, versionId, body.get("title"));
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "保存失败: " + ex.getMessage());
-        }
-    }
-
-    /** 简报阶段点选标题（S6;ADMIN/EDITOR）。body: {"title":"..."}，空串清除。 */
-    @PutMapping("/{id}/selected-title")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> setSelectedTitle(@PathVariable Long id, @RequestBody java.util.Map<String, String> body) {
-        ArticleProjectEntity e = mapper.selectById(id);
-        if (e == null) return R.fail(404, "项目不存在");
-        String title = body.get("title");
-        if (title != null && title.length() > 200) return R.fail(400, "标题不能超过 200 字");
-        // 单列显式 set:避免 updateById 全字段覆盖并发写入的状态列
-        mapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
-                .eq("id", id)
-                .set("selected_title", title == null || title.isBlank() ? null : title)
-                .set("updated_at", LocalDateTime.now()));
-        return R.ok();
-    }
-
-    // ==================== 配图（S3b，字段级契约见 docs/spec/image.md）====================
-
-    /** 配图快照：项目全部图 + 当前版本封面/插图（三角色可读）。 */
-    @GetMapping("/{id}/images")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<java.util.Map<String, Object>> projectImages(@PathVariable Long id) {
-        return R.ok(imageService.projectImages(id));
-    }
-
-    /** 选封面（幂等）。 */
-    @PostMapping("/{id}/images/{imageId}/cover")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> setCover(@PathVariable Long id, @PathVariable Long imageId) {
-        try {
-            imageService.setCover(id, imageId);
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, ex.getMessage());
-        }
-    }
-
-    /** 增/删正文插图（?action=add|remove，幂等）。 */
-    @PostMapping("/{id}/images/{imageId}/body")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> modifyBodyImage(@PathVariable Long id, @PathVariable Long imageId,
-                                   @RequestParam(defaultValue = "add") String action) {
-        try {
-            imageService.modifyBodyImage(id, imageId, action);
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, ex.getMessage());
-        }
-    }
-
-    // ==================== 配图建议（09-15 article-auto-illustrate，子C；字段级契约见 docs/spec/image.md）====================
-
-    /**
-     * 生成按锚点分组的配图建议（三角色可读）。
-     *
-     * **零副作用**：只读正文与图库做语义检索，不修改 {@code content_md} 与版本插图关联行（{@code sparkora_article_version_image}）。
-     * 配图进入正文的唯一路径是用户在预览页显式点「采用」（无任何自动插入开关）。
-     * body: {"tags":["主题/销量"], "minScore":0.3}（均可选）。
-     */
-    @PostMapping("/{id}/illustration-suggestions")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<List<com.sparkora.service.IllustrationSuggestionService.AnchorSuggestion>> illustrationSuggestions(
-            @PathVariable Long id, @RequestBody(required = false) java.util.Map<String, Object> body) {
-        try {
-            return R.ok(suggestionService.suggest(id, stringListOf(body == null ? null : body.get("tags")),
-                    doubleOf(body == null ? null : body.get("minScore"))));
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "生成配图建议失败: " + ex.getMessage());
-        }
-    }
-
-    /**
-     * 忽略某锚点的建议组（ADMIN/EDITOR）：该锚点后续不再推荐（避免反复打扰）。
-     * body: {"anchorKey":"a1b2c3d4e5f6"}。幂等：重复忽略不报错。
-     */
-    @PostMapping("/{id}/illustration-suggestions/dismiss")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> dismissIllustrationSuggestion(@PathVariable Long id,
-                                                 @RequestBody java.util.Map<String, String> body) {
-        try {
-            CurrentUser cu = SecurityUtil.current();
-            suggestionService.dismiss(id, body == null ? null : body.get("anchorKey"),
-                    cu == null ? "system" : cu.getUsername());
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "忽略配图建议失败: " + ex.getMessage());
-        }
-    }
-
-    // ==================== 预览到发布衔接(09-11-preview-publish-bridge)====================
-
-    /** 保存预览页样式(主题/高亮/Mac/脚注,项目级;ADMIN/EDITOR)。只更新非 null 字段。 */
-    @PutMapping("/{id}/preview-style")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> savePreviewStyle(@PathVariable Long id, @RequestBody PreviewStyleRequest req) {
-        ArticleProjectEntity e = mapper.selectById(id);
-        if (e == null) return R.fail(404, "项目不存在");
-        try {
-            String theme = previewService.requireTheme(req.getTheme());
-            String highlight = previewService.requireHighlight(req.getHighlight());
-            // 用 UpdateWrapper 显式 set 仅目标列:避免 updateById 全字段覆盖把并发写入(如生成中状态)回写旧值
-            UpdateWrapper<ArticleProjectEntity> uw = new UpdateWrapper<>();
-            uw.eq("id", id);
-            if (theme != null) uw.set("preview_theme", theme);
-            if (highlight != null) uw.set("preview_highlight", highlight);
-            if (req.getMacStyle() != null) uw.set("preview_mac_style", req.getMacStyle());
-            if (req.getFootnote() != null) uw.set("preview_footnote", req.getFootnote());
-            uw.set("updated_at", LocalDateTime.now());
-            mapper.update(null, uw);
-            return R.ok();
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        }
-    }
-
-    /** 保存发布元信息(作者/原文地址,项目级;ADMIN/EDITOR)。只更新请求中出现的字段,允许空串清空。 */
-    @PutMapping("/{id}/publish-meta")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Void> savePublishMeta(@PathVariable Long id, @Valid @RequestBody PublishMetaRequest req) {
-        ArticleProjectEntity e = mapper.selectById(id);
-        if (e == null) return R.fail(404, "项目不存在");
-        // 用 UpdateWrapper 显式 set:空串需落 NULL 清空,updateById 的 NOT_NULL 策略会跳过 null 字段
-        UpdateWrapper<ArticleProjectEntity> uw = new UpdateWrapper<>();
-        uw.eq("id", id);
-        if (req.getAuthor() != null) uw.set("author", req.getAuthor().isBlank() ? null : req.getAuthor().trim());
-        if (req.getSourceUrl() != null) uw.set("source_url", req.getSourceUrl().isBlank() ? null : req.getSourceUrl().trim());
-        uw.set("updated_at", LocalDateTime.now());
-        mapper.update(null, uw);
-        return R.ok();
-    }
-
-    // ==================== 预览（S4，方案 A:wenyan 同核渲染）====================
-
-    /** 预览(三角色;主题等白名单校验在 service)。显式 @PreAuthorize 与既有矩阵对齐。 */
-    @PostMapping("/{id}/preview")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<java.util.Map<String, Object>> preview(@PathVariable Long id,
-                                                    @RequestParam(required = false) String theme,
-                                                    @RequestParam(required = false) String highlight,
-                                                    @RequestParam(required = false) Boolean macStyle,
-                                                    @RequestParam(required = false) Boolean footnote) {
-        try {
-            return R.ok(previewService.preview(id, theme, highlight, macStyle, footnote));
-        } catch (IllegalArgumentException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (IllegalStateException ex) {
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            return R.fail(500, "预览失败: " + ex.getMessage());
-        }
-    }
-
-    // ==================== 发布（S5,公众号草稿箱;发布通道=wenyan-server）====================
-
-    /** 发布参数与配置状态(三角色可读;viewer 只读)。 */
-    @GetMapping("/{id}/publish-options")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
-    public R<java.util.Map<String, Object>> publishOptions(@PathVariable Long id) {
-        ArticleProjectEntity p = mapper.selectById(id);
-        if (p == null) return R.fail(404, "项目不存在");
-        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-        m.put("themes", previewService.themeOptions());
-        m.put("highlights", java.util.List.of("solarized-light", "monokai", "github", "dracula"));
-        m.put("defaultTheme", previewService.defaultTheme());
-        m.put("highlight", previewService.defaultHighlight());
-        m.put("macStyle", previewService.defaultMacStyle());
-        m.put("footnote", previewService.defaultFootnote());
-        // 09-11-preview-publish-bridge:发布页据 preview* 初始化样式(优先于全局默认),据 author/sourceUrl 初始化手填项
-        m.put("previewTheme", p.getPreviewTheme());
-        m.put("previewHighlight", p.getPreviewHighlight());
-        m.put("previewMacStyle", p.getPreviewMacStyle());
-        m.put("previewFootnote", p.getPreviewFootnote());
-        m.put("author", p.getAuthor());
-        m.put("sourceUrl", p.getSourceUrl());
-        // 发布通道就绪度:server 配置齐备与否 + 可达/鉴权探针(懒探测,失败不阻塞页面)
-        boolean configOk = previewService.serverConfigured();
-        boolean channelOk = configOk && previewService.serverVerify();
-        m.put("publishEnabled", channelOk);
-        m.put("publishConfigOk", configOk);
-        if (!configOk) m.put("publishDisabledReason", "发布通道未配置(WENYAN_MCP_SERVER_URL / WENYAN_MCP_SERVER_API_KEY)");
-        else if (!channelOk) m.put("publishDisabledReason", "发布通道不可用(API Key 无效或 server 不可达)");
-        m.put("wenyanServer", previewService.serverHealth());
-        // 已发布信息(重发场景展示)
-        m.put("publishMediaId", p.getPublishMediaId());
-        m.put("publishTheme", p.getPublishTheme());
-        m.put("publishedAt", p.getPublishedAt());
-        m.put("lastPublishError", p.getLastPublishError());
-        return R.ok(m);
-    }
-
-    /** 发布到公众号草稿箱(ADMIN/EDITOR)。参数与预览一致;成功推进 PUBLISHED_DRAFT,可重发覆盖。 */
-    @PostMapping("/{id}/publish")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<java.util.Map<String, Object>> publish(@PathVariable Long id,
-                                                    @RequestParam(required = false) String theme,
-                                                    @RequestParam(required = false) String highlight,
-                                                    @RequestParam(required = false) Boolean macStyle,
-                                                    @RequestParam(required = false) Boolean footnote) {
-        try {
-            return R.ok(publishService.publish(id, theme, highlight, macStyle, footnote));
-        } catch (IllegalArgumentException | IllegalStateException ex) {
-            // 前置不满足(状态/通道未配置/渲参非法)或通道错误 → 客户端错误语义
-            publishService.markFailure(id, ex.getMessage());
-            return R.fail(400, ex.getMessage());
-        } catch (Exception ex) {
-            publishService.markFailure(id, ex.getMessage());
-            return R.fail(500, "发布失败: " + ex.getMessage());
-        }
-    }
-
-    // ==================== 请求体解析工具（配图建议）====================
-
-    /** JSON 数组 → List&lt;String&gt;；元素不保证是字符串（前端可能传数字），统一 String.valueOf 归一。 */
-    private static List<String> stringListOf(Object raw) {
-        if (!(raw instanceof List<?> list)) return null;
-        List<String> out = new java.util.ArrayList<>();
-        for (Object v : list) {
-            if (v != null) out.add(String.valueOf(v));
-        }
-        return out.isEmpty() ? null : out;
-    }
-
-    /**
-     * JSON number → Double；兼容字符串形式（前端控件可能传字符串），缺省/非法返回 null
-     * （由服务层按配置默认收敛，不报错）。与「请求体数字字段统一健壮解析」既有惯例一致。
-     */
-    private static Double doubleOf(Object raw) {
-        if (raw instanceof Number n) return n.doubleValue();
-        if (raw instanceof String s && !s.isBlank()) {
-            try {
-                return Double.valueOf(s.trim());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
     }
 }
