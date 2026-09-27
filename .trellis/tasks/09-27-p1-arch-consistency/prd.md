@@ -24,7 +24,7 @@
 | 09-27-flyway-migration（⑥） | ✅ 已归档（2026-09） | 引入 Flyway 替代 schema.sql 兼职：V1 基线逐字固化、既有库 BSLN@1 跳过、空库 V1 自举；隔离 pgvector 容器端到端验证 AC3/AC4/AC5 + R4 前向迁移；370 测试全绿 |
 | 09-27-jsonb-normalize（⑦） | ✅ scope A 实现完成（待 check/归档） | **JSONB 复核判定「有意约定，不予处置」**；只做 `body_image_ids` 规范化为 `sparkora_article_version_image` 关联表（Flyway V2：建表+保序回填+DROP 列）；`LIKE` 粗筛与两份 `split(",")` 解析消除；JSONB 部分不处置（理由见 database-guidelines.md）；381 测试全绿 |
 | 09-27-knowledge-write-unify（⑧） | ✅ 已归档（2026-09） | 切块/并发嵌入/事务边界统一（`TextChunker`/`EmbeddingBatchRunner`/REQUIRES_NEW）+ 向量模型名防护（V3 `embedding_model` 列、检索过滤、维度校验、NEWS 重建端点）；424 测试全绿 |
-| ⑨ 拆巨石 | 未建 | 独立；ArticleProjectController 拆分应在 ⑤④ 落地后做（避免拆两次） |
+| 09-27-split-monoliths（⑨） | ✅ 已归档（2026-09） | 三巨石拆分：ArticleProjectController 555→155（拆 5 子域控制器）、StepPreview 994→441、ImageLibrary 908→354；路由/鉴权逐字等价，424 测试全绿 |
 
 ## 依赖与顺序（写进各子任务 prd，不靠树形隐含）
 

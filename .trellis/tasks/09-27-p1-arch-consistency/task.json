@@ -23,7 +23,8 @@
     "09-27-gen-async",
     "09-27-flyway-migration",
     "09-27-jsonb-normalize",
-    "09-27-knowledge-write-unify"
+    "09-27-knowledge-write-unify",
+    "09-27-split-monoliths"
   ],
   "parent": null,
   "relatedFiles": [],

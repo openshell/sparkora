@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端约定(script setup/对象式 props/数组式 emits/API 走 index.js/图标显式 import/动态 :is)是 M2/M3 抽组件的硬约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "控制器错误映射惯例(400/409/500/404)是 M1 纯搬迁必须逐字保留的契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "行为零变化与不可逆副作用隔离的重构纪律"}
+{"file": "docs/spec/preview.md", "reason": "StepPreview 与 ProjectPreviewController 的模块契约,拆分后引用需同步"}
+{"file": "docs/spec/publish.md", "reason": "发布链路契约,ProjectPublishController 路径/鉴权须等价"}
+{"file": "docs/spec/image.md", "reason": "配图契约,StepPreview 图片抽屉与 ImageLibrary/ProjectImageController 拆分依据"}

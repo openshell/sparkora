@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-27-split-monoliths/prd.md", "reason": "AC1-AC10 验收与 Out of Scope(禁止行为变更)"}
+{"file": ".trellis/tasks/09-27-split-monoliths/design.md", "reason": "目标结构/契约/跨切状态归属逐项对照"}
+{"file": ".trellis/tasks/09-27-split-monoliths/research/monolith-inventory.md", "reason": "拆分前端点/行号/依赖清单,用于 AC4/AC5 等价性比对基线"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对新组件/composable 符合前端约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对拆分后异常映射零漂移"}
