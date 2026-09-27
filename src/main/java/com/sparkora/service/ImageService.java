@@ -9,13 +9,16 @@ import com.sparkora.ai.AiImageClient;
 import com.sparkora.config.ImageProperties;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
+import com.sparkora.domain.entity.ArticleVersionImageEntity;
 import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -31,7 +34,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -44,7 +46,8 @@ import java.util.stream.Collectors;
  *  - 上传校验：png/jpg/webp，≤ IMAGE_MAX_UPLOAD_MB；
  *  - AI 生成（文生图/图生图）返回的 URL（或 data URL）一律下载字节后直接转存图床，失败则整次报错，不留死链；
  *  - 图片入库即直接转存图床（storageKey），本地不落盘；
- *  - 封面/插图挂当前版本（ArticleVersionEntity.coverImageId/bodyImageIds），增删幂等；
+ *  - 封面挂当前版本（ArticleVersionEntity.coverImageId）；正文插图挂关联表
+ *    sparkora_article_version_image（P1-⑦ 规范化，一行一图 + sort_order 保序），增删幂等；
  *  - 配图并入预览步骤：不再有独立「完成配图」状态推进（VERSIONS_READY 后直接可预览/发布）。
  */
 @Slf4j
@@ -62,6 +65,8 @@ public class ImageService {
     private final ImageAssetMapper imageMapper;
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
+    /** 版本-正文插图关联表 mapper（P1-⑦ 原逗号列规范化后的读写入口）。 */
+    private final ArticleVersionImageMapper versionImageMapper;
     private final AiImageClient aiImageClient;
     private final ImageStorage imageStorage;
     /** 七牛配置（可选注入：图床供应商非七牛时 bean 不存在，thumbUrl 降级为原图 url）。 */
@@ -80,6 +85,7 @@ public class ImageService {
 
     public ImageService(ImageProperties imageProps, ImageAssetMapper imageMapper,
                         ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
+                        ArticleVersionImageMapper versionImageMapper,
                         AiImageClient aiImageClient, ImageStorage imageStorage,
                         ObjectProvider<QiniuProperties> qiniuProps, ImageTagService tagService,
                         ObjectProvider<com.sparkora.mapper.NewsMapper> newsMapper,
@@ -88,6 +94,7 @@ public class ImageService {
         this.imageMapper = imageMapper;
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
+        this.versionImageMapper = versionImageMapper;
         this.aiImageClient = aiImageClient;
         this.imageStorage = imageStorage;
         this.qiniuProps = qiniuProps;
@@ -657,17 +664,21 @@ public class ImageService {
     public void delete(Long id) {
         ImageAssetEntity img = imageMapper.selectById(id);
         if (img == null) throw new IllegalArgumentException("图片不存在");
-        // 引用检查:先用 like 粗筛候选(避免全表遍历),再按 bodyIdList 精确判定——
-        // like 子串匹配会把 id=5 误匹配到 15/51,粗筛后必须精确过滤,否则合法删除被误拒
-        List<ArticleVersionEntity> candidates = versionMapper.selectList(new QueryWrapper<ArticleVersionEntity>()
-                .eq("cover_image_id", id)
-                .or().like("body_image_ids", String.valueOf(id)));
-        List<ArticleVersionEntity> refs = candidates.stream()
-                .filter(v -> id.equals(v.getCoverImageId()) || bodyIdListOf(v).contains(id))
-                .toList();
-        if (!refs.isEmpty()) {
-            List<String> marks = refs.stream().map(v -> "项目#" + v.getProjectId() + "版本#" + v.getId())
-                    .toList();
+        // 引用检查（P1-⑦）：封面走 cover_image_id 精确匹配，插图走关联表按 image_id 精确反查。
+        // 原对逗号列的 LIKE 粗筛会把 id=5 误匹配到 15/51，已随规范化消除。
+        List<ArticleVersionEntity> coverRefs = versionMapper.selectList(new QueryWrapper<ArticleVersionEntity>()
+                .eq("cover_image_id", id));
+        List<Long> bodyVersionIds = versionImageMapper.findVersionIdsByImage(id);
+        java.util.LinkedHashMap<Long, ArticleVersionEntity> refs = new java.util.LinkedHashMap<>();
+        coverRefs.forEach(v -> refs.put(v.getId(), v));
+        if (!bodyVersionIds.isEmpty()) {
+            for (ArticleVersionEntity v : versionMapper.selectBatchIds(bodyVersionIds)) refs.put(v.getId(), v);
+        }
+        if (!refs.isEmpty() || !bodyVersionIds.isEmpty()) {
+            // 有封面或插图关联即为引用；版本行缺失的孤儿关联行（异常数据）同样拒绝，避免留下悬挂引用
+            List<String> marks = refs.isEmpty()
+                    ? bodyVersionIds.stream().distinct().map(vid -> "版本#" + vid).toList()
+                    : refs.values().stream().map(v -> "项目#" + v.getProjectId() + "版本#" + v.getId()).toList();
             throw new IllegalArgumentException("图片正被引用（" + String.join("、", marks) + "），请先在对应预览步骤移除后再删除");
         }
         tagService.deleteByImageId(id);   // 09-13:标签行生命周期=图片生命周期,删图联动物理清(同 KB embedding 兜底先例)
@@ -689,7 +700,7 @@ public class ImageService {
         if (p == null) throw new IllegalArgumentException("项目不存在");
         ArticleVersionEntity current = currentVersion(p);
         Long coverImageId = current == null ? null : current.getCoverImageId();
-        List<Long> bodyImageIds = bodyIdListOf(current);
+        List<Long> bodyImageIds = current == null ? new ArrayList<>() : versionImageMapper.findImageIdsByVersion(current.getId());
         // 引用图集合 = 封面 + 插图；批量查询 + 内存排序（保持 bodyImageIds 顺序，封面置前）
         java.util.LinkedHashSet<Long> refIds = new java.util.LinkedHashSet<>();
         if (coverImageId != null) refIds.add(coverImageId);
@@ -727,7 +738,7 @@ public class ImageService {
         versionMapper.updateById(v);
     }
 
-    /** 增/删正文插图（action=add/remove，均幂等）。图可来自全局图库。 */
+    /** 增/删正文插图（action=add/remove，均幂等）。图可来自全局图库。P1-⑦：读写关联表 sparkora_article_version_image。 */
     public void modifyBodyImage(Long projectId, Long imageId, String action) {
         ArticleVersionEntity v = requireVersionWithImages(projectId);
         boolean add;
@@ -736,15 +747,25 @@ public class ImageService {
         else throw new IllegalArgumentException("action 仅支持 add/remove");
         if (add && imageMapper.selectById(imageId) == null)
             throw new IllegalArgumentException("图片不存在");
-        List<Long> bodyIdList = new ArrayList<>(bodyIdListOf(v));
         if (add) {
-            if (!bodyIdList.contains(imageId)) bodyIdList.add(imageId);   // 幂等
+            // 幂等：已登记直接返回（不重排既有顺序）
+            if (versionImageMapper.selectCount(new QueryWrapper<ArticleVersionImageEntity>()
+                    .eq("version_id", v.getId()).eq("image_id", imageId)) > 0) return;
+            ArticleVersionImageEntity e = new ArticleVersionImageEntity();
+            e.setVersionId(v.getId());
+            e.setImageId(imageId);
+            Integer max = versionImageMapper.maxSortOrder(v.getId());
+            e.setSortOrder(max == null ? 0 : max + 1);   // 追加到末尾（保序）
+            e.setCreatedAt(LocalDateTime.now());
+            try {
+                versionImageMapper.insert(e);
+            } catch (DuplicateKeyException ex) {
+                // UNIQUE(version_id, image_id) 并发兜底：他请求已登记，视为成功
+                log.debug("插图已登记(跳过) version={} image={}", v.getId(), imageId);
+            }
         } else {
-            bodyIdList.remove(imageId);                                    // 不存在也视为成功
+            versionImageMapper.deleteByVersionAndImage(v.getId(), imageId);   // 不存在也视为成功
         }
-        v.setBodyImageIds(bodyIdList.isEmpty() ? null
-                : bodyIdList.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")));
-        versionMapper.updateById(v);
     }
 
     // ==================== 内部工具 ====================
@@ -765,13 +786,6 @@ public class ImageService {
     private ArticleVersionEntity currentVersion(ArticleProjectEntity p) {
         if (p.getCurrentVersionId() == null) return null;
         return versionMapper.selectById(p.getCurrentVersionId());
-    }
-
-    private static List<Long> bodyIdListOf(ArticleVersionEntity v) {
-        if (v == null || v.getBodyImageIds() == null || v.getBodyImageIds().isBlank()) return new ArrayList<>();
-        return Arrays.stream(v.getBodyImageIds().split(","))
-                .map(String::trim).filter(s -> !s.isEmpty())
-                .map(Long::valueOf).toList();
     }
 
     private String normalizeSize(String size) {

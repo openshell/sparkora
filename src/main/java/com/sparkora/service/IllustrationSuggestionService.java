@@ -29,7 +29,7 @@ import java.util.Set;
  * <h3>硬约束（不可违背）</h3>
  * <ul>
  *   <li><b>只产出建议，绝不自动写入</b>：本服务**零副作用**——不写 {@code content_md}、
- *       不写 {@code body_image_ids}。配图进入正文的唯一路径是用户在预览页显式点「采用」。</li>
+ *       不写版本插图关联行（{@code sparkora_article_version_image}）。配图进入正文的唯一路径是用户在预览页显式点「采用」。</li>
  *   <li><b>无自动插入开关</b>：不存在 {@code AUTO_ILLUSTRATE_ENABLED} 之类配置，从设计上排除无人值守自动配图。
  *       本类刻意**不注入** {@link ImageService}（避免任何 {@code modifyBodyImage}/{@code setCover} 写路径可达）。</li>
  * </ul>

@@ -31,6 +31,7 @@ public class ArticleVersionEntity {
     private Double similarityScore;  // 文章仿写:与原文 5-gram 重合率 0~1(仅仿写版有值)
     private String similarityReport; // 文章仿写:自检明细 JSON {maxRunLength,repeatedRuns:[{text,length}]}
     private Long coverImageId;      // S3b：该版本封面（sparkora_image_asset.id，可空）
-    private String bodyImageIds;    // S3b：正文插图 id 列表（逗号分隔，有序）
+    // S3b 正文插图原为版本表中的逗号分隔 id 列（违反 1NF）；P1-⑦ 已规范化为
+    // sparkora_article_version_image 关联表（一行一图，sort_order 保序），此处不再有对应字段。
     private LocalDateTime createdAt;
 }

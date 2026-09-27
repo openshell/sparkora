@@ -5,6 +5,7 @@ import com.sparkora.config.ImageProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.storage.ImageStorage;
@@ -43,6 +44,7 @@ class ImageServiceLoadDerivedTest {
     @Mock ImageAssetMapper imageMapper;
     @Mock ArticleProjectMapper projectMapper;
     @Mock ArticleVersionMapper versionMapper;
+    @Mock ArticleVersionImageMapper versionImageMapper;
     @Mock AiImageClient aiImageClient;
     @Mock ImageStorage imageStorage;
     @Mock ObjectProvider<QiniuProperties> qiniuProps;
@@ -55,7 +57,7 @@ class ImageServiceLoadDerivedTest {
     @BeforeEach
     void setUp() {
         service = new ImageService(imageProps, imageMapper, projectMapper, versionMapper,
-                aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
+                versionImageMapper, aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
     }
 
     private static ImageAssetEntity image(Long id, String storageKey) {

@@ -5,6 +5,7 @@ import com.sparkora.config.ImageProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.storage.ImageStorage;
@@ -42,6 +43,7 @@ class ImageServiceMultiRefTest {
     @Mock ImageAssetMapper imageMapper;
     @Mock ArticleProjectMapper projectMapper;
     @Mock ArticleVersionMapper versionMapper;
+    @Mock ArticleVersionImageMapper versionImageMapper;
     @Mock AiImageClient aiImageClient;
     @Mock ImageStorage imageStorage;
     @Mock ObjectProvider<QiniuProperties> qiniuProps;
@@ -57,7 +59,7 @@ class ImageServiceMultiRefTest {
     @BeforeEach
     void setUp() {
         service = new ImageService(imageProps, imageMapper, projectMapper, versionMapper,
-                aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
+                versionImageMapper, aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
         lenient().when(imageProps.getMaxUploadMb()).thenReturn(10);
         lenient().when(tagService.normalize(any())).thenReturn(List.of());
     }

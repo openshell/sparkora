@@ -366,7 +366,7 @@ public class ArticleProjectController {
     /**
      * 生成按锚点分组的配图建议（三角色可读）。
      *
-     * **零副作用**：只读正文与图库做语义检索，不修改 {@code content_md} / {@code body_image_ids}。
+     * **零副作用**：只读正文与图库做语义检索，不修改 {@code content_md} 与版本插图关联行（{@code sparkora_article_version_image}）。
      * 配图进入正文的唯一路径是用户在预览页显式点「采用」（无任何自动插入开关）。
      * body: {"tags":["主题/销量"], "minScore":0.3}（均可选）。
      */

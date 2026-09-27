@@ -7,6 +7,7 @@ import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.config.ImageProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.ai.AiImageClient;
@@ -44,6 +45,7 @@ class ImageServiceSourceRefTest {
     @Mock ImageAssetMapper imageMapper;
     @Mock ArticleProjectMapper projectMapper;
     @Mock ArticleVersionMapper versionMapper;
+    @Mock ArticleVersionImageMapper versionImageMapper;
     @Mock AiImageClient aiImageClient;
     @Mock ImageStorage imageStorage;
     @Mock ObjectProvider<QiniuProperties> qiniuProps;
@@ -56,7 +58,7 @@ class ImageServiceSourceRefTest {
     @BeforeEach
     void setUp() {
         service = new ImageService(imageProps, imageMapper, projectMapper, versionMapper,
-                aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
+                versionImageMapper, aiImageClient, imageStorage, qiniuProps, tagService, newsMapper, embeddingService);
     }
 
     /** 造 preset（本次入库携带的来源串）。 */

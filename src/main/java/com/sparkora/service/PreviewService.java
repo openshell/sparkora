@@ -5,6 +5,7 @@ import com.sparkora.config.WenyanProperties;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,8 @@ public class PreviewService {
 
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
+    /** 版本-正文插图关联表 mapper（P1-⑦ 原逗号列规范化后，插图 URL 由关联表有序读取）。 */
+    private final ArticleVersionImageMapper versionImageMapper;
     private final ImageService imageService;
     private final ImageProperties imageProps;
     private final WenyanProperties wenyanProps;
@@ -42,11 +45,13 @@ public class PreviewService {
     private final WenyanThemeCatalog themeCatalog;
 
     public PreviewService(ArticleProjectMapper projectMapper, ArticleVersionMapper versionMapper,
+                          ArticleVersionImageMapper versionImageMapper,
                           ImageService imageService,
                           ImageProperties imageProps, WenyanProperties wenyanProps,
                           WenyanServerService serverService, WenyanThemeCatalog themeCatalog) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
+        this.versionImageMapper = versionImageMapper;
         this.imageService = imageService;
         this.imageProps = imageProps;
         this.wenyanProps = wenyanProps;
@@ -76,7 +81,7 @@ public class PreviewService {
         // 1) 图片 URL 化:封面 + 正文插图直接取图床公网 URL(入库即已转存,storageKey 非空)
         String coverUrl = v.getCoverImageId() == null ? null : imageService.publicUrl(v.getCoverImageId());
         List<String> bodyUrls = new ArrayList<>();
-        for (Long imageId : bodyIdListOf(v)) bodyUrls.add(imageService.publicUrl(imageId));
+        for (Long imageId : versionImageMapper.findImageIdsByVersion(v.getId())) bodyUrls.add(imageService.publicUrl(imageId));
 
         // 2) 组装 markdown:frontmatter(title/cover/author/source_url)+ 正文;
         //    正文里图片引用即为图床公网 URL;插图落点完全由正文 markdown 引用决定,
@@ -316,12 +321,5 @@ public class PreviewService {
     /** frontmatter 值清洗(引号换行防坏结构)。 */
     private static String sanitizeFrontmatterValue(String s) {
         return s.replaceAll("[\\r\\n]+", " ").trim();
-    }
-
-    private static List<Long> bodyIdListOf(ArticleVersionEntity v) {
-        if (v == null || v.getBodyImageIds() == null || v.getBodyImageIds().isBlank()) return new ArrayList<>();
-        return Arrays.stream(v.getBodyImageIds().split(","))
-                .map(String::trim).filter(s -> !s.isEmpty())
-                .map(Long::valueOf).toList();
     }
 }
