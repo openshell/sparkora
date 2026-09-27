@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-tavily-extract-kind-hypotheses/prd.md", "reason": "AC-01..AC-08 验收标准与 Out of Scope 边界（不改 schema/响应主结构/research_notes 字段集/toolHealth）"}
+{"file": ".trellis/tasks/09-27-tavily-extract-kind-hypotheses/design.md", "reason": "R1–R6 数据契约（SearchHit/WebHit content、fact_sheet kind、hypotheses 注入）与兼容/回滚设计"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 record 加字段兼容、降级不丢证据、available() 无闩锁、webCount/resultCount 口径未被 R1 破坏"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对 R1 抽取失败降级、R6 缺失 research_plan 时兼容退化，无静默丢弃"}

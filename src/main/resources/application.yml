@@ -77,6 +77,8 @@ sparkora:
     # 外部搜索 provider 顺序(部署级默认;运行时由 ADMIN 在系统设置覆盖)
     # TAVILY,SEARXNG=TAVILY_FIRST(默认,2026-09-25 反转);SEARXNG,TAVILY=SEARXNG_FIRST
     web-provider-order: ${DEEP_WEB_PROVIDER_ORDER:TAVILY,SEARXNG}
+    # 09-27 背景题 WEB 正文补抓单条上限(字符):Tavily /extract 取正文后工具层截断的唯一上限
+    web-content-max-chars: ${DEEP_WEB_CONTENT_MAX_CHARS:2000}
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}

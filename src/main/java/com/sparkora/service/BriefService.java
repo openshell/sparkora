@@ -135,6 +135,8 @@ public class BriefService {
                 你是新媒体内容策划专家。基于「事实手册」和用户已锁定的需求,输出一份结构化创作 Brief。
                 铁律:手册中出现的数值/参数/价格必须逐字引用,不得改写或补充手册外数字;手册未覆盖的表述放入 factRisks。
                 手册条目可能带「snippet」原始证据(检索命中正文),背景/来龙去脉类素材(行业背景、企业战略、长期目标等)应优先从 snippet 证据中提取,再纳入观点与大纲。
+                coreViewpoints 须体现研究前所立「研究假设」是否被事实手册证实或推翻:每条假设都要能在观点中找到明确回应
+                (证实→据实展开;推翻→指出与手册事实不符)。未提供假设时按常规输出,不得编造假设。
                 只输出 JSON 对象，字段如下，不要任何额外文字：
                 {
                   "titleCandidates": ["3个标题候选"],
@@ -147,13 +149,42 @@ public class BriefService {
                 """;
     }
 
-    /** 深度简报 user prompt：主题 + 锁定需求 + 事实手册（含来源与置信度）。 */
+    /** 深度简报 user prompt：主题 + 锁定需求 + 研究假设 + 事实手册（含来源与置信度）。 */
     private String buildDeepBriefUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
         StringBuilder user = new StringBuilder("主题:").append(p.getTopic()).append('\n');
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:").append(b.getClarifyAnswers()).append('\n');
         }
+        // R6(09-27-tavily-extract-kind-hypotheses):注入 research_plan.hypotheses,使 coreViewpoints
+        // 显式回应「假设被证实/推翻」。research_plan 缺失/无 hypotheses/畸形 → 跳过(兼容退化,不报错)。
+        String hypotheses = hypothesesBlock(b.getResearchPlan());
+        if (hypotheses != null) user.append(hypotheses);
         user.append("事实手册(唯一事实来源,数值逐字引用):").append(b.getFactSheet());
         return user.toString();
+    }
+
+    /**
+     * R6:从 research_plan JSON 提取 hypotheses 并格式化为 prompt 块;缺失/无/非数组 → null(跳过)。
+     * 解析全程容错,绝不因研究计划异常阻断简报生成。
+     */
+    private String hypothesesBlock(String researchPlan) {
+        if (researchPlan == null || researchPlan.isBlank()) return null;
+        try {
+            com.fasterxml.jackson.databind.JsonNode plan = json.readTree(researchPlan);
+            com.fasterxml.jackson.databind.JsonNode hs = plan.path("hypotheses");
+            if (!hs.isArray() || hs.isEmpty()) return null;
+            StringBuilder sb = new StringBuilder("研究假设(研究前所立,请在核心观点中回应其是否被手册证实或推翻):\n");
+            boolean any = false;
+            for (com.fasterxml.jackson.databind.JsonNode h : hs) {
+                String text = h.isTextual() ? h.asText() : h.toString();
+                if (text == null || text.isBlank()) continue;
+                sb.append("- ").append(text).append('\n');
+                any = true;
+            }
+            return any ? sb.toString() : null;
+        } catch (Exception e) {
+            log.warn("研究假设注入简报 prompt 失败,跳过: {}", e.getMessage());
+            return null;
+        }
     }
 }

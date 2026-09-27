@@ -36,15 +36,22 @@ public class FactSheetService {
     public String merge(String notesJson) throws Exception {
         JsonNode notes = json.readTree(notesJson == null || notesJson.isBlank() ? "[]" : notesJson);
         // 展开为有序 fact 列表(保持出现顺序;代表 fact = 簇首条,"首条为准"与旧精确匹配一致)
+        // R4(09-27-tavily-extract-kind-hypotheses):并行记录每条 fact 所属研究问题的 kind
+        // (背景型问题 → background,其余/无问题信号 → param),聚类后取簇首条对应 kind 写入 entry。
         List<JsonNode> facts = new ArrayList<>();
+        List<String> kinds = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
         for (JsonNode note : notes) {
             JsonNode factsJson = note.path("factsJson").isMissingNode()
                     ? note.path("facts") : json.readTree(note.path("factsJson").asText("{}"));
+            // kind 继承「产出该 fact 的研究问题类型」:问题为背景/来龙去脉型 → background,否则 param
+            String kind = ClarifyService.isBackgroundQuestion(note.path("question").asText(""))
+                    ? "background" : "param";
             for (JsonNode f : factsJson.path("facts")) {
                 String claim = f.path("claim").asText("").trim();
                 if (claim.isEmpty()) continue;
                 facts.add(f);
+                kinds.add(kind);
             }
             for (JsonNode g : factsJson.path("gaps")) {
                 String g0 = g.asText("");
@@ -54,7 +61,9 @@ public class FactSheetService {
         // 贪心簇:与已有簇的代表 fact 满足 sameClaim 则归入(近似 claim 合并),否则新开簇。
         // O(n²),n 为单 brief fact 条数(实践中数十条),可接受。
         List<List<JsonNode>> clusters = new ArrayList<>();
-        for (JsonNode f : facts) {
+        List<String> clusterKinds = new ArrayList<>();   // 与 clusters 同索引:簇首条的 kind
+        for (int fi = 0; fi < facts.size(); fi++) {
+            JsonNode f = facts.get(fi);
             List<JsonNode> target = null;
             for (List<JsonNode> cluster : clusters) {
                 JsonNode rep = cluster.get(0);
@@ -68,12 +77,18 @@ public class FactSheetService {
             if (target == null) {
                 target = new ArrayList<>();
                 clusters.add(target);
+                clusterKinds.add(kinds.get(fi));
             }
             target.add(f);
         }
         List<Map<String, Object>> entries = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
+        int clusterIdx = -1;
         for (List<JsonNode> list : clusters) {
+            clusterIdx++;
+            // 代表 fact 的 kind 决定整簇 kind(「首条为准」与旧精确匹配一致);缺失兜底 param
+            String kind = clusterKinds.get(clusterIdx) == null || clusterKinds.get(clusterIdx).isBlank()
+                    ? "param" : clusterKinds.get(clusterIdx);
             JsonNode first = list.get(0);
             String type = first.path("source").path("type").asText("KB");
             // 来源去重(沿用 sameSource 语义:url + modelName),crossCount = 去重来源数
@@ -102,7 +117,7 @@ public class FactSheetService {
                 entries.add(entry(kbFirst.path("claim").asText(""),
                         kbFirst.path("value").asText(""),
                         kbFirst.path("source"), distinctSources, sourceCount, confidence,
-                        altUrls.isEmpty() ? null : altUrls, firstSnippet(list)));
+                        altUrls.isEmpty() ? null : altUrls, firstSnippet(list), kind));
                 if (!altUrls.isEmpty()) {
                     warnings.add("「" + truncate(kbFirst.path("claim").asText(""), 30)
                             + "」以知识库为准;外部来源(" + altUrls.size() + " 条)有异说,未采用");
@@ -120,7 +135,7 @@ public class FactSheetService {
             }
             entries.add(entry(first.path("claim").asText(""), first.path("value").asText(""),
                     sourceNode(first.path("source"), type), distinctSources, sourceCount, confidence, null,
-                    firstSnippet(list)));
+                    firstSnippet(list), kind));
         }
         Map<String, Object> sheet = new LinkedHashMap<>();
         sheet.put("entries", entries);
@@ -134,15 +149,19 @@ public class FactSheetService {
      * sourcesList/sourceCount 为 09-25 增量字段(保留全部来源证据,前端旧逻辑不读也不报错)。
      * snippet 为 09-26 增量字段(R1 降级保真):仅当簇内首个非空 snippet 存在时写入,
      * 无则完全不出现该字段(旧契约与既有消费方零回归)。
+     * kind 为 09-27 增量字段(R4):{@code param|background},继承产出该 fact 的研究问题类型,
+     * 缺省兜底 {@code param}(历史/无问题关联数据);旧消费方不读不报错。
      */
     private static Map<String, Object> entry(String claim, String value, JsonNode source,
                                              List<JsonNode> distinctSources, int sourceCount,
-                                             double confidence, List<String> alternatives, String snippet) {
+                                             double confidence, List<String> alternatives, String snippet,
+                                             String kind) {
         Map<String, Object> e = new LinkedHashMap<>();
         // key 沿用旧语义:代表 fact 的 claim(旧实现 byClaim 的 key 即 claim)
         e.put("key", claim);
         e.put("value", value);
         e.put("claim", claim);
+        e.put("kind", kind == null || kind.isBlank() ? "param" : kind);
         e.put("sources", source);
         e.put("crossCount", sourceCount);
         e.put("confidence", confidence);

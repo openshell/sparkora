@@ -227,6 +227,183 @@ class SubAgentRunnerTest {
         assertEquals("FALLBACK", note.status(), "两次失败才允许降级");
     }
 
+    // ===== R1/R2/R3(09-27-tavily-extract-kind-hypotheses):正文补抓 + 按问题类型分档注入 =====
+
+    /** 背景题 + WEB 命中带正文 → LLM ctx 注入正文片段。 */
+    @Test
+    void 背景题_ctx注入正文片段() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        WebResultNormalizer.WebHit hit = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a",
+                "snippet摘要", "TAVILY", "行业背景正文:比亚迪计划2026年底前建成2万座闪充站");
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("该车型的行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertTrue(user.getValue().contains("正文片段:"), "背景题应注入正文片段行");
+        assertTrue(user.getValue().contains("比亚迪计划2026年底前建成2万座闪充站"), "正文内容应进入 ctx");
+    }
+
+    /** 参数题 + WEB 命中带正文 → 不注入正文(仅摘要),即使命中携带 content。 */
+    @Test
+    void 参数题_ctx不注入正文() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        // KB 不给权威块(避免跳过 WEB),但问题为参数型
+        WebResultNormalizer.WebHit hit = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a",
+                "snippet摘要", "TAVILY", "正文片段不应被参数题注入");
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertFalse(user.getValue().contains("正文片段:"), "参数题不得注入正文");
+        assertFalse(user.getValue().contains("正文片段不应被参数题注入"));
+    }
+
+    /** R1:背景题对 top URL 调 extract 补正文;参数题从不触发 extract。 */
+    @Test
+    void 背景题_触发extract补正文_参数题不触发() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        WebResultNormalizer.WebHit hit = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a", "s", "TAVILY");
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        when(router.extract(anyString(), any())).thenReturn(List.of(
+                SearchTool.SearchHit.webContent("TAVILY", "https://x.com/a", "抽取到的正文")));
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        // 背景题 → extract 被调用一次,且抽取正文回填进 ctx
+        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.times(1)).extract(anyString(), any());
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertTrue(user.getValue().contains("抽取到的正文"), "extract 正文应回填并注入 ctx");
+
+        // 参数题 → 不触发 extract
+        org.mockito.Mockito.reset(router);
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).extract(anyString(), any());
+    }
+
+    /** R2:rawFallback 携带非空正文 content 且 JSON 转义完整可解析。 */
+    @Test
+    void rawFallback_携带正文_JSON转义完整() throws Exception {
+        SearchTool.SearchHit h = SearchTool.SearchHit.web("TAVILY", "标题", "https://x.com/a",
+                "snippet", "正文 \"含引号\"\n换行\\反斜杠\t制表 2.5万");
+        String raw = SubAgentRunner.rawFallback(List.of(h));
+        var fact = new ObjectMapper().readTree(raw).path("facts").get(0);
+        assertEquals("正文 \"含引号\"\n换行\\反斜杠\t制表 2.5万", fact.path("content").asText(),
+                "content 必须转义完整且可解析");
+    }
+
+    /** R2:content 为空/null → 不出现 content 字段(旧契约零回归)。 */
+    @Test
+    void rawFallback_无正文_不含content字段() throws Exception {
+        SearchTool.SearchHit h = new SearchTool.SearchHit("WEB", "标题", "https://x.com/a",
+                "snippet", "TAVILY", null, 0, "W1", "TAVILY");
+        var fact = new ObjectMapper().readTree(SubAgentRunner.rawFallback(List.of(h))).path("facts").get(0);
+        assertFalse(fact.has("content"), "无正文时不得出现 content 字段");
+    }
+
+    /** R1:WEB 开关关闭(webAllowed=false)时既不搜索也不补抓正文(不回归)。 */
+    @Test
+    void WEB关闭_不搜索也不补抓正文() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 1L, 5);
+
+        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).search(anyString(), anyInt(), any());
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).extract(anyString(), any());
+    }
+
+    /**
+     * R1/design §4「正文上限单点化」:子代理不得二次截断（配置上限 > 默认 2000 时不能被静默截回）。
+     * 工具层是唯一截断点；此处传入超长 content，ctx 必须原样注入。
+     */
+    @Test
+    void 正文上限单点化_子代理不二次截断() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        String longContent = "甲".repeat(2500);   // 超过旧硬编码兜底 2000，工具层未截（模拟配置上限调大）
+        WebResultNormalizer.WebHit hit = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a",
+                "摘要", "TAVILY", longContent);
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        when(router.extract(anyString(), any())).thenReturn(List.of());   // 不覆盖命中已带 content
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertTrue(user.getValue().contains(longContent), "工具层未截断的正文不得被子代理二次截断（单点化）");
+    }
+
+    /** R2:rawFallback 同样不得二次截断工具层已定长的正文。 */
+    @Test
+    void rawFallback_不二次截断正文() throws Exception {
+        String longContent = "乙".repeat(2500);
+        SearchTool.SearchHit h = SearchTool.SearchHit.web("TAVILY", "标题", "https://x.com/a", "snippet", longContent);
+        var fact = new ObjectMapper().readTree(SubAgentRunner.rawFallback(List.of(h))).path("facts").get(0);
+        assertEquals(longContent, fact.path("content").asText(), "rawFallback 不得二次截断（单点化）");
+    }
+
+    /** R1:背景题 extract 返回空(抽取失败)→ 降级回摘要,不抛且 ctx 无正文行。 */
+    @Test
+    void 背景题_extract返回空_降级回摘要不抛() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        WebResultNormalizer.WebHit hit = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a", "摘要", "TAVILY");
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        when(router.extract(anyString(), any())).thenReturn(List.of());   // 抽取失败/空
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        SubAgentRunner.Note note = r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        assertEquals("DONE", note.status(), "抽取失败不得影响研究状态");
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertFalse(user.getValue().contains("正文片段:"), "无正文时应降级回摘要(不注入正文行)");
+        assertTrue(user.getValue().contains("摘要"), "摘要仍应在 ctx");
+    }
+
     private static int count(String s, String sub) {
         int c = 0, i = 0;
         while ((i = s.indexOf(sub, i)) >= 0) { c++; i += sub.length(); }

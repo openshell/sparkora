@@ -27,20 +27,46 @@ public interface SearchTool {
     List<SearchHit> search(String query, int maxResults);
 
     /**
+     * 按 URL 抽取正文片段(09-27-tavily-extract-kind-hypotheses R1,机制 B:search 拿摘要 + 按需 extract 补正文)。
+     *
+     * <p>默认返回空列表(不支持正文抽取的工具无需实现);{@code TavilySearchTool} 覆写为 {@code POST /extract}。
+     * 实现约定:异常/空结果(含 {@code failed_results})一律降级为空列表,**绝不抛出**——补正文是增强,
+     * 失败必须回退为「仅摘要」,不得阻断研究链路。
+     *
+     * @param urls  待抽取 URL(已治理/规范化)
+     * @param query 语义重排查询(通常为研究问题;可空)
+     * @return 每条 {url, content};无正文时返回空列表(不返回 null)
+     */
+    default List<SearchHit> extract(List<String> urls, String query) {
+        return List.of();
+    }
+
+    /**
      * 单条搜索命中。type: KB/WEB;url 仅 WEB 有;modelName 复用为 WEB 工具名(TAVILY/SEARXNG)。
      * 09-25-brief-web-search 增量:WEB 命中带稳定 {@code sourceId}(W1/W2…)与 {@code provider}(来源工具名),
      * 供 LLM 事实引用与后验校验;KB 命中两者为空。
+     * 09-27-tavily-extract-kind-hypotheses 增量:{@code content}=正文片段(nullable,仅供研究注入与降级留证),
+     * 与 {@code snippet}(摘要,引用/预览语义)严格区分。
      */
     record SearchHit(String type, String title, String url, String snippet,
                      String modelName, Long docId, double score,
-                     String sourceId, String provider) {
+                     String sourceId, String provider, String content) {
 
         /**
-         * 兼容构造器(7 参,sourceId/provider 为空):既有调用方(工具实现/测试)不受影响。
+         * 兼容构造器(9 参,content=null):既有调用方(工具实现/WebResultNormalizer/测试)不受影响。
+         */
+        public SearchHit(String type, String title, String url, String snippet,
+                         String modelName, Long docId, double score,
+                         String sourceId, String provider) {
+            this(type, title, url, snippet, modelName, docId, score, sourceId, provider, null);
+        }
+
+        /**
+         * 兼容构造器(7 参,sourceId/provider/content 为空):既有调用方(工具实现/测试)不受影响。
          */
         public SearchHit(String type, String title, String url, String snippet,
                          String modelName, Long docId, double score) {
-            this(type, title, url, snippet, modelName, docId, score, null, null);
+            this(type, title, url, snippet, modelName, docId, score, null, null, null);
         }
 
         public static SearchHit kb(String title, String modelName, Long docId, String snippet, double score) {
@@ -49,6 +75,14 @@ public interface SearchTool {
         /** WEB 命中统一 type=WEB(来源工具名记入 title 前缀由调用方处理);tool 单独字段。 */
         public static SearchHit web(String toolName, String title, String url, String snippet) {
             return new SearchHit("WEB", title, url, snippet, toolName, null, 0);
+        }
+        /** WEB 命中(带正文片段,09-27 R1/R2 增量;旧 4 参重载委托 content=null)。 */
+        public static SearchHit web(String toolName, String title, String url, String snippet, String content) {
+            return new SearchHit("WEB", title, url, snippet, toolName, null, 0, null, null, content);
+        }
+        /** 正文抽取结果条目(type=WEB,仅 url + content;供 SubAgentRunner 按 URL 回填命中)。 */
+        public static SearchHit webContent(String toolName, String url, String content) {
+            return new SearchHit("WEB", "", url, "", toolName, null, 0, null, null, content);
         }
     }
 }

@@ -134,6 +134,7 @@ public interface SearchTool {
     default boolean configured() { return true; }     // 密钥/地址是否就绪,不随调用结果变化
     default boolean lastCallOk() { return true; }     // 最近一次调用是否成功(初值乐观,仅供展示)
     List<SearchHit> search(String query, int maxResults);
+    default List<SearchHit> extract(List<String> urls, String query) { return List.of(); }  // 09-27 R1:正文补抓
 }
 ```
 
@@ -367,6 +368,125 @@ raw.append("{\"claim\":\"").append(esc(h.title())).append("\",\"source\":{...");
 raw.append("{\"claim\":\"").append(esc(h.title()))
    .append("\",\"snippet\":\"").append(esc(snippet(h.snippet())))
    .append("\",\"source\":{...");
+```
+
+---
+
+## Scenario: WEB 正文补抓 + 按问题类型分档注入（09-27-tavily-extract-kind-hypotheses R1/R3，机制 B）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改背景题 WEB 正文补抓（`SearchTool.extract` / `TavilySearchTool` / `SubAgentRunner.enrichContent`），或改动命中正文载体（`SearchHit.content`/`WebHit.content`）与注入分档。
+
+### 2. Signatures
+```java
+// SearchTool（default 方法,不支持的工具零成本跳过）
+default List<SearchHit> extract(List<String> urls, String query) { return List.of(); }
+
+// SearchHit 10 参主构造器（content nullable）+ 9 参/7 参兼容构造器
+record SearchHit(String type, String title, String url, String snippet,
+                 String modelName, Long docId, double score,
+                 String sourceId, String provider, String content) { … 
+    static SearchHit web(String toolName, String title, String url, String snippet, String content);
+    static SearchHit webContent(String toolName, String url, String content);   // 抽取结果条目
+}
+// WebResultNormalizer.WebHit 6 参（content）+ 5 参兼容构造器；toSearchHit() 透传 content
+// WebSearchRouter.extract(query, urls)  // 按 provider 顺序尝试支持 extract 的工具,首个非空即采信
+
+// DeepProperties
+int effectiveWebContentMaxChars();   // 默认 2000（<env> DEEP_WEB_CONTENT_MAX_CHARS）
+```
+
+### 3. Contracts
+- **机制 B**：`search` 保持 `search_depth=basic` 拿摘要；**仅背景题**（`ClarifyService.isBackgroundQuestion`）且 WEB 命中后，对 **top 1–2 URL** 调 `POST /extract`（`query` + `chunks_per_source:3` + `extract_depth:"basic"`）取 `raw_content`，**工具层截断**（唯一上限 `effectiveWebContentMaxChars`，避免「工具截一次、注入再截一次」）。
+- **provider 无关**：`WebSearchRouter.extract` 按 provider 顺序委托支持 extract 的工具，不在子代理硬编码 `TavilySearchTool` 依赖；Tavily 不可用 → 不补正文。
+- **降级绝不抛**：失败/空（`failed_results`/空 `results`）/异常 → 命中保持 `content=null`，降级回摘要；`extract` **不修改 `lastCallOk()`**（不污染健康态/门控）。
+- **载体分离**：`snippet`=摘要（引用/预览语义不动）；`content`=正文片段（仅研究注入与降级留证）。两者均**保留旧构造器**（record 加字段先例见 `Citation.docId`）。
+- **注入分档**：背景题 ctx 追加 `正文片段:` 行；**参数题只用 `snippet`**（且从不触发 extract）。
+- **降级留证**：`SubAgentRunner.rawFallback` 在 `content` 非空时增 `"content":esc(...)`（转义完整），空则字段不出现（旧契约零回归）。
+
+### 4. Validation & Error Matrix
+- Tavily 未配置 / urls 空 → 直接空列表（不发起请求）。
+- `failed_results` / 空 `results` / 空 `raw_content` / HTTP 非 2xx / 超时 → 空列表（降级回摘要）。
+- 超上限 → 工具层截断到 `effectiveWebContentMaxChars`。
+- 抽取返回 URL 与命中 URL 有 fragment/大小写差异 → `normalizeUrl` 对齐回填。
+- WEB 开关关闭（`webAllowed=false`）→ 既不 search 也不 extract。
+
+### 5. Good/Base/Bad Cases
+- Good: 背景题命中 2 条 → 对 2 个 URL extract，正文截断 2000 注入 ctx。
+- Base: extract 返回空 → 降级回摘要，`status=DONE` 不受影响。
+- Bad: 对参数题也 extract（浪费 credits）、或在子代理里 `new TavilySearchTool()` 硬编码、或让抽取失败冒泡为 `FAILED`。
+
+### 6. Tests Required
+- `TavilySearchToolExtractTest`：正文非空且 ≤ 上限；请求参数（query/chunks_per_source/extract_depth）；`failed_results`/空 raw/HTTP 500 → 空列表；未配置/空 urls 不发起请求。
+- `SubAgentRunnerTest`：背景题 ctx 含正文、参数题不含；背景题触发 extract 一次、参数题 `never()`；WEB 关闭不 search/extract；extract 空 → 降级不抛；`rawFallback` content 转义可解析 / 空则无字段。
+- `WebResultNormalizerTest`：content 经 `WebHit` 透传到 `SearchHit`；旧构造器 content=null。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 在子代理里硬编码 provider + 失败冒泡
+TavilySearchTool t = new TavilySearchTool(props, json);
+List<SearchHit> body = t.extract(urls, q);   // 抛异常 → 整条 agent FAILED
+```
+#### Correct
+```java
+// 工具抽象 + 仅背景题 + 失败降级回摘要
+if (background && !webHits.isEmpty()) webHits = enrichContent(question, webHits);  // 内部 catch,空则原样
+```
+
+---
+
+## Scenario: 事实手册条目 `kind` 分类 + 写作/简报按类消费（09-27-tavily-extract-kind-hypotheses R4/R5/R6）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改 `fact_sheet.entries[].kind`、`FactSheetService.merge` 的 kind 归属、写作/简报 prompt 的按类分组，或简报注入 `research_plan.hypotheses`。
+
+### 2. Signatures
+```java
+// FactSheetService（签名不变）
+public String merge(String notesJson)
+private static Map<String,Object> entry(..., String snippet, String kind)   // kind 增量参数
+// entry 增量字段：kind ∈ {param, background}（显式写,缺省兜底 param）
+
+// DeepWriterService
+private static StringBuilder buildFactContext(JsonNode entries)  // 有 kind → 两段分组;全无 → 旧平铺
+// BriefService
+private String hypothesesBlock(String researchPlan)              // null = 跳过(不注入)
+```
+
+### 3. Contracts
+- **kind 继承产出该 fact 的「研究问题类型」**：`ClarifyService.isBackgroundQuestion(note.question)` → `background`，其余/无问题信号/历史数据 → `param`。`merge` 展开 facts 时并行记录每条 fact 的 kind，聚类后取**簇首条（代表 fact）**的 kind。
+- **`param`/`background` 都显式写**（增量字段，旧前端不读不报错，对齐 `sourcesList`/`snippet` 范式）；消费侧对缺 kind 兜底 `param`。
+- **写作按 kind 分组**：有任一条带 kind → 分「【参数事实】(可逐字引用数值)」与「【背景素材】(仅用于叙事,不得据此新增数值)」两段；**全无 kind（历史 fact_sheet）时退化为原平铺行为**（prompt 逐字与旧实现等价，AC-05）。
+- **简报注入假设**：user prompt 追加 `research_plan.hypotheses`（数组逐项）；system prompt 要求 `coreViewpoints` 回应假设被证实/推翻。`research_plan` 缺失/无 hypotheses/空数组/畸形 JSON → 跳过（兼容退化,不报错）。
+- **不改红线**：归并/数值回查/冲突裁决路径不变；`verifyNumbers` 以 `sheet.toString()` 为 haystack 仍覆盖归并条目；无 schema 变更。
+
+### 4. Validation & Error Matrix
+- 无问题信号（历史 notes 无 question）→ `kind=param`，不抛。
+- 归并后 kind = 簇首条问题类型（不是各条混合）。
+- 全无 kind → 旧平铺，不出现分组块头。
+- `research_plan` 畸形 JSON → 跳过假设块且不抛（仅 warn）。
+
+### 5. Good/Base/Bad Cases
+- Good: 背景题产出的 2 条近义 claim 合并 → `kind=background`、写作进背景素材段。
+- Base: 参数题 → `kind=param`，写作进参数事实段。
+- Bad: 归并后 kind 取最后一条（覆盖簇首语义）、或缺 kind 时写作直接报错。
+
+### 6. Tests Required
+- `FactSheetServiceTest`：背景题→background、参数题→param、无问题信号→param 不抛、归并取簇首 kind。
+- `DeepWriterServicePromptTest`：有 kind → 两段出现且归属正确；全无 kind → 无分组块头且平铺格式逐字保留；混合 kind → 缺 kind 兜底参数组。
+- `BriefServiceTest`：假设注入 user prompt；null/无 hypotheses/空数组/畸形 → 不注入且不抛。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 只写 background,param 省略 → 写作无法识别「参数组」,分组退化
+if ("background".equals(kind)) e.put("kind", kind);
+```
+#### Correct
+```java
+// param/background 都显式写;消费侧缺 kind 兜底 param
+e.put("kind", kind == null || kind.isBlank() ? "param" : kind);
 ```
 
 ---

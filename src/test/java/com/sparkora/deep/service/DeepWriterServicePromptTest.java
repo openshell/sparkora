@@ -151,6 +151,104 @@ class DeepWriterServicePromptTest {
         assertEquals(count(prompt, "大纲:"), 1, "块头只能出现一次");
     }
 
+    // ==================== R5(09-27-tavily-extract-kind-hypotheses):按 kind 分组 ====================
+
+    /** 有 kind → 分「参数事实」「背景素材」两段,条目归属正确。 */
+    @Test
+    void 有kind_分参数事实与背景素材两段() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(BRIEF_ID);
+        b.setProjectId(PROJECT_ID);
+        b.setGenMode("DEEP");
+        b.setFactSheet("{\"entries\":["
+                + "{\"key\":\"价格\",\"value\":\"239900\",\"kind\":\"param\",\"confidence\":0.9},"
+                + "{\"key\":\"行业背景\",\"value\":\"\",\"kind\":\"background\",\"confidence\":0.4}"
+                + "]}");
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains("【参数事实】"), "应出现参数事实段");
+        assertTrue(prompt.contains("【背景素材】"), "应出现背景素材段");
+        // 归属:价格在参数段、行业背景在背景段
+        assertTrue(prompt.contains("价格 = 239900"), "参数条目应在参数段");
+        assertTrue(prompt.contains("行业背景"), "背景条目应出现");
+        int paramIdx = prompt.indexOf("【参数事实】");
+        int bgIdx = prompt.indexOf("【背景素材】");
+        int priceIdx = prompt.indexOf("价格 = 239900");
+        int bgItemIdx = prompt.indexOf("行业背景");
+        assertTrue(priceIdx > paramIdx && priceIdx < bgIdx, "价格应落在参数段内");
+        assertTrue(bgItemIdx > bgIdx, "行业背景应落在背景段内");
+    }
+
+    /** 全无 kind(历史手册)→ 与旧平铺行为等价:不出现两段块头,逐字平铺。 */
+    @Test
+    void 全无kind_退化为旧平铺且不出现分组块头() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());   // entries 无 kind
+
+        String prompt = capturedUserPrompt();
+
+        assertFalse(prompt.contains("【参数事实】"), "无 kind 不得出现分组块头");
+        assertFalse(prompt.contains("【背景素材】"), "无 kind 不得出现分组块头");
+        assertTrue(prompt.contains("- 价格 = 239900(置信 0.90)\n"), "旧平铺格式逐字保留");
+    }
+
+    /** 全无 kind → system prompt 与旧实现逐字等价(不得出现「参数事实/背景素材」铁律)。 */
+    @Test
+    void 全无kind_systemPrompt与旧行为等价() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), anyString(), eq(4096));
+        String legacy = """
+                你是资深汽车内容作者。基于【事实手册】与用户锁定需求撰写文章正文。
+                铁律:
+                1. 正文中出现的所有具体数值(价格/尺寸/续航/百分比等)必须逐字出自下方事实手册,禁止改写/换算/推算。
+                2. 手册未覆盖的参数,用定性表述,不得给出具体数值。
+                3. 结构清晰,用 Markdown;长度按用户需求。
+                排版铁律(公众号正文可读性,必须遵守):全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;
+                关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
+                """;
+        assertEquals(legacy, system.getValue(), "无 kind 时 system prompt 必须与旧实现逐字等价");
+    }
+
+    /** 有 kind → system prompt 增「参数事实/背景素材」分组铁律。 */
+    @Test
+    void 有kind_systemPrompt含分组约束() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(BRIEF_ID);
+        b.setProjectId(PROJECT_ID);
+        b.setGenMode("DEEP");
+        b.setFactSheet("{\"entries\":[{\"key\":\"价格\",\"value\":\"239900\",\"kind\":\"param\",\"confidence\":0.9}]}");
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), anyString(), eq(4096));
+        assertTrue(system.getValue().contains("参数事实"), "有 kind 应出现分组铁律");
+        assertTrue(system.getValue().contains("背景素材"));
+    }
+
+    /** 缺 kind 的条目在混合手册中兜底进参数组。 */
+    @Test
+    void 混合kind_缺kind条目兜底进参数组() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(BRIEF_ID);
+        b.setProjectId(PROJECT_ID);
+        b.setGenMode("DEEP");
+        b.setFactSheet("{\"entries\":["
+                + "{\"key\":\"续航\",\"value\":\"700km\",\"confidence\":0.9},"
+                + "{\"key\":\"战略布局\",\"value\":\"\",\"kind\":\"background\",\"confidence\":0.4}"
+                + "]}");
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+
+        String prompt = capturedUserPrompt();
+
+        int paramIdx = prompt.indexOf("【参数事实】");
+        int bgIdx = prompt.indexOf("【背景素材】");
+        int rangeIdx = prompt.indexOf("续航 = 700km");
+        assertTrue(rangeIdx > paramIdx && rangeIdx < bgIdx, "缺 kind 条目应兜底进参数段");
+    }
+
     private static int count(String s, String sub) {
         int c = 0, i = 0;
         while ((i = s.indexOf(sub, i)) >= 0) { c++; i += sub.length(); }

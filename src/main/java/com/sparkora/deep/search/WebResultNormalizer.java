@@ -20,12 +20,23 @@ public final class WebResultNormalizer {
     private WebResultNormalizer() {
     }
 
-    /** 单条治理后的 WEB 命中:稳定 sourceId + 规范化 URL + provider(来源工具名)。 */
-    public record WebHit(String sourceId, String title, String url, String snippet, String provider) {
+    /**
+     * 单条治理后的 WEB 命中:稳定 sourceId + 规范化 URL + provider(来源工具名)。
+     *
+     * <p>09-27-tavily-extract-kind-hypotheses R2 增量:{@code content}=正文片段(nullable,
+     * 与 {@code snippet} 摘要语义严格区分——引用/预览仍用 snippet)。保留 5 参构造器兼容既有调用方。
+     */
+    public record WebHit(String sourceId, String title, String url, String snippet, String provider,
+                         String content) {
 
-        /** 转为带 sourceId/provider 的 SearchHit(type=WEB)。 */
+        /** 兼容构造器(5 参,content=null):既有调用方(router/测试)不受影响。 */
+        public WebHit(String sourceId, String title, String url, String snippet, String provider) {
+            this(sourceId, title, url, snippet, provider, null);
+        }
+
+        /** 转为带 sourceId/provider/content 的 SearchHit(type=WEB)。 */
         public SearchTool.SearchHit toSearchHit() {
-            return new SearchTool.SearchHit("WEB", title, url, snippet, provider, null, 0, sourceId, provider);
+            return new SearchTool.SearchHit("WEB", title, url, snippet, provider, null, 0, sourceId, provider, content);
         }
     }
 
@@ -49,7 +60,7 @@ public final class WebResultNormalizer {
             seen.put(normalized, Boolean.TRUE);
             String provider = h.provider() != null && !h.provider().isBlank()
                     ? h.provider() : (h.modelName() == null ? "" : h.modelName());
-            out.add(new WebHit("W" + (out.size() + 1), h.title(), normalized, h.snippet(), provider));
+            out.add(new WebHit("W" + (out.size() + 1), h.title(), normalized, h.snippet(), provider, h.content()));
             if (out.size() >= limit) break;
         }
         return out;

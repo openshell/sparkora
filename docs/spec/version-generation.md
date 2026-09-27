@@ -92,6 +92,7 @@
 - **落版本必须补齐展示字段**：`title`/`version_label`/`style_tag`/`word_count`，否则前端版本卡片渲染 `undefined·undefined`、字数空白（09-10-versions-page-fix 教训）。
 - **必须推进状态机 + 设 current**：只写产物表不推状态会让步骤导航锁死下游（`maxReachableStepOf`），前端卡在上一步。
 - 深度批量 `/deep/generate` 与多版本 `VersionService.generate` 共享上述语义（前者追加不覆盖）。
+- **事实手册按 `kind` 分组呈现（R5，09-27-tavily-extract-kind-hypotheses）**：`DeepWriterService.write` 取 `fact_sheet.entries` 转写作 prompt 时，任一条目带 `kind`（`param`/`background`）即分「【参数事实】(可逐字引用数值)」与「【背景素材】(仅用于叙事,不得据此新增数值)」两段（缺 kind 条目兜底进参数组，空组写 `- (无)`）；`kind` 语义与手册字段契约见 [brief-generation.md §5](brief-generation.md)。**全无 `kind`（历史 fact_sheet）时退化为原平铺行为**——prompt 逐字与旧实现等价。逐条仍保留 09-26 R1 的「证据:{snippet}」（≤200 字）透传。
 
 ---
 

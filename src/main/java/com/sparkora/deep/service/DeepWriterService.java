@@ -193,26 +193,20 @@ public class DeepWriterService {
         ArticleBriefEntity b = briefMapper.selectById(briefId);
         if (b == null) throw new IllegalArgumentException("brief 不存在");
         JsonNode sheet = json.readTree(b.getFactSheet() == null ? "{}" : b.getFactSheet());
-        StringBuilder factCtx = new StringBuilder();
-        for (JsonNode e : sheet.path("entries")) {
-            factCtx.append("- ").append(e.path("key").asText());
-            String v = e.path("value").asText("");
-            if (!v.isBlank()) factCtx.append(" = ").append(v);
-            double c = e.path("confidence").asDouble(0);
-            factCtx.append("(置信 ").append(String.format("%.2f", c)).append(")");
-            // R1(09-26):条目可带降级保留的原始 snippet 证据(背景/来龙去脉素材),写作阶段可见
-            String snip = e.path("snippet").asText("");
-            if (!snip.isBlank()) {
-                factCtx.append(" | 证据:").append(snip.length() > 200 ? snip.substring(0, 200) : snip);
-            }
-            factCtx.append('\n');
-        }
+        // R5(09-27-tavily-extract-kind-hypotheses):手册条目带 kind 时按「参数事实 / 背景素材」分组呈现;
+        // 全无 kind(历史 fact_sheet)时退化为原平铺行为(prompt 与旧实现逐字等价)。
+        boolean hasKind = hasKind(sheet.path("entries"));
+        StringBuilder factCtx = buildFactContext(sheet.path("entries"), hasKind);
         String system = """
                 你是资深汽车内容作者。基于【事实手册】与用户锁定需求撰写文章正文。
                 铁律:
                 1. 正文中出现的所有具体数值(价格/尺寸/续航/百分比等)必须逐字出自下方事实手册,禁止改写/换算/推算。
                 2. 手册未覆盖的参数,用定性表述,不得给出具体数值。
                 3. 结构清晰,用 Markdown;长度按用户需求。
+                """ + (hasKind ? """
+                4. 手册按「参数事实」与「背景素材」分组:参数事实可逐字引用其数值;背景素材仅用于叙事/背景铺陈,
+                   不得据此新增任何数值(背景素材里出现的数字也不得写进正文)。
+                """ : "") + """
                 排版铁律(公众号正文可读性,必须遵守):全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;
                 关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
                 """;
@@ -291,6 +285,61 @@ public class DeepWriterService {
         v.setCreatedAt(LocalDateTime.now());
         versionMapper.insert(v);
         return v.getId();
+    }
+
+    /**
+     * R5(09-27-tavily-extract-kind-hypotheses):按手册条目 kind 分组构造写作事实上下文。
+     *
+     * <p>条目带 {@code kind} 时分为「参数事实」(kind=param,可逐字引用数值)与「背景素材」
+     * (kind=background,仅叙事、不得据此新增数值)两段;全无 kind(历史 fact_sheet)时
+     * 退化为原平铺行为——逐字与旧实现一致(AC-05)。
+     *
+     * <p>逐条仍保留「证据:{snippet}」透传(09-26 R1 降级保真)。
+     */
+    private static StringBuilder buildFactContext(JsonNode entries, boolean anyKind) {
+        StringBuilder out = new StringBuilder();
+        if (!anyKind) {
+            // 历史手册:平铺(与旧实现逐字等价,含末尾换行)
+            for (JsonNode e : entries) out.append(factLine(e));
+            return out;
+        }
+        StringBuilder params = new StringBuilder();
+        StringBuilder backgrounds = new StringBuilder();
+        for (JsonNode e : entries) {
+            String kind = e.path("kind").asText("");
+            if ("background".equals(kind)) backgrounds.append(factLine(e));
+            else params.append(factLine(e));   // 缺 kind/param 兜底进参数组
+        }
+        out.append("【参数事实】(可逐字引用数值):\n");
+        out.append(params.length() == 0 ? "- (无)\n" : params);
+        out.append("【背景素材】(仅用于叙事,不得据此新增数值):\n");
+        out.append(backgrounds.length() == 0 ? "- (无)\n" : backgrounds);
+        return out;
+    }
+
+    /** 手册条目是否带 kind(任一条非空即视为带分类)。 */
+    private static boolean hasKind(JsonNode entries) {
+        for (JsonNode e : entries) {
+            if (!e.path("kind").asText("").isBlank()) return true;
+        }
+        return false;
+    }
+
+    /** 单条手册条目行(参数事实/背景素材共用;保持旧平铺格式逐字一致)。 */
+    private static String factLine(JsonNode e) {
+        StringBuilder line = new StringBuilder();
+        line.append("- ").append(e.path("key").asText());
+        String v = e.path("value").asText("");
+        if (!v.isBlank()) line.append(" = ").append(v);
+        double c = e.path("confidence").asDouble(0);
+        line.append("(置信 ").append(String.format("%.2f", c)).append(")");
+        // R1(09-26):条目可带降级保留的原始 snippet 证据(背景/来龙去脉素材),写作阶段可见
+        String snip = e.path("snippet").asText("");
+        if (!snip.isBlank()) {
+            line.append(" | 证据:").append(snip.length() > 200 ? snip.substring(0, 200) : snip);
+        }
+        line.append('\n');
+        return line.toString();
     }
 
     /**

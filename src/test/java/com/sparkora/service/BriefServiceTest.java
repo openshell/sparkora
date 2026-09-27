@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -176,5 +177,51 @@ class BriefServiceTest {
         verify(aiClient, times(1)).chatJson(anyString(), anyString(), anyInt());
         verify(briefMapper).updateById(any(ArticleBriefEntity.class));
         verify(statusService).advanceReady(eq(PROJECT_ID), eq(BRIEF_ID), anyMap());
+    }
+
+    // ==================== R6(09-27-tavily-extract-kind-hypotheses):注入研究假设 ====================
+
+    /** 捕获 user prompt(首次成功的 8192 调用;先清历史调用,支持同一测试多次调用)。 */
+    private String capturedUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
+        stubHappyPath(p, b);
+        when(aiClient.chatJson(anyString(), anyString(), eq(8192))).thenReturn(result());
+        service.generateFromFactSheet(PROJECT_ID, BRIEF_ID);
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chatJson(anyString(), user.capture(), eq(8192));
+        String captured = user.getValue();
+        org.mockito.Mockito.clearInvocations(aiClient);
+        return captured;
+    }
+
+    /** research_plan 含 hypotheses → user prompt 注入假设文本。 */
+    @Test
+    void 研究假设_注入userPrompt() {
+        ArticleBriefEntity b = deepBrief();
+        b.setResearchPlan("{\"keyQuestions\":[\"背景\"],\"hypotheses\":[\"假设A:该技术将主导市场\",\"假设B:成本将下降\"]}");
+
+        String prompt = capturedUserPrompt(project(), b);
+
+        assertTrue(prompt.contains("研究假设"), "应有研究假设块");
+        assertTrue(prompt.contains("假设A:该技术将主导市场"), "假设A应注入");
+        assertTrue(prompt.contains("假设B:成本将下降"), "假设B应注入");
+    }
+
+    /** research_plan 缺失/null/无 hypotheses/畸形 → 不注入且不报错(兼容退化)。 */
+    @Test
+    void 无研究假设_兼容退化不报错() {
+        // null 与空
+        assertFalse(capturedUserPrompt(project(), deepBrief()).contains("研究假设"));
+        // 无 hypotheses 字段
+        ArticleBriefEntity b = deepBrief();
+        b.setResearchPlan("{\"keyQuestions\":[\"背景\"]}");
+        assertFalse(capturedUserPrompt(project(), b).contains("研究假设"));
+        // hypotheses 为空数组
+        ArticleBriefEntity b2 = deepBrief();
+        b2.setResearchPlan("{\"hypotheses\":[]}");
+        assertFalse(capturedUserPrompt(project(), b2).contains("研究假设"));
+        // 畸形 JSON → 跳过不抛
+        ArticleBriefEntity b3 = deepBrief();
+        b3.setResearchPlan("{not-json");
+        assertFalse(capturedUserPrompt(project(), b3).contains("研究假设"));
     }
 }

@@ -227,6 +227,51 @@ class FactSheetServiceTest {
         assertFalse(e.has("snippet"), "无 snippet 时不得出现该字段");
     }
 
+    // ==================== 09-27-tavily-extract-kind-hypotheses R4:kind 分类 ====================
+
+    /** 背景型问题产出的 fact → kind=background。 */
+    @Test
+    void kind_背景题产出fact_标background() throws Exception {
+        String notes = "[{\"agentId\":1,\"question\":\"该车型的行业背景与战略目标是什么?\",\"status\":\"DONE\","
+                + "\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"比亚迪计划建成2万座闪充站\\\",\\\"source\\\":{\\\"type\\\":\\\"WEB\\\",\\\"url\\\":\\\"https://a\\\"},\\\"confidence\\\":0.4}],\\\"gaps\\\":[]}\",\"webCount\":1}]";
+        JsonNode e = sheet(svc.merge(notes)).path("entries").get(0);
+        assertEquals("background", e.path("kind").asText(), "背景题产出的 fact 应标 background");
+    }
+
+    /** 参数型问题产出的 fact → kind=param。 */
+    @Test
+    void kind_参数题产出fact_标param() throws Exception {
+        String notes = "[{\"agentId\":1,\"question\":\"海狮08的价格是多少?\",\"status\":\"DONE\","
+                + "\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"海狮08EV起售价239900\\\",\\\"value\\\":\\\"239900\\\",\\\"source\\\":{\\\"type\\\":\\\"KB\\\"},\\\"confidence\\\":0.9}],\\\"gaps\\\":[]}\",\"webCount\":0}]";
+        JsonNode e = sheet(svc.merge(notes)).path("entries").get(0);
+        assertEquals("param", e.path("kind").asText(), "参数题产出的 fact 应标 param");
+    }
+
+    /** 无 question 信号(历史数据/缺字段)→ kind 兜底 param,不抛异常。 */
+    @Test
+    void kind_无问题信号_兜底param且不抛() throws Exception {
+        // 旧历史 notes 无 question 字段(或为空)
+        String notes = "[{\"agentId\":1,\"status\":\"DONE\","
+                + "\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"某事实\\\",\\\"source\\\":{\\\"type\\\":\\\"KB\\\"},\\\"confidence\\\":0.9}],\\\"gaps\\\":[]}\",\"webCount\":0}]";
+        JsonNode e = sheet(svc.merge(notes)).path("entries").get(0);
+        assertEquals("param", e.path("kind").asText(), "无问题信号应兜底 param");
+    }
+
+    /** 近似归并后 kind 取簇首条(代表 fact)的问题类型。 */
+    @Test
+    void kind_归并后取簇首条问题类型() throws Exception {
+        // 簇首为背景题,第二条为参数题近义 claim(同数值签名) → kind 应继承 background
+        String notes = "["
+                + "{\"agentId\":1,\"question\":\"该车型的行业背景与战略目标是什么?\",\"status\":\"DONE\","
+                + "\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"比亚迪第2000座闪充站落成\\\",\\\"source\\\":{\\\"type\\\":\\\"WEB\\\",\\\"url\\\":\\\"https://a\\\",\\\"provider\\\":\\\"TAVILY\\\"},\\\"confidence\\\":0.4}],\\\"gaps\\\":[]}\",\"webCount\":1},"
+                + "{\"agentId\":2,\"question\":\"落成情况如何?\",\"status\":\"DONE\","
+                + "\"factsJson\":\"{\\\"facts\\\":[{\\\"claim\\\":\\\"比亚迪第 2000 座闪充站正式落成 - 新闻\\\",\\\"source\\\":{\\\"type\\\":\\\"WEB\\\",\\\"url\\\":\\\"https://b\\\",\\\"provider\\\":\\\"TAVILY\\\"},\\\"confidence\\\":0.4}],\\\"gaps\\\":[]}\",\"webCount\":1}]";
+        JsonNode sheet = sheet(svc.merge(notes));
+        assertEquals(1, sheet.path("entries").size(), "近义应合并");
+        assertEquals("background", sheet.path("entries").get(0).path("kind").asText(),
+                "归并后 kind 取簇首条(代表 fact)的问题类型");
+    }
+
     private void assertNotNullEntry(JsonNode sheet, String fragment) {
         for (JsonNode e : sheet.path("entries")) {
             if (e.path("claim").asText("").contains(fragment)) return;

@@ -89,4 +89,24 @@ class WebResultNormalizerTest {
         assertTrue(WebResultNormalizer.normalize(null, 5).isEmpty());
         assertTrue(WebResultNormalizer.normalize(List.of(), 5).isEmpty());
     }
+
+    /** R2(09-27-tavily-extract-kind-hypotheses):content 正文载体透传(不混入 snippet 语义)。 */
+    @Test
+    void content正文载体_经WebHit透传到SearchHit() {
+        SearchTool.SearchHit raw = SearchTool.SearchHit.web("TAVILY", "t", "https://x.com/a", "摘要", "正文片段");
+        List<WebResultNormalizer.WebHit> hits = WebResultNormalizer.normalize(List.of(raw), 5);
+        assertEquals("正文片段", hits.get(0).content(), "content 应经 WebHit 透传");
+        SearchTool.SearchHit sh = hits.get(0).toSearchHit();
+        assertEquals("正文片段", sh.content(), "toSearchHit 应透传 content");
+        assertEquals("摘要", sh.snippet(), "snippet 语义不受 content 影响");
+    }
+
+    /** R2:旧 5 参构造器/旧 web(...)无 content → null(向后兼容)。 */
+    @Test
+    void 旧构造器_无content_兼容为null() {
+        List<WebResultNormalizer.WebHit> hits = WebResultNormalizer.normalize(
+                List.of(web("t", "https://x.com/a")), 5);
+        assertNull(hits.get(0).content());
+        assertNull(hits.get(0).toSearchHit().content());
+    }
 }

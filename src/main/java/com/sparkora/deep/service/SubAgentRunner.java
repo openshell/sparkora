@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sparkora.ai.AiClient;
+import com.sparkora.deep.search.WebResultNormalizer;
 import com.sparkora.deep.search.WebResultNormalizer.WebHit;
 import com.sparkora.deep.search.WebSearchOutcome;
 import com.sparkora.deep.search.WebSearchRouter;
@@ -101,11 +102,17 @@ public class SubAgentRunner {
         // R2(09-27-brief-writing-linkage-fix):KB 权威块仅对「事实/参数型」问题生效。
         // 背景/来龙去脉型问题在车型锚定主题下几乎必然命中该车型 MODEL_INFO(复合 query 带锚点加权),
         // 若据此跳过 WEB,行业战略类背景素材永远拿不到(KB 是车型库,不含此类内容)。故背景题强制放行 WEB。
-        boolean kbAuthoritative = !ClarifyService.isBackgroundQuestion(question) && kbParamAuthoritative;
+        // R1/R3(09-27-tavily-extract-kind-hypotheses):背景题额外对 top URL 补抓正文(仅背景题注入)。
+        boolean background = ClarifyService.isBackgroundQuestion(question);
+        boolean kbAuthoritative = !background && kbParamAuthoritative;
         if (toolsAllowed.contains("WEB") && snapshot != null && snapshot.webAllowed() && webQuota > 0 && !kbAuthoritative) {
             appliedWebQuery = webQuery(topic, question, lockedAnswers);
             outcome = webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot);
             webHits = outcome.hits();
+            // R1:背景题对 top 1–2 URL 调 extract 取正文并回填(失败/空/Tavily 不可用 → 保持 null 摘要降级)
+            if (background && !webHits.isEmpty()) {
+                webHits = enrichContent(question, webHits);
+            }
             for (WebHit wh : webHits) hits.add(wh.toSearchHit());
         }
         // 3) LLM 汇总为结构化笔记(容错:非法 JSON 重试 1 次;仍失败走原始条目降级)
@@ -131,6 +138,11 @@ public class SubAgentRunner {
                 if (h.sourceId() != null && !h.sourceId().isBlank()) ctx.append("sourceId=").append(h.sourceId()).append(' ');
                 if (h.url() != null && !h.url().isBlank()) ctx.append(h.url()).append(" | ");
                 ctx.append(h.title()).append(" : ").append(snippet(h.snippet())).append('\n');
+                // R3(09-27-tavily-extract-kind-hypotheses):仅背景型问题注入正文片段(参数题只用摘要);
+                // 正文已在工具层按 DEEP_WEB_CONTENT_MAX_CHARS 截断(唯一上限、单点化),此处不再二次截断。
+                if (background && h.content() != null && !h.content().isBlank()) {
+                    ctx.append("  正文片段:").append(h.content()).append('\n');
+                }
             }
             if (hits.isEmpty()) ctx.append("(无检索结果,请基于空结果产出 gaps)\n");
             String factsJson = validateFacts(chat(system, ctx.toString()), webHits);
@@ -371,12 +383,66 @@ public class SubAgentRunner {
                .append("\",\"provider\":\"").append(esc(h.provider()))
                .append("\",\"modelName\":\"").append(esc(h.modelName() == null ? "" : h.modelName()))
                .append("\",\"docId\":").append(h.docId() == null ? 0 : h.docId())
-               .append("},\"confidence\":").append("KB".equals(h.type()) ? "0.6" : "0.4").append("}");
+               .append("},\"confidence\":").append("KB".equals(h.type()) ? "0.6" : "0.4");
+            // R2(09-27-tavily-extract-kind-hypotheses 增量):正文片段仅非空时写入(转义完整),
+            // 与 snippet 语义区分;不写时不出现该字段(旧契约零回归)。正文已由工具层截断,不再二次截断。
+            if (h.content() != null && !h.content().isBlank()) {
+                raw.append(",\"content\":\"").append(esc(h.content())).append("\"");
+            }
+            raw.append('}');
         }
         raw.append("],\"gaps\":[\"研究汇总失败,以下为原始检索条目,请人工核对\"]}");
         return raw.toString();
     }
 
+    /**
+     * R1(09-27-tavily-extract-kind-hypotheses):背景题对 top 1–2 WEB 命中 URL 调
+     * {@link WebSearchRouter#extract} 取正文,并按规范化 URL 回填对应命中的 content
+     * (extract 结果的 URL 可能与命中 URL 有 fragment/大小写差异,用 normalizeUrl 对齐)。
+     *
+     * <p>抽取失败/空/不支持 → 原样返回(命中保持 content=null = 降级回摘要),绝不抛出。
+     */
+    private List<WebHit> enrichContent(String question, List<WebHit> webHits) {
+        try {
+            List<String> urls = new ArrayList<>();
+            for (WebHit wh : webHits) {
+                if (wh.url() != null && !wh.url().isBlank()) urls.add(wh.url());
+                if (urls.size() >= 2) break;   // 仅 top 1–2,控制 credits 与体积
+            }
+            if (urls.isEmpty()) return webHits;
+            List<SearchTool.SearchHit> extracted = webRouter.extract(question, urls);
+            if (extracted.isEmpty()) return webHits;
+            Map<String, String> byUrl = new LinkedHashMap<>();
+            for (SearchTool.SearchHit e : extracted) {
+                if (e == null || e.url() == null || e.content() == null || e.content().isBlank()) continue;
+                String key = WebResultNormalizer.normalizeUrl(e.url());
+                if (key != null) byUrl.putIfAbsent(key, e.content());
+            }
+            if (byUrl.isEmpty()) return webHits;
+            List<WebHit> out = new ArrayList<>(webHits.size());
+            for (WebHit wh : webHits) {
+                String key = WebResultNormalizer.normalizeUrl(wh.url());
+                String content = key == null ? null : byUrl.get(key);
+                if (content == null || content.isBlank()) {
+                    out.add(wh);
+                } else {
+                    out.add(new WebHit(wh.sourceId(), wh.title(), wh.url(), wh.snippet(), wh.provider(),
+                            content));
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("背景题正文补抓失败(降级回摘要) question={}: {}", question, e.getClass().getSimpleName());
+            return webHits;
+        }
+    }
+
+    /**
+     * 正文上限单点化(09-27-tavily-extract-kind-hypotheses 已确认决策):截断唯一发生在工具层
+     * ({@code TavilySearchTool.extract} 按 `DEEP_WEB_CONTENT_MAX_CHARS` 截断)。子代理只做注入/留证,
+     * <b>不再二次截断</b>——否则配置值 > 默认 2000 时会被静默截回 2000,形成「工具截一次、注入再截一次」
+     * 的隐形双重限制(与 design.md §4 冲突)。
+     */
     private static String snippet(String s) { return s == null ? "" : s.length() > 200 ? s.substring(0, 200) : s; }
 
     /** JSON 字符串转义:反斜杠优先,再引号/换行/制表/回车与其余控制字符(防 rawFallback 产出非法 JSON)。 */

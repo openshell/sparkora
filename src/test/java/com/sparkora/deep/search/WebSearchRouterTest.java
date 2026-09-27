@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -133,5 +134,54 @@ class WebSearchRouterTest {
         assertFalse(out.hasHits());
         assertNull(out.usedProvider());
         assertEquals(2, out.attempts().size());   // AC-09
+    }
+
+    // ===== R1(09-27-tavily-extract-kind-hypotheses):按 URL 抽取正文(工具抽象 + 降级) =====
+
+    /** 空 urls → 不发起任何请求(零成本跳过)。 */
+    @Test
+    void extract_空urls_不调用任何provider() {
+        assertTrue(router().extract("q", List.of()).isEmpty());
+        assertTrue(router().extract("q", null).isEmpty());
+        verify(tavily, never()).extract(any(), anyString());
+        verify(searxng, never()).extract(any(), anyString());
+    }
+
+    /** 首个产出非空即采信并停止(不重复调用后备 provider)。 */
+    @Test
+    void extract_首选非空_不调后备() {
+        when(tavily.available()).thenReturn(true);
+        when(searxng.available()).thenReturn(true);
+        when(tavily.extract(any(), anyString()))
+                .thenReturn(List.of(SearchTool.SearchHit.webContent("TAVILY", "https://t.com/a", "正文")));
+        List<SearchTool.SearchHit> got = router().extract("q", List.of("https://t.com/a"));
+        assertEquals(1, got.size());
+        assertEquals("正文", got.get(0).content());
+        verify(searxng, never()).extract(any(), anyString());
+    }
+
+    /** 首选未配置 → 跳过;首选异常 → 降级后备(不抛)。 */
+    @Test
+    void extract_未配置跳过_异常降级后备不抛() {
+        when(searxng.available()).thenReturn(true);
+        when(searxng.extract(any(), anyString()))
+                .thenReturn(List.of(SearchTool.SearchHit.webContent("SEARXNG", "https://s.com/a", "后备正文")));
+        // Tavily 未配置 → 跳过,直接到 SearxNG
+        when(tavily.available()).thenReturn(false);
+        assertEquals("后备正文", router().extract("q", List.of("https://s.com/a")).get(0).content());
+        verify(tavily, never()).extract(any(), anyString());
+
+        // Tavily 可用但抽取异常 → 降级 SearxNG
+        when(tavily.available()).thenReturn(true);
+        when(tavily.extract(any(), anyString())).thenThrow(new RuntimeException("boom tvly-123"));
+        assertEquals("后备正文", router().extract("q", List.of("https://s.com/a")).get(0).content());
+    }
+
+    /** 全部 provider 无正文 → 空列表(降级回摘要),不抛。 */
+    @Test
+    void extract_全部为空_返回空列表不抛() {
+        when(tavily.available()).thenReturn(true);
+        when(searxng.available()).thenReturn(true);
+        assertTrue(router().extract("q", List.of("https://x.com/a")).isEmpty());
     }
 }

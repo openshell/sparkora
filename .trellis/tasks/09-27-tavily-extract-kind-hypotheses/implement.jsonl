@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "搜索工具契约、SearchHit/WebHit 字段与 record 加字段兼容先例（Citation docId）、降级不得丢证据、失败提额重试契约；R1/R2 不得破坏 available()/toolHealth/降级语义"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "确认本任务无 schema 变更（AC-08 红线），fact_sheet JSON 为 TEXT 列仅改内容形态"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AI/工具失败降级与状态写入约定，R1 正文抽取失败必须降级不抛"}
+{"file": "docs/spec/brief-generation.md", "reason": "六阶段流程、工具层降级语义、research_notes/fact_sheet 结构与增量字段范式（snippet/sourcesList）、简报生成契约；R2–R6 落点权威"}
+{"file": "docs/spec/version-generation.md", "reason": "深度写作 write/runBatch 契约与版本落库；R5 写作 prompt 分组落点"}
+{"file": ".trellis/tasks/09-27-tavily-extract-kind-hypotheses/research/tavily-api-capabilities.md", "reason": "Tavily /search 与 /extract 字段、include_raw_content/chunks_per_source 语义、Free 套餐 credits 计费取证；R1 机制选型依据"}

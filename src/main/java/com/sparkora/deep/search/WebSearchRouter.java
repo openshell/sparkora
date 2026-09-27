@@ -100,6 +100,29 @@ public class WebSearchRouter {
         return tool != null && tool.configured();
     }
 
+    /**
+     * 按 URL 抽取正文片段(09-27-tavily-extract-kind-hypotheses R1,机制 B:search 拿摘要 + 按需 extract 补正文)。
+     *
+     * <p>保持工具抽象:按 provider 顺序尝试支持 {@link SearchTool#extract} 的工具,首个产出非空即采信并停止;
+     * 不支持的工具默认返回空列表(零成本跳过)。未配置/异常/空 → 继续尝试后备;全部无 → 返回空列表
+     * (调用方降级回摘要,绝不抛出)。provider 与密钥不落日志。
+     */
+    public List<SearchTool.SearchHit> extract(String query, List<String> urls) {
+        if (urls == null || urls.isEmpty()) return List.of();
+        for (WebProvider p : WebProvider.values()) {
+            SearchTool tool = tools.get(p);
+            if (tool == null || !tool.available()) continue;
+            try {
+                List<SearchTool.SearchHit> got = tool.extract(urls, query);
+                if (got != null && !got.isEmpty()) return got;
+            } catch (Exception e) {
+                // 异常文本可能含密钥/URL,仅记类型化原因
+                log.warn("WEB 正文抽取 provider 异常降级 provider={} error={}", p, e.getClass().getSimpleName());
+            }
+        }
+        return List.of();
+    }
+
     /** 查询串截断(日志不写全量 query,避免噪音)。 */
     private static String truncate(String q) {
         if (q == null) return "";

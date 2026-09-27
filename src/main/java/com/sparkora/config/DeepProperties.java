@@ -26,6 +26,17 @@ public class DeepProperties {
      * 2026-09-25 显式反转旧的「SEARXNG 优先」决策:Tavily 已配置却从未被调用,且 SearxNG 上游曾全部不可用。
      */
     private String webProviderOrder = "TAVILY,SEARXNG";
+    /**
+     * WEB 正文补抓单条上限(09-27-tavily-extract-kind-hypotheses R1):背景题对 top URL 调 Tavily
+     * {@code /extract} 取正文后，在**工具层**截断到该字符数(唯一上限，避免「工具截一次、注入再截一次」
+     * 的隐形双重限制)。默认 2000。
+     */
+    private int webContentMaxChars = 2000;
+
+    /** 生效正文上限(≤0 视为不截断/使用默认；防御异常配置)。 */
+    public int effectiveWebContentMaxChars() {
+        return webContentMaxChars > 0 ? webContentMaxChars : 2000;
+    }
 
     /** 生效密钥:显式 DEEP_TAVILY_API_KEY 优先,否则读环境变量 TAVILY_API_KEY(.env)。 */
     public String effectiveTavilyKey() {
