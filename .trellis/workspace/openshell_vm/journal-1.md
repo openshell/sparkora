@@ -556,3 +556,27 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: P1-④ 生成链路异步化(同步占位+@Async+轮询)
+<!-- trellis-session: v=2 fp=b2e393d2cd80ca17 -->
+
+**Date**: 2026-09-27
+**Task**: P1-④ 生成链路异步化(同步占位+@Async+轮询)
+**Branch**: `main`
+
+### Summary
+
+三条项目状态驱动的生成链路(imitation/analyze、generate/versions、deep/generate)改为同步毫秒级返回+@Async后台+前端轮询;deep 改批量 styleIds[] 并补 claim(专用 claimDeepVersionsGenerating);移除 advanceVersionsReadyFromReady;新增 25 测试(370 全绿);error-handling.md 新增 start/run 异步切分约定。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6cd8bed` | feat(s2): 生成链路异步化(同步占位+@Async+状态机委托) |
+| `217e35f` | feat(ui): 三生成链路改轮询驱动刷新 + deep/generate 批量 styleIds |
+| `66142c1` | docs(spec): 生成链路异步化契约同步 + start/run 异步切分约定 |
+
+### Status
+
+[OK] **Completed**

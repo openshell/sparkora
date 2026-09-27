@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~558 | Active |
+| `journal-1.md` | ~582 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-09-27 | P1-④ 生成链路异步化(同步占位+@Async+轮询) | `6cd8bed`, `217e35f`, `66142c1` | `main` |
 | 21 | 2026-09-27 | P1-⑤ 状态机推进收敛到 ProjectStatusService | `dcedf49`, `05900ae` | `main` |
 | 20 | 2026-09-27 | P0 加固:超时对齐+并发回写修复+JWT查库校验 | `9e2eb5c`, `ecc3445`, `410f960` | `main` |
 | 19 | 2026-09-27 | 图生图多参考图（≤4，混合来源）+ 405 部署修复验证 | `0699a25`, `02c0b78`, `fc2f6d7`, `4311f21`, `3ef655a` | `main` |
