@@ -705,3 +705,27 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 简报到写作断链修复(09-27-brief-writing-linkage-fix)
+<!-- trellis-session: v=2 fp=f783ec93ab289fdc -->
+
+**Date**: 2026-09-27
+**Task**: 简报到写作断链修复(09-27-brief-writing-linkage-fix)
+**Branch**: `main`
+
+### Summary
+
+5 项 P0:R1 简报四字段注入写作 prompt(空字段逐字兼容);R2 kbAuthoritative 仅限参数型(背景题永不因 KB 命中 MODEL_INFO 跳过 WEB);R3 研究窗口保背景题(selectResearchWindow,Option A maxAgents=6);R4 正文截断提额重试 4096→8192(ChatResult 增 finishReason);R5 webQuery 否定答案过滤。check 修 4 处(畸形JSON块头重复/AC-01 尾部指引句兼容/格式粘连/spec 漂移)+新增回归测试。mvn test 448 全绿,npm build 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e7f9809` | fix(deep): 简报字段注入写作 prompt + 正文截断提额重试 |
+| `864d5b0` | fix(deep): 背景题不被 KB 权威误跳过 WEB + 研究窗口保背景题 + webQuery 否定答案过滤 |
+| `032b57e` | docs(spec): 简报注入/提额重试/背景题 WEB 门控/研究窗口/否定过滤契约同步 + 可选段落注入坑 |
+
+### Status
+
+[OK] **Completed**
