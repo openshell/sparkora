@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-knowledge-write-unify/prd.md", "reason": "AC1-AC11 验收清单与 Out of Scope 边界"}
+{"file": ".trellis/tasks/09-27-knowledge-write-unify/design.md", "reason": "共享抽象/事务边界/V3 迁移/检索过滤的设计逐项对照"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 REQUIREments_NEW 自注入与注解 SQL 符合权威模式"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 R5 检索过滤未破坏三域契约与降级可见语义"}

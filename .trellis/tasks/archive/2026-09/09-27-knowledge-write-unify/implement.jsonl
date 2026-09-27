@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "向量表 mapper 注解 SQL、REQUIRES_NEW 事务隔离、异步写入先清后插的权威约定是 M2 的依据"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索契约/开关语义/搜索工具健康状态码，R5 检索过滤须不破坏"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "best-effort 写入须与调用方事务隔离、多步写入失败顺序约束"}
+{"file": "src/main/resources/db/migration/README.md", "reason": "V3 迁移脚本命名/勿改已应用脚本/表结构三处同步约定"}
+{"file": "docs/spec/retrieval.md", "reason": "统一检索 searchTopKUnified 的域配额与候选窗口语义，R5 加模型过滤不得回归"}
+{"file": "docs/spec/knowledge/news.md", "reason": "NEWS 域写入链路与同步契约，R6 重建端点须与之一致"}
