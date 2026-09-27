@@ -729,3 +729,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: P1 架构一致性父任务收口(Cross-child 整合验收)
+<!-- trellis-session: v=2 fp=81930710d54cd348 -->
+
+**Date**: 2026-09-27
+**Task**: P1 架构一致性父任务收口(Cross-child 整合验收)
+**Branch**: `main`
+
+### Summary
+
+父任务 09-27-p1-arch-consistency 6/6 子任务全归档后执行整合验收:①项目表 status/last_*_error 写权唯一集中 ProjectStatusService(VersionService.setCurrent 仅写 current_version_id 选择列,属⑤划定例外);②spec 同步无矛盾(schema.sql 残留仅 baseline-description 文案、body_image_ids 零残留);③mvn test 448 全绿+npm build 通过;④AGENTS.md 当前阶段补 P1 收口段+控制器列表按子域拆分现状+ProjectStatusService 条目(文件被 gitignore,磁盘已更新)。父任务归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7b49298` | chore(task): archive 09-27-p1-arch-consistency |
+
+### Status
+
+[OK] **Completed**

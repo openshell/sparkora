@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
+- **Total Sessions**: 28
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~731 | Active |
+| `journal-1.md` | ~753 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-09-27 | P1 架构一致性父任务收口(Cross-child 整合验收) | `7b49298` | `main` |
 | 27 | 2026-09-27 | 简报到写作断链修复(09-27-brief-writing-linkage-fix) | `e7f9809`, `864d5b0`, `032b57e` | `main` |
 | 26 | 2026-09-27 | P1-⑨ 拆巨石（后端控制器+前端大组件） | `9801eaf`, `8351abf`, `0cacce9`, `de362e1` | `main` |
 | 25 | 2026-09-27 | P1-⑧ 知识域写入侧统一 + 向量模型名防护 | `73980ab`, `25b5b12`, `f0f7e59` | `main` |
