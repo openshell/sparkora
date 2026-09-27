@@ -580,3 +580,41 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: P1-⑥ Flyway 版本化迁移
+<!-- trellis-session: v=2 fp=e0d3e559f519b063 -->
+
+**Date**: 2026-09-27
+**Task**: P1-⑥ Flyway 版本化迁移
+**Branch**: `main`
+
+### Summary
+
+引入 Flyway 替代 schema.sql 兼职迁移:schema.sql 全量逐字固化为 V1__baseline.sql,既有库 BSLN@1 跳过、空库 V1 自举;文档/spec 33 处引用改指 Flyway
+
+### Main Changes
+
+- pom 增 flyway-core + flyway-database-postgresql(Boot BOM 10.10.0);application.yml 换 spring.flyway.*(baseline-on-migrate=true/baseline-version=1)
+- db/schema.sql → db/migration/V1__baseline.sql(逐字)+ 新增 migration/README.md;删旧 schema.sql
+- database-guidelines.md Migrations 段整体改写为 Flyway 约定;补 PG 主版本超前 Flyway 告警 gotcha
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c92f475` | feat(db): 引入 Flyway 版本化迁移替代 schema.sql 兼职 |
+| `6002212` | docs(spec): schema.sql 引用改指 Flyway 迁移 + 版本化约定 |
+
+### Testing
+
+- [OK] mvn -q -DskipTests compile 通过;mvn test 370 全绿
+- [OK] 隔离 pgvector 容器端到端:空库 V1 type=SQL、既有库 BSLN@1 跳过、重启幂等、V2 前向迁移;pg_dump 结构等价
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- P1-⑦ JSONB/表结构变更(已解锁,走 V2+ 迁移);或 P1-⑧ 知识域写入统一
