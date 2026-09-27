@@ -38,7 +38,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# jar 内含 db/schema.sql（spring.sql.init.mode=always 启动时幂等执行建表）
+# jar 内含 db/migration/*.sql（spring.flyway.* 启动时按版本执行迁移建表）
 COPY --from=build /build/target/*.jar /app/app.jar
 
 # WENYAN_CLI_PATH=wenyan：全局安装后位于 PATH（/usr/bin/wenyan），与 application.yml 默认值一致

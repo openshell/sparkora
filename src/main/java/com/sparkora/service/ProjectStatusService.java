@@ -15,7 +15,7 @@ import java.util.Map;
  *
  * <p>sparkora_article_project 的 status / last_brief_error / last_version_error / last_publish_error
  * 写入全部收敛到本服务。唯二例外:ArticleProjectController 创建时 INSERT 初始 DRAFT(非状态机转换)
- * 与 schema.sql 启动回填(存量数据修复,随 Flyway 子任务处置)。
+ * 与 V1__baseline.sql 启动回填(存量数据修复,已固化为 Flyway 基线,不再每次启动执行)。
  *
  * <p>历史教训:09-10-versions-page-fix(深度链路漏推状态机)与 09-27 P0-②(8 处 updateById 并发回写)
  * 都是状态推进逻辑散落多处的直接产物。

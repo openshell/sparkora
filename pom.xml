@@ -69,6 +69,16 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- Flyway 版本化迁移(版本走 spring-boot-starter-parent BOM,不写死) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <!-- Flyway 10 起 PostgreSQL 方言拆分为独立模块,缺失会报 Unsupported Database -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
         <!-- .env 读取 -->
         <dependency>
             <groupId>io.github.cdimascio</groupId>

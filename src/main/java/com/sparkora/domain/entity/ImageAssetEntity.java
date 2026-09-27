@@ -43,7 +43,7 @@ public class ImageAssetEntity {
     @TableField(exist = false)
     private List<String> tags;
 
-    // ==== S10 持久化字段（schema.sql S10 段幂等补列；存量行为 NULL） ====
+    // ==== S10 持久化字段（Flyway 迁移补列，已固化进 V1 基线；存量行为 NULL） ====
     /** 内容哈希（sha256 hex，入库去重用；仅新增入库必填，存量允许 NULL）。 */
     private String contentHash;
     /** 生成留档：实际命中的模型名（AI 来源；上传/BYD 为空）。 */
@@ -51,7 +51,7 @@ public class ImageAssetEntity {
     /** 生成留档：请求尺寸（AI 来源；auto/未指定为 NULL）。 */
     private String genSize;
 
-    // ==== 09-15 img-classify 持久化字段（schema.sql 幂等补列；存量行为 NULL） ====
+    // ==== 09-15 img-classify 持久化字段（Flyway 迁移补列，已固化进 V1 基线；存量行为 NULL） ====
     /** 来源引用串：新闻图 = 官方 news_id（如 /page/byd-cn/news-2026/detail632）；其他来源留空。 */
     private String sourceRef;
 }
