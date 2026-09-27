@@ -680,3 +680,28 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: P1-⑨ 拆巨石（后端控制器+前端大组件）
+<!-- trellis-session: v=2 fp=a0dee05afe2be1ea -->
+
+**Date**: 2026-09-27
+**Task**: P1-⑨ 拆巨石（后端控制器+前端大组件）
+**Branch**: `main`
+
+### Summary
+
+三巨石纯结构拆分、零行为变化：ArticleProjectController 555→155 行按子域拆出 ProjectBrief/Version/Image/Preview/Publish 5 个薄控制器（路由 25/25 等价、鉴权矩阵逐字一致、preview 400/409 不一致保留、方法体逐字搬迁）；StepPreview 994→441 + PreviewToolbar/Pane/ImageDrawer + 4 composable；ImageLibrary 908→354 + 5 子组件 + 4 composable + 2 utils。mvn test 424 全绿、npm run build 通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9801eaf` | refactor(web): ArticleProjectController 按子域拆分（路由/鉴权等价） |
+| `8351abf` | refactor(ui): StepPreview 抽子组件 + composable |
+| `0cacce9` | refactor(ui): ImageLibrary 抽子组件 + composable |
+| `de362e1` | docs(spec): 巨石拆分后的权威代码路径同步 |
+
+### Status
+
+[OK] **Completed**

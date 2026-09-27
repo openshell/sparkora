@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 25
+- **Total Sessions**: 26
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~682 | Active |
+| `journal-1.md` | ~707 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 26 | 2026-09-27 | P1-⑨ 拆巨石（后端控制器+前端大组件） | `9801eaf`, `8351abf`, `0cacce9`, `de362e1` | `main` |
 | 25 | 2026-09-27 | P1-⑧ 知识域写入侧统一 + 向量模型名防护 | `73980ab`, `25b5b12`, `f0f7e59` | `main` |
 | 24 | 2026-09-27 | P1-⑦ body_image_ids 规范化(Flyway V2) | `51ffef1`, `a80be75`, `d248513` | `main` |
 | 23 | 2026-09-27 | P1-⑥ Flyway 版本化迁移 | `c92f475`, `6002212` | `main` |
