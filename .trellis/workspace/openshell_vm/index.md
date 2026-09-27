@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 28
+- **Total Sessions**: 29
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~753 | Active |
+| `journal-1.md` | ~775 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 29 | 2026-09-27 | Session 18: 背景题 Tavily 正文补抓 + 事实手册 kind 分类 + 简报注入研究假设 | `652b187` | `main` |
 | 28 | 2026-09-27 | P1 架构一致性父任务收口(Cross-child 整合验收) | `7b49298` | `main` |
 | 27 | 2026-09-27 | 简报到写作断链修复(09-27-brief-writing-linkage-fix) | `e7f9809`, `864d5b0`, `032b57e` | `main` |
 | 26 | 2026-09-27 | P1-⑨ 拆巨石（后端控制器+前端大组件） | `9801eaf`, `8351abf`, `0cacce9`, `de362e1` | `main` |

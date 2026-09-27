@@ -751,3 +751,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: Session 18: 背景题 Tavily 正文补抓 + 事实手册 kind 分类 + 简报注入研究假设
+<!-- trellis-session: v=2 fp=fab9931317257270 -->
+
+**Date**: 2026-09-27
+**Task**: Session 18: 背景题 Tavily 正文补抓 + 事实手册 kind 分类 + 简报注入研究假设
+**Branch**: `main`
+
+### Summary
+
+任务 09-27-tavily-extract-kind-hypotheses（机制 B）：R1 SearchTool.extract default + Tavily POST /extract、WebSearchRouter.extract 委托降级、SubAgentRunner 仅背景题 top1-2 URL 补正文、截断唯一在工具层(DEEP_WEB_CONTENT_MAX_CHARS=2000);R2 SearchHit/WebHit 增 nullable content 保留旧构造器、rawFallback 透传;R3 背景题 ctx 注入正文、参数题不触发;R4 fact_sheet entry 增 kind(簇首问题类型,兜底 param);R5 写作按 kind 分参数事实/背景素材两段(全无 kind 退化旧平铺);R6 简报注入 research_plan.hypotheses。check 阶段修复 2 缺陷(SubAgentRunner 二次截断违反单点化、WebSearchRouter.extract 缺测)。mvn test 479 全绿;无 schema 变更;后端镜像重建 healthy。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `652b187` | feat(deep): 背景题 Tavily 正文补抓 + 事实手册 kind 分类 + 简报注入研究假设 |
+
+### Status
+
+[OK] **Completed**
