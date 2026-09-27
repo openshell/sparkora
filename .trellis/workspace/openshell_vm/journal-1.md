@@ -618,3 +618,41 @@ S9 外部搜索改为策略路由(默认 Tavily 优先、ADMIN 全局可配、�
 ### Next Steps
 
 - P1-⑦ JSONB/表结构变更(已解锁,走 V2+ 迁移);或 P1-⑧ 知识域写入统一
+
+
+## Session 24: P1-⑦ body_image_ids 规范化(Flyway V2)
+<!-- trellis-session: v=2 fp=62543056b953400d -->
+
+**Date**: 2026-09-27
+**Task**: P1-⑦ body_image_ids 规范化(Flyway V2)
+**Branch**: `main`
+
+### Summary
+
+P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关联表(V2 迁移含保序回填+DROP);JSONB 复核判定为有意约定不处置
+
+### Main Changes
+
+- V2__article_version_image.sql:建表+regexp_split_to_table WITH ORDINALITY 保序回填+DROP COLUMN
+- ArticleVersionImageEntity/Mapper;ImageService 引用检查改精确 SQL、modifyBodyImage insert/delete、快照契约不变;PreviewService 查关联表
+- spec/docs 同步:JSONB 有意约定裁定 + 有序小集合关联表先例
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51ffef1` | feat(db): body_image_ids 规范化为 version-image 关联表（V2 迁移） |
+| `a80be75` | docs(spec): 图像版本关联表字段同步 + JSONB 有意约定裁定 |
+| `d248513` | chore(task): archive 09-27-jsonb-normalize; update P1 parent task map |
+
+### Testing
+
+- [OK] mvn test 382 全绿(370 基线+12);npm run build 通过;隔离 pgvector 容器验两路径迁移+保序回填
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- P1-⑧ 知识域写入统一 / P1-⑨ 拆巨石

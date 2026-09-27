@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~620 | Active |
+| `journal-1.md` | ~658 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-09-27 | P1-⑦ body_image_ids 规范化(Flyway V2) | `51ffef1`, `a80be75`, `d248513` | `main` |
 | 23 | 2026-09-27 | P1-⑥ Flyway 版本化迁移 | `c92f475`, `6002212` | `main` |
 | 22 | 2026-09-27 | P1-④ 生成链路异步化(同步占位+@Async+轮询) | `6cd8bed`, `217e35f`, `66142c1` | `main` |
 | 21 | 2026-09-27 | P1-⑤ 状态机推进收敛到 ProjectStatusService | `dcedf49`, `05900ae` | `main` |
