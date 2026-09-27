@@ -17,6 +17,9 @@ public class AiProperties {
     private String model;
     /** 向量化模型(S6 车型知识库 RAG 用;实测 Qwen3-Embedding-8B,1024 维)。 */
     private String embeddingModel;
+    /** 向量维度(09-27 知识域写入侧统一):embedList 返回值校验用,不符即抛 AiException;
+     *  默认 1024 与现有 DDL 一致(不改变现状)。换模型须同步调大/调小该值与向量表 DDL。 */
+    private int embeddingDim = 1024;
     private String imageModel;
     /** 逗号分隔的图片模型列表，按序轮询（图片模型不稳定）；为空时回退到 imageModel 单个。 */
     private String imageModels;

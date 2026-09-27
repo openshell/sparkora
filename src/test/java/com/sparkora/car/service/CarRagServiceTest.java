@@ -48,7 +48,7 @@ class CarRagServiceTest {
         RuntimeException unifiedThrow = null;
 
         @Override
-        public int insert(Long docId, Long modelId, String embedding) { return 0; }
+        public int insert(Long docId, Long modelId, String embedding, String embeddingModel) { return 0; }
 
         @Override
         public int deleteByDocId(Long docId) { return 0; }
@@ -57,17 +57,17 @@ class CarRagServiceTest {
         public int deleteByModelId(Long modelId) { return 0; }
 
         @Override
-        public List<Map<String, Object>> searchTopK(Long modelId, String queryVec, int limit) {
+        public List<Map<String, Object>> searchTopK(Long modelId, String queryVec, int limit, String model) {
             RuntimeException e = byThrow.get(modelId);
             if (e != null) throw e;
             return byModelId.getOrDefault(modelId, List.of());
         }
 
         @Override
-        public List<Map<String, Object>> countByModel() { return List.of(); }
+        public List<Map<String, Object>> countByModel(String model) { return List.of(); }
 
         @Override
-        public List<Map<String, Object>> searchTopKUnified(String queryVec, int limit) {
+        public List<Map<String, Object>> searchTopKUnified(String queryVec, int limit, String model) {
             if (unifiedThrow != null) throw unifiedThrow;
             return unifiedRows.size() > limit ? unifiedRows.subList(0, limit) : unifiedRows;
         }
@@ -79,13 +79,13 @@ class CarRagServiceTest {
         RuntimeException byThrow = null;
 
         @Override
-        public int insert(Long chunkId, String embedding) { return 0; }
+        public int insert(Long chunkId, String embedding, String embeddingModel) { return 0; }
 
         @Override
         public int deleteByDocId(Long docId) { return 0; }
 
         @Override
-        public List<Map<String, Object>> searchTopK(String queryVec, int limit) {
+        public List<Map<String, Object>> searchTopK(String queryVec, int limit, String model) {
             if (byThrow != null) throw byThrow;
             return rows.size() > limit ? rows.subList(0, limit) : rows;
         }

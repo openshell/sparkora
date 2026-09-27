@@ -112,7 +112,7 @@ public class CarRagService {
     public List<Hit> retrieve(Long modelId, String query, int topK) {
         if (modelId == null || query == null || query.isBlank()) return List.of();
         String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = embMapper.searchTopK(modelId, vec, topK);
+        List<Map<String, Object>> rows = embMapper.searchTopK(modelId, vec, topK, embeddingClient.modelName());
         List<Hit> hits = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
@@ -128,7 +128,7 @@ public class CarRagService {
     public List<TypedHit> retrieveTyped(Long modelId, String query, int topK) {
         if (modelId == null || query == null || query.isBlank()) return List.of();
         String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = embMapper.searchTopK(modelId, vec, topK);
+        List<Map<String, Object>> rows = embMapper.searchTopK(modelId, vec, topK, embeddingClient.modelName());
         List<TypedHit> hits = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
@@ -378,7 +378,7 @@ public class CarRagService {
     public List<UnifiedHit> retrieveUnified(String query, int limit) {
         if (query == null || query.isBlank() || limit <= 0) return List.of();
         String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = embMapper.searchTopKUnified(vec, limit);
+        List<Map<String, Object>> rows = embMapper.searchTopKUnified(vec, limit, embeddingClient.modelName());
         List<UnifiedHit> hits = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
@@ -400,7 +400,7 @@ public class CarRagService {
     public List<TypedHit> retrieveKb(String query, int topK) {
         if (query == null || query.isBlank() || topK <= 0) return List.of();
         String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = kbEmbMapper.searchTopK(vec, topK);
+        List<Map<String, Object>> rows = kbEmbMapper.searchTopK(vec, topK, embeddingClient.modelName());
         List<TypedHit> hits = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));

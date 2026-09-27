@@ -49,7 +49,7 @@ public class ImageEmbeddingBackfillRunner implements ApplicationRunner {
     private void backfill() {
         try {
             long start = System.currentTimeMillis();
-            ImageEmbeddingService.EmbedStats st = embeddingService.rebuildMissing();
+            com.sparkora.ai.EmbedStats st = embeddingService.rebuildMissing();
             long cost = System.currentTimeMillis() - start;
             if (st.total() == 0) {
                 log.info("图片向量补齐完成:无缺失,跳过(total=0,耗时{}ms)", cost);

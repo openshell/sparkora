@@ -12,9 +12,10 @@ import org.apache.ibatis.annotations.Param;
 public interface NewsDocEmbeddingMapper {
 
     /** 插入一条向量。embedding 传 pgvector 字面量字符串,如 "[0.1,0.2,...]"。 */
-    @Insert("INSERT INTO sparkora_news_doc_embedding (doc_id, news_id, embedding, created_at) " +
-            "VALUES (#{docId}, #{newsId}, #{embedding}::vector, CURRENT_TIMESTAMP)")
-    int insert(@Param("docId") Long docId, @Param("newsId") Long newsId, @Param("embedding") String embedding);
+    @Insert("INSERT INTO sparkora_news_doc_embedding (doc_id, news_id, embedding, embedding_model, created_at) " +
+            "VALUES (#{docId}, #{newsId}, #{embedding}::vector, #{embeddingModel}, CURRENT_TIMESTAMP)")
+    int insert(@Param("docId") Long docId, @Param("newsId") Long newsId,
+               @Param("embedding") String embedding, @Param("embeddingModel") String embeddingModel);
 
     /** 删除某文档块的全部向量(重算时先清)。 */
     @Delete("DELETE FROM sparkora_news_doc_embedding WHERE doc_id = #{docId}")

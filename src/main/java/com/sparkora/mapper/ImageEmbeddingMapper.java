@@ -20,25 +20,29 @@ import java.util.Map;
 public interface ImageEmbeddingMapper {
 
     /** 插入一条图片向量。embedding 传 pgvector 字面量字符串。 */
-    @Insert("INSERT INTO sparkora_image_embedding (image_id, embedding, source_text, created_at) " +
-            "VALUES (#{imageId}, #{embedding}::vector, #{sourceText}, CURRENT_TIMESTAMP)")
+    @Insert("INSERT INTO sparkora_image_embedding (image_id, embedding, source_text, embedding_model, created_at) " +
+            "VALUES (#{imageId}, #{embedding}::vector, #{sourceText}, #{embeddingModel}, CURRENT_TIMESTAMP)")
     int insert(@Param("imageId") Long imageId,
                @Param("embedding") String embedding,
-               @Param("sourceText") String sourceText);
+               @Param("sourceText") String sourceText,
+               @Param("embeddingModel") String embeddingModel);
 
     /** 删除某图的向量（重建/增量共用：先物理清后插，幂等）。 */
     @Delete("DELETE FROM sparkora_image_embedding WHERE image_id = #{imageId}")
     int deleteByImageId(@Param("imageId") Long imageId);
 
-    /** 无向量的图片 id 集（rebuildMissing 用；一次 JOIN 求出差集，不走全量拉取）。 */
+    /**
+     * 无**当前模型**向量的图片 id 集（rebuildMissing 用；一次 JOIN 求出差集，不走全量拉取）。
+     * 09-27:JOIN 条件加 embedding_model,使「只有旧模型向量」的图被判为缺失、可被重建补齐。
+     */
     @Select("SELECT a.id FROM sparkora_image_asset a " +
-            "LEFT JOIN sparkora_image_embedding e ON e.image_id = a.id " +
+            "LEFT JOIN sparkora_image_embedding e ON e.image_id = a.id AND e.embedding_model = #{model} " +
             "WHERE e.id IS NULL ORDER BY a.id")
-    List<Long> findImageIdsWithoutEmbedding();
+    List<Long> findImageIdsWithoutEmbedding(@Param("model") String model);
 
     /**
      * 余弦相似度检索 top-K；ids 非空时限定候选集（标签 AND 预过滤后的白名单，候选集 ≤500）。
-     * 返回行：imageId / sourceText / score（余弦相似度，越大越相关）。
+     * 仅返回 embedding_model = 当前模型的行（09-27 模型过滤）；返回行：imageId / sourceText / score。
      *
      * 门槛在 SQL 外层过滤（`WHERE 1 - (embedding <=> vec) >= minScore`）：不传输注定被丢弃的行。
      * 注意：门槛写在 ORDER BY/LIMIT 同一层，HNSW 索引（`idx_image_emb_vec_hnsw`）仍可用于排序；
@@ -51,7 +55,8 @@ public interface ImageEmbeddingMapper {
     @Select("<script>SELECT e.image_id AS \"imageId\", e.source_text AS \"sourceText\", " +
             "1 - (e.embedding &lt;=&gt; #{queryVec}::vector) AS \"score\" " +
             "FROM sparkora_image_embedding e " +
-            "WHERE 1 - (e.embedding &lt;=&gt; #{queryVec}::vector) &gt;= #{minScore} " +
+            "WHERE e.embedding_model = #{model} " +
+            "AND 1 - (e.embedding &lt;=&gt; #{queryVec}::vector) &gt;= #{minScore} " +
             "<if test='ids != null and ids.size() &gt; 0'>" +
             "AND e.image_id IN <foreach item='i' collection='ids' open='(' separator=',' close=')'>#{i}</foreach> " +
             "</if>" +
@@ -59,5 +64,6 @@ public interface ImageEmbeddingMapper {
     List<Map<String, Object>> searchTopK(@Param("queryVec") String queryVec,
                                          @Param("ids") List<Long> ids,
                                          @Param("minScore") double minScore,
-                                         @Param("limit") int limit);
+                                         @Param("limit") int limit,
+                                         @Param("model") String model);
 }

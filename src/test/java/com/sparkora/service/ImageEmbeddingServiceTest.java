@@ -93,18 +93,18 @@ class ImageEmbeddingServiceTest {
 
         assertTrue(hits.isEmpty());
         verify(embeddingClient, never()).embed(anyString());
-        verify(embMapper, never()).searchTopK(anyString(), any(), anyDouble(), anyInt());
+        verify(embMapper, never()).searchTopK(anyString(), any(), anyDouble(), anyInt(), any());
     }
 
     @Test
     void 未指定标签_不查标签且不传白名单() {
         when(embeddingClient.embed("销量海报")).thenReturn("[0.1,0.2]");
-        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt())).thenReturn(List.of());
+        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt(), any())).thenReturn(List.of());
 
         assertTrue(service.searchImages("销量海报", 10, null, null).isEmpty());
 
         verify(tagService, never()).imageIdsByTag(anyString());
-        verify(embMapper).searchTopK(eq("[0.1,0.2]"), isNull(), eq(0.3), eq(10));
+        verify(embMapper).searchTopK(eq("[0.1,0.2]"), isNull(), eq(0.3), eq(10), any());
     }
 
     // ==================== 门槛与 limit 透传 ====================
@@ -112,25 +112,25 @@ class ImageEmbeddingServiceTest {
     @Test
     void minScore为null用配置默认_显式值优先() {
         when(embeddingClient.embed(anyString())).thenReturn("[0]");
-        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt())).thenReturn(List.of());
+        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt(), any())).thenReturn(List.of());
 
         service.searchImages("海报", 5, null, null);
-        verify(embMapper).searchTopK(eq("[0]"), isNull(), eq(0.3), eq(5));   // 配置默认 0.3
+        verify(embMapper).searchTopK(eq("[0]"), isNull(), eq(0.3), eq(5), any());   // 配置默认 0.3
 
         service.searchImages("海报", 999, 0.99, null);
-        verify(embMapper).searchTopK(eq("[0]"), isNull(), eq(0.99), eq(50)); // 显式门槛 + topK 收敛 50
+        verify(embMapper).searchTopK(eq("[0]"), isNull(), eq(0.99), eq(50), any()); // 显式门槛 + topK 收敛 50
     }
 
     @Test
     void 标签预过滤_白名单传入SQL且命中集截断() {
         when(tagService.imageIdsByTag("主题/销量")).thenReturn(List.of(1L, 2L, 3L));
         when(embeddingClient.embed(anyString())).thenReturn("[0]");
-        when(embMapper.searchTopK(anyString(), anyList(), anyDouble(), anyInt())).thenReturn(List.of());
+        when(embMapper.searchTopK(anyString(), anyList(), anyDouble(), anyInt(), any())).thenReturn(List.of());
 
         service.searchImages("海报", 10, null, List.of("主题/销量"));
 
         ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
-        verify(embMapper).searchTopK(eq("[0]"), captor.capture(), eq(0.3), eq(10));
+        verify(embMapper).searchTopK(eq("[0]"), captor.capture(), eq(0.3), eq(10), any());
         assertEquals(List.of(1L, 2L, 3L), captor.getValue());
     }
 
@@ -140,7 +140,7 @@ class ImageEmbeddingServiceTest {
     void 命中回填主表字段与标签_url与thumbUrl派生() {
         when(tagService.imageIdsByTag("主题/销量")).thenReturn(List.of(7L));
         when(embeddingClient.embed("销量海报")).thenReturn("[0.1]");
-        when(embMapper.searchTopK(anyString(), anyList(), anyDouble(), anyInt()))
+        when(embMapper.searchTopK(anyString(), anyList(), anyDouble(), anyInt(), any()))
                 .thenReturn(List.of(Map.of("imageId", 7L, "sourceText", "比亚迪销量创新高 主题/销量", "score", 0.62)));
 
         ImageAssetEntity img = new ImageAssetEntity();
@@ -177,7 +177,7 @@ class ImageEmbeddingServiceTest {
     @Test
     void 向量残留但图已删_跳过该命中() {
         when(embeddingClient.embed(anyString())).thenReturn("[0.1]");
-        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt()))
+        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt(), any()))
                 .thenReturn(List.of(Map.of("imageId", 404L, "sourceText", "x", "score", 0.9)));
         when(imageMapper.selectBatchIds(List.of(404L))).thenReturn(List.of());
 
@@ -213,7 +213,7 @@ class ImageEmbeddingServiceTest {
 
         var inOrder = org.mockito.Mockito.inOrder(embMapper);
         inOrder.verify(embMapper).deleteByImageId(9L);
-        inOrder.verify(embMapper).insert(9L, "[0.5]", "出海签约 主题/合作签约");
+        inOrder.verify(embMapper).insert(9L, "[0.5]", "出海签约 主题/合作签约", null);
     }
 
     @Test
@@ -222,7 +222,7 @@ class ImageEmbeddingServiceTest {
 
         var inOrder = org.mockito.Mockito.inOrder(embMapper);
         inOrder.verify(embMapper).deleteByImageId(9L);
-        inOrder.verify(embMapper).insert(9L, "[0.5]", "文本");
+        inOrder.verify(embMapper).insert(9L, "[0.5]", "文本", null);
     }
 
     /** self 未注入（直接 new 的单测场景）时退化为直写，不得 NPE。 */
@@ -238,7 +238,7 @@ class ImageEmbeddingServiceTest {
         service.embedOne(img);   // self == null（未反射注入）
 
         verify(embMapper).deleteByImageId(9L);
-        verify(embMapper).insert(9L, "[0.5]", "a");
+        verify(embMapper).insert(9L, "[0.5]", "a", null);
     }
 
     /**
@@ -263,7 +263,7 @@ class ImageEmbeddingServiceTest {
         // 经代理（独立事务边界）——直写由代理内的真实实现完成
         verify(spySelf).persistVector(9L, "[0.5]", "a");
         verify(embMapper).deleteByImageId(9L);
-        verify(embMapper).insert(9L, "[0.5]", "a");
+        verify(embMapper).insert(9L, "[0.5]", "a", null);
     }
 
     /** 反射注入 self（生产由 Spring @Autowired @Lazy 装配；单测无容器）。 */
@@ -291,7 +291,7 @@ class ImageEmbeddingServiceTest {
         when(embeddingClient.embed("(图片 1)")).thenReturn("[0]");
         when(embeddingClient.embed("(图片 2)")).thenThrow(new RuntimeException("超时"));
 
-        ImageEmbeddingService.EmbedStats st = service.rebuildAll();
+        com.sparkora.ai.EmbedStats st = service.rebuildAll();
 
         assertEquals(2, st.total());
         assertEquals(1, st.success());
@@ -300,9 +300,9 @@ class ImageEmbeddingServiceTest {
 
     @Test
     void rebuildMissing_无缺失时零副作用() {
-        when(embMapper.findImageIdsWithoutEmbedding()).thenReturn(List.of());
+        when(embMapper.findImageIdsWithoutEmbedding(any())).thenReturn(List.of());
 
-        ImageEmbeddingService.EmbedStats st = service.rebuildMissing();
+        com.sparkora.ai.EmbedStats st = service.rebuildMissing();
 
         assertEquals(0, st.total());
         assertEquals(0, st.success());

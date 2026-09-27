@@ -16,9 +16,10 @@ import java.util.Map;
 public interface KbChunkEmbeddingMapper {
 
     /** 插入一条向量。embedding 传 pgvector 字面量字符串,如 "[0.1,0.2,...]"。 */
-    @Insert("INSERT INTO sparkora_kb_chunk_embedding (chunk_id, embedding, created_at) " +
-            "VALUES (#{chunkId}, #{embedding}::vector, CURRENT_TIMESTAMP)")
-    int insert(@Param("chunkId") Long chunkId, @Param("embedding") String embedding);
+    @Insert("INSERT INTO sparkora_kb_chunk_embedding (chunk_id, embedding, embedding_model, created_at) " +
+            "VALUES (#{chunkId}, #{embedding}::vector, #{embeddingModel}, CURRENT_TIMESTAMP)")
+    int insert(@Param("chunkId") Long chunkId, @Param("embedding") String embedding,
+               @Param("embeddingModel") String embeddingModel);
 
     /** 删除某文档全部块的向量(重算时先清)。 */
     @Delete("DELETE FROM sparkora_kb_chunk_embedding WHERE chunk_id IN (SELECT id FROM sparkora_kb_chunk WHERE doc_id = #{docId})")
@@ -26,15 +27,17 @@ public interface KbChunkEmbeddingMapper {
 
     /**
      * 通用域余弦相似度检索 top-K(全库,无车型约束)。
-     * 仅取启用文档的块;返回 chunk_id + chunk_text + score(余弦相似度,越大越相关)。
+     * 仅取启用文档的块且 embedding_model = 当前模型(09-27 模型过滤);返回 chunk_id + chunk_text + score。
      */
     @Select("SELECT e.chunk_id AS \"chunkId\", c.chunk_text AS \"chunkText\", " +
             "1 - (e.embedding <=> #{queryVec}::vector) AS \"score\" " +
             "FROM sparkora_kb_chunk_embedding e " +
             "JOIN sparkora_kb_chunk c ON c.id = e.chunk_id " +
             "JOIN sparkora_kb_doc d ON d.id = c.doc_id AND d.deleted = 0 AND d.enabled = TRUE " +
+            "WHERE e.embedding_model = #{model} " +
             "ORDER BY e.embedding <=> #{queryVec}::vector " +
             "LIMIT #{limit}")
     List<Map<String, Object>> searchTopK(@Param("queryVec") String queryVec,
-                                         @Param("limit") int limit);
+                                         @Param("limit") int limit,
+                                         @Param("model") String model);
 }

@@ -69,12 +69,24 @@ public class EmbeddingClient {
             if (!emb.isArray() || emb.isEmpty()) {
                 throw new AiException("embedding 为空: " + truncate(resp), null);
             }
-            return mapper.convertValue(emb, mapper.getTypeFactory().constructCollectionType(List.class, Double.class));
+            List<Double> vec = mapper.convertValue(emb, mapper.getTypeFactory().constructCollectionType(List.class, Double.class));
+            // 09-27 维度校验（fail-fast）:不符立即抛 AiException,避免维度错位的脏向量进入 pgvector
+            int expected = props.getEmbeddingDim();
+            if (vec.size() != expected) {
+                throw new AiException("embedding 维度不符: 期望 " + expected + ", 实际 " + vec.size()
+                        + "（模型 " + model + "）", null);
+            }
+            return vec;
         } catch (AiException e) {
             throw e;
         } catch (Exception e) {
             throw new AiException("embedding 调用失败: " + e.getMessage(), e);
         }
+    }
+
+    /** 当前配置的向量模型名（09-27:写入向量表 embedding_model 列与检索过滤用同一来源）。 */
+    public String modelName() {
+        return props.getEmbeddingModel();
     }
 
     /** 把 double 列表转成 pgvector 字面量字符串。 */

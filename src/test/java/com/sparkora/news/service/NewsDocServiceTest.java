@@ -41,7 +41,7 @@ class NewsDocServiceTest {
         assertTrue(chunks.size() > 1, "超长段应切成多块");
         for (String c : chunks) {
             String body = c.substring(c.indexOf('\n') + 1);
-            assertTrue(body.length() <= NewsDocService.MAX_BODY_LEN, () -> "块体超限: " + body.length());
+            assertTrue(body.length() <= com.sparkora.ai.TextChunker.MAX_BODY_LEN, () -> "块体超限: " + body.length());
         }
     }
 
@@ -65,7 +65,7 @@ class NewsDocServiceTest {
         List<String> chunks = NewsDocService.chunkContent("硬切", PUB, sb.toString());
         assertTrue(chunks.size() >= 2);
         for (String c : chunks) {
-            assertTrue(c.length() <= "新闻：硬切（2026-09-01）\n".length() + NewsDocService.MAX_BODY_LEN);
+            assertTrue(c.length() <= "新闻：硬切（2026-09-01）\n".length() + com.sparkora.ai.TextChunker.MAX_BODY_LEN);
         }
     }
 

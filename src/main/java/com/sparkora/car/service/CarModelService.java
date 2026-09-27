@@ -68,6 +68,8 @@ public class CarModelService {
     private final com.sparkora.service.ImageService imageService;
     private final ImageStorage imageStorage;
     private final ObjectMapper json;
+    /** 09-27:向量对账统计须按当前配置模型过滤(countByModel 只计同模型行)。 */
+    private final com.sparkora.car.client.EmbeddingClient embeddingClient;
 
     private final java.net.http.HttpClient imageClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -80,7 +82,8 @@ public class CarModelService {
                            CarDocService docService, CarCleanService cleanService,
                            CarDocEmbeddingMapper embStatsMapper,
                            ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json,
-                           com.sparkora.service.ImageService imageService) {
+                           com.sparkora.service.ImageService imageService,
+                           com.sparkora.car.client.EmbeddingClient embeddingClient) {
         this.client = client;
         this.modelMapper = modelMapper;
         this.versionMapper = versionMapper;
@@ -94,6 +97,7 @@ public class CarModelService {
         this.imageStorage = imageStorage;
         this.json = json;
         this.imageService = imageService;
+        this.embeddingClient = embeddingClient;
     }
 
     /** 车型列表(按 id 倒序)。 */
@@ -280,7 +284,7 @@ public class CarModelService {
         // 每车型「块数 vs 有向量块数」一次 SQL(embStatsMapper 按注解 SQL 统计,不拉向量本体)
         int chunkCount = 0, embedded = 0;
         List<Map<String, Object>> missingTopN = new ArrayList<>();
-        for (Map<String, Object> row : embStatsMapper.countByModel()) {
+        for (Map<String, Object> row : embStatsMapper.countByModel(embeddingClient.modelName())) {
             long modelId = ((Number) row.get("modelId")).longValue();
             long total = ((Number) row.get("chunkCount")).longValue();
             long emb = ((Number) row.get("embeddedCount")).longValue();

@@ -38,7 +38,7 @@ class KbDocServiceTest {
         assertTrue(chunks.size() > 1, "超长段应切成多块");
         for (String c : chunks) {
             String body = c.substring(c.indexOf('\n') + 1);
-            assertTrue(body.length() <= KbDocService.MAX_BODY_LEN,
+            assertTrue(body.length() <= com.sparkora.ai.TextChunker.MAX_BODY_LEN,
                     () -> "块体超限: " + body.length());
         }
     }
@@ -64,7 +64,7 @@ class KbDocServiceTest {
         List<String> chunks = KbDocService.chunkContent("硬切", "通用", sb.toString());
         assertTrue(chunks.size() >= 2);
         for (String c : chunks) {
-            assertTrue(c.length() <= "知识：硬切（通用）\n".length() + KbDocService.MAX_BODY_LEN);
+            assertTrue(c.length() <= "知识：硬切（通用）\n".length() + com.sparkora.ai.TextChunker.MAX_BODY_LEN);
         }
     }
 }

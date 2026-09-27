@@ -1,9 +1,11 @@
 package com.sparkora.web.controller;
 
+import com.sparkora.ai.EmbedStats;
 import com.sparkora.common.R;
 import com.sparkora.domain.dto.PageResult;
 import com.sparkora.domain.entity.NewsEntity;
 import com.sparkora.domain.entity.NewsSyncJobEntity;
+import com.sparkora.news.service.NewsDocService;
 import com.sparkora.news.service.NewsService;
 import com.sparkora.news.service.NewsSyncJobService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,10 +26,12 @@ public class NewsController {
 
     private final NewsService service;
     private final NewsSyncJobService jobService;
+    private final NewsDocService docService;
 
-    public NewsController(NewsService service, NewsSyncJobService jobService) {
+    public NewsController(NewsService service, NewsSyncJobService jobService, NewsDocService docService) {
         this.service = service;
         this.jobService = jobService;
+        this.docService = docService;
     }
 
     /** 分页列表(?page&size&keyword)。 */
@@ -91,6 +95,23 @@ public class NewsController {
             return R.ok(Map.of("jobId", jobId));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+    }
+
+    /**
+     * 手动重建单篇新闻切块 + 向量（先清后建，幂等；09-27 R6 补齐 NEWS 缺失的手动重嵌入口）。
+     * 返回 {total, success, failed}；新闻不存在返回 404。
+     */
+    @PostMapping("/{id}/rebuild")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<EmbedStats> rebuild(@PathVariable Long id) {
+        try {
+            service.get(id);   // 不存在时抛 IllegalArgumentException → 404
+            return R.ok(docService.rebuildForNews(id));
+        } catch (IllegalArgumentException e) {
+            return R.fail(404, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
         }

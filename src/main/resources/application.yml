@@ -26,6 +26,9 @@ spring:
     baseline-description: "schema.sql baseline (S0~S12 全量)"
     # 校验已应用脚本 checksum,防止迁移文件被事后篡改
     validate-on-migrate: true
+    # 09-27:V3 迁移回填存量向量行的 embedding_model = 实际部署配置模型(避免硬编码默认值错标既有库)
+    placeholders:
+      embeddingModel: ${AI_EMBEDDING_MODEL:Qwen3-Embedding-8B}
   jackson:
     default-property-inclusion: non_null
 
@@ -51,6 +54,7 @@ sparkora:
     api-key: ${AI_API_KEY:}
     model: ${AI_MODEL:}
     embedding-model: ${AI_EMBEDDING_MODEL:}   # S6:向量化模型(车型知识库 RAG,实测 Qwen3-Embedding-8B)
+    embedding-dim: ${AI_EMBEDDING_DIM:1024}   # 09-27:向量维度校验(embedList 返回长度不符即抛 AiException)
     image-model: ${AI_IMAGE_MODEL:}
     image-models: ${AI_IMAGE_MODELS:}   # 逗号分隔，按序轮询（图片模型不稳定）
     timeout-ms: ${AI_TIMEOUT_MS:120000}

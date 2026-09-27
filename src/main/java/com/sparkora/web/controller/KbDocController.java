@@ -90,7 +90,7 @@ public class KbDocController {
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> rebuild(@PathVariable Long id) {
         try {
-            KbDocService.EmbedStats st = service.rebuild(id);
+            com.sparkora.ai.EmbedStats st = service.rebuild(id);
             return R.ok(Map.of("total", st.total(), "success", st.success(), "failed", st.failed()));
         } catch (Exception e) {
             return R.fail(500, e.getMessage());

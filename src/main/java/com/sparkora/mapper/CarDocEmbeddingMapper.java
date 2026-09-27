@@ -16,9 +16,10 @@ import java.util.Map;
 public interface CarDocEmbeddingMapper {
 
     /** 插入一条向量。embedding 传 pgvector 字面量字符串,如 "[0.1,0.2,...]"。 */
-    @Insert("INSERT INTO sparkora_car_doc_embedding (doc_id, model_id, embedding, created_at) " +
-            "VALUES (#{docId}, #{modelId}, #{embedding}::vector, CURRENT_TIMESTAMP)")
-    int insert(@Param("docId") Long docId, @Param("modelId") Long modelId, @Param("embedding") String embedding);
+    @Insert("INSERT INTO sparkora_car_doc_embedding (doc_id, model_id, embedding, embedding_model, created_at) " +
+            "VALUES (#{docId}, #{modelId}, #{embedding}::vector, #{embeddingModel}, CURRENT_TIMESTAMP)")
+    int insert(@Param("docId") Long docId, @Param("modelId") Long modelId,
+               @Param("embedding") String embedding, @Param("embeddingModel") String embeddingModel);
 
     /** 删除某文档块的全部向量(重算时先清)。 */
     @Insert("DELETE FROM sparkora_car_doc_embedding WHERE doc_id = #{docId}")
@@ -30,27 +31,33 @@ public interface CarDocEmbeddingMapper {
 
     /**
      * 余弦相似度检索 top-K。embedding 传查询向量字面量字符串。
+     * 仅返回与当前配置模型同模型的行（09-27 模型过滤：换模型后旧向量不再参与检索,避免静默混空间）。
      * 返回 doc_id + chunk_text + score(余弦相似度,越大越相关)。
      */
     @Select("SELECT e.doc_id AS \"docId\", d.chunk_text AS \"chunkText\", d.chunk_type AS \"chunkType\", " +
             "1 - (e.embedding <=> #{queryVec}::vector) AS \"score\" " +
             "FROM sparkora_car_doc_embedding e " +
             "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
-            "WHERE e.model_id = #{modelId} " +
+            "WHERE e.model_id = #{modelId} AND e.embedding_model = #{model} " +
             "ORDER BY e.embedding <=> #{queryVec}::vector " +
             "LIMIT #{limit}")
     List<Map<String, Object>> searchTopK(@Param("modelId") Long modelId,
                                          @Param("queryVec") String queryVec,
-                                         @Param("limit") int limit);
+                                         @Param("limit") int limit,
+                                         @Param("model") String model);
 
-    /** 全库向量对账统计(S6b):每车型块数与有向量块数(不拉向量本体,轻量聚合)。仅统计未逻辑删除的块。 */
+    /**
+     * 全库向量对账统计(S6b):每车型块数与**当前模型**有向量块数(不拉向量本体,轻量聚合)。
+     * 仅统计未逻辑删除的块;embeddedCount 只计 embedding_model = 当前模型 的行(09-27),
+     * 使「只有旧模型向量」的块被正确判为缺失、可被重建补齐。
+     */
     @Select("SELECT d.model_id AS \"modelId\", COUNT(*) AS \"chunkCount\", " +
-            "COUNT(e.id) AS \"embeddedCount\" " +
+            "COUNT(e.id) FILTER (WHERE e.embedding_model = #{model}) AS \"embeddedCount\" " +
             "FROM sparkora_car_doc d " +
             "LEFT JOIN sparkora_car_doc_embedding e ON e.doc_id = d.id " +
             "WHERE d.deleted = 0 " +
             "GROUP BY d.model_id")
-    List<Map<String, Object>> countByModel();
+    List<Map<String, Object>> countByModel(@Param("model") String model);
 
     /**
      * 统一检索(S8 去门禁):车型域、KB 域与新闻域(C2)同向量空间检索,按余弦分排序。
@@ -63,6 +70,8 @@ public interface CarDocEmbeddingMapper {
      * 新闻块(≈1300+)会因同向量空间高相似而占满整个窗口,把 CAR/KB 完全挤出候选
      * (实测 BYD 新闻类 query CAR 命中数从 32 掉到 0),下游独立配额随即失效。
      * 调用方传入的 limit 需 >= 各域配额(默认 topK*4 且至少 32,远大于 ragKbTopk/ragNewsTopk)。
+     *
+     * 模型过滤(09-27):三段均加 `embedding_model = #{model}`,换模型后旧模型行不再参与统一检索。
      */
     @Select("SELECT * FROM ( " +
             // ① 车型 + KB:合并取 top-K(C2 前语义原样保留)
@@ -72,6 +81,7 @@ public interface CarDocEmbeddingMapper {
             "FROM sparkora_car_doc_embedding e " +
             "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
             "JOIN sparkora_car_model m ON m.id = d.model_id " +
+            "WHERE e.embedding_model = #{model} " +
             "UNION ALL " +
             "SELECT 'KB' AS \"source\", e.chunk_id AS \"docId\", NULL AS \"modelId\", " +
             "       'KB_CHUNK' AS \"chunkType\", c.chunk_text AS \"chunkText\", " +
@@ -79,6 +89,7 @@ public interface CarDocEmbeddingMapper {
             "FROM sparkora_kb_chunk_embedding e " +
             "JOIN sparkora_kb_chunk c ON c.id = e.chunk_id " +
             "JOIN sparkora_kb_doc d2 ON d2.id = c.doc_id AND d2.deleted = 0 AND d2.enabled = TRUE " +
+            "WHERE e.embedding_model = #{model} " +
             "ORDER BY \"score\" DESC LIMIT #{limit}) " +
             // ② 新闻域:独立候选窗口,不与 CAR/KB 争抢全局 LIMIT
             "UNION ALL " +
@@ -88,8 +99,10 @@ public interface CarDocEmbeddingMapper {
             "FROM sparkora_news_doc_embedding e " +
             "JOIN sparkora_news_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
             "JOIN sparkora_news n ON n.id = d.news_id AND n.deleted = 0 " +
+            "WHERE e.embedding_model = #{model} " +
             "ORDER BY \"score\" DESC LIMIT #{limit}) " +
             ") u ORDER BY \"score\" DESC")
     List<Map<String, Object>> searchTopKUnified(@Param("queryVec") String queryVec,
-                                                @Param("limit") int limit);
+                                                @Param("limit") int limit,
+                                                @Param("model") String model);
 }

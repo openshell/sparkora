@@ -308,7 +308,7 @@ public class ImageController {
      *  单图失败不阻断整体；返回 {total, success, failed}（失败原因见后端日志）。 */
     @PostMapping("/embeddings/rebuild")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<com.sparkora.service.ImageEmbeddingService.EmbedStats> rebuildEmbeddings() {
+    public R<com.sparkora.ai.EmbedStats> rebuildEmbeddings() {
         try {
             return R.ok(embeddingService.rebuildAll());
         } catch (Exception ex) {

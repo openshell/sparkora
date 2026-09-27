@@ -3,6 +3,7 @@ package com.sparkora.car.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.ai.EmbeddingBatchRunner;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.domain.entity.CarDocEntity;
 import com.sparkora.domain.entity.CarModelEntity;
@@ -15,7 +16,10 @@ import com.sparkora.mapper.CarParamCleanMapper;
 import com.sparkora.mapper.CarParamGroupMapper;
 import com.sparkora.mapper.CarVersionMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -29,7 +33,7 @@ import java.util.List;
  * 另含 MODEL_INFO(车型基础信息)与 RIGHTS(购车权益)块,便于概览检索。
  *
  * 流程:先清旧文档块+向量,再按分组生成 chunk_text,逐个调 embedding 入库。
- * 网络 embedding 无事务;本地入库短事务。
+ * 网络 embedding 无事务;本地入库短事务(09-27 统一为 REQUIRES_NEW 自注入范式,见 rebuildForModel)。
  *
  * S6 重构:参数分组块基于清洗后数据(car_param_clean)生成,取值干净、类型化。
  */
@@ -44,12 +48,18 @@ public class CarDocService {
     private final CarDocMapper docMapper;
     private final CarDocEmbeddingMapper embMapper;
     private final EmbeddingClient embeddingClient;
+    private final EmbeddingBatchRunner batchRunner;
     private final ObjectMapper json;
+    /** 自注入代理（@Lazy）：让 {@link #persistCarDoc} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
+    @Autowired
+    @Lazy
+    private CarDocService self;
 
     public CarDocService(CarModelMapper modelMapper, CarParamGroupMapper groupMapper,
                          CarParamCleanMapper cleanMapper, CarVersionMapper versionMapper,
                          CarDocMapper docMapper, CarDocEmbeddingMapper embMapper,
-                         EmbeddingClient embeddingClient, ObjectMapper json) {
+                         EmbeddingClient embeddingClient, EmbeddingBatchRunner batchRunner,
+                         ObjectMapper json) {
         this.modelMapper = modelMapper;
         this.groupMapper = groupMapper;
         this.cleanMapper = cleanMapper;
@@ -57,6 +67,7 @@ public class CarDocService {
         this.docMapper = docMapper;
         this.embMapper = embMapper;
         this.embeddingClient = embeddingClient;
+        this.batchRunner = batchRunner;
         this.json = json;
     }
 
@@ -75,47 +86,11 @@ public class CarDocService {
         docs.addAll(buildParamGroupDocs(m));
 
         // S6b:embedding 调用并发化(固定小线程池,不随车型数膨胀)+ 单块失败重试 1 次;
-        // 结束输出成功/失败计数,失败块记 id——消除「静默丢块」与千次串行 HTTP。
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
-                Math.min(4, Math.max(1, docs.size())));
-        java.util.List<java.util.concurrent.Callable<Boolean>> tasks = new ArrayList<>();
-        java.util.List<CarDocEntity> failedDocs = java.util.Collections.synchronizedList(new ArrayList<>());
-        java.util.concurrent.atomic.AtomicInteger okCount = new java.util.concurrent.atomic.AtomicInteger();
-        for (CarDocEntity doc : docs) {
-            tasks.add(() -> {
-                try {
-                    try {
-                        insertDocWithEmbedding(doc);
-                    } catch (Exception first) {
-                        // 单块失败重试 1 次( embedding 服务抖动场景);重试仍失败才计失败
-                        log.warn("文档块向量化失败将重试 model={} type={} err={}", modelId, doc.getChunkType(), first.getMessage());
-                        insertDocWithEmbedding(doc);
-                    }
-                    okCount.incrementAndGet();
-                    return Boolean.TRUE;
-                } catch (Exception e) {
-                    failedDocs.add(doc);
-                    log.warn("文档块向量化失败(已重试) model={} type={} sortOrder={} err={}",
-                            modelId, doc.getChunkType(), doc.getSortOrder(), e.getMessage());
-                    return Boolean.FALSE;
-                }
-            });
-        }
-        try {
-            pool.invokeAll(tasks);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            pool.shutdown();
-        }
-        int total = docs.size();
-        int failed = failedDocs.size();
-        if (failed > 0) {
-            log.warn("车型向量重建完成(有缺失) model={} 成功 {}/{} 失败块 sortOrder={}",
-                    modelId, okCount.get(), total, failedDocs.stream().map(CarDocEntity::getSortOrder).toList());
-        } else {
-            log.info("车型向量重建完成 model={} 成功 {}/{}", modelId, okCount.get(), total);
-        }
+        // 结束输出成功/失败计数,失败块记 sortOrder——消除「静默丢块」与千次串行 HTTP。
+        // 09-27:委托 EmbeddingBatchRunner;embed 在事务外,持久化走 REQUIRES_NEW 独立事务。
+        batchRunner.run(docs, CarDocEntity::getChunkText,
+                (doc, vec) -> (self == null ? this : self).persistCarDoc(doc, vec),
+                "model=" + modelId, 4, 1);
     }
 
     /** 删除某车型的全部文档块 + 向量。 */
@@ -128,14 +103,18 @@ public class CarDocService {
         docMapper.delete(new QueryWrapper<CarDocEntity>().eq("model_id", modelId));
     }
 
-    /** 插入文档块并向量化(先插 doc 拿 id,再插 embedding)。 */
-    @Transactional
-    protected void insertDocWithEmbedding(CarDocEntity doc) {
+    /**
+     * 持久化文档块 + 向量(先插 doc 拿 id,再插 embedding)——独立事务边界(09-27 统一):
+     * embedding 网络调用在事务外,此处 REQUIRES_NEW 保证向量插入失败时 doc 一并回滚(不留孤儿块),
+     * 且不加入调用方环境事务。此前的 {@code @Transactional insertDocWithEmbedding} 由线程池 lambda
+     * 内 this 调用,代理不生效、注解被忽略。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void persistCarDoc(CarDocEntity doc, String vec) {
         doc.setCreatedAt(LocalDateTime.now());
         doc.setUpdatedAt(LocalDateTime.now());
         docMapper.insert(doc);
-        String vec = embeddingClient.embed(doc.getChunkText());
-        embMapper.insert(doc.getId(), doc.getModelId(), vec);
+        embMapper.insert(doc.getId(), doc.getModelId(), vec, embeddingClient.modelName());
     }
 
     /** 车型基础信息块。 */

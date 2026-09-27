@@ -2,6 +2,7 @@ package com.sparkora.service;
 
 import com.sparkora.car.client.EmbeddingClient;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.sparkora.ai.EmbedStats;
 import com.sparkora.config.AiProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.domain.dto.ImageSearchHit;
@@ -82,9 +83,6 @@ public class ImageEmbeddingService {
         this.newsMapper = newsMapper;
     }
 
-    /** 向量化结果（可观测）：成功/失败图计数（参照 KB 域 EmbedStats 先例）。 */
-    public record EmbedStats(int total, int success, int failed) {}
-
     // ==================== 写路径 ====================
 
     /**
@@ -121,7 +119,7 @@ public class ImageEmbeddingService {
 
     private void persistVectorInline(Long imageId, String vec, String text) {
         embMapper.deleteByImageId(imageId);
-        embMapper.insert(imageId, vec, text);
+        embMapper.insert(imageId, vec, text, embeddingClient.modelName());
     }
 
     /**
@@ -153,7 +151,7 @@ public class ImageEmbeddingService {
 
     /** 仅补缺失：只处理无向量的图（LEFT JOIN 差集），启动 runner 用；重跑无缺失即零副作用。 */
     public EmbedStats rebuildMissing() {
-        List<Long> missing = embMapper.findImageIdsWithoutEmbedding();
+        List<Long> missing = embMapper.findImageIdsWithoutEmbedding(embeddingClient.modelName());
         if (missing == null || missing.isEmpty()) return new EmbedStats(0, 0, 0);
         List<ImageAssetEntity> imgs = imageMapper.selectBatchIds(missing);
         // selectBatchIds 不保证顺序（且为 IN 查询），按 id 升序处理便于日志对照
@@ -245,7 +243,8 @@ public class ImageEmbeddingService {
         }
 
         String queryVec = embeddingClient.embed(query.trim());
-        List<Map<String, Object>> rows = embMapper.searchTopK(queryVec, idWhiteList, threshold, limit);
+        List<Map<String, Object>> rows = embMapper.searchTopK(queryVec, idWhiteList, threshold, limit,
+                embeddingClient.modelName());
         if (rows == null || rows.isEmpty()) return List.of();
 
         // 批查主表回填展示字段（避免 N+1，也避免向量表 JOIN 主表）
