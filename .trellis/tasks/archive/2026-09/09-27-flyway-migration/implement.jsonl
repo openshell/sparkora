@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migrations 段是当前 schema.sql 迁移约定权威,本任务整体改写为 Flyway;含幂等/索引切换/DO $$ 限制等历史约束"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "结构变更只允许执行幂等语句、验证不得触碰生产数据的硬约束(临时库验证方案依据)"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "容器启动路径与 schema.sql 执行时机的既有契约,docker compose 不托管 DB 的事实"}
+{"file": "docs/deploy.md", "reason": "第 123 行 schema.sql 启动执行说明需同步;部署命令与重建约定"}

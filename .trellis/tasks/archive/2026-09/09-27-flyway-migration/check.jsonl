@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-flyway-migration/prd.md", "reason": "AC1-AC8 验收清单(含既有库 baseline/新库 V1/二次幂等/文档同步)"}
+{"file": ".trellis/tasks/09-27-flyway-migration/design.md", "reason": "baseline-on-migrate/baseline-version 配置、V1 整段策略、两启动路径对照表"}
+{"file": ".trellis/tasks/09-27-flyway-migration/implement.md", "reason": "5 步有序清单 + 33 处文档同步面 + 验证命令"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对改写后的迁移约定无矛盾(旧幂等 schema.sql 指引已清除)"}

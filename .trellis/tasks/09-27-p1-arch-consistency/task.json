@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "09-27-state-machine-service",
-    "09-27-gen-async"
+    "09-27-gen-async",
+    "09-27-flyway-migration"
   ],
   "parent": null,
   "relatedFiles": [],

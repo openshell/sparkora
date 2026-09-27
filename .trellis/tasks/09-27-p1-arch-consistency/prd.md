@@ -21,7 +21,7 @@
 |---|---|---|
 | 09-27-state-machine-service（⑤） | ✅ 已归档（2026-09） | 状态机推进收敛到 `ProjectStatusService`（commit dcedf49 + 05900ae）；10 个转换逐字等价，345 测试全绿 |
 | 09-27-gen-async（④） | ✅ 已归档（2026-09） | 三条项目状态链路异步化（imitation/analyze、generate/versions、deep/generate）+ deep 批量 styleIds[] 补 claim；移除 advanceVersionsReadyFromReady；370 测试全绿 |
-| ⑥ Flyway 迁移 | 未建 | 独立；先迁工具再迁 ⑦ 的表结构（⑦ 的 schema 变更依赖 ⑥ 的版本化能力） |
+| 09-27-flyway-migration（⑥） | ✅ 已归档（2026-09） | 引入 Flyway 替代 schema.sql 兼职：V1 基线逐字固化、既有库 BSLN@1 跳过、空库 V1 自举；隔离 pgvector 容器端到端验证 AC3/AC4/AC5 + R4 前向迁移；370 测试全绿 |
 | ⑦ JSONB/表结构 | 未建 | 依赖 ⑥ |
 | ⑧ 知识域写入统一 | 未建 | 独立；向量模型名防护可与 ⑦ 一并落表结构 |
 | ⑨ 拆巨石 | 未建 | 独立；ArticleProjectController 拆分应在 ⑤④ 落地后做（避免拆两次） |
