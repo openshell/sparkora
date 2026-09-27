@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-jsonb-normalize/prd.md", "reason": "AC1-AC7 与 scope A 边界(JSONB 不处置)"}
+{"file": ".trellis/tasks/09-27-jsonb-normalize/design.md", "reason": "迁移 SQL/实体/服务改造逐项对照;对外契约不变与回滚路径"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对关联表写法/迁移幂等/三处同步与 JSONB 裁定落地"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "引用检查拒绝仍走 IllegalArgumentException(400) 语义不变"}

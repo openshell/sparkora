@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "关联表范式(多对多/应用层外键/无强FK/UNIQUE兜底)与 Migrations(Flyway V2 幂等/无 DO $$)是本任务权威约定;同时需在其中记录 JSONB 有意约定裁定"}
+{"file": "src/main/resources/db/migration/README.md", "reason": "V2 迁移脚本命名/幂等/禁改已应用脚本约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "多步写入失败顺序/不可逆副作用隔离/验证禁改生产数据(迁移端到端须隔离容器)"}
+{"file": "docs/spec/image.md", "reason": "body_image_ids 字段级契约与配图快照 API,三处同步目标"}
+{"file": "docs/spec/preview.md", "reason": "PreviewService 插图渲染契约,同源渲染输出不得变"}

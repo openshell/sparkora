@@ -21,7 +21,8 @@
   "children": [
     "09-27-state-machine-service",
     "09-27-gen-async",
-    "09-27-flyway-migration"
+    "09-27-flyway-migration",
+    "09-27-jsonb-normalize"
   ],
   "parent": null,
   "relatedFiles": [],
