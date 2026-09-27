@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-brief-writing-linkage-fix/prd.md", "reason": "AC-01..AC-07 验收与 Out of Scope 边界（不改 schema/响应结构/字段集）"}
+{"file": ".trellis/tasks/09-27-brief-writing-linkage-fix/design.md", "reason": "R1-R5 逐项设计、AiClient finishReason 向后兼容、窗口选择器索引对齐"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对检索/降级语义未被 R2/R5 破坏"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对 R4 两次失败落状态、无静默丢弃"}

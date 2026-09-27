@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "深度研究/子代理/KB-WEB 降级与工具契约的权威约定，R2/R3 须不破坏"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "状态写入收敛与 start*/run* 异步切分约定，R4 重试失败须落状态而非静默"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "确认本任务无 schema 变更的必要性（AC-07）"}
+{"file": "docs/spec/brief-generation.md", "reason": "简报六阶段与 research_notes/toolHints/keyQuestions 契约，R3 窗口选择依据"}
+{"file": "docs/spec/version-generation.md", "reason": "深度写作链路（write/runBatch）与版本落库契约，R1/R4 落点"}
