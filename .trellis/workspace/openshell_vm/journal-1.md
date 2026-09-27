@@ -656,3 +656,27 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Next Steps
 
 - P1-⑧ 知识域写入统一 / P1-⑨ 拆巨石
+
+
+## Session 25: P1-⑧ 知识域写入侧统一 + 向量模型名防护
+<!-- trellis-session: v=2 fp=54ffd6ed9702de59 -->
+
+**Date**: 2026-09-27
+**Task**: P1-⑧ 知识域写入侧统一 + 向量模型名防护
+**Branch**: `main`
+
+### Summary
+
+统一 CAR/KB/NEWS 切块(TextChunker)、并发嵌入(EmbeddingBatchRunner)、事务边界(REQUIRES_NEW+自注入)，修 CAR/NEWS 失效 @Transactional；V3 迁移给 4 张向量表加 embedding_model，检索按当前模型过滤，EmbeddingClient 维度校验，EmbeddingModelReconcileRunner 启动对账，NEWS 补 POST /{id}/rebuild；424 测试全绿，隔离 pgvector 容器验迁移与检索过滤；check 修正切块分隔符过度统一(AC4)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `73980ab` | feat(ai): 知识域写入侧统一(切块/并发嵌入/REQUIRES_NEW) + 向量模型名防护(V3/检索过滤/维度校验/NEWS重建端点) |
+| `25b5b12` | docs(spec): 向量模型列/维度校验/重嵌入口契约同步 |
+| `f0f7e59` | chore(task): archive 09-27-knowledge-write-unify; update P1 parent task map |
+
+### Status
+
+[OK] **Completed**
