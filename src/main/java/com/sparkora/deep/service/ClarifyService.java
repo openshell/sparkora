@@ -217,6 +217,22 @@ public class ClarifyService {
             "背景", "战略", "规划", "目标", "意义", "来龙去脉", "发展历程", "布局", "为什么", "如何演变"};
 
     /**
+     * 背景/来龙去脉型问题判定(09-27-brief-writing-linkage-fix R2)。
+     *
+     * <p>命中 {@link #BACKGROUND_TERMS} ∪ {@link #BACKGROUND_SIGNALS} 任一即为背景型。
+     * 取并集原因:LLM 生成的背景题含「背景/战略/目标」等 TERMS 词,而 R2 兜底背景题文案同样含这些词;
+     * 背景「主题信号词」(发布/战略/规划…)则可能出现在问题文本里。两类均属 R2 既有信号体系,不新增词汇。
+     *
+     * <p>用途:① 研究子代理判定「参数型问题」才允许因 KB 命中车型域权威块跳过 WEB;
+     * ② 研究窗口(受 maxAgents 截断)优先保留背景题。纯字符串判定,无副作用,包级可见供同包复用。
+     */
+    static boolean isBackgroundQuestion(String question) {
+        if (question == null || question.isBlank()) return false;
+        return java.util.Arrays.stream(BACKGROUND_TERMS).anyMatch(question::contains)
+                || java.util.Arrays.stream(BACKGROUND_SIGNALS).anyMatch(question::contains);
+    }
+
+    /**
      * R2(09-26)确定性兜底:主题/补充信息命中背景信号词、且现有 keyQuestions 无背景型问题时,
      * 追加一条背景/来龙去脉型问题,并同步追加对应 toolHints(保证问题与提示 1:1,避免落到 KB-only 默认)。
      *

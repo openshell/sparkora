@@ -134,4 +134,36 @@ class ClarifyServiceTest {
         assertEquals(node.path("keyQuestions").get(1).asText(),
                 node.path("toolHints").get(1).path("question").asText());
     }
+
+    // ===== R2(09-27-brief-writing-linkage-fix):背景/来龙去脉型问题判定 =====
+
+    @Test
+    void isBackgroundQuestion_背景词表命中() {
+        assertTrue(ClarifyService.isBackgroundQuestion("该车型的行业背景与意义是什么?"));
+        assertTrue(ClarifyService.isBackgroundQuestion("企业战略与长期目标?"));
+        assertTrue(ClarifyService.isBackgroundQuestion("发展规划与布局如何?"));
+        assertTrue(ClarifyService.isBackgroundQuestion("为什么会这样?"));
+        assertTrue(ClarifyService.isBackgroundQuestion("发展历程回顾"));
+    }
+
+    @Test
+    void isBackgroundQuestion_主题信号词命中() {
+        assertTrue(ClarifyService.isBackgroundQuestion("第2000座闪充站落成的意义?"));
+        assertTrue(ClarifyService.isBackgroundQuestion("这次发布会宣布了什么?"));
+        assertTrue(ClarifyService.isBackgroundQuestion("该里程碑事件的影响?"));
+    }
+
+    @Test
+    void isBackgroundQuestion_参数型问题为负例() {
+        assertEquals(false, ClarifyService.isBackgroundQuestion("海狮08的价格是多少?"));
+        assertEquals(false, ClarifyService.isBackgroundQuestion("续航里程与充电速度?"));
+        assertEquals(false, ClarifyService.isBackgroundQuestion("车身尺寸参数?"));
+    }
+
+    @Test
+    void isBackgroundQuestion_空输入为false() {
+        assertEquals(false, ClarifyService.isBackgroundQuestion(null));
+        assertEquals(false, ClarifyService.isBackgroundQuestion(""));
+        assertEquals(false, ClarifyService.isBackgroundQuestion("   "));
+    }
 }

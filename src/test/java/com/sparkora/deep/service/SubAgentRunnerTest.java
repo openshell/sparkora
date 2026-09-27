@@ -233,6 +233,84 @@ class SubAgentRunnerTest {
         return c;
     }
 
+    // ===== R5/AC-05:webQuery 否定答案过滤(09-27-brief-writing-linkage-fix) =====
+
+    @Test
+    void webQuery_否定答案被过滤_正常答案保留() {
+        String locked = "[{\"q\":\"对比竞品\",\"a\":\"不对比\"},{\"q\":\"读者\",\"a\":\"家庭用户\"}]";
+        String q = SubAgentRunner.webQuery("海狮08EV", "价格对比", locked);
+        assertFalse(q.contains("不对比"), "否定性答案不得进入 WEB query(制造噪声)");
+        assertTrue(q.contains("家庭用户"), "正常答案仍应注入");
+        assertTrue(q.contains("海狮08EV") && q.contains("价格对比"));
+    }
+
+    @Test
+    void webQuery_各类否定值均被过滤() {
+        for (String neg : new String[]{"无所谓", "都可以", "不限", "无偏好", "随便", "暂无", "不需要", "无", "跳过"}) {
+            String locked = "[{\"q\":\"x\",\"a\":\"" + neg + "\"}]";
+            String q = SubAgentRunner.webQuery("主题", "问题", locked);
+            assertFalse(q.contains(neg), "否定值「" + neg + "」不得进入 query: " + q);
+        }
+    }
+
+    @Test
+    void isNegativeAnswer_前缀兜底与正例() {
+        assertTrue(SubAgentRunner.isNegativeAnswer("不对比其他车型"));
+        assertTrue(SubAgentRunner.isNegativeAnswer("不需要对比"));
+        assertFalse(SubAgentRunner.isNegativeAnswer("Model Y"), "正常答案不得误判");
+        assertFalse(SubAgentRunner.isNegativeAnswer(null));
+        // 「无」精确匹配,但「无框车门」这类正常答案不得误伤(非精确/非前缀)
+        assertFalse(SubAgentRunner.isNegativeAnswer("无框车门"));
+    }
+
+    // ===== R2/AC-02:kbAuthoritative 仅对参数型问题生效(09-27-brief-writing-linkage-fix) =====
+
+    /** KB 命中车型域权威块(MODEL_INFO)。 */
+    private static SearchTool.SearchHit modelInfoHit() {
+        return SearchTool.SearchHit.kb("海狮08·MODEL_INFO", "海狮08", 1L, "价格区间 12.98-19.98 万", 0.9);
+    }
+
+    private static WebSearchOutcome oneHitOutcome() {
+        WebResultNormalizer.WebHit h1 = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a", "s", "TAVILY");
+        return new WebSearchOutcome(List.of(h1), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true)));
+    }
+
+    @Test
+    void 背景题_KB命中权威块_仍调用WEB() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        when(kb.search(anyString(), anyInt(), any())).thenReturn(List.of(modelInfoHit()));
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        when(router.search(anyString(), anyInt(), any())).thenReturn(oneHitOutcome());
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("该车型的行业背景与战略目标是什么?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.times(1))
+                .search(anyString(), anyInt(), any());
+    }
+
+    @Test
+    void 参数题_KB命中权威块_跳过WEB() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        when(kb.search(anyString(), anyInt(), any())).thenReturn(List.of(modelInfoHit()));
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("海狮08的价格是多少?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]", snap);
+
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never())
+                .search(anyString(), anyInt(), any());
+    }
+
     // ===== R10/AC-11:LLM 汇总失败降级时,搜索结果数口径不归零 =====
 
     @Test

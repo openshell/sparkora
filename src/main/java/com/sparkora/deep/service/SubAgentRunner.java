@@ -95,9 +95,13 @@ public class SubAgentRunner {
         List<WebHit> webHits = List.of();
         WebSearchOutcome outcome = null;
         String appliedWebQuery = null;
-        boolean kbAuthoritative = hits.stream().anyMatch(h ->
+        boolean kbParamAuthoritative = hits.stream().anyMatch(h ->
                 "KB".equals(h.type()) && (h.title() != null && h.title().contains("MODEL_INFO")
                         || (h.snippet() != null && h.snippet().contains("价格区间"))));
+        // R2(09-27-brief-writing-linkage-fix):KB 权威块仅对「事实/参数型」问题生效。
+        // 背景/来龙去脉型问题在车型锚定主题下几乎必然命中该车型 MODEL_INFO(复合 query 带锚点加权),
+        // 若据此跳过 WEB,行业战略类背景素材永远拿不到(KB 是车型库,不含此类内容)。故背景题强制放行 WEB。
+        boolean kbAuthoritative = !ClarifyService.isBackgroundQuestion(question) && kbParamAuthoritative;
         if (toolsAllowed.contains("WEB") && snapshot != null && snapshot.webAllowed() && webQuota > 0 && !kbAuthoritative) {
             appliedWebQuery = webQuery(topic, question, lockedAnswers);
             outcome = webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot);
@@ -182,6 +186,9 @@ public class SubAgentRunner {
     /**
      * WEB 查询构造(R7):项目主题 + 研究问题 + 已锁定澄清答案(仅非空答案);
      * 未锁定的澄清项绝不进入 query。无有效组成时回退问题本身。
+     *
+     * <p>R5(09-27-brief-writing-linkage-fix):语义为「放弃/无偏好」的否定性答案
+     * (如「不对比」「无所谓」)不得进入 query——它们描述的是用户的不选择,拼入会制造搜索噪声。
      */
     static String webQuery(String topic, String question, String lockedAnswersJson) {
         StringBuilder sb = new StringBuilder();
@@ -190,9 +197,23 @@ public class SubAgentRunner {
         String q = question == null ? "" : question.trim();
         if (!q.isEmpty()) sb.append(sb.length() > 0 ? " " : "").append(q);
         for (String a : lockedAnswerValues(lockedAnswersJson)) {
+            if (isNegativeAnswer(a)) continue;   // R5:否定性答案不注入
             if (!a.isBlank()) sb.append(sb.length() > 0 ? " " : "").append(a.trim());
         }
         return sb.length() == 0 && question != null ? question : sb.toString();
+    }
+
+    /** R5:语义为「放弃/无偏好」的否定性答案值(精确匹配 + 「不对比/不需要」前缀兜底)。 */
+    private static final List<String> NEGATIVE_ANSWER_VALUES = List.of(
+            "不对比", "不比较", "无所谓", "都可以", "都行", "不限", "无偏好", "随便",
+            "暂无", "不需要", "无", "没有", "不涉及", "跳过");
+
+    /** R5:否定性答案判定(仅精确匹配词表 + 「不对比/不需要」前缀,不做模糊包含,避免误伤正常答案)。 */
+    static boolean isNegativeAnswer(String a) {
+        if (a == null) return false;
+        String s = a.trim();
+        return NEGATIVE_ANSWER_VALUES.stream().anyMatch(s::equals)
+                || s.startsWith("不对比") || s.startsWith("不需要");
     }
 
     /** 从锁定答案 JSON [{q,a}] 提取非空答案值(去重);解析失败返回空列表(未锁定/无答案)。 */

@@ -116,7 +116,10 @@ public class DeepResearchService {
         JsonNode plan = json.readTree(b.getResearchPlan() == null ? "{}" : b.getResearchPlan());
         List<String> questions = new ArrayList<>();
         for (JsonNode q : plan.path("keyQuestions")) questions.add(q.asText());
-        int n = Math.min(questions.size(), props.getMaxAgents());
+        // R3(09-27-brief-writing-linkage-fix):预算内优先保背景型问题(兜底背景题 append 在尾部,
+        // 旧「截前 N 条」会优先丢它,与 R2「背景题必须拿到 WEB 素材」相互挫败)
+        List<Integer> window = selectResearchWindow(questions, props.getMaxAgents());
+        int n = window.size();
         if (n == 0) throw new IllegalStateException("研究计划无关键问题");
 
         // 运行互斥:同一 brief 未结束前拒绝重复触发(避免重复付费外部调用)
@@ -130,7 +133,7 @@ public class DeepResearchService {
             for (int i = 0; i < n; i++) {
                 Map<String, Object> note = new LinkedHashMap<>();
                 note.put("agentId", i + 1);
-                note.put("question", questions.get(i));
+                note.put("question", questions.get(window.get(i)));
                 note.put("status", "PENDING");
                 note.put("factsJson", "{\"facts\":[],\"gaps\":[]}");
                 note.put("webCount", 0);
@@ -154,6 +157,43 @@ public class DeepResearchService {
         } finally {
             if (!released) runningBriefs.remove(briefId);
         }
+    }
+
+    /**
+     * 研究窗口选择器(09-27-brief-writing-linkage-fix R3):在 {@code maxAgents} 预算内
+     * **优先保留背景/来龙去脉型问题**,其余按原序补足;返回按原序稳定的索引列表。
+     *
+     * <p>动机:研究计划 keyQuestions 可达 8 条(3~7 LLM + ≤1 兜底背景题),而 maxAgents 默认 6;
+     * 旧实现「截前 N 条」会优先丢掉 append 在尾部的兜底背景题,与 R2「背景题必须拿到 WEB 素材」相互挫败。
+     *
+     * <p>纯函数、无副作用、不调 LLM;两处调用(run 落占位/doRunAsync 执行)共用同一索引选择,
+     * 保证 question 与 toolHints 索引对齐;排序归位后 agent 顺序自然、与原计划一致。
+     *
+     * @return 原序升序的索引列表(长度 = min(questions.size(), maxAgents))
+     */
+    static List<Integer> selectResearchWindow(List<String> questions, int maxAgents) {
+        List<Integer> idx = new ArrayList<>();
+        if (questions == null || questions.isEmpty() || maxAgents <= 0) return idx;
+        int n = Math.min(questions.size(), maxAgents);
+        List<Integer> bg = new ArrayList<>();
+        for (int i = 0; i < questions.size(); i++) {
+            if (ClarifyService.isBackgroundQuestion(questions.get(i))) bg.add(i);
+        }
+        int remaining = n - bg.size();
+        if (remaining <= 0) {
+            // 背景题多于预算:仍按原序取前 n 条背景题
+            idx.addAll(bg.subList(0, n));
+        } else {
+            idx.addAll(bg);
+            for (int i = 0; i < questions.size() && remaining > 0; i++) {
+                if (!ClarifyService.isBackgroundQuestion(questions.get(i))) {
+                    idx.add(i);
+                    remaining--;
+                }
+            }
+        }
+        java.util.Collections.sort(idx);   // 归位原序,与 toolHints 索引一致
+        return idx;
     }
 
     /** 解析本次研究的有效策略与开关快照:运行时设置(非空优先)> 部署级默认;开关两路相与。 */
@@ -202,7 +242,9 @@ public class DeepResearchService {
             for (JsonNode t : hints == null ? java.util.List.<JsonNode>of() : hints) {
                 toolHints.add(t.path("tools").toString());
             }
-            int n = Math.min(questions.size(), props.getMaxAgents());
+            // R3:与研究启动阶段同一选择器(预算内保背景题),按索引取 questions/toolHints 保证对齐
+            List<Integer> window = selectResearchWindow(questions, props.getMaxAgents());
+            int n = window.size();
             if (n == 0) return;
 
             // webQuota 语义:单 provider 返回条数上限(策略路由只采信首个有效 provider)
@@ -222,7 +264,7 @@ public class DeepResearchService {
             for (int i = 0; i < n; i++) {
                 Map<String, Object> note = new LinkedHashMap<>();
                 note.put("agentId", i + 1);
-                note.put("question", questions.get(i));
+                note.put("question", questions.get(window.get(i)));
                 note.put("status", "RUNNING");
                 note.put("factsJson", "{\"facts\":[],\"gaps\":[]}");
                 note.put("webCount", 0);
@@ -234,10 +276,11 @@ public class DeepResearchService {
             List<Future<SubAgentRunner.Note>> futures = new ArrayList<>();
             for (int i = 0; i < n; i++) {
                 final int idx = i;
-                String q = questions.get(i);
+                final int qIdx = window.get(i);
+                String q = questions.get(qIdx);
                 // WEB 门控用快照(AC-05:同批次同一开关快照),KB 门控仍读运行时设置
                 List<String> tools = applySettingGates(
-                        idx < toolHints.size() ? parseTools(toolHints.get(idx)) : List.of("KB"),
+                        qIdx < toolHints.size() ? parseTools(toolHints.get(qIdx)) : List.of("KB"),
                         snapshot.webAllowed());
                 futures.add(pool.submit(() -> subAgent.research(q, tools, webQuotaPerAgent, anchors, topic,
                         lockedAnswers, snapshot)));
@@ -249,7 +292,7 @@ public class DeepResearchService {
             List<Future<?>> collectors = new ArrayList<>();
             for (int i = 0; i < futures.size(); i++) {
                 final int idx = i;
-                final String q = questions.get(i);
+                final String q = questions.get(window.get(i));
                 final Future<SubAgentRunner.Note> f = futures.get(i);
                 collectors.add(pool.submit(() -> {
                     Map<String, Object> note = new LinkedHashMap<>();
