@@ -147,14 +147,15 @@
 |---|---|---|
 | id | BIGSERIAL | 主键 |
 | image_id | BIGINT NOT NULL | → `sparkora_image_asset.id`（应用层维护，**不建强外键**；与 `sparkora_image_tag` 同惯例） |
-| embedding | VECTOR(1024) NOT NULL | **与 car/kb/news 三域同模型（Qwen3-Embedding-8B）同维度（1024）同向量空间**——硬约束，否则跨域检索无意义，故**不存模型名/维度列** |
+| embedding | VECTOR(1024) NOT NULL | **与 car/kb/news 三域同模型（Qwen3-Embedding-8B）同维度（1024）同向量空间**——硬约束，否则跨域检索无意义 |
+| embedding_model | VARCHAR(100) 可空 | **09-27 P1-⑧ 新增**：写入时盖当前配置模型（`EmbeddingClient.modelName()`），检索按当前模型过滤；存量行回填为实际部署配置模型。~~不存模型名/维度列~~（V1 决策已被本任务推翻——同维换模型需可检测） |
 | source_text | TEXT NOT NULL | 嵌入原文（调试 + 重建可追溯） |
 | created_at | TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间 |
 
 - **一图一向量**：`CREATE UNIQUE INDEX IF NOT EXISTS uk_image_emb_image ON sparkora_image_embedding(image_id)` —— 唯一约束即幂等保证（重建先物理删后插，重复插入不可能；并发重复嵌入第二插入报唯一冲突由 `embedQuietly` 吞掉并 warn）。
 - 向量索引 `idx_image_emb_vec_hnsw`：`USING hnsw (embedding vector_cosine_ops)`（与三域统一 HNSW cosine）。
 - **不加 `deleted` 列**（物理表，同三域 embedding 表）；**不建 FK**：删图时应用层同事务物理清向量（`ImageService.delete` → `embeddingService.deleteByImageId`），防残留向量命中已删图。
-- 实体：本表**无 entity**（VECTOR 类型 MyBatis-Plus `BaseMapper` 无法处理），用注解 SQL mapper `ImageEmbeddingMapper`（`insert`/`deleteByImageId`/`findImageIdsWithoutEmbedding`/`searchTopK`，参照 `CarDocEmbeddingMapper` 先例）。
+- 实体：本表**无 entity**（VECTOR 类型 MyBatis-Plus `BaseMapper` 无法处理），用注解 SQL mapper `ImageEmbeddingMapper`（`insert`/`deleteByImageId`/`findImageIdsWithoutEmbedding`/`searchTopK`，参照 `CarDocEmbeddingMapper` 先例；09-27 起 `insert`/`searchTopK`/`findImageIdsWithoutEmbedding` 均带 `embedding_model` 参数——检索按当前模型过滤，补缺失用 `LEFT JOIN ... AND e.embedding_model = #{model}` 使「只有旧模型向量」的图被判为缺失可补齐）。
 
 **嵌入文本构造（`com.sparkora.image.embed.ImageEmbeddingTextBuilder`，纯静态可单测）**：
 

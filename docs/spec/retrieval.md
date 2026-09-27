@@ -62,6 +62,18 @@
 | `AI_RAG_ANCHOR_BOOST` | `1.15` | 统一检索锚点车型块分数加权系数（见 [knowledge/kb.md](knowledge/kb.md)） |
 | `AI_RAG_NEWS_TOPK` | `4` | 新闻域生成注入块数上限（`0` 关闭 NEWS 注入；不受 KB 开关控制；见 [knowledge/news.md](knowledge/news.md)） |
 | `AI_IMAGE_MIN_SCORE` | `0.3` | 图片语义检索门槛（独立入口；见 [image.md](image.md)） |
+| `AI_EMBEDDING_DIM` | `1024` | 向量维度校验：`EmbeddingClient.embedList` 返回长度不符即抛 `AiException`（09-27；见下节） |
+
+---
+
+## 4.1 向量模型防护（09-27 P1-⑧）
+
+- **配置单一来源**：`AI_EMBEDDING_MODEL`（`.env` → `sparkora.ai.embedding-model` → `AiProperties.embeddingModel`）；维度 `AI_EMBEDDING_DIM`（默认 1024，与 DDL `VECTOR(1024)` 一致）。
+- **4 张向量表加 `embedding_model VARCHAR(100)`**（Flyway V3）：`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding` / `sparkora_news_doc_embedding` / `sparkora_image_embedding`；存量行回填为实际部署配置模型（placeholder `${embeddingModel}`）。
+- **写入盖名**：4 条写路径（CAR/KB/NEWS/IMAGE）统一盖 `EmbeddingClient.modelName()`；**检索过滤**：4 条查询（`searchTopK`×3 + `searchTopKUnified` 三段）均加 `embedding_model = 当前模型`。换模型后旧模型行自动失效（可见降级而非静默混空间），重嵌后新向量自动生效。
+- **维度校验 fail-fast**：`EmbeddingClient.embedList` 校验返回长度 == `AI_EMBEDDING_DIM`，不符抛 `AiException`（中文提示含实际/期望维度与模型名），首次写入或查询即暴露。
+- **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）逐表 `GROUP BY embedding_model`，存在非当前模型的行时 WARN（列出模型名+条数，提示重嵌），异常仅 warn 不阻断启动。
+- **重嵌入口**：CAR `POST /api/car/models/rebuild-all`、KB `POST /api/kb/docs/{id}/rebuild`、NEWS `POST /api/news/{id}/rebuild`（09-27 新增）、IMAGE `POST /api/images/embeddings/rebuild`；跨域一键重嵌编排 out of scope。
 
 ---
 

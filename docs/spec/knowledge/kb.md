@@ -20,7 +20,7 @@
 |---|---|---|
 | `sparkora_kb_doc` | id / title(≤200) / domain(默认「通用」) / content / enabled / created_by / 审计字段 / deleted | 手工知识条目；逻辑删 |
 | `sparkora_kb_chunk` | id / doc_id FK / seq / chunk_text / created_at | 检索块；`chunk_text` 首行固定「知识：<title>（<domain>）」 |
-| `sparkora_kb_chunk_embedding` | id / chunk_id FK / embedding vector(1024) / created_at | 向量；**C1 起 HNSW cosine（`idx_kb_chunk_emb_vec_hnsw`，与车型域 `idx_car_doc_emb_vec` 统一；旧 IVFFLAT 索引已幂等 DROP）** |
+| `sparkora_kb_chunk_embedding` | id / chunk_id FK / embedding vector(1024) / **embedding_model VARCHAR(100)（09-27）** / created_at | 向量；**C1 起 HNSW cosine（`idx_kb_chunk_emb_vec_hnsw`，与车型域 `idx_car_doc_emb_vec` 统一；旧 IVFFLAT 索引已幂等 DROP）**；09-27 起写入盖模型名、检索按当前模型过滤 |
 
 ---
 
@@ -28,8 +28,8 @@
 
 `com.sparkora.kb.service.KbDocService` — create/update/delete/list/get/rebuild：
 
-- 切块：空行分段、单段 ≤500 字符、超长按句读（。；；！？）切分合并、段内换行转空格。
-- 重建幂等（先物理清 chunk+embedding 再重嵌）；embedding 单块失败 warn+计数（`EmbedStats` total/success/failed），块缺失用 rebuild 补齐。
+- 切块：**09-27 起薄委托 `com.sparkora.ai.TextChunker.chunk`**（空行分段、单段 ≤500 字符、超长按句读（KB 保持历史集合 `。；!?`）切分合并、段内换行转空格；KB 语义 = 空正文恒保留标题块；句读集合按域参数化，不取 NEWS 超集）。`splitSentences` 全库仅 `TextChunker` 一处定义。
+- 重建幂等（先物理清 chunk+embedding 再重嵌）；**串行无重试（KB 失败策略不变）**，委托 `EmbeddingBatchRunner`（`maxParallel=1,maxRetries=0`）；embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistChunk`（chunk 行与向量行同事务）；单块失败 warn+计数（共享 `com.sparkora.ai.EmbedStats` total/success/failed），块缺失用 rebuild 补齐。
 - `enabled=false` 时清块。
 
 ---
@@ -53,7 +53,7 @@
 
 | 项 | 行为 |
 |---|---|
-| 统一检索 | `searchTopKUnified(queryVec, limit)`：车型域与 KB 域（及 NEWS 域）**UNION ALL 同向量空间全库检索**，按余弦分排序；返回行带 `source(CAR/KB/NEWS)`/`modelId`/`chunkType`/`modelName`。「项目关联车型」**不再是检索门禁**——未关联车型也全库检索（修复文章18 类误伤：数据在库却因未关联查不到） |
+| 统一检索 | `searchTopKUnified(queryVec, limit, model)`：车型域与 KB 域（及 NEWS 域）**UNION ALL 同向量空间全库检索**，按余弦分排序；返回行带 `source(CAR/KB/NEWS)`/`modelId`/`chunkType`/`modelName`。「项目关联车型」**不再是检索门禁**——未关联车型也全库检索（修复文章18 类误伤：数据在库却因未关联查不到）。**09-27 起三段各带 `embedding_model = 当前模型` 过滤**（换模型后旧向量不再参与检索） |
 | 锚点加权 | 项目关联车型降为**写作锚点**：CAR 块 `modelId ∈ anchor` → `score × AI_RAG_ANCHOR_BOOST`（默认 1.15，上限 1.0 截断）重排；~~前端项目编辑页改「写作锚点车型」文案~~（**2026-09-09：创建页车型选择入口已移除**——创作不与车型绑定，知识库停用期间该字段无生效点；后端关联逻辑与锚点加权保留，存量项目不受影响；新项目无 anchor 即全库无加权） |
 | 配额 | 核心块（`PARAM_GROUP`/`MODEL_INFO`）优先、`RIGHTS`/`FEATURE` ≤1/3、`KB_CHUNK` 独立配额 `AI_RAG_KB_TOPK`；`AI_RAG_KB_ENABLED=false` 时 KB 块在配额层排除（等价 S6 行为，检索仍跑） |
 | 来源标注 | 行内前缀「【车型数据：名称】」/「【通用知识：标题】」/「【官方新闻：标题】」；首行「知识来源：…」按命中构成生成 |
@@ -81,3 +81,4 @@
 - KB 块不参与锚点加权（无 `modelId`）。
 - `AI_RAG_KB_ENABLED=false` 只是配额层排除，检索仍会跑（浪费一次向量查询）。
 - 「项目关联车型」入口已从创建页移除，存量项目 anchor 仍生效。
+- **换 embedding 模型后 KB 存量向量自动失效**（`embedding_model` 过滤），需逐文档 `POST /api/kb/docs/{id}/rebuild` 重嵌；无跨域一键重嵌。

@@ -70,6 +70,7 @@ graph LR
 
 - 图片域 `sparkora_image_embedding` 与三域**同模型同维度同空间**，但检索入口独立（`POST /api/images/search`），不并入 `searchTopKUnified`。
 - 知识域与问答的浏览/问答**不受** `kb_enabled` 控制，仅生成注入可开关。
+- **向量模型防护（09-27 P1-⑧）**：4 张向量表均有 `embedding_model` 列（Flyway V3），写入盖当前模型、检索按当前模型过滤（换模型后旧行自动失效）；`AI_EMBEDDING_DIM` 校验向量维度；启动 `EmbeddingModelReconcileRunner` 对非当前模型行告警。详见 [spec/retrieval.md §4.1](spec/retrieval.md)。
 
 ---
 
@@ -177,7 +178,7 @@ graph TD
 |---|---|---|
 | 数据库 | `SPARKORA_DB_HOST/PORT/NAME/USER/PASSWORD` | —（Flyway 迁移建表） |
 | JWT / 端口 | `JWT_SECRET`、`JWT_EXPIRE_MINUTES`、`SERVER_PORT`（默认 8080）、`BACKEND_PORT`/`FRONTEND_PORT`（Docker 产线端口，见 [deploy.md](deploy.md)） | [spec/overview.md](spec/overview.md)、[deploy.md](deploy.md) |
-| AI 统一入口 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` / `AI_EMBEDDING_MODEL` / `AI_TIMEOUT_MS` / `AI_TEMPERATURE` | [spec/overview.md](spec/overview.md) |
+| AI 统一入口 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` / `AI_EMBEDDING_MODEL` / `AI_EMBEDDING_DIM` / `AI_TIMEOUT_MS` / `AI_TEMPERATURE` | [spec/overview.md](spec/overview.md)、[spec/retrieval.md §4.1](spec/retrieval.md) |
 | AI 图像 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS`（多模型逗号分隔轮询，图生图）+ `AI_IMAGE_MIN_SCORE` | [spec/image.md](spec/image.md) |
 | 配图建议 | `AI_ILLUSTRATION_SUGGEST_ENABLED` / `AI_ILLUSTRATION_MAX_ANCHORS` / `AI_ILLUSTRATION_TOP_N` | [spec/image.md](spec/image.md) |
 | RAG 检索 | `AI_RAG_MIN_SCORE` / `AI_RAG_REJECT_SCORE` / `AI_RAG_KB_TOPK` / `AI_RAG_KB_ENABLED` / `AI_RAG_ANCHOR_BOOST` / `AI_RAG_NEWS_TOPK` | [spec/retrieval.md](spec/retrieval.md)、[spec/knowledge/kb.md](spec/knowledge/kb.md)、[spec/knowledge/news.md](spec/knowledge/news.md) |

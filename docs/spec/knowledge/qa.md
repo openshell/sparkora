@@ -135,3 +135,4 @@ QaController ─▶ QaService.ask(sessionId, question, user)
 - 历史无摘要压缩，超长会话丢最旧（见 §2）。
 - 会话不可分享/导出（Out of Scope，后续可扩展）。
 - `sparkora_*_embedding` 为物理表（无 `deleted`），删除带逻辑删除的实体时需按外键一条 SQL 兜底物理清（既有实现已处理）。
+- 问答链路消费的 `searchTopKUnified`/`searchTopK`（图片）自 09-27 起按 `embedding_model = 当前模型` 过滤；换模型后旧模型向量对问答不可见，需先重嵌各域（见 [car.md](car.md)/[kb.md](kb.md)/[news.md](news.md)）。

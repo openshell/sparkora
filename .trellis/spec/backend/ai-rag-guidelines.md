@@ -433,7 +433,7 @@ try {
 // ImageEmbeddingTextBuilder（纯静态，可单测，零 AI）
 static String build(ImageAssetEntity img, List<String> tags, String newsTitle)  // 2000 字符截断，全空兜底 (图片 <id>)
 // ImageEmbeddingService
-record EmbedStats(int total, int success, int failed)          // 对标 KbDocService.EmbedStats
+record EmbedStats(int total, int success, int failed)          // 09-27 起为 com.sparkora.ai.EmbedStats 共享定义
 void embedOne(ImageAssetEntity img)                            // 先物理删旧向量再插（幂等）
 void embedQuietly(Long imageId)                                // 吞全部异常仅 warn，绝不影响图片入库
 EmbedStats rebuildAll() / rebuildMissing()                     // 全量 / 仅补 LEFT JOIN 差集
@@ -442,7 +442,7 @@ List<ImageSearchHit> searchImages(String query, Integer topK, Double minScore, L
 ```
 
 ### 3. Contracts
-- **同空间硬约束**：`sparkora_image_embedding.embedding VECTOR(1024)` + HNSW `vector_cosine_ops`，复用 `EmbeddingClient`（Qwen3-Embedding-8B）。**不新增 embedding 客户端、不存模型名/维度列**——列存模型名只会制造「不同模型混检索」的错觉。
+- **同空间硬约束**：`sparkora_image_embedding.embedding VECTOR(1024)` + HNSW `vector_cosine_ops`，复用 `EmbeddingClient`（Qwen3-Embedding-8B）。**不新增 embedding 客户端**。~~不存模型名/维度列~~（**09-27 P1-⑧ 推翻**：加 `embedding_model` 列并检索按当前模型过滤，见本文「知识域写入侧统一 + 向量模型防护」Scenario 与 database-guidelines.md——原「列存模型名只会制造错觉」的判断已被「同维换模型静默混空间」风险证伪）。
 - **一图一向量**：`UNIQUE(image_id)` 即幂等保证（重建先清后插）；不加 `deleted`（物理表）、不建 FK（应用层维护，删图同事务清向量，同 `sparkora_image_tag` 惯例）。
 - **图片无自身文本 → 描述性文本代理**：byd-news=来源新闻标题（`source_ref` 反查）+ 标签；ai-*=promptText+标签；upload/byd=文件名去扩展名+标签。标签**原样拼**（保留 `主题/` 前缀，「销量」即检索信号）。
 - **全空仍嵌入**（兜底 `(图片 <id>)`）：缺向量图在语义检索中永久不可见，比低质向量更糟；低质命中交给门槛过滤。
@@ -610,6 +610,77 @@ boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), h.score() * boost,
 ```java
 boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), h.score() * boost,
         h.source(), h.modelId(), h.modelName(), h.docId()));   // 全字段透传
+```
+
+---
+
+## Scenario: 知识域写入侧统一 + 向量模型防护（09-27 P1-⑧）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改 CAR/KB/NEWS/IMAGE 任一域的切块、并发嵌入、向量持久化、向量模型配置，或改动检索的模型过滤。
+
+### 2. Signatures
+```java
+// com.sparkora.ai（新共享层）
+TextChunker.chunk(String header, String content, boolean titlePresent, boolean keepTitleWhenEmpty, String sentenceSeparators)
+TextChunker.MAX_BODY_LEN = 500;  TextChunker.KB_SEPARATORS = "。；!?";  TextChunker.NEWS_SEPARATORS = "。；;！!？?"
+TextChunker.splitSentences(p, separators)                        // 全库唯一定义；句读集合按域参数化
+record EmbedStats(int total, int success, int failed)            // 全库唯一定义
+EmbeddingBatchRunner.run(List<T> items, Function<T,String> textFn, BiConsumer<T,String> persistFn,
+                         String label, int maxParallel, int maxRetries) → EmbedStats
+// EmbeddingClient
+List<Double> embedList(String text)   // 校验 size == AiProperties.embeddingDim,不符抛 AiException
+String modelName()                    // 写入/检索共用的当前模型名
+// AiProperties
+int embeddingDim = 1024               // env AI_EMBEDDING_DIM
+```
+
+### 3. Contracts
+- **切块唯一实现**：KB/NEWS `chunkContent` 改为薄委托 `TextChunker`；header 由调用方构造（KB「知识：t（d）」/ NEWS「新闻：t（date）」），空正文语义参数化（KB `keepTitleWhenEmpty=true` 恒保留；NEWS `titlePresent && keepTitleWhenEmpty=false`）。**句读集合也按域参数化（KB `。；!?` / NEWS `。；;！!？?`），不得取超集**——两域原集合不同，取超集会改变 KB 切块边界（违反「产出逐块不变」）；`splitSentences` 参数化后仍是全库唯一实现。产出逐块不变由 `KbDocServiceTest`/`NewsDocServiceTest` + `TextChunkerTest`（含 `legacyChunk` 等价性锁）证明。
+- **并发执行器唯一实现**：`EmbeddingBatchRunner` 泛型化「固定线程池 + 单块重试 + 失败收集 + 计数日志」；**各域失败策略用参数保留**（CAR/NEWS `maxParallel=4,maxRetries=1`；KB `maxParallel=1,maxRetries=0` 串行无重试）。
+- **事务边界统一（关键）**：embed 网络调用在事务外，随后经**自注入 `@Autowired @Lazy self`** 调 `@Transactional(REQUIRES_NEW)` 的持久化方法（`persistCarDoc`/`persistChunk`/`persistNewsDoc`）完成「插块行（拿 id）+ 插向量」原子写入。单测直 new 时 `(self==null?this:self)` 退化直调。
+  - **反例（被本任务修复）**：`@Transactional protected insertDocWithEmbedding` 由同类线程池 lambda 内 `this` 调用 → 代理不生效、注解被忽略 → 向量插入失败时块行可能已落成孤儿、事务边界不明。
+  - 收益同 IMAGE 范式：失败回滚不留孤儿块；`REQUIRES_NEW` 不污染调用方（`NewsService.upsertOne` 为 `@Transactional`）事务。
+- **向量模型名防护**：4 张向量表加 `embedding_model`；写入盖 `modelName()`、检索加 `embedding_model = #{model}`、对账/补齐口径同模型过滤；V3 用 Flyway placeholder 回填存量行 = 实际配置模型。详见 database-guidelines.md「向量模型名防护」。
+- **维度 fail-fast**：`embedList` 返回长度 ≠ `embeddingDim` 抛 `AiException`（含实际/期望与模型名）。
+- **NEWS 手动重建端点**：`POST /api/news/{id}/rebuild`（ADMIN/EDITOR）→ `NewsDocService.rebuildForNews` 返回 `EmbedStats`。不做跨域一键重嵌编排。
+
+### 4. Validation & Error Matrix
+- 切块空正文：KB 恒 `[header]`；NEWS 无标题 `[]`、有标题 `[header]`。
+- 嵌入单条失败：按 `maxRetries` 重试；仍失败计 `failed` 且**不持久化该条**（`EmbedStats` 可判定）。
+- 维度不符 → `AiException`，块/图不落库。
+- 换模型后旧行：检索不命中（`embedding_model` 过滤），启动 `EmbeddingModelReconcileRunner` WARN（非当前模型名 + 条数），不阻断启动。
+
+### 5. Good/Base/Bad Cases
+- Good: KB 串行无重试、CAR/NEWS 并发重试 1 次，全部复用同一 `EmbeddingBatchRunner`，行为与改造前一致。
+- Base: 单测直 new 服务（无 Spring 代理）→ `(self==null?this:self)` 退化为直写不 NPE。
+- Bad: 在 rebuild 里直接 `this.insertDocWithEmbedding()`（`@Transactional` 失效）；或检索 SQL 漏加 `embedding_model` 过滤（换模型后静默混空间）。
+
+### 6. Tests Required
+- `TextChunkerTest`（KB/NEWS 两语义）；`EmbeddingBatchRunnerTest`（重试成功/两次失败/maxRetries=0/串行保序/空列表）；`EmbeddingClientTest`（维度不符抛 AiException + modelName）；`{Car,Kb,News}DocTransactionTest`（自注入代理持久化 + 无代理退化）；`EmbeddingMapperModelFilterTest`（4 查询含模型过滤、4 insert 带列、对账/补齐口径）；`EmbeddingModelReconcileRunnerTest`（非当前模型仅告警、异常不阻断）。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 线程池 lambda 内 this 调用:@Transactional 代理不生效,失败留孤儿块
+tasks.add(() -> { try { insertDocWithEmbedding(doc); } catch (Exception e) { insertDocWithEmbedding(doc); } ... });
+
+@Transactional protected void insertDocWithEmbedding(CarDocEntity doc) {
+    docMapper.insert(doc);
+    embMapper.insert(doc.getId(), doc.getModelId(), embeddingClient.embed(doc.getChunkText()));
+}
+```
+#### Correct
+```java
+// embed 在事务外;持久化经 self 代理走 REQUIRES_NEW
+batchRunner.run(docs, CarDocEntity::getChunkText,
+        (doc, vec) -> (self == null ? this : self).persistCarDoc(doc, vec), "model=" + modelId, 4, 1);
+
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void persistCarDoc(CarDocEntity doc, String vec) {
+    docMapper.insert(doc);                                   // 拿 id
+    embMapper.insert(doc.getId(), doc.getModelId(), vec, embeddingClient.modelName());
+}
 ```
 
 ---

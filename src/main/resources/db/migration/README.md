@@ -24,5 +24,6 @@
 ## 后续变更入口
 
 - `V2__article_version_image.sql`（P1-⑦）：`body_image_ids` 逗号列规范化为 `sparkora_article_version_image` 关联表（建表 + 回填 + DROP 旧列，单迁移内完成）。
-- 后续结构变更一律新增 `V3+` 脚本，不再触碰 V1/V2。
+- `V3__embedding_model.sql`（P1-⑧）：4 张向量表加 `embedding_model VARCHAR(100)`，回填存量行 = 实际配置模型（Flyway placeholder `${embeddingModel}` ← `spring.flyway.placeholders.embeddingModel` ← `AI_EMBEDDING_MODEL`）；写入盖名、检索按当前模型过滤（换模型后旧行自动失效，不静默混空间）。
+- 后续结构变更一律新增 `V4+` 脚本，不再触碰 V1/V2/V3。
 - **JSON 存 TEXT 为有意约定**（P1-⑦ 复核裁定，不转 JSONB），理由见 `.trellis/spec/backend/database-guidelines.md`「JSON 存 TEXT 是有意约定」。

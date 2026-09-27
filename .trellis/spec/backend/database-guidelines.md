@@ -257,6 +257,22 @@ CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec_hnsw ON sparkora_kb_chunk_embedd
 
 - 向量索引统一 HNSW `vector_cosine_ops`（车型域 `idx_car_doc_emb_vec`、KB 域 `idx_kb_chunk_emb_vec_hnsw`）。
 
+### 向量模型名防护：加列 + placeholder 回填（推翻 V1「不存模型名」）
+
+4 张向量表（`sparkora_{car_doc,kb_chunk,news_doc,image}_embedding`）**同向量空间**（同 embedding 模型/维度）；V1 曾决策「不存模型名/维度列」，**09-27 P1-⑧ 推翻**——同维换模型是真实风险且完全不可检测。做法：
+
+```sql
+-- V3__embedding_model.sql：加列（可空，避免极端数据迁移失败）；回填 = 实际部署配置模型
+ALTER TABLE sparkora_car_doc_embedding ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(100);
+UPDATE sparkora_car_doc_embedding SET embedding_model = '${embeddingModel}' WHERE embedding_model IS NULL;
+-- …另外 3 表同构
+```
+
+- **回填用 Flyway placeholder** `${embeddingModel}`（`application.yml` 的 `spring.flyway.placeholders.embeddingModel: ${AI_EMBEDDING_MODEL:Qwen3-Embedding-8B}`），**不得硬编码默认值**——否则会把既有部署库错标为默认模型。这是「回填值须随实际配置走」的通用范式。
+- **写入盖名 + 检索过滤成对**：4 个 insert mapper 增 `embeddingModel` 参数（写路径传 `EmbeddingClient.modelName()`）；4 条检索 SQL 加 `AND e.embedding_model = #{model}`。列可空 + `=` 比较：NULL 行天然不匹配（安全方向——宁可漏检旧行，不混空间）。
+- **对账/补齐口径同步**：判定「已向量化」的统计（`countByModel.embeddedCount`、`findImageIdsWithoutEmbedding` 的 LEFT JOIN 条件）必须加同模型过滤，否则「只有旧模型向量」会被误判为已就绪、`rebuildMissing` 永不修复。
+- **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）逐表 `GROUP BY embedding_model`，非当前模型行 WARN；异常仅 warn 不阻断启动。
+
 ### 逻辑删除实体 + 物理向量表：级联清理
 
 `*_embedding` 表（`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding`）**无 `deleted` 列**，是物理表。删除带 `@TableLogic` 的实体时：
