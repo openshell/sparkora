@@ -54,9 +54,9 @@
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
 | POST | `/api/projects` | ADMIN/EDITOR | `genSource`(缺省 `TOPIC`)/`imitationText`(IMITATION 必填非空) | `{id}`；IMITATION 缺原文 `R.fail(400)`；仿写项目不关联车型（跳过 AI 自动匹配） |
-| POST | `/api/projects/{id}/imitation/analyze` | ADMIN/EDITOR | — | `ArticleBriefEntity`（`gen_mode=IMITATION`；一次 AI 调用产出原文分析落 `outline`/`coreViewpoints`/`titleCandidates` + 风格推荐 ≤3 个附理由落 `style_recommendations`，只保留库内 `styleId` 防御截断）；非仿写项目 400；状态冲突 409；失败回 DRAFT 写 `last_brief_error` |
+| POST | `/api/projects/{id}/imitation/analyze` | ADMIN/EDITOR | — | **09-27-gen-async 异步化**：`{status:"GENERATING_BRIEF"}` 毫秒级返回；同步 claim `GENERATING_BRIEF` 后后台 `@Async` 执行一次 AI 分析（原文分析落 `outline`/`coreViewpoints`/`titleCandidates` + 风格推荐 ≤3 个附理由落 `style_recommendations`，只保留库内 `styleId` 防御截断，产物冗余 `project.imitation_analysis`），成功 `advanceReady`、失败回 DRAFT 写 `last_brief_error`；非仿写项目 400；状态冲突 409；前端据项目状态轮询（GENERATING_BRIEF→READY）翻转刷新 |
 | GET | `/api/projects/{id}/imitation` | 三角色 | — | `{briefId, titleCandidates, coreViewpoints, outline, styleRecommendations, analysis:{genre,structure,sentenceFeatures}}`（无则 `data:null`） |
-| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | 仿写模式复用：每风格一版（含 `similarity_score`/`similarity_report`）；状态机同 [overview.md §4](overview.md) |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **09-27-gen-async 异步化**：`{status:"GENERATING_VERSIONS", styleCount:N}` 毫秒级返回；后台逐风格生成（含 `similarity_score`/`similarity_report`），成功 `advanceVersionsReady`（部分失败写 `last_version_error`）、全部失败 `failVersionsToReady`；状态机同 [overview.md §4](overview.md)；前端据项目状态轮询翻转刷新 |
 
 ---
 

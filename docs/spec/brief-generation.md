@@ -24,7 +24,7 @@ graph TD
     D4 --> D5["④ FactSheetService.merge()<br/>汇总 fact_sheet（按 claim 近似归并聚合）"]
     D5 --> D6["⑤ 自动 BriefService.generateFromFactSheet()<br/>手册为唯一事实来源生成简报字段<br/>复用同一条 DEEP brief<br/>status = READY<br/>（简报页引用面板：rag_citations + 手册 WEB/MULTI 条目合并）"]
     D6 -->|"自动简报失败不回滚研究产物"| D7["POST /deep/brief 手动重试"]
-    D5 -->|"跳过简报"| D8["⑥ POST /deep/generate<br/>DeepWriterService：手册+锁定需求 → 正文<br/>数值回查 verifyNumbers<br/>未收录数值 → fact_risks(high) 随版本落库"]
+    D5 -->|"跳过简报"| D8["⑥ POST /deep/generate（批量异步）<br/>DeepWriterService.startBatch → @Async runBatch<br/>逐风格：手册+锁定需求 → 正文<br/>数值回查 verifyNumbers<br/>未收录数值 → fact_risks(high) 随版本落库"]
     D6 --> V["StepVersions 版本步"]
     D8 --> V
 ```
@@ -53,7 +53,7 @@ graph TD
 | POST | `/deep/clarify` | ADMIN/EDITOR | `{topic(必填), extraInfo?}` | **2026-09-11 异步化**：`{briefId, stage:"PLANNING"}`，毫秒级返回（不再携带计划内容）；同步落 PLANNING 占位 brief(`gen_mode=DEEP`)，后台 `@Async` 生成研究计划与澄清问题，成功回写 plan/questions + `plan_status=READY`；失败删除占位行 + 写 `project.last_brief_error`。并发/陈旧冲突 → `R.fail(409,...)` |
 | POST | `/deep/clarify-answer` | ADMIN/EDITOR | `{briefId, answers:{问题:答案}}` | `{briefId, locked}`（锁定 JSON 落库） |
 | POST | `/deep/run` | ADMIN/EDITOR | `{briefId}` | `{briefId, agents, started:true, strategy, webProviderOrder}`（同步校验 + 落 PENDING 占位后立即返回；后台 `@Async` 执行，前端轮询 status。前置：brief 存在且属于路径 projectId、`gen_mode=DEEP`、`clarify_answers` 已锁定，否则 400；`plan_status=PLANNING`（计划生成中）或研究计划无关键问题 → 409；同一 brief 已在研究中 → 409「该 brief 正在研究中，请勿重复触发」） |
-| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, styleId?}`（09-10-style-library-enhance：`styleId` 优先，后端回查风格表取 `toneGuidance`/`name` 注入 system prompt；查无 → 400「风格不存在或已删除」；旧 `stylePrompt`/`styleName` 保留兼容，deprecated） | `{versionId}`（版本 `fact_risks` 落库；09-10-versions-page-fix：落版本补齐 `title`/`version_label`/`style_tag`/`word_count`，成功后推进状态机 READY→VERSIONS_READY、首版设 current（追加不覆盖）） |
+| POST | `/deep/generate` | ADMIN/EDITOR | `{briefId, styleIds:[...]}`（09-27-gen-async 批量：一次提交多风格，后端保序回查风格表取 `toneGuidance`/`name`；查无 → 400「风格不存在或已删除」；兼容单 `styleId`（数组化）与旧 `stylePrompt`/`styleName`，deprecated；`styleIds` 缺省时按「无风格」生成一版） | **09-27-gen-async 异步化**：`{status:"GENERATING_VERSIONS", styleCount:N}`，毫秒级返回；同步 claim `GENERATING_VERSIONS`（源态 READY/DRAFT/VERSIONS_READY 或陈旧）后后台 `@Async` 逐风格生成，成功 `advanceVersionsReady`（部分失败写 `last_version_error`）、全部失败 `failVersionsToReady`；版本仍补齐 `title`/`version_label`/`style_tag`/`word_count` 与 `fact_risks`，首版设 current（追加不覆盖）。重复触发 409 |
 | POST | `/deep/brief` | ADMIN/EDITOR | `{briefId}` | `ArticleBriefEntity`（基于事实手册生成简报，落同一条 DEEP brief 行并推状态机到 READY；研究完成后自动触发一次，此处为手动重试入口；409=状态冲突。**R6 09-26**：`generateFromFactSheet` 首次 `chatJson(...,8192)`，截断/空内容/非法 JSON 时翻倍 `16384` 重试一次，仅两次均失败才回 DRAFT + `lastBriefError`） |
 | GET | `/deep/status` | 三角色 | `?briefId`（缺省取最新 DEEP brief） | `{briefId, genMode, stage, planStatus, researchPlan?, questions?, answers?, agents?, factSheet?, toolHealth:{KB,SEARXNG,TAVILY}, webStrategy, webProviderOrder}` |
 

@@ -4,7 +4,7 @@
 
 职责：基于简报（brief）+ 用户选择的风格，产出多版本正文，并维护「当前版本」与版本展示字段。
 
-- 主题创作的**多版本生成接口已封死**（2026-09-09，恒 410）；主题正文由深度链路的 `/deep/generate` 单版生成（见 [brief-generation.md](brief-generation.md)）。`POST /generate/versions` 仅保留给**文章仿写**（见 [imitation.md](imitation.md)）。
+- 主题创作的**多版本生成接口已封死**（2026-09-09，恒 410）；主题正文由深度链路的 `/deep/generate` 生成（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发，见 [brief-generation.md](brief-generation.md)）。`POST /generate/versions` 仅保留给**文章仿写**（见 [imitation.md](imitation.md)）。
 - 项目状态机推进（READY→GENERATING_VERSIONS→VERSIONS_READY / 失败回退）见 [overview.md §4](overview.md)。
 
 ---
@@ -42,27 +42,34 @@
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **主题创作恒 `R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)")`**；**仿写项目例外**（`genSource=IMITATION`）：每风格一版，产出含 `similarity_score`/`similarity_report`，契约详见 [imitation.md](imitation.md) |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **主题创作恒 `R.fail(410, "生成流程已升级为深度模式,版本生成请使用深度生成(/deep/generate)")`**；**仿写项目例外**（`genSource=IMITATION`）：**09-27-gen-async 异步化**，返回 `{status:"GENERATING_VERSIONS", styleCount:N}`（毫秒级），后台逐风格生成，产出含 `similarity_score`/`similarity_report`，契约详见 [imitation.md](imitation.md) |
 
 - `styleIds` 为风格库 id 列表；空 → `IllegalArgumentException`（400「至少选择一个风格」）；超过 10 个 → 400「一次最多生成 10 版」。
 - 所选风格查无 → 400「所选风格不存在」。
 
 ---
 
-## 3. `VersionService.generate` 语义
+## 3. `VersionService` 语义（09-27-gen-async 同步/异步切分）
 
-`com.sparkora.service.VersionService`：
+`com.sparkora.service.VersionService`——同步 `generate()` 做校验 + 抢占 + 触发异步并立即返回；`@Async runGenerate()` 执行 AI：
+
+**同步 `generate(projectId, styleIds)`（毫秒级）**
 
 1. **入参校验**：`styleIds` 非空、≤ `LABELS.length()`（10）。
-2. **项目/简报就绪校验**：项目不存在 → 400；`current_brief_id` 为空 → `NotReadyException`「尚未生成 brief，无法生成版本」；brief 不存在 → `NotReadyException`。
+2. **项目/简报就绪校验**：项目不存在 → 400；`current_brief_id` 为空 → `NotReadyException`「尚未生成 brief，无法生成版本」；brief 不存在 → `NotReadyException`；`selectBatchIds` 为空 → 400「所选风格不存在」（校验保留在同步阶段，400 即时反馈）。
 3. **并发防护 + 原子抢占**（消除 check-then-set 竞态）：
    - 项目处于生成中（`stuckGenerating(p)`，`updated_at` 在 10 分钟内）→ `IllegalStateException`「该项目正在生成中，请稍候（刷新页面可查看进度）」。
-   - 条件更新置 `GENERATING_VERSIONS`：仅当 `status ∈ {READY, VERSIONS_READY}`（首生成/追加）**或**「生成中且已陈旧（超 `STALE_GENERATING_MS=10min`，进程已死，自愈）」才生效；陈旧分支必须限定生成中状态，否则任何 `updated_at` 较旧的下游状态都会被误放行、状态机回退。`PUBLISHED_DRAFT` 之后已触发下一步，再生成版本会把状态机拉回 VERSIONS_READY，拒绝（`projectStatusGuardMsg` =「…下游步骤已触发，不支持回退重做」）。
+   - `claimVersionsGenerating` 条件更新置 `GENERATING_VERSIONS`：仅当 `status ∈ {READY, VERSIONS_READY}`（首生成/追加）**或**「生成中且已陈旧（超 `STALE_GENERATING_MS=10min`，进程已死，自愈）」才生效；陈旧分支必须限定生成中状态，否则任何 `updated_at` 较旧的下游状态都会被误放行、状态机回退。`PUBLISHED_DRAFT` 之后已触发下一步，再生成版本会把状态机拉回 VERSIONS_READY，拒绝（`guardMsg` =「…下游步骤已触发，不支持回退重做」）。
    - 同时清 `last_version_error`。
-4. **风格与 RAG**：`styleMapper.selectBatchIds(styleIds)`；RAG 检索 `CarRagService.retrieveForGeneration(topic, 8, modelIds)`（`modelIds` 由 `ArticleProjectCarService.listModelIds` 取，S8 起仅作**写作锚点加权**，未关联也全库检索）。仿写模式跳过 RAG（`RagResult.EMPTY`，`ragStatus=NO_KNOWLEDGE`）。
-5. **逐风格生成**：每风格一版，`label = A/B/C…`；单版失败仅 warn 并计入 `perVersionErrors`（**部分成功也继续**）；全部失败 → `AiException("全部版本生成失败: …")`。
-6. **成功落库**：插入各版本 → 默认选**第一版**为当前（`p.setCurrentVersionId(first.getId())`）→ `status=VERSIONS_READY` → `last_version_error` 记录部分失败明细（无失败则清空）→ `projectMapper.updateById(p)`。
-7. **整体失败**：重取项目 → `status=READY` + `last_version_error`（截断 1000 字）→ 抛 `AiException("版本生成失败: …")`（接口 500）。
+4. **触发异步**：`(self == null ? this : self).runGenerate(...)`（自注入 `@Autowired @Lazy` 代理确保 `@Async` 生效），返回 `{status:"GENERATING_VERSIONS", styleCount:N}`。
+
+**异步 `runGenerate(projectId, styleIds)`（后台）**
+
+5. **重取实体**（不复用同步阶段快照，防陈旧）→ 再次校验 brief 就绪。
+6. **风格与 RAG**：`styleMapper.selectBatchIds(styleIds)`；RAG 检索 `CarRagService.retrieveForGeneration(topic, 8, modelIds)`（`modelIds` 由 `ArticleProjectCarService.listModelIds` 取，S8 起仅作**写作锚点加权**，未关联也全库检索）。仿写模式跳过 RAG（`RagResult.EMPTY`，`ragStatus=NO_KNOWLEDGE`）。
+7. **逐风格生成**：每风格一版，`label = A/B/C…`；单版失败仅 warn 并计入 `perVersionErrors`（**部分成功也继续**）。
+8. **成功落库**：`advanceVersionsReady(projectId, first.getId(), partialErrors)`（委托状态服务，条件更新防回退 + 首版两拆分；部分失败明细写 `last_version_error`，无失败则清空）。
+9. **整体失败/异常**：`failVersionsToReady(projectId, e.getMessage())`（仅生成中状态回 READY，错误截断 1000 收在状态服务）；**异步体顶层 catch 吞异常不外抛**（异步线程无调用方），避免卡 `GENERATING_VERSIONS` 到 10min 自愈。
 
 ---
 
@@ -84,7 +91,7 @@
 
 - **落版本必须补齐展示字段**：`title`/`version_label`/`style_tag`/`word_count`，否则前端版本卡片渲染 `undefined·undefined`、字数空白（09-10-versions-page-fix 教训）。
 - **必须推进状态机 + 设 current**：只写产物表不推状态会让步骤导航锁死下游（`maxReachableStepOf`），前端卡在上一步。
-- 深度单版 `/deep/generate` 与多版本 `VersionService.generate` 共享上述语义（前者追加不覆盖）。
+- 深度批量 `/deep/generate` 与多版本 `VersionService.generate` 共享上述语义（前者追加不覆盖）。
 
 ---
 
@@ -98,5 +105,5 @@
 
 ## 7. 已知限制
 
-- 主题创作多版本接口已封死（410），仅仿写可用；主题正文为深度单版。
+- 主题创作多版本接口已封死（410），仅仿写可用；主题正文为深度批量生成（`/deep/generate`）。
 - 版本插图 `body_image_ids` 不参与渲染（正文插图落点只由 `content_md` 中的 `![](url)` 决定），详见 [image.md](image.md)「已知债务」。

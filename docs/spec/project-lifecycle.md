@@ -50,10 +50,10 @@
 | DELETE | `/api/projects/{ids}` | ADMIN | — | `{ok:true}` |
 | POST | `/api/projects/{id}/generate/brief` | ADMIN/EDITOR | — | **2026-09-09 起封死**：恒 `R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify)")`（存量 FAST 项目产物可读，重新生成走深度） |
 | GET | `/api/projects/{id}/brief` | 三角色 | — | `{brief}`（无则 `data:null`） |
-| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **2026-09-09 起封死（主题创作）**：恒 `R.fail(410, ...)`；**仿写项目例外**（[imitation.md](imitation.md)）：`genSource=IMITATION` 时本接口复用为仿写生成（每风格一版，产出含 `similarity_score`/`similarity_report`） |
+| POST | `/api/projects/{id}/generate/versions` | ADMIN/EDITOR | `{styleIds:[...]}` | **2026-09-09 起封死（主题创作）**：恒 `R.fail(410, ...)`；**仿写项目例外**（[imitation.md](imitation.md)）：`genSource=IMITATION` 时本接口复用为仿写生成（**09-27-gen-async 异步化**：返回 `{status:"GENERATING_VERSIONS", styleCount:N}` 毫秒级占位，后台逐风格生成，产出含 `similarity_score`/`similarity_report`，前端轮询状态翻转） |
 | GET | `/api/projects/{id}/versions` | 三角色 | — | `{versions[]}`（全量，按 id 升序；仿写版含 `similarity_score`/`similarity_report`） |
 | PUT | `/api/projects/{id}/current-version` | ADMIN/EDITOR | `?versionId=` | `{ok:true}` |
-| POST | `/api/projects/{id}/imitation/analyze` | ADMIN/EDITOR | — | `ArticleBriefEntity`（`gen_mode=IMITATION`，含 `styleRecommendations`；409=状态冲突；失败回 DRAFT 写 `last_brief_error`；契约见 [imitation.md](imitation.md)） |
+| POST | `/api/projects/{id}/imitation/analyze` | ADMIN/EDITOR | — | **09-27-gen-async 异步化**：`{status:"GENERATING_BRIEF"}` 毫秒级占位（`gen_mode=IMITATION` 分析与 `styleRecommendations` 由后台 `@Async` 落库）；409=状态冲突；失败回 DRAFT 写 `last_brief_error`；前端轮询 `GENERATING_BRIEF→READY` 翻转；契约见 [imitation.md](imitation.md) |
 | GET | `/api/projects/{id}/imitation` | 三角色 | — | `{briefId,titleCandidates,coreViewpoints,outline,styleRecommendations,analysis}`（无则 `data:null`；契约见 [imitation.md](imitation.md)） |
 | GET | `/api/settings` | ADMIN, EDITOR | — | `{id, kbEnabled, webSearchEnabled, updatedBy, updatedAt}`（单行；首访自动初始化；契约见 [settings.md](settings.md)） |
 | PUT | `/api/settings` | **仅 ADMIN** | `{kbEnabled?, webSearchEnabled?}`（null 不改） | 同 GET（写后刷缓存；契约见 [settings.md](settings.md)） |

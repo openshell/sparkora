@@ -138,7 +138,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发返回 409）。
 - **READY**：简报就绪（`current_brief_id` 指向最新简报；S0 语义「记录创建成功」已由 S1 取代）。
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发返回 409）。
-- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。深度单版生成（`/deep/generate`）同样推进 READY→VERSIONS_READY（2026-09-10 修复：落版本后由 `DeepController` 成功分支推状态 + 首版设 current）。**存量数据自愈（09-10-versions-page-fix）**：`schema.sql` 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等，与 R3 字段回填同段）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。深度写作 `/deep/generate`（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成）同样推进 →VERSIONS_READY（源态 READY/DRAFT/VERSIONS_READY，由 `DeepWriterService.runBatch` 委托 `ProjectStatusService.advanceVersionsReady` + 首版设 current）。**存量数据自愈（09-10-versions-page-fix）**：`schema.sql` 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等，与 R3 字段回填同段）。
 - **PUBLISHED_DRAFT**（S5 新增，终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱，拿到 media_id）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿，刷新 `publish_media_id`/`published_at`/`publish_theme`；发布失败状态原样保留并写 `last_publish_error`（成功后清空）；`publish` 仅在 VERSIONS_READY/PUBLISHED_DRAFT 可调用，否则 `R.fail(400)`（错误经状态校验文案提示，如「尚未生成正文版本，无法预览」）。
 - 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 `isPublishable`/`isPublished`）。**S6 起 `statusMeta` 对历史残留 `IMAGES_READY` 归一为 `VERSIONS_READY`**（兼容旧数据，避免历史项目无法预览/发布）。
 - **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
@@ -146,6 +146,8 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
   - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见——下一步已触发后不再显示上一步的生成按钮。
 
 > 生成接口并发防护（S2a 补）：项目处于 GENERATING_BRIEF / GENERATING_VERSIONS 时再次触发，返回 `R.fail(409, "该项目正在生成中…")`，不重复调 AI；若生成中状态已陈旧（`updated_at` 超过 10 分钟，如 JVM 中途死亡/重启遗留），原子条件更新放行重新生成以自愈。brief 未就绪时触发版本生成返回 `R.fail(400)`。
+>
+> **生成链路异步化（09-27-gen-async）**：`imitation/analyze`、`generate/versions`（仿写）、`deep/generate` 三条项目状态驱动的生成链路统一为「同步毫秒级：校验 + `ProjectStatusService.claim*` 置生成中 + 自注入代理触发 `@Async run*` + 返回占位标记（`{status:"GENERATING_BRIEF"}` / `{status:"GENERATING_VERSIONS", styleCount:N}`）」+「后台 `run*`：重取实体 → AI → `advance*`/`fail*`（顶层 catch 必落状态、不外抛）」。响应保持 **HTTP 200 + `R.ok`**（不引入 HTTP 202）；前端不 await 结果，靠 `store.startPolling`（项目状态翻转）刷新。`deep/generate` 由「单风格单版、前端串行多次」改为 `styleIds[]` 一次批量并补 claim（专用 `claimDeepVersionsGenerating`，源态 READY/DRAFT/VERSIONS_READY，与 `claimVersionsGenerating` 白名单不同不合并）；`advanceVersionsReadyFromReady` 已移除。`publish`/`qa ask` 载体不同，异步化另立子任务。
 
 ---
 

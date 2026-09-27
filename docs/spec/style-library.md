@@ -45,7 +45,7 @@
 | POST | `/api/styles/extract/preview` | ADMIN/EDITOR | `{name?, sourceText}` | `R<StyleProfileEntity>`（AI 提炼**不入库**，`id=null`；两步式提炼预览，人工修改后入库走 `POST /api/styles`；`sourceText` 空 → 400；异常 500） |
 
 - 前端：`views/StyleLibrary.vue`，`api/index.js` 的 `styleApi`（`extract`/`extractPreview` 前端超时放宽至 120s）。
-- 生成侧消费：`VersionService`（主题/仿写 prompt 的 `style.toneGuidance` + 统一强化句）、`DeepController`/`DeepWriterService`（`/deep/generate` 按 `styleId` 后端回查风格表取 `toneGuidance`/`name` 注入 system prompt；查无 → 400「风格不存在或已删除」）。
+- 生成侧消费：`VersionService`（主题/仿写 prompt 的 `style.toneGuidance` + 统一强化句）、`DeepWriterService.startBatch`（`/deep/generate` 按 `styleIds[]` 保序回查风格表取 `toneGuidance`/`name` 注入 system prompt；查无 → 400「风格不存在或已删除」）。
 - 仿写风格推荐：`ImitationService.analyze` 产出 `style_recommendations`（`[{styleId,name,reason,matchScore}]`，只保留库内 `styleId` 防御截断），见 [imitation.md](imitation.md)。
 
 ---
@@ -53,4 +53,4 @@
 ## 4. 已知限制
 
 - 「两步式提炼预览」的人工修改**不落库**，需走 `POST /api/styles` 入库。
-- 风格删除为逻辑删；历史版本/仿写推荐中引用的 `styleId` 可能已失效（深度生成时后端查无返回 400）。
+- 风格删除为逻辑删；历史版本/仿写推荐中引用的 `styleId` 可能已失效（深度批量生成时后端逐 id 查无返回 400）。

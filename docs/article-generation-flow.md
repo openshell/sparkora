@@ -20,7 +20,7 @@ graph TD
     D4 --> D5["④ FactSheetService.merge()<br/>汇总事实手册 fact_sheet"]
     D5 --> D6["⑤ 自动 BriefService.generateFromFactSheet()<br/>手册为唯一事实来源生成简报字段<br/>复用同一条 DEEP brief<br/>status = READY<br/>（简报页引用面板:rag_citations + 手册 WEB/MULTI 条目合并）"]
     D6 -.自动简报失败不回滚研究产物.-> D7["POST /deep/brief 手动重试"]
-    D5 -->|"跳过简报"| D8["⑥ POST /deep/generate<br/>DeepWriterService: 手册+锁定需求 → 正文<br/>数值回查 verifyNumbers<br/>未收录数值 → factRisks(high) 随版本落库"]
+    D5 -->|"跳过简报"| D8["⑥ POST /deep/generate（批量异步）<br/>DeepWriterService.startBatch → @Async runBatch<br/>逐风格: 手册+锁定需求 → 正文<br/>数值回查 verifyNumbers<br/>未收录数值 → factRisks(high) 随版本落库"]
     D6 --> STEP2
     D8 --> STEP2
 
@@ -45,7 +45,7 @@ graph TD
     PB4 --> PB5["原子落库:<br/>status = PUBLISHED_DRAFT（终态，可重发覆盖）<br/>publish_media_id / publish_theme / published_at"]
 ```
 
-> 说明：多版本接口 `POST /{id}/generate/versions` 对主题创作已封死（410），主题正文由深度单版 `/deep/generate` 产出；Step 2 仅在选择深度单版时使用，风格选择随 `/deep/generate` 的 `styleId` 传入。
+> 说明：多版本接口 `POST /{id}/generate/versions` 对主题创作已封死（410），主题正文由深度写作 `/deep/generate` 产出（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成，前端轮询状态翻转）；Step 2 仅在选择深度生成时使用，风格选择随 `/deep/generate` 的 `styleIds[]` 传入。
 
 ---
 

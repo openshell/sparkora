@@ -73,8 +73,8 @@ statusService.claimBriefGenerating(projectId, p, "生成简报");
 // 成功推进(extraCols 业务列同条 UPDATE 写入,如 imitation_analysis,保持原子性)
 statusService.advanceReady(projectId, b.getId(), Map.of("imitation_analysis", json));
 // 首版两拆分/失败回退/发布终态同理:
-statusService.advanceVersionsReady(projectId, first.getId(), partialErrors);   // 源态 GENERATING_VERSIONS
-statusService.advanceVersionsReadyFromReady(projectId, versionId);             // 深度单版,源态 READY/DRAFT
+statusService.claimDeepVersionsGenerating(projectId, p, "生成版本");            // 深度链路抢占,源态 READY/DRAFT/VERSIONS_READY
+statusService.advanceVersionsReady(projectId, first.getId(), partialErrors);   // 源态 GENERATING_VERSIONS(多版本与深度批量共用)
 statusService.failBriefToDraft(projectId, reason);     // 截断 1000 收在服务内
 statusService.failVersionsToReady(projectId, reason);
 statusService.markPublished(projectId, mediaId, theme, now);
@@ -85,8 +85,41 @@ statusService.writeBriefError(projectId, reasonOrNull); // 单列写入/清空(C
 - **唯二例外**（不走状态服务）：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）；`schema.sql` 启动回填（存量数据修复，随 Flyway 子任务处置）。
 - **常量与判定收编**：`STALE_GENERATING_MS`（10 分钟）唯一定义在状态服务；`stuckGenerating(p)` / `guardMsg(p, action)`（409 守卫提示语）由服务持有，调用方不再各自复制。
 - **语义不变契约**：各转换的 WHERE 状态白名单、SET 列、两拆分顺序、截断口径（1000/990）、409 提示语与 P0 修复后实现逐字等价——新增/修改转换时必须在 `ProjectStatusServiceTest` 补对应断言（WHERE 白名单/两拆分/截断）。
-- **源态白名单不同的转换不合并**：多版本链路源态 `GENERATING_VERSIONS`，深度单版源态 `READY/DRAFT`——语义不同，显式化为两个方法。
+- **源态白名单不同的转换不合并**：多版本链路源态 `READY/VERSIONS_READY`（`claimVersionsGenerating`），深度批量链路源态 `READY/DRAFT/VERSIONS_READY`（`claimDeepVersionsGenerating`，因 `/deep/generate` 可从 DRAFT「跳过简报」或 VERSIONS_READY「追加」进入）——语义不同，显式化为两个方法。
 - 历史教训：状态推进逻辑散落多处曾产出 09-10-versions-page-fix（深度链路漏推状态机）与 P0-②（8 处 updateById 并发回写）两类缺陷；收敛后新链路只做委托，落库语义单点维护。
+
+### 生成链路异步切分（09-27-gen-async 先例：start*/run*）
+
+需要长耗时 AI 的端点改为「同步毫秒级返回 + 后台 `@Async` 执行 + 前端轮询状态翻转」时，统一按此切分（进度载体复用项目状态机，不新建表）：
+
+```java
+// 同步:校验(400/409 语义即时反馈) + claim(置 GENERATING_*) + 自注入代理触发异步 + 返回占位标记
+public Map<String,Object> start(Long projectId, ...) {
+    ArticleProjectEntity p = projectMapper.selectById(projectId);
+    // ...既有校验(存在/模式/素材/并发防护)...
+    statusService.claimVersionsGenerating(projectId, p, "生成版本");
+    (self == null ? this : self).runGenerate(projectId, ...);   // self==null 兼容单测直 new
+    return Map.of("status", "GENERATING_VERSIONS", "styleCount", n);
+}
+
+@Async
+public void runGenerate(Long projectId, ...) {
+    try {
+        ArticleProjectEntity p = projectMapper.selectById(projectId);   // 重取,不复用同步阶段快照
+        // ...AI 调用 + 产物落库...
+        statusService.advanceVersionsReady(projectId, firstId, partialErrors);
+    } catch (Exception e) {
+        log.warn(...); statusService.failVersionsToReady(projectId, e.getMessage());   // 顶层 catch 必调 fail,不 rethrow
+    }
+}
+```
+
+- **`@Async` 必须靠自注入代理触发**：`@Autowired @Lazy private XxxService self;` + `(self == null ? this : self).runXxx(...)`（`this.runXxx` 不走代理，`@Async` 失效；`self==null` 兼容单测直 `new`）——与 `ClarifyService`/`DeepResearchService`/`CarSyncJobService`/`NewsSyncJobService` 同范式。
+- **异步体顶层 catch 必落状态**：无调用方接收异常，失败只能靠 `fail*` 回写 + 日志；**严禁 rethrow**，否则状态卡 `GENERATING_*` 直到 10min `stuckGenerating` 自愈（自愈只是兜底，不是设计路径）。
+- **异步体先重取实体**：status/brief/styles 在同步 claim 与异步执行之间可能已变，复用同步阶段快照会基于陈旧数据。
+- **响应契约**：`HTTP 200 + R.ok(占位标记)`，**不引入 HTTP 202**（与 `/deep/clarify` 先例一致）；前端不 await 结果，靠 `store.startPolling`（项目状态翻转）刷新。
+- **`@Async` 入参应为值快照**：传 id / 已构造好的不可变列表，不传后续会被修改的可变实体引用（异步线程读到的引用状态不可控）。
+- 先例：`ImitationService.analyze`、`VersionService.generate`、`DeepWriterService.startBatch`（09-27-gen-async）。
 
 ---
 

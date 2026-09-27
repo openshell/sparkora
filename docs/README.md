@@ -137,7 +137,7 @@ graph TD
 - **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发 409）。
 - **READY**：简报就绪（`current_brief_id` 指向最新简报）。
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发 409）。
-- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。S6 起版本就绪后**直接可预览/发布**。深度单版生成（`/deep/generate`）同样推进 READY→VERSIONS_READY（2026-09-10 修复：落版本后由 `DeepController` 成功分支推状态 + 首版设 current）。**存量数据自愈**（09-10-versions-page-fix）：`schema.sql` 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。S6 起版本就绪后**直接可预览/发布**。深度写作 `/deep/generate`（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成）同样推进 READY/DRAFT/VERSIONS_READY→VERSIONS_READY（`DeepWriterService.runBatch` 委托 `ProjectStatusService.advanceVersionsReady` + 首版设 current）。**存量数据自愈**（09-10-versions-page-fix）：`schema.sql` 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等）。
 - **PUBLISHED_DRAFT**（S5 新增，终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱，拿到 `media_id`）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿，刷新 `publish_media_id`/`published_at`/`publish_theme`；发布失败状态原样保留并写 `last_publish_error`（成功后清空）；`publish` 仅在 VERSIONS_READY/PUBLISHED_DRAFT 可调用，否则 `R.fail(400)`。
 - 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 `isPublishable`/`isPublished`）。S6 起 `statusMeta` 对历史残留 `IMAGES_READY` 归一为 `VERSIONS_READY`。
 - **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
@@ -145,6 +145,7 @@ graph TD
   - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见。
 - **并发防护（S2a 补）**：项目处于 GENERATING_BRIEF/GENERATING_VERSIONS 时再次触发返回 `R.fail(409, "该项目正在生成中…")`，不重复调 AI；生成中状态陈旧（`updated_at` 超 10 分钟，如 JVM 中途死亡）时原子条件更新放行重新生成以自愈。brief 未就绪时触发版本生成返回 `R.fail(400)`。
 - **状态写权收敛（09-27-state-machine-service）**：项目 status / last_brief_error / last_version_error / last_publish_error 的写入全部收敛到 `com.sparkora.service.ProjectStatusService`（抢占/成功推进/失败回退/发布终态/错误列写入清空），BriefService/ImitationService/VersionService/DeepController/PublishService/ClarifyService 均为纯委托。唯二例外：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）、`schema.sql` 启动回填（存量修复，随 Flyway 子任务处置）。各转换的 WHERE 白名单/SET 列语义不变（单测 `ProjectStatusServiceTest` 逐项断言）。
+- **生成链路异步化（09-27-gen-async）**：三条项目状态驱动的生成链路（`imitation/analyze`、`generate/versions` 仿写、`deep/generate` 深度写作）统一为「同步毫秒级：校验 + `ProjectStatusService.claim*` 置生成中 + `self.run*`（`@Async`，自注入代理触发）+ 返回占位标记」+「后台 `run*`：重取实体 → AI 调用 → `advance*`/`fail*`（异步体顶层 catch 必调 fail 回写，不外抛）」。响应保持 **HTTP 200 + `R.ok(占位标记)`**（不引入 HTTP 202，与 `/deep/clarify` 先例一致）；前端不 await 结果，靠 `store.startPolling`（项目状态翻转）刷新。`/deep/generate` 由「单风格单版、前端串行多次」改为「`styleIds[]` 一次批量」并补 claim（源态 READY/DRAFT/VERSIONS_READY，专用 `claimDeepVersionsGenerating`，与 `claimVersionsGenerating` 源态白名单不同不合并）；`advanceVersionsReadyFromReady` 已随改造移除。`publish`/`qa ask` 载体不同，异步化另立子任务。
 - 深度模式的 `CLARIFYING`/`RESEARCHING`/`PLANNING` 等是 **brief 侧展示态**（`/deep/status`），不改项目状态机。
 
 ### 4.3 权限角色
