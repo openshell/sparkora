@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "异步Claim/幂等占位范式(同步落占位+后台生成+部分唯一索引兜底)与轮询占位id规则是三条链路改造的权威模式来源"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "状态机写权收敛(只委托ProjectStatusService/不同源态白名单不合并)+异步成功三件事+轮询契约,是run*/advance*/fail*的约束"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "不可逆副作用隔离/多步写入失败顺序/验证禁改生产数据,约束异步体内异常与状态回退处理"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层约定(调用走 api/index.js 具名导出)+页面结构+状态轮询,约束前端 onAnalyze/doGenerate 改造"}
+{"file": "docs/README.md", "reason": "4.2 状态机总览与 4.4 权限,确认三条链路的状态源态白名单与轮询翻转语义"}
+{"file": "docs/spec/version-generation.md", "reason": "版本生成模块契约(接口/状态/展示字段),deep 批量改造后须同步字段级契约"}

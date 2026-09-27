@@ -20,7 +20,7 @@
 | 子任务 | 状态 | 说明 |
 |---|---|---|
 | 09-27-state-machine-service（⑤） | ✅ 已归档（2026-09） | 状态机推进收敛到 `ProjectStatusService`（commit dcedf49 + 05900ae）；10 个转换逐字等价，345 测试全绿 |
-| ④ 生成链路异步化 | 未建 | 依赖 ⑤ 的状态推进接口定型后再改链路，减少返工 |
+| 09-27-gen-async（④） | ✅ 已归档（2026-09） | 三条项目状态链路异步化（imitation/analyze、generate/versions、deep/generate）+ deep 批量 styleIds[] 补 claim；移除 advanceVersionsReadyFromReady；370 测试全绿 |
 | ⑥ Flyway 迁移 | 未建 | 独立；先迁工具再迁 ⑦ 的表结构（⑦ 的 schema 变更依赖 ⑥ 的版本化能力） |
 | ⑦ JSONB/表结构 | 未建 | 依赖 ⑥ |
 | ⑧ 知识域写入统一 | 未建 | 独立；向量模型名防护可与 ⑦ 一并落表结构 |

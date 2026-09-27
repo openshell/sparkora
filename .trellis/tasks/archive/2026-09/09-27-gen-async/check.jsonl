@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-27-gen-async/prd.md", "reason": "AC1-AC9 验收(端点<1s/409/状态翻转/失败可见/前端轮询)与 Out of Scope 边界(publish/qa 不改)"}
+{"file": ".trellis/tasks/09-27-gen-async/design.md", "reason": "同步/异步切分、响应契约、deep 批量 styleIds 改造、advanceVersionsReadyFromReady 移除,逐项对照核查"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对异步体异常必落状态、无跨@Async事务、自注入代理写法正确"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对400/409/500映射与状态写入仍只经ProjectStatusService"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端改动符合 api/index.js 具名导出与轮询/防重复提交约定"}
