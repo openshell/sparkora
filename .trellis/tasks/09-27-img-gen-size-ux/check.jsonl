@@ -1,0 +1,7 @@
+{"file": "docs/spec/image.md", "reason": "核对 §6 size 契约是否已写入 4 档比例→白名单映射、§8 是否已写取消/错误分层/参数回显；AC12 的验收依据（体积超 32KB,注入会截断,须按节定向读取而非通读）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对是否遵守 api 具名导出、thumbUrl/原图分工、≥44px 触控、未引入新依赖；并复核是否需补「客户端放弃≠服务端停止」可复用约定"}
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "核对取消文案是否如实告知后端可能仍完成、是否与既有非幂等条款一致（design §3 Gate B）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对错误分层未引入自造错误码、未改写后端中文 msg、超时提示含可执行建议"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "确认零 DB 迁移决策成立：gen_size VARCHAR(20) 与 width/height 已够用，不需 V4 脚本；如实现中出现新落库字段则本条转为必须建迁移"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "确认 AiImageClient 的 size 透传与模型轮询行为未被本任务改动破坏，ALLOWED_SIZES 未被误扩（体积超 32KB,注入会截断,须按节定向读取而非通读）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对比例映射在两层间的一致性、存量会话缓存反查回落是否安全"}

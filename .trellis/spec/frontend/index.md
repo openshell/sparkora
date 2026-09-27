@@ -163,6 +163,47 @@ const onKeywordInput = () => { clearTimeout(kwTimer); kwTimer = setTimeout(load,
 onBeforeUnmount(() => { clearTimeout(kwTimer) })
 ```
 
+### Convention: 客户端「取消」≠ 服务端停止：必须如实告知 + 取消判据先于超时判据
+
+长耗时非幂等请求（生图、发布、批量重建…）给「取消」入口时，`AbortController` 只能**停止客户端等待**——后端请求线程仍在跑，下游可能照常处理完成并**落库**。三条硬性要求（09-27 先例：`AiImageDrawer.vue` 的生成取消，与后端 [`external-cli-integration.md`](../backend/external-cli-integration.md) 的非幂等条款同源）：
+
+1. **提示必须如实告知**：「已取消本次请求（已提交给服务端的任务可能仍会完成并入库）」。谎报「已取消/无产出」= 让用户以为白等，且重试即重复数据。
+2. **取消后不得弹成功提示**：即使 `await` 拿到了响应，只要 `signal.aborted` 为真就走取消分支（否则会弹「已进图库」，用户无法分辨图到底出没出来）。
+3. **判据顺序：取消 → 超时 → 传输层**。超时判据常含「message 含 `timeout`」这类宽匹配，排在取消前面会把取消显示成「请重试」——等于诱导用户重复提交。
+
+```js
+const isCanceled = (e, ctl) => !!ctl?.signal?.aborted || e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError'
+const ctl = new AbortController()
+try {
+  const res = await reqFn(ctl.signal)      // 收「工厂」而非已发起的 promise：signal 必须在发请求前拿到
+  if (ctl.signal.aborted) return
+  handle(res)
+} catch (e) {
+  if (isCanceled(e, ctl)) ElMessage.info('已取消本次请求（已提交给服务端的任务可能仍会完成并入库）')
+  else reportLayeredError(e)               // 后端 msg / 超时 / 传输层，逐类给可执行建议
+} finally { abortCtl = null; busy.value = false }   // 取消后必须复位，否则按钮永久 loading
+```
+
+- 入口补 `if (busy.value) return` 防重入（非幂等动作不靠 UI 禁用单点防重）；`onBeforeUnmount` 里 `abortCtl?.abort()` 断掉在途请求。
+- 取消入口**默认始终可见**（单次也可能卡满超时），张数少/预计快完成时用次要样式，避免诱导取消。
+- `signal` 在 `api/index.js` 里必须是**末尾可选形参**并透传 axios config——不传=行为不变，存量调用方零改动。
+- **`http.js` 的全局错误拦截器会把上面三条全打回原形**：axios 的取消也会走响应拦截器的 reject 分支，
+  弹一条**红色英文** `canceled`；超时/断网则弹 `timeout of 300000ms exceeded` / `Network Error`。
+  结果是「两个 toast + 取消被显示成错误」，正是后端 `error-handling.md`「禁止把框架内部串透给用户」在前端侧的同一坑。
+  ⇒ **要做自定义错误分层的请求必须传 `skipGlobalErrorToast: true` 关掉全局提示**（401 处理不受影响，仍无条件跳登录）。
+  参照 `http.js` 拦截器 + `api/index.js` 的 `imageApi.generateText/generateFromImageUpload/regenerate`。
+- 等待提示**不写预估耗时**（各下游差异大，编造数字比不给更糟）；要写就写「可随时取消」。
+- **回显类信息不得与图不同源**：结果区顶部回显「本次按 X（实际 Y）· N 张」若取提交时快照，而失败/取消时结果区仍渲染**上一批**候选，
+  就会「回显是新的、图是旧的」；须在非成功路径回滚快照（`settled` 标记），或发起时清空候选。二者选一，别留半新半旧。
+
+### Convention: 语义档位与底层取值不同值时，档位要独立记忆、不可反查
+
+用户选的是**语义档**（比例 `3:4` / `9:16`、密度「高清」/「标准」）而下游契约收**底层取值**（像素 `1024x1536`、比特率）时，若多个档位映射到同一取值（如 `3:4` 与 `9:16` 同为 `1024x1536`），**禁止由底层取值反查档位**——必然歧义，用户在两档间切换时选中态乱跳。做法：独立 ref 记档位（`genRatio`），底层取值由其 `computed` 派生（`genSize`），映射表放 `src/utils/` 作单一真源；非精确档在控件上写出实际取值，不做后处理。参照 `utils/imageGenRatio.js` / `AiImageDrawer.vue`。
+
+### Convention: 缩略图按真实宽高展示，缺失回落而非破版
+
+有 `width`/`height` 的实体，网格缩略图应内联 `aspect-ratio: w / h` + `fit="contain"` + 纸色底，竖图不裁成横图；两列**缺失/为 0/非法时必须回落固定比例**（如 `4/3`）——不回落会得到 `0 / 0`（被忽略）或 `NaN`（整条声明作废）导致破版。网格用 `align-items: start` + 单元格限高保持横竖混排稳定，**不引 masonry**。本地未入库图片（如粘贴的参考图）用自身 `blob:` URL 探测宽高，**复用同一条 URL**（另建 = 多一条待 revoke 的 URL）。参照 `AiImageDrawer.vue` 的 `ratioStyleOf` / `probeRefSize`。
+
 ### Convention: 抽屉内多 Tab 的表单状态必须按 Tab 拆分
 
 `el-tabs` 切换默认不销毁面板，两个 Tab **共用同一个 `ref`** 会导致内容互相污染（在文生图输入，切到图生图看到同一段文字）。每个 Tab 的表单字段用**独立 ref**（如 `aiPromptText` / `aiPromptImg`），提交各自读取。

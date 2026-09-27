@@ -19,7 +19,12 @@ public class ImageGenDTO {
     private String refImageId;
     @NotBlank(message = "请输入生成提示词（prompt）")
     private String prompt;
-    /** OpenAI 兼容 size 白名单（控制器复用 ImageService.ALLOWED_SIZES 校验）。 */
+    /**
+     * OpenAI 兼容 size 白名单（控制器复用 ImageService.ALLOWED_SIZES 校验）。
+     * 合法值只有三个：1024x1024 / 1536x1024 / 1024x1536，非法值 400「不支持的尺寸: xxx」。
+     * 09-27-img-gen-size-ux：前端把用户选的**比例**映射为这 3 个像素之一（映射单一真源在
+     * frontend/src/utils/imageGenRatio.js），本字段不接收比例值——比例档与像素非同值，无法回传。
+     */
     private String size;
     /** 批量生成张数（1~4；S10 候选生成）。 */
     @Min(value = 1, message = "生成张数至少 1")

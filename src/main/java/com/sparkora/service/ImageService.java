@@ -55,7 +55,20 @@ import java.util.stream.Collectors;
 public class ImageService {
 
     private static final java.util.Set<String> ALLOWED_EXT = java.util.Set.of("png", "jpg", "jpeg", "webp");
-    /** OpenAI 兼容 size 参数白名单；auto/空由客户端层不传。 */
+    /**
+     * OpenAI 兼容 size 参数白名单；auto/空由客户端层不传。
+     * 09-27-img-gen-size-ux：白名单**保持 3 值不变**（扩值要撞 axonhub 下游未验证的 WxH 支持矩阵）。
+     * 前端不直接暴露像素，而是给用户 4 档「比例」，映射到本白名单（映射表单一真源 = 前端
+     * {@code frontend/src/utils/imageGenRatio.js}，后端只认像素、不参与该语义）：
+     * <pre>
+     *   1:1  → 1024x1024（精确）
+     *   4:3  → 1536x1024（实际 3:2）
+     *   3:4  → 1024x1536（实际 2:3）
+     *   9:16 → 1024x1536（实际 2:3，手机全屏近似）
+     * </pre>
+     * 16:9 与 4:3 同为 1536x1024，故前端不提供该档（不给两个指向同一像素的选项）。
+     * gen_size 落库仍是像素 ⇒ 本表与本注释是长期契约：新增像素值须同步前端映射与 docs/spec/image.md §6。
+     */
     private static final java.util.Set<String> ALLOWED_SIZES = java.util.Set.of("1024x1024", "1536x1024", "1024x1536");
 
     /** 转存 axonhub 临时 URL 的读超时。 */

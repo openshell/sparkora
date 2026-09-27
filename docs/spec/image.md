@@ -289,6 +289,10 @@
 - 图片访问：**图床公网 URL**（`url` 字段，由 `storage_key` 实时拼）。`/images/**` 静态映射已删除（S6 本地不留）。
 - **缩略图交付（S10）**：列表/网格用 `thumbUrl`（七牛 `imageView2/2/w/360/format/webp`，交付层转换零转码成本）；大图预览、正文插入、wenyan 拉图、公众号发布均用原图 `url`。非七牛图床实现降级 `thumbUrl=url`（`ObjectProvider` 可选注入，`ImageStorage` 接口不掺七牛特性）。
 - 文生图/图生图返回的 axonhub URL **必须转存图床**（临时 URL 会过期），转存失败则该次生成报错（不留死链）。
+- **出图尺寸（size）契约（09-27-img-gen-size-ux）**：合法值**只有 3 个**——`1024x1024` / `1536x1024` / `1024x1536`（`ImageService.ALLOWED_SIZES`，`normalizeSize` 校验；空/`auto` 视为不传），非白名单 → 400「不支持的尺寸: xxx」。**本次未扩白名单**：扩值要撞 axonhub 下游未实测的 WxH 支持矩阵，且 `AiImageClient` 的多模型轮询会把网关一次 4xx 放大成难归因的整轮报错。
+  - **比例档 → 实际像素**（映射单一真源：`frontend/src/utils/imageGenRatio.js`，后端不参与该语义）：`1:1`→`1024x1024`（精确）、`4:3`→`1536x1024`（实际 3:2）、`3:4`→`1024x1536`（实际 2:3）、`9:16`→`1024x1536`（实际 2:3，手机全屏近似）。**`16:9` 不提供**（与 `4:3` 同像素，不给两个指向同一张图的选项）。非精确档必须在控件上显式写出实际像素；**不做裁切/补边**等后处理。
+  - **比例不落库**：`gen_size` 仍存像素，比例档只在前端 `genRatio` ref 记忆（`genSize` 由其 `computed` 派生）⇒ `/{id}/regenerate` 用源图 `gen_size` 复现、历史图、`utils/imageRefCache` 缓存条目三条既有链路零改动。比例档**不可由像素反查**（3:4 与 9:16 同像素必然歧义，会让选中态乱跳）。
+  - **取消是纯客户端行为**：`generate-text` / `generate-from-image-upload` **没有取消参数**。前端用 `AbortController` 只停止等待，**服务端可能仍处理完成并把图入库**（可在图库看到）——前端必须如实告知，不得谎报「已取消/无产出」。
 - 请求体数字字段（`projectId`/`refImageId`）统一健壮解析：兼容数字与字符串形式（前端路由参数为字符串）。
 - **S6 起 `complete-images` 接口已删除**（配图并入预览，不再有「完成配图」状态推进）。
 
@@ -355,11 +359,17 @@
 
 ---
 
-## 8. 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级；2026-09-13 image-tags 标签能力；2026-09-26 image-gen-drawer-ux 生图抽屉共用组件 + 粘贴/本地参考图；09-26 img2img-multi-ref 多参考图 ≤4）
+## 8. 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级；2026-09-13 image-tags 标签能力；2026-09-26 image-gen-drawer-ux 生图抽屉共用组件 + 粘贴/本地参考图；09-26 img2img-multi-ref 多参考图 ≤4；09-27-img-gen-size-ux 出图比例档 + 生成中取消 + 缩略图真实比例）
 
 - **AI 生图界面共用组件 `components/AiImageDrawer.vue`（09-26 image-gen-drawer-ux）**：图库页与预览页的生图 UI/逻辑统一到同一组件，消除两套近乎重复的实现（AC-1）。props：`modelValue`(v-model)/`projectId`(空=全局图库)/`mode`(`library`|`preview`)/`presetTags`/`showCoverAction`；emits：`update:modelValue`/`generated(images,{reason})`/`insert(image)`/`set-cover(imageId)`/`locate(image)`。**宿主差异由 `mode` + emits 承担**：library 模式为独立抽屉（生成后「定位到列表」）、preview 模式内联在预览「配图」抽屉的 AI 生图 tab 内（生成后「插入正文 / 设为封面」）；组件不写宿主状态，宿主在 `generated` 回调里刷新列表/快照。**09-27-image-insert-bugs 起预览页 `generated` 回调只刷新快照，不再有任何自动插入**：旧行为「`reason==='generate'` 且 n=1 自动插入正文」会把用户随后设为封面的图顺带塞进正文（同一张图既是封面又是插图），且违反 `.trellis/spec/frontend/index.md`「不得提供任何自动写入路径」。`reason` 字段保留仅作信息透传。「插入正文」与「设为封面」两个动作完全独立，互不影响。`presetTags` 由图库页上传标签预选注入。
   - **参考图多来源多张（09-26 img2img-multi-ref，上限 4）**：① 粘贴（Ctrl/⌘+V，window paste 监听，遍历 `DataTransferItemList` **可一次多张**，仅在抽屉打开时挂载）② 本地文件（`accept=.png,.jpg,.jpeg,.webp`，`multiple`）③ 图库选图（**多选**，组件自持独立数据源 + 页内搜索 300ms 防抖 + 分页，不复用宿主主列表）。**三来源可追加、可混合**，总数上限 `REF_MAX=4`（再加第 5 张 → warning「最多支持 4 张参考图」；0 张提交 → warning「请至少选择 1 张参考图」）。参考图区为缩略图网格（来源角标 + 逐张移除 `uid` 定位 + `n/4` 计数 + 清空）。本地/粘贴来源用 `URL.createObjectURL` 即时预览，同一 `File` 引用全局只建一个 URL（跨条目 + 条目内数组去重），移除/清空/卸载 `revokeObjectURL`；参考图**不落图库**。
   - **展示顺序 = 提交顺序**：界面按来源分组渲染（本地组在前、图库组在后），与后端契约「先 `files` 后 `refImageIds`」天然一致；**统一走多图 `generateFromImageUpload(projectId, files, refImageIds, prompt, size, n, tags)`（旧单图 JSON `generateFromImage` 分支已从图生图 UI 移除，导出保留为 API 面）**。
+  - **出图比例 + 生成交互（09-27-img-gen-size-ux）**：文生图/图生图两个 tab 的「比例/张数/生成」控件**上移为 tab 之外的一块共用区**（同一 `genRatio`/`genSize`/`AbortController`），不再各写一份。
+    - **比例选择器**替代原像素下拉：4 档可视化卡片（纯 CSS 轮廓，**不引依赖**），`1:1` / `4:3` / `3:4` / `9:16`，**无 `16:9`**；每档写出实际像素（非精确档带「实际」前缀，`1:1` 档不显示「近似」字样）。映射与「不可由像素反查」的理由见 §6。
+    - **生成中取消**：`AbortController` 真正中断等待（`imageApi.generateText/generateFromImageUpload` 末尾可选 `signal`，不传=行为不变）。取消入口**始终可见**（含 `n=1`，用次要样式避免诱导取消本会很快完成的请求）。取消后**不弹「已进图库」成功提示**，改提示「已取消本次请求（**已提交给服务端的任务可能仍会完成并入库**）」——客户端放弃 ≠ 服务端停止（与 `09-27-wenyan-stale-conn` 同类事故）。**绝不自动重试**。
+    - **错误分层**：取消（先判）→ 后端 `R.fail` 中文 msg（网关/模型/校验）→ 超时（建议「减少张数后重试」）→ 传输层断网。取消判据必须排在超时之前，否则取消会被显示成「请重试」而诱导重复提交。三个生图/重生成接口均传 `skipGlobalErrorToast: true` **关掉 `http.js` 全局错误提示**——axios 的取消也会走该拦截器并弹红色英文 `canceled`（超时/断网同理），不关就是「两个 toast + 取消被显示成错误」。
+    - **参数回显**：结果区顶部显示「本次按 4:3（实际 1536×1024）· 2 张生成」，取**提交时快照**（不读 await 后的响应式值）；重生成回显「本次重生成 N 张（像素）」。快照只在**本次候选真落到结果区**时保留——失败/取消时结果区仍渲染上一批候选，须回滚快照，否则「回显是新的、图是旧的」。
+    - **缩略图按真实比例**：候选区 `.cand-thumb`、参考图区 `.ref-thumb`、图库选择弹窗 `.ref-cell-thumb` 一律按 `sparkora_image_asset.width/height` 内联 `aspect-ratio` + `fit="contain"` + 纸色底（竖图不再被裁成横图）；两列缺失时回落 `4/3`，单元格限高 + 网格 `align-items: start` 保持横竖混排稳定（**不引 masonry**）。本地参考图无落库宽高，由 `probeRefSize` 用自身 `blob:` 预览 URL 探测（复用同一条 URL，不另建待 revoke 的 URL）。
   - **重生成缓存（`utils/imageRefCache.js`，模块级单例 Map，LRU 上限 20，不持久化）**：生成成功时把**每张结果图 id** → **整组参考图** `{files[], refImageIds[], names[], previewUrls[], prompt, size, tags, projectId}` 写入缓存（缓存自持 ObjectURL，按 `files` 逐项去重/revoke，淘汰/删除/清空时释放）。重生成分支：缓存命中且 `files.length || refImageIds.length` → 用缓存整组参考图 + prompt 走多图 multipart 产新图（新结果 id 同样写回该整组缓存，支持连续重生成）；图库单图图生图（结果 `refImageId != null`）/文生图（prompt）→ 后端 `/{id}/regenerate`；多图/本地来源且缓存失效（如刷新后）→ 按钮置灰 + tooltip「参考图未入库且会话缓存已失效，无法重生成」。图库页卡片重生成与组件内候选重生成**同口径**（`canRegenerate`；语义检索命中 `img.score != null` 交后端判定不误置灰）。
 - **图库独立页 `/images`**（`ImageLibrary.vue`，TopBar 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，`el-pagination` 翻页）；网格缩略图走 `thumbUrl`（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡提供**一键重生成**（缓存感知，见上）；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图三来源：粘贴/本地文件/图库选图，**09-26 起多张 ≤4 可混合**；n(1/2/4) 张候选生成，`projectId` 传空 = 全局图库，产物即进图库）由共用组件 `AiImageDrawer` 渲染。**UI 重设计（S10+）**：卡片瘦身——默认仅缩略图+来源小标，元数据/操作入 hover 浮层（移动端常显文件名行+「···」更多操作）；工具条两段式（主操作|浏览控制）；大图预览支持当前页连续浏览；筛选状态 chip 条（单独清除/一键全清）；批量选择模式（多选→单次确认删除，被引用图后端拒绝逐张提示）；舒适/紧凑密度切换（localStorage 记忆）。素材管理归图库，不在文章流程内。
   - **标签能力（09-13 image-tags）**：工具条「上传标签」预选控件（multiple allow-create，上传与 AI 生图共读，不持久化）；工具条标签筛选下拉（数据源 `GET /api/images/tags`，与 chip 条联动，可与其他筛选组合）；卡片 hover 层/移动端常显区展示标签，**点标签直接触发筛选**；卡片 hover 操作区/移动端 ··· 菜单「编辑标签」→ 对话框全量覆盖（`PUT /{id}/tags`）；批量选择态「打标签」→ 对话框（标签多选 + add/remove 单选 → `POST /tags/batch`）。**R5 交互修复**：AI 抽屉文生图/图生图 prompt 拆为独立 ref（切换 tab 不再互相污染）；参考图选择弹窗独立数据源 + 页内搜索（300ms 防抖）+ 分页（不再只看主列表第一页）；来源标签补「比亚迪新闻」（`byd-news`，红色点）。
@@ -374,12 +384,14 @@
 ## 9. 关键实现路径
 
 - 后端：`web.controller.ImageController`、`service.ImageService`（入库/去重/派生/删图）、`service.ImageTagService`、`service.ImageEmbeddingService`、`service.IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`news.classify.NewsImageClassifier`、`storage.ImageStorage`（抽象）+ `service.QiniuService`（实现）、`mapper.ImageEmbeddingMapper`/`ImageTagMapper`、`ImageTagBackfillRunner`(`@Order(10)`)/`ImageEmbeddingBackfillRunner`(`@Order(20)`)。
-- 前端：`views/ImageLibrary.vue`、`views/project/StepPreview.vue`（配图面板 + 智能建议 tab）、`components/AiImageDrawer.vue`（共用 AI 生图面板；09-26）、`utils/imageRefCache.js`（参考图会话缓存；09-26）、`components/MarkdownEditor.vue`（`insertMd`/`insertMdAtAnchor`）、`api/index.js`（`imageApi`）。
+- 前端：`views/ImageLibrary.vue`、`views/project/StepPreview.vue`（配图面板 + 智能建议 tab）、`components/AiImageDrawer.vue`（共用 AI 生图面板；09-26，比例/取消/真实比例缩略图 09-27）、`utils/imageGenRatio.js`（比例档 → 实际像素映射单一真源；09-27）、`utils/imageRefCache.js`（参考图会话缓存；09-26）、`components/MarkdownEditor.vue`（`insertMd`/`insertMdAtAnchor`）、`api/index.js`（`imageApi`）。
 - 表：`sparkora_image_asset`、`sparkora_image_tag`、`sparkora_image_embedding`、`sparkora_illustration_dismiss`、`sparkora_article_version`（`cover_image_id`）、`sparkora_article_version_image`（正文插图关联，P1-⑦）、`sparkora_news.cover_image_id`。
 
 ---
 
 ## 10. 已知限制
+
+- **出图比例只有 4 档、且 3 档是近似（09-27-img-gen-size-ux）**：后端白名单固定 3 个像素，故 `4:3`（实际 3:2）、`3:4` / `9:16`（实际 2:3）均为**近似**（UI 已显式标注实际像素，**无后处理**：不裁切、不补边）。升级到精确比例像素（`768x1024` / `1024x1792` 等）取决于 axonhub 对非官方 WxH 的实测接受度，且须先解决「模型轮询把所有模型试一遍导致报错难归因」。比例值与实际像素的持久化**未分离**：`gen_size` 只存像素，图库/正文里无法还原「用户当初想选的比例」；若需长期保留比例意图，须新增落库列（届时走 `V4+` 迁移）。
 
 - 标签变更不触发实时重嵌（`source_text` 与当前标签漂移；用重建接口修正）。
 - `body_image_ids`（现 `sparkora_article_version_image` 关联表）不参与渲染（见「已知债务」）；手动插图与粘贴图已补登记（best-effort），但关联表**不能当计数真值**（手工编辑正文不同步登记）。

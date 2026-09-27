@@ -20,6 +20,7 @@ http.interceptors.response.use(
   err => {
     const status = err.response?.status
     if (status === 401) {
+      // 401 恒定处理，不受调用方抑制影响（登录态失效必须无条件跳登录）
       localStorage.removeItem('sparkora_token')
       localStorage.removeItem('sparkora_user')
       // 带上当前路径,登录成功后回跳(与 router.beforeEach、LoginView 的 redirect 约定一致)
@@ -28,7 +29,11 @@ http.interceptors.response.use(
         router.push({ name: 'login', query: redirect && redirect !== '/' ? { redirect } : {} })
       }
       ElMessage.error('登录已过期，请重新登录')
-    } else {
+    } else if (!err.config?.skipGlobalErrorToast) {
+      // 调用方要做自定义错误分层（取消 / 超时 / 传输层分流，见 AiImageDrawer 的 reportGenError）时，
+      // 由该请求传 skipGlobalErrorToast:true 关掉这里的全局提示——否则会弹**两个** toast，且这里的
+      // 文案是 axios 框架串（超时「timeout of 300000ms exceeded」、断网「Network Error」、取消「canceled」），
+      // 会把「已取消」显示成红色英文错误（同 error-handling.md「禁止把框架内部异常串透给用户」）。
       ElMessage.error(err.response?.data?.msg || err.message || '请求失败')
     }
     return Promise.reject(err)

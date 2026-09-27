@@ -169,10 +169,15 @@ export const imageApi = {
     return http.post('/images/upload', fd, { timeout: 120000 })
   },
   // 文生图：body={projectId?, prompt, size?, n?, tags?[]}，AI 耗时放宽超时;projectId 一律转数字(路由参数是字符串),null/空 = 全局图库
-  generateText: (projectId, prompt, size, n, tags) =>
+  // size 一律传「实际像素」（1024x1024/1536x1024/1024x1536，后端白名单）；比例档→像素映射见 utils/imageGenRatio.js
+  // signal?（09-27-img-gen-size-ux）：AbortController 信号，供生成中「取消」；不传=行为不变
+  // 注意：取消只是客户端停止等待，**服务端可能仍处理完成并把图入库**（见 AiImageDrawer 的如实告知文案）
+  // skipGlobalErrorToast（09-27）：生图/重生成由调用方做错误分层（取消→后端msg→超时→传输层），
+  //   必须关掉 http.js 的全局提示，否则超时/断网/取消会同时弹两个 toast（且其中一个是英文框架串）
+  generateText: (projectId, prompt, size, n, tags, signal) =>
     http.post('/images/generate-text',
       { projectId: projectId == null || projectId === '' ? null : Number(projectId), prompt, size, n: n == null ? 1 : n, tags: tags?.length ? tags : undefined },
-      { timeout: 300000 }),
+      { timeout: 300000, signal, skipGlobalErrorToast: true }),
   // 图生图（单图库参考图 JSON 路径）：body={projectId?, refImageId, prompt, size?, n?, tags?[]}。
   // 09-26 img2img-multi-ref 起图生图 UI 统一走多图 generateFromImageUpload；此导出保留 API 面，无 UI 调用方。
   generateFromImage: (projectId, refImageId, prompt, size, n, tags) =>
@@ -185,7 +190,8 @@ export const imageApi = {
   //  + prompt + projectId? + size? + n? + tags?[]。
   // 参考图不落图库（后端内存校验后字节直传 AI）；总数须 1~4，顺序为「先 files 后 refImageIds」，后端不重排。
   // 字段名须与后端 @RequestParam 完全一致；不要手工设 Content-Type——交给 axios 生成 multipart boundary。
-  generateFromImageUpload: (projectId, files, refImageIds, prompt, size, n, tags) => {
+  // signal?（09-27-img-gen-size-ux）：AbortController 信号，供生成中「取消」；不传=行为不变（取消只停客户端等待）
+  generateFromImageUpload: (projectId, files, refImageIds, prompt, size, n, tags, signal) => {
     const fd = new FormData()
     ;(files || []).forEach(f => { if (f) fd.append('files', f) })
     ;(refImageIds || []).forEach(id => { if (id != null) fd.append('refImageIds', Number(id)) })
@@ -194,14 +200,15 @@ export const imageApi = {
     if (size) fd.append('size', size)
     fd.append('n', n == null ? 1 : n)
     ;(tags || []).forEach(t => { const v = String(t || '').trim(); if (v) fd.append('tags', v) })
-    return http.post('/images/generate-from-image-upload', fd, { timeout: 300000 })
+    return http.post('/images/generate-from-image-upload', fd, { timeout: 300000, signal, skipGlobalErrorToast: true })
   },
   // 单图标签全量覆盖（09-13 image-tags）：body={tags:[]}，空数组=清空
   updateTags: (imageId, tags) => http.put(`/images/${imageId}/tags`, { tags: tags || [] }),
   // 批量打标/移除（09-13 image-tags）：action=add(补打) / remove(移除)，逐张幂等
   batchTags: (ids, tags, action) => http.post('/images/tags/batch', { ids, tags, action }),
   // 重新生成（S10）：同 prompt/gen_size 产新图（不覆盖源图），返回候选列表
-  regenerate: (imageId) => http.post(`/images/${imageId}/regenerate`, null, { timeout: 300000 }),
+  // skipGlobalErrorToast（09-27）：两个调用方（抽屉内候选重生成 / 图库页卡片重生成）都自带错误提示
+  regenerate: (imageId) => http.post(`/images/${imageId}/regenerate`, null, { timeout: 300000, skipGlobalErrorToast: true }),
   // 配图快照：{images[], currentVersionId, coverImageId, bodyImageIds[], coverImage?, bodyImages[]}（S10 起 images=引用图集合）
   projectImages: (id) => http.get(`/projects/${id}/images`),
   setCover: (id, imageId) => http.post(`/projects/${id}/images/${imageId}/cover`),

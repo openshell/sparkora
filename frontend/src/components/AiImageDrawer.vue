@@ -8,21 +8,6 @@
         <el-tab-pane label="文生图" name="text2img">
           <el-input v-model="t2iPrompt" type="textarea" :rows="3"
                     placeholder="例：俯瞰一杯与摊开的笔记本，晨光，暖色调，杂志摄影风格" />
-          <div class="ai-row">
-            <el-select v-model="genSize" class="size-select">
-              <el-option label="方图 1024×1024" value="1024x1024" />
-              <el-option label="横图 1536×1024" value="1536x1024" />
-              <el-option label="竖图 1024×1536" value="1024x1536" />
-            </el-select>
-            <el-select v-model="genCount" class="n-select">
-              <el-option label="1 张" :value="1" />
-              <el-option label="2 张" :value="2" />
-              <el-option label="4 张" :value="4" />
-            </el-select>
-          </div>
-          <el-button type="primary" class="gen-btn" :loading="generating" :disabled="generating" @click="onGenerateText">
-            {{ generating ? '生成中…' : '生成候选' }}
-          </el-button>
         </el-tab-pane>
 
         <!-- 图生图：参考图多来源（粘贴 / 本地文件 / 图库），支持多张（≤4），统一本地预览 -->
@@ -37,7 +22,7 @@
               <div class="ref-thumbs">
                 <div v-for="r in orderedRefs" :key="r.uid" class="ref-item">
                   <img :src="r.kind === 'library' ? thumbOf(r.libraryImage) : r.previewUrl"
-                       class="ref-thumb" :alt="r.name" />
+                       class="ref-thumb" :style="ratioStyleOf(refImgOf(r))" :alt="r.name" />
                   <span class="ref-badge">{{ r.kind === 'library' ? '图库' : '本地' }}</span>
                   <el-button class="ref-del" size="small" circle :icon="Delete" :aria-label="`移除 ${r.name}`"
                              @click="removeRef(r.uid)" />
@@ -63,43 +48,61 @@
           </div>
           <el-input v-model="i2iPrompt" type="textarea" :rows="3"
                     placeholder="例：保持构图，改为蓝灰色科技感色调" />
-          <div class="ai-row">
-            <el-select v-model="genSize" class="size-select">
-              <el-option label="方图 1024×1024" value="1024x1024" />
-              <el-option label="横图 1536×1024" value="1536x1024" />
-              <el-option label="竖图 1024×1536" value="1024x1536" />
-            </el-select>
-            <el-select v-model="genCount" class="n-select">
-              <el-option label="1 张" :value="1" />
-              <el-option label="2 张" :value="2" />
-              <el-option label="4 张" :value="4" />
-            </el-select>
-          </div>
-          <el-button type="primary" class="gen-btn" :disabled="generating" :loading="generating"
-                     @click="onGenerateFromImage">
-            {{ generating ? '生成中…' : '生成候选' }}
-          </el-button>
         </el-tab-pane>
       </el-tabs>
+
+      <!-- 比例 + 张数 + 生成/取消：文生图与图生图两个 tab **共用**同一块（同一 genRatio/genSize/AbortController）。
+           比例选择器（09-27-img-gen-size-ux）替代原像素下拉：轮廓按用户所选比例绘制，
+           每档显式写出实际像素（非精确档带「实际」前缀），避免用户误以为拿到精确比例。 -->
+      <div class="gen-params">
+        <div class="ratio-picker" role="radiogroup" aria-label="出图比例">
+          <button v-for="r in GEN_RATIOS" :key="r.key" type="button" role="radio"
+                  class="ratio-item" :class="{ 'is-active': genRatio === r.key }"
+                  :aria-checked="genRatio === r.key" :aria-label="ratioAriaOf(r)"
+                  @click="genRatio = r.key">
+            <span class="ratio-shape-box" aria-hidden="true">
+              <span class="ratio-shape" :style="{ aspectRatio: cssRatioOf(r.key) }"></span>
+            </span>
+            <span class="ratio-name">{{ r.key }}</span>
+            <span class="ratio-px">{{ r.exact ? pxTextOf(r.size) : `实际 ${pxTextOf(r.size)}` }}</span>
+          </button>
+        </div>
+        <div class="ai-row">
+          <el-select v-model="genCount" class="n-select">
+            <el-option label="1 张" :value="1" />
+            <el-option label="2 张" :value="2" />
+            <el-option label="4 张" :value="4" />
+          </el-select>
+          <el-button type="primary" class="gen-btn" :loading="generating" :disabled="generating"
+                     @click="onGenerateActive">
+            {{ generating ? '生成中…' : '生成候选' }}
+          </el-button>
+          <!-- 取消入口**始终可见**（含 n=1：单张也可能卡满 300s 超时）；n=1 用次要样式，避免诱导取消本会很快完成的请求 -->
+          <el-button v-if="generating" class="cancel-btn" plain :type="genCount > 1 ? 'warning' : 'default'"
+                     @click="onCancelGenerate">取消</el-button>
+        </div>
+      </div>
 
       <!-- 本地文件选择（隐藏 input；粘贴/拖拽之外的第三条本地路径，支持多选） -->
       <input ref="fileInput" type="file" accept=".png,.jpg,.jpeg,.webp" multiple class="hidden-input" @change="onFileInput" />
 
       <!-- 生成中骨架 -->
       <div v-if="generating" class="cand-list">
-        <div class="cand-tip">生成中，请稍候…（约 10~30 秒）</div>
+        <div class="cand-tip">{{ runningTip }}</div>
         <el-skeleton :rows="3" animated />
       </div>
 
       <!-- 候选结果：预览页可插入/设封面；图库页定位到列表；均可重生成 -->
       <div v-else-if="candidates.length" class="cand-list">
         <div class="cand-tip">
+          <!-- 本次参数回显：取**提交时快照**，不读 await 后的响应式值（生成期间控件仍可改） -->
+          <div v-if="runEcho" class="cand-echo">{{ runEcho }}</div>
           <template v-if="mode === 'preview'">本次生成 {{ candidates.length }} 张候选：点击插入正文，或设为封面</template>
           <template v-else>本次生成 {{ candidates.length }} 张，已进图库（点击「定位到列表」查看）</template>
         </div>
         <div class="cand-grid">
           <div v-for="img in candidates" :key="img.id" class="cand-cell">
-            <el-image :src="thumbOf(img)" fit="cover" class="cand-thumb"
+            <el-image :src="thumbOf(img)" fit="contain" class="cand-thumb" :style="ratioStyleOf(img)"
                       :preview-src-list="[originOf(img)]" preview-teleported hide-on-click-modal />
             <span class="cand-id">#{{ img.id }}</span>
             <div class="cand-actions">
@@ -132,7 +135,7 @@
       <div v-else class="ref-grid">
         <div v-for="img in refImages" :key="img.id" class="ref-cell"
              :class="{ 'is-picked': pickedIds.includes(img.id) }" @click="togglePick(img)">
-          <el-image :src="thumbOf(img)" fit="cover" class="ref-cell-thumb" />
+          <el-image :src="thumbOf(img)" fit="contain" class="ref-cell-thumb" :style="ratioStyleOf(img)" />
           <span v-if="pickedIds.includes(img.id)" class="ref-cell-check">
             <el-icon><Select /></el-icon>
           </span>
@@ -159,6 +162,7 @@ import { ElDrawer, ElMessage } from 'element-plus'
 import { Upload, Picture, PictureFilled, Delete, Search, Select } from '@element-plus/icons-vue'
 import { imageApi } from '../api'
 import * as imageRefCache from '../utils/imageRefCache'
+import { GEN_RATIOS, GEN_RATIO_DEFAULT, sizeOfRatio, cssRatioOf } from '../utils/imageGenRatio'
 
 /**
  * 共用的 AI 生图面板（09-26 image-gen-drawer-ux）：
@@ -172,6 +176,10 @@ import * as imageRefCache from '../utils/imageRefCache'
  * 重生成：会话缓存命中整组参考图 → 复用 files/ids + prompt 走多图接口；文生图 / refImageId 非空 → 后端 /regenerate；
  *         本地上传来源且缓存失效 → 置灰 + tooltip。
  * 硬约束：系统只产候选，写入由宿主在用户点击后执行（组件仅 emit，不写宿主状态）。
+ *
+ * 出图比例（09-27-img-gen-size-ux）：用户按投放场景选**比例**，实际提交仍是后端白名单像素
+ * （utils/imageGenRatio.js 单一真源）。比例选择态用独立 ref `genRatio` 记忆，`genSize` 由其派生——
+ * **不能由像素反查档位**（3:4 与 9:16 同为 1024x1536，反查必然歧义、选中态乱跳）。
  */
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -193,11 +201,36 @@ const wrapperAttrs = computed(() => (isInline.value
 const aiTab = ref('text2img')
 const t2iPrompt = ref('')
 const i2iPrompt = ref('')
-const genSize = ref('1024x1024')
+/** 用户选的比例档（1:1 / 4:3 / 3:4 / 9:16）——比例语义的唯一记忆位。 */
+const genRatio = ref(GEN_RATIO_DEFAULT)
+/** 提交给后端的实际像素：始终**由档位派生**（后端只认像素；不引入「比例」新参数 ⇒ 零后端改动/零迁移）。 */
+const genSize = computed(() => sizeOfRatio(genRatio.value))
 const genCount = ref(1)
 const generating = ref(false)
 const regeneratingId = ref(null)
 const candidates = ref([])
+/** 本次生成参数快照（提交时写入，await 后不再改）：供结果区回显，避免「改了控件分不清产出对应哪次」。 */
+const lastRun = ref(null)
+
+// ==== 展示派生（纯函数，零副作用） ====
+/** '1024x1536' → '1024×1536'（控件像素标注与参数回显共用同一格式）。 */
+const pxTextOf = (size) => String(size || '').replace(/x/i, '×')
+/** 比例档的无障碍文案（读屏与 title 用，比视觉排版更完整）。 */
+const ratioAriaOf = (r) => `${r.key} 比例，实际 ${pxTextOf(r.size)}${r.exact ? '' : '（近似，非精确比例）'}`
+/**
+ * 按图片**真实宽高**给缩略图定 aspect-ratio（09-27-img-gen-size-ux）。
+ * `sparkora_image_asset.width/height` 由入库时 `ImageService.fillSize` 探测填；两列缺失/非法时回落 4/3
+ * ——不回落会得到 `aspect-ratio: 0 / 0`（被忽略）或 `NaN`（整条声明作废）导致破版。
+ * 配合 `fit="contain"` + 纸色底：竖图完整显示、不裁切，也不会变形。
+ */
+const ratioStyleOf = (img) => {
+  const w = Number(img?.width)
+  const h = Number(img?.height)
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return { aspectRatio: `${w} / ${h}` }
+  return { aspectRatio: '4 / 3' }
+}
+/** 参考图条目取「带宽高的对象」：图库来源是实体（含 width/height），本地来源是条目自身（探测后回填）。 */
+const refImgOf = (r) => (r?.kind === 'library' ? r.libraryImage : r)
 
 // ==== 参考图（多来源统一为有序列表，界面顺序 == 提交顺序） ====
 /** 参考图上限（与后端 generateImage2ImageFromUpload 的 1~4 校验一致）。 */
@@ -257,14 +290,37 @@ const appendLocalRef = (file, name) => {
     : new File([file], `reference.${extOfMime(file.type) || 'png'}`, { type: file.type || 'image/png' })
   let previewUrl = ''
   try { previewUrl = URL.createObjectURL(uploadFile) } catch (e) { previewUrl = '' }
-  refs.value.push({
+  const entry = {
     uid: `local-${++refUid}`,
     kind: 'local',
     file: uploadFile,
     previewUrl,
-    name: name || file.name || '参考图'
-  })
+    name: name || file.name || '参考图',
+    width: null,
+    height: null
+  }
+  refs.value.push(entry)
+  probeRefSize(entry.uid)
   return true
+}
+/**
+ * 本地参考图宽高探测（blob 预览 URL → naturalWidth/Height）：让参考图缩略图也能按真实比例展示
+ * （图库来源自带 width/height；本地 File 未入库，只有客户端能测）。
+ * 复用条目自己那条 ObjectURL，不另建（另建 = 多一条待 revoke 的 URL）。
+ * 失败/条目已被移除（URL 已 revoke）时静默留空 → 回落 4/3，不阻断。
+ */
+const probeRefSize = (uid) => {
+  const src = refs.value.find((r) => r.uid === uid)?.previewUrl
+  if (!src) return
+  const im = new Image()
+  im.onload = () => {
+    const t = refs.value.find((r) => r.uid === uid)
+    if (!t) return
+    t.width = im.naturalWidth || null
+    t.height = im.naturalHeight || null
+  }
+  im.onerror = () => { /* 探测失败（URL 已释放等）：留空回落 4/3 */ }
+  im.src = src
 }
 /** 追加图库来源（记录实体 id，无 ObjectURL 需要管理）。 */
 const appendLibraryRef = (img) => {
@@ -400,17 +456,69 @@ const confirmRefPicks = () => {
 const thumbOf = (img) => img?.thumbUrl || img?.url || ''
 const originOf = (img) => img?.url || ''
 
+/** 当前在途请求的中止器（生成中「取消」入口的落点；空闲为 null）。 */
+let abortCtl = null
+/** 取消提示：**必须如实告知「客户端放弃 ≠ 服务端停止」**——服务端可能仍处理完成并把图入库。 */
+const CANCEL_TIP = '已取消本次请求（已提交给服务端的任务可能仍会完成并入库）'
+/** 是否是「用户主动取消」：以我们自己的 signal 为准，另兜 axios 的取消标记（不额外 import axios）。 */
+const isCanceled = (e, ctl) => !!ctl?.signal?.aborted || e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError'
+/** 超时判据：axios 超时（ECONNABORTED）/系统超时（ETIMEDOUT）/消息含 timeout。 */
+const isTimeout = (e) => e?.code === 'ECONNABORTED' || e?.code === 'ETIMEDOUT' || /timeout|超时/i.test(String(e?.message || ''))
+/** 传输层失败（断网/连接被拒）：与「后端业务错误」（有 response）区分开。 */
+const isTransport = (e) => e?.code === 'ERR_NETWORK' || !e?.response
+
+/**
+ * 生成类请求的错误分层提示（09-27-img-gen-size-ux）。
+ * 判据顺序是**功能性要求**：取消必须最先判定——超时判据含「消息含 timeout」较宽，
+ * 放在前面会把取消误显示成「请重试」，等于诱导用户重复提交（非幂等重复生图）。
+ * 后端 msg 直接透出（已是中文可读，见 .trellis/spec/backend/error-handling.md），不追加框架内部串。
+ */
+const reportGenError = (e, canceled) => {
+  if (canceled) { ElMessage.info(CANCEL_TIP); return }
+  const msg = e?.response?.data?.msg
+  if (msg) { ElMessage.error(msg); return }
+  if (isTimeout(e)) { ElMessage.error('生成超时（张数越多越容易发生）：可减少张数后重试，或稍后再试'); return }
+  if (isTransport(e)) { ElMessage.error('网络连接失败，请检查网络后重试'); return }
+  ElMessage.error('生成失败：' + (e?.message || '未知错误'))
+}
+
+/** 结果区参数回显：generate 回显档位+实际像素+张数；regenerate 无档位语义（用源图 gen_size），只回显像素。 */
+const runEcho = computed(() => {
+  const r = lastRun.value
+  if (!r) return ''
+  const px = pxTextOf(r.size)
+  if (r.kind === 'regenerate') return `本次重生成 ${r.n} 张（${px}）`
+  return `本次按 ${r.ratioKey}（实际 ${px}）· ${r.n} 张生成`
+})
+/** 生成中骨架提示：**不写预估耗时**（各模型/张数差异大，编造数字比不给更糟），改为指向取消入口。 */
+const runningTip = computed(() => `正在生成 ${lastRun.value?.n || genCount.value} 张，请稍候…（可随时取消本次请求）`)
+
 /** 统一收口：成功则展示候选、写会话缓存（持有本地参考图时）、通知宿主刷新。
  *  `reason`（`generate`/`regenerate`）仅作信息透传给宿主，当前**无任何宿主据此自动写入正文**——
  *  预览页曾按「首次 n=1 自动插入」处理，那正是把封面图误塞进正文的来源，
- *  也违反 .trellis/spec/frontend/index.md「不得提供任何自动写入路径」的硬约束（09-27-image-insert-bugs 已移除）。 */
-const doGenerate = async (req, ctx) => {
+ *  也违反 .trellis/spec/frontend/index.md「不得提供任何自动写入路径」的硬约束（09-27-image-insert-bugs 已移除）。
+ *  `reqFn` 收**工厂**而非已发起的 promise：取消需要 AbortController 的 signal 在**发请求之前**拿到。
+ *  入口 `if (generating.value) return` 防重入——`:disabled`/`:loading` 只是 UI 兜底，
+ *  「双击/Enter 快速确认」仍可能在 generating 置位后二次进入（frontend spec：非幂等动作要显式守卫）。 */
+const doGenerate = async (reqFn, ctx) => {
+  if (generating.value) return
   generating.value = true
+  const ctl = new AbortController()
+  abortCtl = ctl
+  // 参数回显取**提交时快照**：生成期间用户仍可改比例/张数，读当前值会与本次产出不符。
+  // 快照先写 lastRun（生成中骨架提示要读它），但**只有本次候选真落到结果区才保留**——
+  // 失败/取消时若不回滚，结果区仍渲染上一批候选、却配上本次的比例/像素/张数回显（回显与图不匹配）。
+  const prevRun = lastRun.value
+  lastRun.value = { kind: 'generate', ratioKey: ctx?.ratioKey, size: ctx?.size, n: ctx?.n || 1 }
+  let settled = false
   try {
-    const res = await req
+    const res = await reqFn(ctl.signal)
+    // 已取消即便拿到响应也不算成功：否则会弹「已进图库」，让用户以为取消失败/图丢了。
+    if (ctl.signal.aborted) return
     if (res.code !== 0) { ElMessage.error(res.msg || '生成失败'); return }
     const list = res.data || []
     candidates.value = list
+    settled = true
     // 持有本地参考图（或图库 id）时：每张结果图 id → 整组参考图信息，供同会话「重生成」复用。
     // size/tags/projectId 用提交时快照（ctx），不用 await 后的响应式值——生成期间用户仍可改尺寸/标签，
     // 若读取当前值会缓存下「与本次生成不符」的参数，重生成产出与预期不同。
@@ -422,8 +530,19 @@ const doGenerate = async (req, ctx) => {
     else ElMessage.success(`生成成功 ${list.length} 张，已进图库`)
     emit('generated', list, { reason: 'generate' })
   } catch (e) {
-    ElMessage.error('生成失败：' + (e.response?.data?.msg || e.message || '网络异常或超时'))
-  } finally { generating.value = false }
+    reportGenError(e, isCanceled(e, ctl))
+  } finally {
+    if (!settled) lastRun.value = prevRun   // 取消/失败：回滚回显，保住「回显 ↔ 候选图」一致
+    abortCtl = null
+    generating.value = false
+  }
+}
+
+/** 生成中「取消」：真正中断等待（axios AbortController）。**绝不自动重试**（重复提交=重复生图）。 */
+const onCancelGenerate = () => {
+  if (!abortCtl) return
+  abortCtl.abort()
+  // 提示文案在 catch 的取消分支里给（避免重复弹）；此处只负责断连。
 }
 
 /** 构造缓存条目所需的参考图快照（files/refImageIds/names 与提交顺序一致）。 */
@@ -440,29 +559,47 @@ const buildCacheInfo = (ctx) => ({
 const onGenerateText = () => {
   const p = t2iPrompt.value.trim()
   if (!p) { ElMessage.warning('请输入画面描述'); return }
-  doGenerate(imageApi.generateText(props.projectId, p, genSize.value, genCount.value, props.presetTags))
+  // 提交时快照比例/张数/像素（生成期间控件仍可改，读当前值会与本次产出不符）
+  const ratioKey = genRatio.value
+  const size = genSize.value
+  const n = genCount.value
+  doGenerate(
+    (signal) => imageApi.generateText(props.projectId, p, size, n, props.presetTags, signal),
+    { ratioKey, size, n }
+  )
 }
 const onGenerateFromImage = () => {
   if (!refReady.value) { ElMessage.warning('请至少选择 1 张参考图'); return }
   const p = i2iPrompt.value.trim()
   if (!p) { ElMessage.warning('请输入画面描述'); return }
   // 统一走多图接口：files[]（本地/粘贴，按界面顺序）+ refImageIds[]（图库，按界面顺序），上限 4。
-  // 提交时快照 size/tags/files/ids（生成期间 select 仍可交互），缓存与本次请求参数保持一致。
+  // 提交时快照 size/tags/files/ids（生成期间比例/张数控件仍可交互），缓存与本次请求参数保持一致。
+  const ratioKey = genRatio.value
+  const size = genSize.value
+  const n = genCount.value
   const localFiles = localRefs.value.map(r => r.file)
   const libIds = libraryRefs.value.map(r => r.id)
   doGenerate(
-    imageApi.generateFromImageUpload(props.projectId, localFiles, libIds, p, genSize.value, genCount.value, props.presetTags),
+    (signal) => imageApi.generateFromImageUpload(props.projectId, localFiles, libIds, p, size, n, props.presetTags, signal),
     {
+      ratioKey,
+      n,
       cacheRefs: true,
       files: localFiles,
       refImageIds: libIds,
       names: orderedRefs.value.map(r => r.name),
       prompt: p,
-      size: genSize.value,
+      size,
       tags: [...(props.presetTags || [])],
       projectId: props.projectId ?? null
     }
   )
+}
+
+/** 参数行是文生图/图生图共用的，故按当前 tab 分派（各自的前置校验仍在各自函数内）。 */
+const onGenerateActive = () => {
+  if (aiTab.value === 'text2img') onGenerateText()
+  else onGenerateFromImage()
 }
 
 // ==== 重生成分支 ====
@@ -501,10 +638,16 @@ const onRegenerate = async (img) => {
       }
     }
     candidates.value = list
+    // 参数回显：重生成无「档位」语义（像素来自源图 gen_size / 会话缓存），故只回显像素 + 张数。
+    lastRun.value = { kind: 'regenerate', size: list[0]?.genSize || cached?.size || '', n: list.length }
     ElMessage.success('已重新生成')
     emit('generated', list, { reason: 'regenerate' })
   } catch (e) {
-    ElMessage.error('重新生成失败：' + (e.response?.data?.msg || e.message || '网络异常'))
+    // 与生图同款分层（后端 msg / 超时 / 传输层），文案前缀区分动作用途
+    const msg = e?.response?.data?.msg
+    if (msg) ElMessage.error(msg)
+    else if (isTimeout(e)) ElMessage.error('重新生成超时：请稍后重试')
+    else reportGenError(e, isCanceled(e, null))
   } finally { regeneratingId.value = null }
 }
 
@@ -517,7 +660,8 @@ onMounted(() => { if (props.modelValue) window.addEventListener('paste', onWindo
 onBeforeUnmount(() => {
   window.removeEventListener('paste', onWindowPaste)
   clearTimeout(refKwTimer)
-  clearRef()   // 释放本地预览 ObjectURL
+  clearRef()             // 释放本地预览 ObjectURL
+  abortCtl?.abort()      // 卸载时断掉在途请求：否则回调/提示会打在已销毁的组件上
 })
 </script>
 
@@ -528,10 +672,29 @@ onBeforeUnmount(() => {
 .ai-tabs :deep(.el-tabs__header) { margin-bottom: 8px; }
 .ai-tabs :deep(.el-tabs__nav-wrap)::after { height: 1px; }
 
+/* 比例选择器（09-27-img-gen-size-ux）：纯 CSS 轮廓示意，不引依赖；触控目标 ≥44px。
+   列数用 auto-fit + minmax(84px,1fr) 而非固定 4 列：容器变窄（preview 内联模式宿主更窄）时自动降为 3/2 列，
+   避免 .ratio-px（white-space:nowrap 的「实际 1024×1536」约 77px 宽）被挤压出按钮边框。
+   84px 下限保证 420px 抽屉（内容区 380px）仍是 4 列：(380-3*6)/4≈90px > 84px。 */
+.ratio-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 6px; }
+.ratio-item {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 44px; padding: 6px 2px; cursor: pointer; font: inherit; color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper);
+  transition: border-color .2s, background-color .2s;
+}
+.ratio-item:hover { border-color: var(--line-strong); }
+.ratio-item.is-active { border-color: var(--brand, var(--el-color-primary)); background: var(--brand-weak, var(--el-fill-color)); }
+.ratio-shape-box { display: flex; align-items: center; justify-content: center; height: 30px; }
+.ratio-shape { display: block; height: 30px; max-width: 44px; border: 1.5px solid var(--muted); border-radius: 2px; }
+.ratio-item.is-active .ratio-shape { border-color: var(--brand, var(--el-color-primary)); background: var(--brand, var(--el-color-primary)); opacity: .85; }
+.ratio-name { font-size: 12px; font-weight: 600; line-height: 1.2; }
+.ratio-px { font-size: 10px; color: var(--muted); line-height: 1.2; white-space: nowrap; }
+
 .ai-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-.ai-row .size-select { flex: 1; min-width: 0; }
 .ai-row .n-select { width: 90px; flex: none; }
-.gen-btn { width: 100%; margin-top: 10px; min-height: 44px; }
+.gen-btn { flex: 1; min-width: 0; min-height: 44px; }
+.cancel-btn { flex: none; min-height: 44px; }
 
 /* 参考图区：空态为拖拽/粘贴投放区，有图时为多图缩略网格 + 来源角标 + 逐张移除 */
 .ref-zone {
@@ -544,9 +707,11 @@ onBeforeUnmount(() => {
 .ref-zone.is-empty { align-items: center; text-align: center; padding: 16px 10px; gap: 6px; }
 .ref-head { display: flex; align-items: center; justify-content: space-between; }
 .ref-count { font-size: 12px; font-weight: 600; color: var(--ink); }
-.ref-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; }
+.ref-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; align-items: start; }
 .ref-item { position: relative; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px; background: var(--paper); }
-.ref-thumb { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius-sm); display: block; }
+/* 缩略图按真实宽高展示（09-27-img-gen-size-ux）：aspect-ratio 由内联 :style 提供（width/height 缺失回落 4/3），
+   object-fit 用 contain（竖图完整显示、不裁切），背景纸色避免变形留缝；限高防长图撑破网格。 */
+.ref-thumb { width: 100%; max-height: 96px; object-fit: contain; border-radius: var(--radius-sm); display: block; }
 .ref-badge { position: absolute; top: 6px; left: 6px; font-size: 10px; color: #fff; background: rgba(0,0,0,.55); padding: 1px 5px; border-radius: 4px; pointer-events: none; }
 .ref-del { position: absolute; top: 4px; right: 4px; }
 .ref-item-name { font-size: 10px; color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -559,9 +724,12 @@ onBeforeUnmount(() => {
 /* 候选网格 */
 .cand-list { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .cand-tip { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-.cand-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* 本次参数回显（比例 + 实际像素 + 张数） */
+.cand-echo { font-size: 12px; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+/* align-items: start + 单元格限高：横竖混排时不让行高被竖图撑爆（不引 masonry 依赖） */
+.cand-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-items: start; }
 .cand-cell { position: relative; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; }
-.cand-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); display: block; }
+.cand-thumb { width: 100%; max-height: 220px; border-radius: var(--radius-sm); background: var(--paper); display: block; }
 .cand-id { position: absolute; top: 8px; left: 8px; font-size: 11px; color: #fff; background: rgba(0,0,0,.55); padding: 1px 6px; border-radius: 4px; pointer-events: none; }
 .cand-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 .regen-wrap { display: inline-flex; }
@@ -570,18 +738,19 @@ onBeforeUnmount(() => {
 .ref-kw { margin-bottom: 8px; }
 .ref-dialog-tip { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
 .img-pop-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
-.ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 60vh; overflow-y: auto; }
+.ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 60vh; overflow-y: auto; align-items: start; }
 .ref-cell { position: relative; cursor: pointer; border: 2px solid var(--line); border-radius: var(--radius-sm); padding: 6px; }
 .ref-cell:hover { box-shadow: var(--shadow-hover); }
 .ref-cell.is-picked { border-color: var(--brand, var(--el-color-primary)); }
 .ref-cell-check { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: #fff; background: var(--brand, var(--el-color-primary)); border-radius: 50%; }
-.ref-cell-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); }
+.ref-cell-thumb { width: 100%; max-height: 180px; border-radius: var(--radius-sm); background: var(--paper); }
 .ref-cell-name { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ref-pager { display: flex; justify-content: center; margin-top: 12px; }
 
-/* 移动端：单列候选、触控目标 ≥44px */
+/* 移动端：单列候选、比例选择器 2×2、触控目标 ≥44px */
 @media (max-width: 768px) {
   .cand-grid { grid-template-columns: 1fr; }
+  .ratio-picker { grid-template-columns: repeat(2, 1fr); }
   .ref-empty-actions .el-button,
   .ref-ops .el-button,
   .cand-actions .el-button { min-height: 44px; }

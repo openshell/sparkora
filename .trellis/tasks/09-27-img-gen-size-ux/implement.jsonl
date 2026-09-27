@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端硬约定主索引：api 具名导出、耗时接口 timeout、预览用原图/缩略用 thumbUrl、触控≥44px、图片上传扩展名校验。本任务前端改动必须逐条对照"}
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "「客户端放弃≠服务端停止」与非幂等调用提示条款。design §3 的取消文案直接由此约束，取消路径若谎报会造出与 09-27-wenyan-stale-conn 同类事故"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "调外部 AI 服务约定：AiClient/AiException 边界、record 加字段保留旧构造器、派生展示零副作用。本任务不改 AiImageClient 但需确认未破坏其契约（体积超 32KB,注入会截断,须按节定向读取而非通读）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误提示须中文可读、不得透出框架内部串、语义与传输层原因分离。design §4 的错误分层据此设计"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "GEN_RATIOS 单一真源、两处 el-select 换同一组件、避免比例映射在前后端各写一份漂移"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "比例映射跨前端 UI 与后端白名单两层，需保证 genSize 保持像素使 gen_size 落库/regenerate/imageRefCache 零改动"}
+{"file": "docs/spec/image.md", "reason": "配图模块权威契约：§1 字段表、§6 API size 契约、§8 页面职责。本任务规格同步目标文件（体积超 32KB,注入会截断,须按节定向读取而非通读）"}

@@ -1,0 +1,28 @@
+{
+  "id": "img-gen-size-ux",
+  "name": "img-gen-size-ux",
+  "title": "生图尺寸比例选项 + 生图交互优化",
+  "description": "生图支持按新媒体主流比例(1:1/3:4/4:3/9:16)出图,补齐完整生图交互优化(尺寸可视化选择、生成中进度与取消、张数联动、错误提示、候选缩略图按真实比例展示)",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-09-27",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "decisions": "尺寸方案=A(近似映射到3个官方像素,不撞未验证的网关支持矩阵);比例档=1:1/4:3/3:4/9:16四档(16:9与4:3同像素故去掉);后处理=不做裁切补边;交互=完整优化(可视化选择/取消/错误分层/参数回显);缩略图=按真实比例展示"
+  }
+}
