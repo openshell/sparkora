@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-deep-writing-adaptive-sections/prd.md", "reason": "AC-01..AC-06 验收标准与 Out of Scope 边界（不改 schema/不改 VersionService/不改响应结构）"}
+{"file": ".trellis/tasks/09-27-deep-writing-adaptive-sections/design.md", "reason": "分档纯函数取值表、system/user prompt 改造点与测试重构方案"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对 §6 深度写作契约与实现一致（目标字数注入 + 自适应分节）"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 AI prompt 拼装契约未被 R2 破坏（其余铁律逐字保留、截断重试不动）"}

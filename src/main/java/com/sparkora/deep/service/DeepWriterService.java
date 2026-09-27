@@ -88,6 +88,38 @@ public class DeepWriterService {
     public record StyleSpec(String prompt, String name) {}
 
     /**
+     * 09-27-deep-writing-adaptive-sections:分节档位(小标题数区间 + 每节段数区间,纯字符串直接进 prompt)。
+     */
+    record SectionSpec(String headings, String parasPerSection) {}
+
+    /** 目标字数默认值(与 {@link com.sparkora.service.VersionService} 口径一致:null → 1500)。 */
+    private static final int DEFAULT_WORD_COUNT_TARGET = 1500;
+
+    /**
+     * 09-27-deep-writing-adaptive-sections R2/R3:按目标字数取分节档位(纯函数,无副作用,不抛)。
+     *
+     * <p>null/≤0 → 按 1500(中档 3~5);边界:800→2~3,801→3~5,1800→3~5,1801→5~8,
+     * 3000→5~8,3001→8~12,10000→8~12。
+     */
+    static SectionSpec sectionSpec(Integer targetWords) {
+        int n = (targetWords == null || targetWords <= 0) ? DEFAULT_WORD_COUNT_TARGET : targetWords;
+        if (n <= 800) return new SectionSpec("2~3", "2~3");
+        if (n <= 1800) return new SectionSpec("3~5", "2~3");
+        if (n <= 3000) return new SectionSpec("5~8", "2~3");
+        return new SectionSpec("8~12", "2~4");
+    }
+
+    /**
+     * 09-27-deep-writing-adaptive-sections R2:排版铁律「节数行」(随目标字数自适应);
+     * 其余排版铁律(加粗/单段行数/禁止整篇无分节)保留不变,由调用方拼接。
+     */
+    static String layoutRule(Integer targetWords) {
+        SectionSpec s = sectionSpec(targetWords);
+        return "排版铁律(公众号正文可读性,必须遵守):全文用 " + s.headings()
+                + " 个「## 小标题」分节,每节 " + s.parasPerSection() + " 段,禁止整篇无分节;\n";
+    }
+
+    /**
      * 启动批量深度写作(同步毫秒级,占位语义):校验 brief/风格 + 原子抢占 GENERATING_VERSIONS 后立即返回,
      * 后台 self.runBatch 逐风格生成;前端靠项目状态轮询(GENERATING_VERSIONS→VERSIONS_READY)翻转刷新。
      *
@@ -192,11 +224,20 @@ public class DeepWriterService {
     public Long write(Long projectId, Long briefId, String stylePrompt, String styleName) throws Exception {
         ArticleBriefEntity b = briefMapper.selectById(briefId);
         if (b == null) throw new IllegalArgumentException("brief 不存在");
+        // 09-27-deep-writing-adaptive-sections:取一次项目快照(wordCountTarget 注入 + title 回退复用),
+        // 避免为取目标字数额外新增查询(原 extractH1 内部自有一次,改造后复用本快照)。
+        ArticleProjectEntity p = null;
+        try {
+            p = projectMapper.selectById(projectId);
+        } catch (Exception e) {
+            log.warn("取项目快照失败 projectId={}: {}", projectId, e.getMessage());
+        }
         JsonNode sheet = json.readTree(b.getFactSheet() == null ? "{}" : b.getFactSheet());
         // R5(09-27-tavily-extract-kind-hypotheses):手册条目带 kind 时按「参数事实 / 背景素材」分组呈现;
         // 全无 kind(历史 fact_sheet)时退化为原平铺行为(prompt 与旧实现逐字等价)。
         boolean hasKind = hasKind(sheet.path("entries"));
         StringBuilder factCtx = buildFactContext(sheet.path("entries"), hasKind);
+        // R2(09-27-deep-writing-adaptive-sections):排版铁律「节数行」按目标字数自适应;其余铁律逐字保留。
         String system = """
                 你是资深汽车内容作者。基于【事实手册】与用户锁定需求撰写文章正文。
                 铁律:
@@ -206,15 +247,18 @@ public class DeepWriterService {
                 """ + (hasKind ? """
                 4. 手册按「参数事实」与「背景素材」分组:参数事实可逐字引用其数值;背景素材仅用于叙事/背景铺陈,
                    不得据此新增任何数值(背景素材里出现的数字也不得写进正文)。
-                """ : "") + """
-                排版铁律(公众号正文可读性,必须遵守):全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;
+                """ : "") + layoutRule(p == null ? null : p.getWordCountTarget()) + """
                 关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
                 """;
         // 09-10-style-library-enhance:风格指令从 user prompt 迁入 system prompt(与仿写链路统一注入位置)
         if (stylePrompt != null && !stylePrompt.isBlank()) {
             system = system + "\n文风要求:\n" + stylePrompt + "\n" + STYLE_ENFORCE;
         }
-        StringBuilder user = new StringBuilder("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
+        // R1(09-27-deep-writing-adaptive-sections):注入目标字数(null/≤0 → 1500,口径对齐 VersionService)。
+        int target = (p == null || p.getWordCountTarget() == null || p.getWordCountTarget() <= 0)
+                ? DEFAULT_WORD_COUNT_TARGET : p.getWordCountTarget();
+        StringBuilder user = new StringBuilder("目标字数：").append(target).append('\n');
+        user.append("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:\n").append(b.getClarifyAnswers()).append('\n');
         }
@@ -276,7 +320,7 @@ public class DeepWriterService {
         v.setContentMd(content);
         // 09-10-versions-page-fix:深度链路此前漏填 title/version_label/style_tag/word_count,
         // 与多版本链路(VersionService.generateOne)对齐补齐,消除版本页 undefined/null 与字数统计为空
-        v.setTitle(extractH1(projectId, content));
+        v.setTitle(extractH1(p == null ? null : p.getTopic(), content));
         v.setVersionLabel(nextLabel(projectId));
         // style_tag 列 VARCHAR(20),超长截断防御(PG 超长 insert 直接报错会阻断整次生成)
         String tag = styleName == null || styleName.isBlank() ? "深度" : styleName;
@@ -387,16 +431,9 @@ public class DeepWriterService {
 
     /**
      * 09-10-versions-page-fix:抽取 AI 正文首个 Markdown H1 作为版本 title。
-     * 正则多行首匹配「# 标题」;缺失/空白回退 project.topic(project 查询判空防御)。
+     * 正则多行首匹配「# 标题」;缺失/空白回退 project.topic(由 {@link #write} 传入的项目快照,不重复查询)。
      */
-    private String extractH1(Long projectId, String contentMd) {
-        String topic = null;
-        try {
-            ArticleProjectEntity p = projectMapper.selectById(projectId);
-            topic = p != null ? p.getTopic() : null;
-        } catch (Exception e) {
-            log.warn("取项目 title 回退源失败 projectId={}: {}", projectId, e.getMessage());
-        }
+    private String extractH1(String topic, String contentMd) {
         if (contentMd != null) {
             var m = Pattern.compile("(?m)^#\\s+(.+)$").matcher(contentMd);
             if (m.find()) {

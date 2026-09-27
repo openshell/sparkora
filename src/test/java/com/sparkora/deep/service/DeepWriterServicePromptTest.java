@@ -3,6 +3,7 @@ package com.sparkora.deep.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.domain.entity.ArticleBriefEntity;
+import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
@@ -193,23 +194,19 @@ class DeepWriterServicePromptTest {
         assertTrue(prompt.contains("- 价格 = 239900(置信 0.90)\n"), "旧平铺格式逐字保留");
     }
 
-    /** 全无 kind → system prompt 与旧实现逐字等价(不得出现「参数事实/背景素材」铁律)。 */
+    /** 全无 kind → system prompt 不得出现「参数事实/背景素材」分组铁律(实质契约,不逐字锁定排版文案)。 */
     @Test
-    void 全无kind_systemPrompt与旧行为等价() throws Exception {
+    void 全无kind_systemPrompt不含分组铁律() throws Exception {
         when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
         service.write(PROJECT_ID, BRIEF_ID, "", "深度");
         ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
         verify(aiClient).chat(system.capture(), anyString(), eq(4096));
-        String legacy = """
-                你是资深汽车内容作者。基于【事实手册】与用户锁定需求撰写文章正文。
-                铁律:
-                1. 正文中出现的所有具体数值(价格/尺寸/续航/百分比等)必须逐字出自下方事实手册,禁止改写/换算/推算。
-                2. 手册未覆盖的参数,用定性表述,不得给出具体数值。
-                3. 结构清晰,用 Markdown;长度按用户需求。
-                排版铁律(公众号正文可读性,必须遵守):全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;
-                关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
-                """;
-        assertEquals(legacy, system.getValue(), "无 kind 时 system prompt 必须与旧实现逐字等价");
+        assertFalse(system.getValue().contains("参数事实"), "无 kind 不得出现分组铁律");
+        assertFalse(system.getValue().contains("背景素材"), "无 kind 不得出现分组铁律");
+        // 其余铁律仍逐字保留(改造只动态化排版铁律「节数行」)
+        assertTrue(system.getValue().contains("3. 结构清晰,用 Markdown;长度按用户需求。"), "铁律 1~3 不得变");
+        assertTrue(system.getValue().contains("关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。"),
+                "结尾排版铁律不得变");
     }
 
     /** 有 kind → system prompt 增「参数事实/背景素材」分组铁律。 */
@@ -253,5 +250,140 @@ class DeepWriterServicePromptTest {
         int c = 0, i = 0;
         while ((i = s.indexOf(sub, i)) >= 0) { c++; i += sub.length(); }
         return c;
+    }
+
+    // ==================== 09-27-deep-writing-adaptive-sections:目标字数 + 自适应分节 ====================
+
+    private ArticleProjectEntity project(Integer wordCountTarget) {
+        ArticleProjectEntity p = new ArticleProjectEntity();
+        p.setId(PROJECT_ID);
+        p.setTopic("主题X");
+        p.setWordCountTarget(wordCountTarget);
+        return p;
+    }
+
+    /** AC-01:user prompt 注入目标字数;null → 1500(与 VersionService 口径一致)。 */
+    @Test
+    void 目标字数注入_userPrompt含默认1500() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(null));
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains("目标字数：1500"), "null 目标字数应回退 1500");
+    }
+
+    /** AC-01:显式目标字数原样注入。 */
+    @Test
+    void 目标字数注入_显式值() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(5000));
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains("目标字数：5000"), "显式目标字数应注入");
+    }
+
+    /** AC-01:project 缺失/查询异常时容错默认 1500,不抛。 */
+    @Test
+    void 目标字数注入_project缺失容错1500() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(null);
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains("目标字数：1500"), "project 缺失应容错默认档");
+    }
+
+    /** AC-02:默认目标字数(1500)→ 中档 3~5 个。 */
+    @Test
+    void 分节_默认档为中档3to5() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(1500));
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), anyString(), eq(4096));
+
+        assertTrue(system.getValue().contains("全文用 3~5 个「## 小标题」分节,每节 2~3 段"),
+                "1500 字应为 3~5 个 / 2~3 段");
+        assertFalse(system.getValue().contains("2~4 个"), "不得再出现写死的 2~4");
+        // 动态化只替换「节数行」文案,与下一行之间仍为单个换行(不引入空行,与旧实现排版一致)
+        assertTrue(system.getValue().contains("段,禁止整篇无分节;\n关键数据、核心结论"),
+                "排版铁律两行间不得插入空行");
+    }
+
+    /** AC-02:目标 ≤800 → 2~3 个且每节 2~3 段。 */
+    @Test
+    void 分节_短文档为2to3() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(500));
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), anyString(), eq(4096));
+
+        assertTrue(system.getValue().contains("全文用 2~3 个「## 小标题」分节,每节 2~3 段"),
+                "≤800 应为 2~3 个 / 2~3 段");
+    }
+
+    /** AC-02:目标 >3000 → 8~12 个且每节 2~4 段。 */
+    @Test
+    void 分节_长文档为8to12每节2to4() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(5000));
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), anyString(), eq(4096));
+
+        assertTrue(system.getValue().contains("全文用 8~12 个「## 小标题」分节,每节 2~4 段"),
+                ">3000 应为 8~12 个 / 2~4 段");
+    }
+
+    /** AC-03:分档纯函数边界覆盖(null/-1/0/800/801/1800/1801/3000/3001/10000),不抛。 */
+    @Test
+    void 分档纯函数_边界值() {
+        assertSpec(null, "3~5", "2~3");
+        assertSpec(-1, "3~5", "2~3");
+        assertSpec(0, "3~5", "2~3");
+        assertSpec(800, "2~3", "2~3");
+        assertSpec(801, "3~5", "2~3");
+        assertSpec(1800, "3~5", "2~3");
+        assertSpec(1801, "5~8", "2~3");
+        assertSpec(3000, "5~8", "2~3");
+        assertSpec(3001, "8~12", "2~4");
+        assertSpec(10000, "8~12", "2~4");
+        assertSpec(Integer.MAX_VALUE, "8~12", "2~4");   // 极端大值仍落顶档,不抛
+    }
+
+    /** AC-01:project 查询异常时容错默认 1500,不阻断生成。 */
+    @Test
+    void 目标字数注入_project查询异常容错1500() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenThrow(new RuntimeException("db down"));
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains("目标字数：1500"), "查询异常应容错默认档");
+        assertTrue(prompt.contains("事实手册(数值唯一来源):"), "异常不得阻断手册注入");
+    }
+
+    /** AC-01/AC-02:≤0 项目字号 → user prompt 回退 1500,且 system 走中档 3~5(口径一致)。 */
+    @Test
+    void 目标字数注入_非正值回退默认档() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(-5));
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), user.capture(), eq(4096));
+
+        assertTrue(user.getValue().contains("目标字数：1500"), "≤0 应回退 1500");
+        assertTrue(system.getValue().contains("全文用 3~5 个「## 小标题」分节"),
+                "≤0 与 null 同档(1500 → 3~5)");
+    }
+
+    private static void assertSpec(Integer target, String headings, String paras) {
+        DeepWriterService.SectionSpec s = DeepWriterService.sectionSpec(target);
+        assertEquals(headings, s.headings(), "目标 " + target + " 的小标题数档");
+        assertEquals(paras, s.parasPerSection(), "目标 " + target + " 的每节段数档");
     }
 }

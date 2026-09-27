@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 文本合成链路（DeepWriterService）prompt 拼装契约与截断/重试范式；R1/R2 不得破坏既有铁律结构与 ChatResult 语义"}
+{"file": "docs/spec/brief-generation.md", "reason": "§6 深度写作契约（手册注入/数值回查/排版铁律）权威落点；R1/R2 与文档同步依据"}
+{"file": "docs/spec/version-generation.md", "reason": "VersionService 目标字数口径（目标字数：N / null→1500）与排版铁律先例；R1 对齐参照、同时确认仿写链路不在范围"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "生成链路写入/状态委托约定；确认本任务不触碰状态机与失败路径"}
