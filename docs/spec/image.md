@@ -222,9 +222,26 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | cover_image_id | BIGINT | 该版本封面（`sparkora_image_asset.id`，可空；每版本一张） |
-| body_image_ids | String(1000) | 正文插图 id 列表（逗号分隔，有序） |
 
 > 理由：多版本各有排版，预览/发布按「当前版本」取图；项目级关联无法表达版本间差异。
+
+**正文插图关联表（P1-⑦ 规范化，Flyway `V2__article_version_image.sql`）**：
+
+原 `sparkora_article_version.body_image_ids VARCHAR(1000)`（逗号分隔有序 id 串，违反 1NF）已规范化为独立关联表 `sparkora_article_version_image`：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | BIGSERIAL | 主键 |
+| version_id | BIGINT NOT NULL | → `sparkora_article_version.id`（应用层维护，不建强 FK） |
+| image_id | BIGINT NOT NULL | → `sparkora_image_asset.id`（应用层维护，不建强 FK） |
+| sort_order | INTEGER NOT NULL DEFAULT 0 | 正文插图顺序（0 起，与原逗号串顺序一致） |
+| created_at | TIMESTAMP | 默认 `CURRENT_TIMESTAMP` |
+
+- `UNIQUE (version_id, image_id)` 数据库级防重（重复登记幂等，应用层捕 `DuplicateKeyException` 静默吞）；索引 `idx_article_version_image_version`、`idx_article_version_image_image`。
+- 无 `deleted` 逻辑删除列（关系行生命周期 = 版本生命周期，物理删，同 `sparkora_image_tag` 惯例）；不建强外键。
+- `body_image_ids` 列已 DROP；读写走 `ArticleVersionImageMapper`（有序查询 / 按图反查引用 / 幂等删除），消除原两份重复 `split(",")` 与 `delete` 的 `LIKE` 粗筛（id=5 误配 15/51）。
+- **对外契约不变**：`GET /api/projects/{id}/images` 仍返回 `bodyImageIds: List<Long>`（由关联表按 `sort_order` 计算），前端零改动。
+- 回滚（manual）：重加 `body_image_ids` 列 + `string_agg(image_id::text, ',' ORDER BY sort_order)` 从关联表聚合回填。
 
 **配图建议「忽略」记录（09-15 article-auto-illustrate 子C 新表，幂等建表）**：
 
@@ -264,8 +281,8 @@
 | POST | `/api/images/tags/batch` | ADMIN/EDITOR | `{ids:[...], tags:[...], action:"add"\|"remove"}`（逐张执行，全部幂等） | `{ok:true}`；`ids` 空 `R.fail(400)`；`tags` 空 `R.fail(400)`；action 非 add/remove `R.fail(400)` |
 | GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[], coverImage?, bodyImages[]}`。**S10 语义改写**：`images` 从全量图库收缩为**当前版本引用的图**（封面+插图）；新增服务端解析的 `coverImage`（对象含 url）/`bodyImages`（按 `bodyImageIds` 顺序）。全量图库浏览改走 `GET /api/images` 分页接口 |
 | POST | `/api/projects/{id}/images/{imageId}/cover` | ADMIN/EDITOR | — | `{ok:true}`（`version.cover_image_id`）；重复选同一张幂等 |
-| POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 `version.body_image_ids`）；重复添加幂等 |
-| POST | `/api/projects/{id}/illustration-suggestions` | 三角色 | `{tags?[], minScore?}`（09-15 article-auto-illustrate 子C 新增）；`tags` 为**标签 AND 预过滤**（同 `GET /api/images`）；`minScore` null → `AI_IMAGE_MIN_SCORE`（默认 0.3），须在 [0,1] 否则 400 | `data = [{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}]`，`candidates` 为 `ImageSearchHit`（同 `/api/images/search`，按 score 降序）。**零副作用**：只读正文 + 图库，**不修改 `content_md` / `body_image_ids`**。无候选的锚点不出现在结果中（不报错）；单锚点检索失败仅跳过该锚点（其余照常返回）。无当前版本 → `R.fail(400,"尚未生成正文版本，无法生成配图建议")`；正文空 → `R.fail(400,"正文为空，无法生成配图建议")`；项目不存在 → `R.fail(400,"项目不存在")`。契约详解见下文「配图建议」 |
+| POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 `sparkora_article_version_image` 关联行）；重复添加幂等 |
+| POST | `/api/projects/{id}/illustration-suggestions` | 三角色 | `{tags?[], minScore?}`（09-15 article-auto-illustrate 子C 新增）；`tags` 为**标签 AND 预过滤**（同 `GET /api/images`）；`minScore` null → `AI_IMAGE_MIN_SCORE`（默认 0.3），须在 [0,1] 否则 400 | `data = [{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}]`，`candidates` 为 `ImageSearchHit`（同 `/api/images/search`，按 score 降序）。**零副作用**：只读正文 + 图库，**不修改 `content_md` / `sparkora_article_version_image`**。无候选的锚点不出现在结果中（不报错）；单锚点检索失败仅跳过该锚点（其余照常返回）。无当前版本 → `R.fail(400,"尚未生成正文版本，无法生成配图建议")`；正文空 → `R.fail(400,"正文为空，无法生成配图建议")`；项目不存在 → `R.fail(400,"项目不存在")`。契约详解见下文「配图建议」 |
 | POST | `/api/projects/{id}/illustration-suggestions/dismiss` | ADMIN/EDITOR | `{anchorKey}`（09-15 article-auto-illustrate 子C 新增） | `{ok:true}`；写 `sparkora_illustration_dismiss`（`UNIQUE(version_id, anchor_key)`），**幂等**（重复忽略不报错、不重复插入）。`anchorKey` 空/超长(>200) → `R.fail(400)`；无当前版本 → `R.fail(400)`。VIEWER 调用 403 |
 
 - 图片访问：**图床公网 URL**（`url` 字段，由 `storage_key` 实时拼）。`/images/**` 静态映射已删除（S6 本地不留）。
@@ -280,7 +297,7 @@
 
 把图库从「手动选图」升级为「**系统建议、用户定夺**」：正文生成后按段落语义检索图库，产出配图**建议**。
 
-> **硬约束（不可违背）**：系统**只产出建议，绝不自动写入**。配图进入正文的唯一路径是用户在预览页显式操作（单张「插入到此段」/ 整组「全部采用」）。**不存在任何自动插入开关**（无 `AUTO_ILLUSTRATE_ENABLED` 之类配置），从设计上排除无人值守自动配图。生成建议本身**零副作用**：不写 `content_md`、不写 `body_image_ids`。
+> **硬约束（不可违背）**：系统**只产出建议，绝不自动写入**。配图进入正文的唯一路径是用户在预览页显式操作（单张「插入到此段」/ 整组「全部采用」）。**不存在任何自动插入开关**（无 `AUTO_ILLUSTRATE_ENABLED` 之类配置），从设计上排除无人值守自动配图。生成建议本身**零副作用**：不写 `content_md`、不写 `sparkora_article_version_image`。
 
 ### 7.1 锚点切分（`AnchorExtractor`，纯静态可单测）
 
@@ -307,7 +324,7 @@
 采用必须**两处都写**（2026-09-16 勘察修正）：
 
 1. **编辑器插入 markdown `![](图床原图URL)` 到锚点位置**（`MarkdownEditor.insertMdAtAnchor(headingPath, text)`：按标题文本**首次出现**定位插到该标题行之后；找不到标题则**退回光标处**，保证不丢内容）——保证**真正渲染**；
-2. **调既有 `POST /api/projects/{id}/images/{imageId}/body?action=add`** 登记 `body_image_ids`——保证**发布页「插图 N 张」计数正确 + 图片受删图引用保护**。
+2. **调既有 `POST /api/projects/{id}/images/{imageId}/body?action=add`** 登记 `sparkora_article_version_image` 关联行——保证**发布页「插图 N 张」计数正确 + 图片受删图引用保护**。
 
 二者均幂等（`addBodyImage` 幂等；重复插入 markdown 用户可见可自行编辑）。不新增关联模型。
 
@@ -329,10 +346,10 @@
 
 ### 7.7 已知债务（本任务不修复，记录在案）
 
-- `body_image_ids` **不参与渲染**：`PreviewService.buildMarkdown()` 的 `bodyImageUrls` 参数完全未被使用，正文插图落点只由 `contentMd` 中的 `![](url)` 决定。
-- **手动插图（预览页图库/AI 生图面板）只写 markdown、不登记 `body_image_ids`**（前端 `insertBodyImage` 仅调 `editorRef.insertMd()`）；仅「智能建议采用」两处都写。历史 34 个版本中 4 个 `body_image_ids` 非空且正文 `![` 出现 0 次，两者本就脱节。
-- 修复方向是「`body_image_ids` 改为基于正文解析」，波及 `delete` 引用保护、`projectImages`、发布页计数，超出本任务范围（用户选择「markdown + 登记」双写，非大规模修复）。
-- 另注：`ImageService.modifyBodyImage` 清空 `body_image_ids` 时用 `updateById`（MyBatis-Plus `NOT_NULL` 策略）会把 `null` 跳过，导致**移除最后一张插图后字段不清空**（`add` 正常）。既有缺陷，与本任务无关。
+- `body_image_ids`（现 `sparkora_article_version_image` 关联表）**不参与渲染**：`PreviewService.buildMarkdown()` 的 `bodyImageUrls` 参数完全未被使用，正文插图落点只由 `contentMd` 中的 `![](url)` 决定。
+- **手动插图（预览页图库/AI 生图面板）只写 markdown、不登记关联表**（前端 `insertBodyImage` 仅调 `editorRef.insertMd()`）；仅「智能建议采用」两处都写。历史 34 个版本中 4 个插图登记非空且正文 `![` 出现 0 次，两者本就脱节。
+- 修复方向是「登记改为基于正文解析」，波及 `delete` 引用保护、`projectImages`、发布页计数，超出本任务范围（用户选择「markdown + 登记」双写，非大规模修复）。
+- **P1-⑦ 已消除**：原 `ImageService.modifyBodyImage` 清空逗号列时用 `updateById`（MyBatis-Plus `NOT_NULL` 策略）会把 `null` 跳过、导致移除最后一张插图后字段不清空；改为关联表按行删（`deleteByVersionAndImage`），该缺陷自然消失。
 
 ---
 
@@ -356,14 +373,14 @@
 
 - 后端：`web.controller.ImageController`、`service.ImageService`（入库/去重/派生/删图）、`service.ImageTagService`、`service.ImageEmbeddingService`、`service.IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`news.classify.NewsImageClassifier`、`storage.ImageStorage`（抽象）+ `service.QiniuService`（实现）、`mapper.ImageEmbeddingMapper`/`ImageTagMapper`、`ImageTagBackfillRunner`(`@Order(10)`)/`ImageEmbeddingBackfillRunner`(`@Order(20)`)。
 - 前端：`views/ImageLibrary.vue`、`views/project/StepPreview.vue`（配图面板 + 智能建议 tab）、`components/AiImageDrawer.vue`（共用 AI 生图面板；09-26）、`utils/imageRefCache.js`（参考图会话缓存；09-26）、`components/MarkdownEditor.vue`（`insertMd`/`insertMdAtAnchor`）、`api/index.js`（`imageApi`）。
-- 表：`sparkora_image_asset`、`sparkora_image_tag`、`sparkora_image_embedding`、`sparkora_illustration_dismiss`、`sparkora_article_version`（`cover_image_id`/`body_image_ids`）、`sparkora_news.cover_image_id`。
+- 表：`sparkora_image_asset`、`sparkora_image_tag`、`sparkora_image_embedding`、`sparkora_illustration_dismiss`、`sparkora_article_version`（`cover_image_id`）、`sparkora_article_version_image`（正文插图关联，P1-⑦）、`sparkora_news.cover_image_id`。
 
 ---
 
 ## 10. 已知限制
 
 - 标签变更不触发实时重嵌（`source_text` 与当前标签漂移；用重建接口修正）。
-- `body_image_ids` 不参与渲染 + 手动插图不登记（见「已知债务」）。
+- `body_image_ids`（现 `sparkora_article_version_image` 关联表）不参与渲染 + 手动插图不登记（见「已知债务」）。
 - 车型库图片接入预留（暂不开发）。
 - 非七牛图床实现下 `thumbUrl` 降级为原图 URL。
 - **参考图不落库 + 多图重生成依赖前端会话缓存（09-26 image-gen-drawer-ux / img2img-multi-ref）**：粘贴/本地文件参考图仅用于本次生成（参考图未入库，「重生成」依赖前端 `utils/imageRefCache.js` 会话缓存复用**整组**参考图）；缓存不持久化，**刷新页面后丢失 → 该来源图的重生成按钮置灰 + tooltip**（需重新粘贴/选图生成）。`ref_image_id` 为**单列**无法表达多对多：**多张参考图生成的结果一律 `ref_image_id=NULL`**（即便全来自图库），仅「单张且来自图库」保留 `ref_image_id` 走后端 `/{id}/regenerate`。multipart 请求体上限需满足 `IMAGE_MAX_REQUEST_MB ≥ 4 × IMAGE_MAX_UPLOAD_MB`（默认 45 ≥ 4×10，运维调整单张上限时须同步）。

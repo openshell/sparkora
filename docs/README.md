@@ -51,7 +51,7 @@ graph LR
 创作项目(ArticleProject)
   └─ 简报(Brief)                    ← 深度链路六阶段产出（研究计划→澄清→并行研究→事实手册→简报）
        └─ 多版本正文(ArticleVersion) ← 每选一个风格生成一版（label/styleTag/wordCount/ragStatus/factRisks）
-            ├─ 配图(ImageAsset)       ← 版本级封面 cover_image_id + 正文插图 body_image_ids；图库 + AI 生图 + BYD 同步
+            ├─ 配图(ImageAsset)       ← 版本级封面 cover_image_id + 正文插图关联表 sparkora_article_version_image；图库 + AI 生图 + BYD 同步
             ├─ 预览(Preview)          ← wenyan CLI 同核渲染 → HTML（degraded 降级链）
             └─ 发布(Publish)          ← gzhContent JSON → wenyan-server upload/publish → 公众号草稿箱
 ```

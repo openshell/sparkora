@@ -119,9 +119,9 @@ public void persistVector(...) { deleteByImageId(id); insert(id, vec); }  // 独
 
 ---
 
-### 多对多关系表：独立关联表 + 应用层维护外键（09-13 先例：图片标签）
+### 多对多 / 有序一对多关系表：独立关联表 + 应用层维护外键（09-13 先例：图片标签）
 
-图片与标签这类「多对多、标签按名称自由新建」的关系，用**独立关联表**承载，不往主表加逗号/JSON 列（`body_image_ids` 那类有序小集合才用逗号列）：
+图片与标签这类「多对多、标签按名称自由新建」的关系，用**独立关联表**承载，不往主表加逗号/JSON 列。**有序一对多同样走关联表**（用 `sort_order` 保序），不再给主表加逗号列：
 
 ```sql
 CREATE TABLE IF NOT EXISTS sparkora_image_tag (
@@ -191,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_illustration_dismiss_version ON sparkora_illustra
 - **定位用指纹而非序号**：被引用对象（正文段落）会编辑，序号漂移会让决策错位到别的对象；指纹（稳定字段 + 内容短哈希）在未编辑时稳定，编辑后仅该条失效、不误伤其他。
 - 幂等写入 = 先查 + `UNIQUE` 兜底捕 `DuplicateKeyException`；该写入无外层事务，冲突后无后续 SQL 会撞 aborted 事务（若在事务内，见上「向量/派生数据写入需与调用方事务隔离」）。
 
-> **Warning**: 关联/派生表的「清空」不要用 `updateById(entity)`——MyBatis-Plus `NOT_NULL` 策略会跳过 `null` 字段，导致**清空最后一行的操作静默失败**（先例：`ImageService.modifyBodyImage` 移除最后一张插图后 `body_image_ids` 不为空）。置空必须用 `UpdateWrapper.set(col, null)`。
+> **Warning**: 关联/派生表的「清空/置空」不要用 `updateById(entity)`——MyBatis-Plus `NOT_NULL` 策略会跳过 `null` 字段，导致**清空最后一行的操作静默失败**。置空必须用 `UpdateWrapper.set(col, null)`。**更好的是改为关联表按行删**（P1-⑦ 先例：`ImageService.modifyBodyImage` 移除最后一张插图由「`updateById` 写 `body_image_ids`」改为 `ArticleVersionImageMapper.deleteByVersionAndImage`，缺陷自然消失）。
 
 ### multipart 同名多值参数：`getParameterValues` + 逗号拆分
 
@@ -297,6 +297,44 @@ SELECT * FROM (
 - 表：`sparkora_<domain>_<entity>`；列：snake_case ↔ 实体驼峰自动映射。
 - 状态值/枚举落 VARCHAR(20) 内全大写（TOPIC/IMITATION、DRAFT/READY...）。
 - JSON 字段统一 TEXT 列存字符串（后端写入、前端解析），不引入 JSON 类型处理器。
+
+### JSON 存 TEXT 是「有意约定」（P1-⑦ 复核裁定，不转 JSONB）
+
+评审曾提「`fact_sheet`/`rag_citations`/`citations`/`image_refs` 等 JSON 列改 JSONB」，**复核后判定不予处置**，理由是「有意约定 + 零收益 + 高 churn」：
+
+1. **明文约定**：本文件「JSON 字段统一 TEXT 列存字符串，不引入 JSON 类型处理器」即项目约定；`ArticleBriefEntity` 类注释同款声明；全实体 JSON 列均为 `String`，全库无 `TypeHandler`/`autoResultMap`。
+2. **零收益**：全库**零 JSON-path 查询**——JSON 列是纯不透明载荷（后端 `ObjectMapper` 写、前端 `JSON.parse` 读），从不参与查询/索引/过滤（`grep -rn '\->>\|jsonb\|json_array_elements\|stringtype' src/` 仅命中迁移 README 示例名）。
+3. **高 churn**：JDBC URL 须加 `?stringtype=unspecified`（当前 `application.yml` 无参数），否则 insert 报 varchar vs jsonb 类型错；~20 个 TEXT JSON 列需 `USING ::jsonb` 迁移 + 空串防御。
+
+> 结论：**JSON 列保持 TEXT**。仅当出现「按 JSON 内部字段查询/索引/聚合」的真实需求时再重新评估（届时按新 Flyway 迁移版本实施，并同步改 JDBC URL）。
+
+### 有序小集合不落逗号列：P1-⑦ body_image_ids 规范化先例
+
+`sparkora_article_version.body_image_ids VARCHAR(1000)`（逗号分隔有序 id 串）违反 1NF，已由 Flyway `V2__article_version_image.sql` 规范化为关联表 `sparkora_article_version_image`（`version_id`/`image_id`/`sort_order` 保序、`UNIQUE(version_id,image_id)`、两索引、无强 FK）：
+
+```sql
+-- P1-⑦：逗号列 → 关联表（含回填 + DROP 列，单迁移内完成）
+CREATE TABLE IF NOT EXISTS sparkora_article_version_image (
+    id         BIGSERIAL PRIMARY KEY,
+    version_id BIGINT  NOT NULL,
+    image_id   BIGINT  NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,      -- 0 起，与原串顺序一致
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (version_id, image_id)
+);
+INSERT INTO sparkora_article_version_image (version_id, image_id, sort_order)
+SELECT v.id, trim(parts.token)::bigint, parts.ord - 1
+FROM sparkora_article_version v
+CROSS JOIN LATERAL regexp_split_to_table(v.body_image_ids, ',') WITH ORDINALITY AS parts(token, ord)
+WHERE v.body_image_ids IS NOT NULL AND trim(v.body_image_ids) <> '' AND trim(parts.token) <> ''
+ON CONFLICT (version_id, image_id) DO NOTHING;
+ALTER TABLE sparkora_article_version DROP COLUMN IF EXISTS body_image_ids;
+```
+
+- **逗号列代价**（本先例的动机）：读侧两份重复 `split(",")` 解析易漂移；引用检查只能 `LIKE '%id%'` 粗筛，`id=5` 会误匹配 `15/51`，必须再 Java 侧精确过滤兜底；`updateById` 回写整行还带读改写竞态。
+- **规范化收益**：有序查询 `WHERE version_id=? ORDER BY sort_order`（`ArticleVersionImageMapper.findImageIdsByVersion`）；引用检查 `WHERE image_id=?` 精确反查（`findVersionIdsByImage`），`LIKE` hack 与误匹配消失；add = `sort_order=max+1` 追加（幂等 + `UNIQUE` 兜底），remove = 精确 `DELETE`（幂等，且天然修掉「清空最后一行静默失败」）。
+- **列搬数用「补表/补列 → 迁移数据 → DROP 旧列」**，且回填与 DROP 同一迁移内完成（数据是搬移非丢失）；回滚 = 重加列 + `string_agg(image_id::text, ',' ORDER BY sort_order)` 聚合回填（manual，文档化）。
+- **对外契约不变**：快照 API 仍返回 `bodyImageIds: List<Long>`（由关联表按 `sort_order` 计算），前端零改动。
 
 ---
 

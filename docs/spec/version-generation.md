@@ -29,12 +29,12 @@
 | similarity_score | DOUBLE PRECISION | 文章仿写：与原文 5-gram 重合率 0~1（仅仿写版有值；见 [imitation.md](imitation.md)） |
 | similarity_report | TEXT | 文章仿写：自检明细 JSON `{maxRunLength,maxRunText?,repeatedRuns:[{text,length}],thresholds}` |
 | cover_image_id | BIGINT | S3b：该版本封面（`sparkora_image_asset.id`，可空；每版本一张） |
-| body_image_ids | VARCHAR(1000) | S3b：正文插图 id 列表（逗号分隔，有序） |
 | created_at | TIMESTAMP | 创建时间 |
 
 - 版本-图片关联**挂版本，不挂项目**：多版本各有排版，预览/发布按「当前版本」取图；项目级关联无法表达版本间差异（见 [image.md](image.md)）。
 - 索引：`idx_version_project (project_id)`。
-- 幂等迁移：`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`（`rag_status` / `fact_risks` / `rag_citations` / `cover_image_id` / `body_image_ids`；仿写字段见 [imitation.md](imitation.md)）。
+- **正文插图（P1-⑦ 规范化）**：原 `body_image_ids VARCHAR(1000)`（逗号分隔有序 id 串）已改为独立关联表 `sparkora_article_version_image`（`version_id`/`image_id`/`sort_order`/`created_at`，`UNIQUE(version_id,image_id)`），字段/契约见 [image.md](image.md) §5。
+- 幂等迁移：`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`（`rag_status` / `fact_risks` / `rag_citations` / `cover_image_id`；仿写字段见 [imitation.md](imitation.md)）。
 
 ---
 
@@ -106,4 +106,4 @@
 ## 7. 已知限制
 
 - 主题创作多版本接口已封死（410），仅仿写可用；主题正文为深度批量生成（`/deep/generate`）。
-- 版本插图 `body_image_ids` 不参与渲染（正文插图落点只由 `content_md` 中的 `![](url)` 决定），详见 [image.md](image.md)「已知债务」。
+- 版本插图登记（`sparkora_article_version_image`）不参与渲染（正文插图落点只由 `content_md` 中的 `![](url)` 决定），详见 [image.md](image.md)「已知债务」。
