@@ -224,8 +224,32 @@ public class DeepWriterService {
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:\n").append(b.getClarifyAnswers()).append('\n');
         }
+        // R1(09-27-brief-writing-linkage-fix):简报字段显式注入写作 prompt——简报是唯一结构化中间件,
+        // 此前 titleCandidates/coreViewpoints/outline/factRisks 在写作阶段零引用(仅末尾一句空指引)。
+        // 历史 brief 字段缺失/为空 → 跳过对应块,prompt 退化为旧行为(不报错不阻断)。
+        appendBriefSection(user, "标题候选", b.getTitleCandidates(), true);
+        appendBriefSection(user, "核心观点", b.getCoreViewpoints(), true);
+        appendBriefSection(user, "大纲", b.getOutline(), false);
+        appendBriefSection(user, "事实风险", b.getFactRisks(), true);
+        // 末尾指引句与旧实现逐字一致:空字段 brief 的 prompt 与旧行为等价(AC-01);有字段时其内容已在上方列出
         user.append("主题与大纲参考 brief(标题候选/核心观点/大纲),直接写正文 Markdown。");
-        AiClient.ChatResult cr = aiClient.chat(system, user.toString(), 4096);
+        // R4(09-27-brief-writing-linkage-fix):正文是全链路最长输出,对齐 R4/R6 范式——
+        // 首次 4096;截断(finish_reason=length)或异常提额 8192 重试一次,仅两次均失败才抛。
+        // 重试只包裹 AI 调用,版本 insert 仍只执行一次(下方落库逻辑不动)。
+        AiClient.ChatResult cr;
+        try {
+            cr = aiClient.chat(system, user.toString(), 4096);
+            if ("length".equals(cr.finishReason())) {
+                throw new AiException("AI 输出被 max_tokens 截断(正文)", null);
+            }
+        } catch (Exception first) {
+            log.warn("深度写作首次失败,提额重试(8192) briefId={}: {}", briefId, first.getMessage());
+            cr = aiClient.chat(system,
+                    user + "\n注意:上次输出被截断,请输出完整正文。", 8192);
+            if ("length".equals(cr.finishReason())) {
+                throw new AiException("AI 输出两次均被 max_tokens 截断(正文)", first);
+            }
+        }
         String content = cr.content();
 
         // ⑥ 数值回查
@@ -267,6 +291,49 @@ public class DeepWriterService {
         v.setCreatedAt(LocalDateTime.now());
         versionMapper.insert(v);
         return v.getId();
+    }
+
+    /**
+     * R1(09-27-brief-writing-linkage-fix):把简报 JSON 字段块追加进写作 prompt。
+     *
+     * <p>规则:
+     * <ul>
+     *   <li>null/空白/{@code "[]"}/{@code "{}"} → 跳过(历史 brief 无字段时 prompt 与旧行为等价);</li>
+     *   <li>{@code asArray=true}:解析为数组则逐项 {@code - } 列出(元素为对象时 toString);
+     *       解析失败或非数组 → 原样追加(不丢信息);</li>
+     *   <li>{@code asArray=false}(outline):解析成功 → toString 追加(结构未知,不强解);失败 → 原样。</li>
+     * </ul>
+     * 全程 try/catch 仅 warn,绝不因简报字段异常阻断正文生成。
+     */
+    private void appendBriefSection(StringBuilder sb, String label, String jsonText, boolean asArray) {
+        if (jsonText == null || jsonText.isBlank()
+                || "[]".equals(jsonText.trim()) || "{}".equals(jsonText.trim())) {
+            return;
+        }
+        try {
+            boolean parsed = false;
+            if (asArray) {
+                JsonNode node = json.readTree(jsonText);
+                if (node != null && node.isArray()) {
+                    sb.append(label).append(":\n");
+                    for (JsonNode item : node) {
+                        sb.append("- ").append(item.isTextual() ? item.asText() : item.toString()).append('\n');
+                    }
+                    parsed = true;
+                }
+            } else {
+                JsonNode node = json.readTree(jsonText);
+                if (node != null) {
+                    sb.append(label).append(":\n").append(node.toString()).append('\n');
+                    parsed = true;
+                }
+            }
+            // 非数组/解析未产出结构:按原文追加(仅在此处补块头,避免解析失败时块头重复)
+            if (!parsed) sb.append(label).append(":\n").append(jsonText.trim()).append('\n');
+        } catch (Exception e) {
+            log.warn("简报字段「{}」注入写作 prompt 失败,按原文追加: {}", label, e.getMessage());
+            sb.append(label).append(":\n").append(jsonText.trim()).append('\n');
+        }
     }
 
     /**

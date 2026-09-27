@@ -45,8 +45,18 @@ public class AiClient {
                 .build();
     }
 
-    /** chat 调用结果。 */
-    public record ChatResult(String content, String model, int totalTokens) {}
+    /**
+     * chat 调用结果。
+     *
+     * <p>09-27-brief-writing-linkage-fix R4:增 {@code finishReason}(模型给出 stop/length 等;
+     * 截断=length)。非 JSON 调用不会抛截断异常,调用方(DeepWriterService)需据此判定重试,
+     * 故统一透出;保留 3 参构造器以兼容既有调用方与测试。
+     */
+    public record ChatResult(String content, String model, int totalTokens, String finishReason) {
+        public ChatResult(String content, String model, int totalTokens) {
+            this(content, model, totalTokens, null);
+        }
+    }
 
     /**
      * AI 输出 JSON 容错清洗(2026-09-10):模型偶发违反 response_format=json_object 约束,
@@ -191,7 +201,10 @@ public class AiClient {
             }
             int tokens = root.path("usage").path("total_tokens").asInt(0);
             String model = root.path("model").asText("");
-            return new ChatResult(content, model, tokens);
+            // R4(09-27-brief-writing-linkage-fix):始终透出 finish_reason——非 JSON 调用(如正文写作)
+            // 截断时不抛异常,调用方需据此判定是否提额重试
+            String finishReason = choices.get(0).path("finish_reason").asText(null);
+            return new ChatResult(content, model, tokens, finishReason);
         } catch (AiException e) {
             throw e;
         } catch (Exception e) {
