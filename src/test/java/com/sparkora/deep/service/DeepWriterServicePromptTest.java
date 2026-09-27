@@ -382,7 +382,7 @@ class DeepWriterServicePromptTest {
     }
 
     private static void assertSpec(Integer target, String headings, String paras) {
-        DeepWriterService.SectionSpec s = DeepWriterService.sectionSpec(target);
+        com.sparkora.service.LayoutRules.SectionSpec s = com.sparkora.service.LayoutRules.sectionSpec(target);
         assertEquals(headings, s.headings(), "目标 " + target + " 的小标题数档");
         assertEquals(paras, s.parasPerSection(), "目标 " + target + " 的每节段数档");
     }

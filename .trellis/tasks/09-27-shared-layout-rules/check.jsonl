@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-27-shared-layout-rules/prd.md", "reason": "AC-01..AC-06 验收与 Out of Scope（只共享分类、不改文案格式/响应结构/状态值域）"}
+{"file": ".trellis/tasks/09-27-shared-layout-rules/implement.md", "reason": "LayoutRules 契约、两 service 改造点与测试要求"}
+{"file": "docs/spec/version-generation.md", "reason": "核对 §5 写作契约与实现一致（VersionService 分档）"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 prompt 拼装契约未被改动破坏"}

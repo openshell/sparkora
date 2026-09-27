@@ -122,7 +122,7 @@ graph TD
 - `DeepWriterService.write`：`fact_sheet` 条目进 prompt（条目带 `snippet` 时追加 `| 证据:{snippet}`，≤200） + **简报四字段显式注入**（R1，09-27-brief-writing-linkage-fix：`titleCandidates`/`coreViewpoints`/`outline`/`factRisks` 经 `appendBriefSection` 追加——数组逐项 `- ` 列出、outline 用 `toString`、空/null/`[]`/`{}` 跳过、解析失败按原文追加且全程 try/catch 仅 warn；历史 brief 无字段时 prompt 与旧行为逐字等价）+ **按 `kind` 分组呈现（R5，09-27-tavily-extract-kind-hypotheses）**：手册条目带 `kind` 时分为「【参数事实】(可逐字引用数值)」与「【背景素材】(仅用于叙事,不得据此新增数值)」两段（背景素材出现的数字也不得写进正文）；**全无 `kind`（历史 fact_sheet）时退化为原平铺行为**（prompt 逐字与旧实现等价）；缺 kind 的条目兜底进参数组。 + 铁律「数值必须逐字出自手册」→ `AiClient.chat`（非 JSON 方法）→ 落 version（复用版本链路，见 [version-generation.md](version-generation.md)）。
 - **正文截断提额重试（R4，09-27-brief-writing-linkage-fix）**：正文是全链路最长输出，此前是唯一无重试的 AI 调用。`write` 首次 `chat(system,user,4096)`；任何失败（`finish_reason=length` 截断 / 异常）提额 `8192` **重试一次**（附纠错说明），仅两次均失败才抛 `AiException` → `runBatch` catch 计入该版本失败（部分/整体失败语义不变）。`AiClient.ChatResult` 增第 4 分量 `finishReason`（保留 3 参构造器兼容既有调用方/测试），`parseChat` 始终透出 `finish_reason`——非 JSON 调用截断时不抛异常，调用方须据此判定重试。重试只包裹 AI 调用，版本 `insert` 仍只执行一次（无重复落库）。
 - 数值回查（正则，0 次 LLM）：抽取正文数值（万/千分位/百分比/带单位 `km|kWh|kW|mm|L/100km|s`）与手册比对，手册外数值 → `fact_risks` `[{claim,riskLevel:"high",suggestion:"发布前必须人工核实或删除"}]` 落版本字段。
-- **注入目标字数 + 自适应分节（R1/R2/R3，09-27-deep-writing-adaptive-sections）**：`write` 取一次项目快照（复用给 `extractH1`，不新增查询放大），user prompt 首行注入 `目标字数：N`（全角冒号,口径对齐 `VersionService`：项目 `wordCountTarget` 为 null/≤0 → `1500`）；system prompt 的排版铁律「节数行」由纯静态函数 `sectionSpec(Integer)` 按目标字数分档动态生成（其余铁律 1/2/3、`hasKind` 时铁律 4、结尾「加粗/单段 ≤5 行」逐字保留）：
+- **注入目标字数 + 自适应分节（R1/R2/R3，09-27-deep-writing-adaptive-sections；09-27-shared-layout-rules）**：`write` 取一次项目快照（复用给 `extractH1`，不新增查询放大），user prompt 首行注入 `目标字数：N`（全角冒号,口径对齐 `VersionService`：项目 `wordCountTarget` 为 null/≤0 → `1500`）；system prompt 的排版铁律「节数行」由共享类 `com.sparkora.service.LayoutRules.sectionSpec(Integer)` 按目标字数分档动态生成（其余铁律 1/2/3、`hasKind` 时铁律 4、结尾「加粗/单段 ≤5 行」逐字保留）。**分节档位由共享 `LayoutRules` 统一（深度写作与 `VersionService` 两链路同档，各自文案格式不变——深度保持单行分号串、`VersionService` 保持三段 bullet 列表）**：
 
   | 目标字数 | 小标题数 | 每节段数 |
   |---|---|---|
@@ -131,7 +131,7 @@ graph TD
   | 1801~3000 | 5~8 | 2~3 |
   | > 3000 | 8~12 | 2~4 |
 
-  边界语义：`null`/`≤0`→1500 档（3~5）；`800`→2~3；`801`→3~5；`1800`→3~5；`1801`→5~8；`3000`→5~8；`3001`→8~12；`10000`→8~12；不抛异常。仅深度写作链路（`VersionService` 仿写链路不在本次范围）。
+  边界语义：`null`/`≤0`→1500 档（3~5）；`800`→2~3；`801`→3~5；`1800`→3~5；`1801`→5~8；`3000`→5~8；`3001`→8~12；`10000`→8~12；不抛异常。深度写作与 `VersionService`（多版本/仿写）两链路共用同一分档（`VersionService.generateOne` 的 `layoutRules` 首行按 `p.getWordCountTarget()` 自适应，其余两条 bullet 逐字保留）。
 - 2026-09-04 实测：version 1917 字符，捕获手册外「25万」high 1 条。
 
 ---

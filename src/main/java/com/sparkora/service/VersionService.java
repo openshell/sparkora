@@ -181,8 +181,11 @@ public class VersionService {
         String styleEnforce = "\n\n以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
         // 2026-09-10:排版铁律(三处正文生成点统一)——此前仅「用 Markdown」靠模型自觉,
         // 部分模型/风格组合会输出整段长文无小标题无加粗,公众号可读性差
+        // 09-27-shared-layout-rules R3:分节档位随项目目标字数自适应(与深度写作同档,共享 LayoutRules);
+        // 文案格式仍为三段 bullet 列表,其余两行逐字保留。
+        LayoutRules.SectionSpec sec = LayoutRules.sectionSpec(p.getWordCountTarget());
         String layoutRules = "\n\n排版铁律(公众号正文可读性,必须遵守):"
-                + "\n- 全文用 2~4 个「## 小标题」分节,每节 2~3 段,禁止整篇无分节;"
+                + "\n- 全文用 " + sec.headings() + " 个「## 小标题」分节,每节 " + sec.parasPerSection() + " 段,禁止整篇无分节;"
                 + "\n- 关键数据、核心结论用 **加粗** 突出,每节至少一处;"
                 + "\n- 单段不超过 5 行,长段拆分。";
         String sys;

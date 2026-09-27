@@ -855,3 +855,13 @@ public void persistCarDoc(CarDocEntity doc, String vec) {
 **Fix**: 令注解前缀与实际 YAML 路径一致。本仓库域配置类惯例为 `sparkora.<domain>`（`NewsProperties`/`CarProperties`/`WenyanProperties`/`QiniuProperties`/`ImageProperties`），故 `DeepProperties` 取 `sparkora.deep`。
 
 **Prevention**: 新增/改动 `@ConfigurationProperties` 时，用 `grep -rn "prefix = \"sparkora" src/main/java` 对照 `application.yml` 的缩进层级逐一核对；字段绑定不能只靠"环境变量兜底"证伪，需构造 `ApplicationContextRunner` 或启动后读取 `getXxx()` 实测非默认值。
+
+### Common Mistake: 多链路共享文案各自复制导致漂移（分节档位）
+
+**Symptom**: 同一产品规则（如「正文用几个 `## 小标题` 分节」）在两个正文生成链路各写一份常量/`if` 分档，一处升级（深度写作改为按目标字数自适应）后另一处（多版本/仿写）保持旧值「2~4 个」——同一项目因走不同链路得到不一致的排版约束，且无测试会发现。
+
+**Cause**: 派生规则被当成两段「文案」分别硬编码，而非从**同一分类函数**取值；升级时自然只改被点名的链路。
+
+**Fix**: 把分类逻辑抽成无 Spring 依赖的共享纯函数类（先例 `com.sparkora.service.LayoutRules`：`normalizeTarget`/`sectionSpec`，两链路同档），各链路只负责用自己的文案格式拼装（深度=单行分号串、VersionService=三段 bullet）；**只共享分类结果、不强行统一文案格式**，避免无关 diff 与既有断言回归。
+
+**Prevention**: 出现「同一规则被多处 prompt 引用」时，优先提取纯函数类并让所有消费方委托；迁移时用 `git show HEAD:<file>` 逐字比对被迁移方法的输出，确保**行为零回归**；新增边界单测（`null/≤0/档位边界/Integer.MAX_VALUE`）锁定分档表。先例 `LayoutRulesTest` + `VersionServiceAsyncTest`（09-27-shared-layout-rules）。

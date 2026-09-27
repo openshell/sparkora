@@ -205,4 +205,56 @@ class VersionServiceAsyncTest {
 
         verify(statusService).advanceVersionsReady(eq(PROJECT_ID), eq(301L), eq(null));
     }
+
+    // ==================== 09-27-shared-layout-rules R3/R4:排版分节档位随目标字数自适应 ====================
+
+    /** 捕获 runGenerate 发出的 chatJson system prompt。 */
+    private String capturedSystem(Integer wordCountTarget) {
+        ArticleProjectEntity p = project("TOPIC", "READY");
+        p.setWordCountTarget(wordCountTarget);
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(styleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(style(1L, "正式")));
+        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(VERSION_JSON, "m", 10));
+        doAnswer(inv -> { ((ArticleVersionEntity) inv.getArgument(0)).setId(401L); return 1; })
+                .when(versionMapper).insert(any(ArticleVersionEntity.class));
+        service.generate(PROJECT_ID, List.of(1L));
+        org.mockito.ArgumentCaptor<String> system = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chatJson(system.capture(), anyString(), eq(4096));
+        return system.getValue();
+    }
+
+    /** AC-03:1500 → 3~5 个 / 2~3 段,且不再出现写死的 2~4。 */
+    @Test
+    void 分节档位_1500为中档3to5() {
+        String sys = capturedSystem(1500);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                sys.contains("全文用 3~5 个「## 小标题」分节,每节 2~3 段"), "1500 应为 3~5 个 / 2~3 段");
+        org.junit.jupiter.api.Assertions.assertFalse(sys.contains("2~4 个"), "不得再出现写死的 2~4");
+    }
+
+    /** AC-03:5000 → 8~12 个 / 2~4 段。 */
+    @Test
+    void 分节档位_5000为顶档8to12每节2to4() {
+        String sys = capturedSystem(5000);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                sys.contains("全文用 8~12 个「## 小标题」分节,每节 2~4 段"), "5000 应为 8~12 个 / 2~4 段");
+    }
+
+    /** AC-03:null → 1500 档(3~5 / 2~3)。 */
+    @Test
+    void 分节档位_null回退1500档() {
+        String sys = capturedSystem(null);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                sys.contains("全文用 3~5 个「## 小标题」分节,每节 2~3 段"), "null 应回退 1500 档");
+    }
+
+    /** AC-03:其余两条排版 bullet(加粗 / 单段行数)逐字保留。 */
+    @Test
+    void 分节档位_其余bullet文案逐字保留() {
+        String sys = capturedSystem(1500);
+        org.junit.jupiter.api.Assertions.assertTrue(sys.contains("- 关键数据、核心结论用 **加粗** 突出,每节至少一处;"));
+        org.junit.jupiter.api.Assertions.assertTrue(sys.contains("- 单段不超过 5 行,长段拆分。"));
+    }
 }

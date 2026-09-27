@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 文本合成链路 prompt 拼装契约与 record 加字段/兼容先例；R1-R3 不得破坏深度写作与多版本 prompt 语义"}
+{"file": "docs/spec/brief-generation.md", "reason": "§6 深度写作「目标字数注入 + 自适应分节」契约权威落点；R2 行为零回归的比对基准"}
+{"file": "docs/spec/version-generation.md", "reason": "§3/§5 VersionService 写作 prompt 与目标字数口径（目标字数：N / null→1500）；R3 落点与文档同步"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "确认不触碰状态机/失败路径与异步切分契约"}

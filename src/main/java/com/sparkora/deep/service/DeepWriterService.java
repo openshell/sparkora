@@ -88,33 +88,15 @@ public class DeepWriterService {
     public record StyleSpec(String prompt, String name) {}
 
     /**
-     * 09-27-deep-writing-adaptive-sections:分节档位(小标题数区间 + 每节段数区间,纯字符串直接进 prompt)。
-     */
-    record SectionSpec(String headings, String parasPerSection) {}
-
-    /** 目标字数默认值(与 {@link com.sparkora.service.VersionService} 口径一致:null → 1500)。 */
-    private static final int DEFAULT_WORD_COUNT_TARGET = 1500;
-
-    /**
-     * 09-27-deep-writing-adaptive-sections R2/R3:按目标字数取分节档位(纯函数,无副作用,不抛)。
-     *
-     * <p>null/≤0 → 按 1500(中档 3~5);边界:800→2~3,801→3~5,1800→3~5,1801→5~8,
-     * 3000→5~8,3001→8~12,10000→8~12。
-     */
-    static SectionSpec sectionSpec(Integer targetWords) {
-        int n = (targetWords == null || targetWords <= 0) ? DEFAULT_WORD_COUNT_TARGET : targetWords;
-        if (n <= 800) return new SectionSpec("2~3", "2~3");
-        if (n <= 1800) return new SectionSpec("3~5", "2~3");
-        if (n <= 3000) return new SectionSpec("5~8", "2~3");
-        return new SectionSpec("8~12", "2~4");
-    }
-
-    /**
      * 09-27-deep-writing-adaptive-sections R2:排版铁律「节数行」(随目标字数自适应);
      * 其余排版铁律(加粗/单段行数/禁止整篇无分节)保留不变,由调用方拼接。
+     *
+     * <p>09-27-shared-layout-rules R2:分档分类委托共享 {@link com.sparkora.service.LayoutRules},
+     * 输出文案(单行分号串)逐字不变,行为零回归。
      */
     static String layoutRule(Integer targetWords) {
-        SectionSpec s = sectionSpec(targetWords);
+        com.sparkora.service.LayoutRules.SectionSpec s =
+                com.sparkora.service.LayoutRules.sectionSpec(targetWords);
         return "排版铁律(公众号正文可读性,必须遵守):全文用 " + s.headings()
                 + " 个「## 小标题」分节,每节 " + s.parasPerSection() + " 段,禁止整篇无分节;\n";
     }
@@ -255,8 +237,8 @@ public class DeepWriterService {
             system = system + "\n文风要求:\n" + stylePrompt + "\n" + STYLE_ENFORCE;
         }
         // R1(09-27-deep-writing-adaptive-sections):注入目标字数(null/≤0 → 1500,口径对齐 VersionService)。
-        int target = (p == null || p.getWordCountTarget() == null || p.getWordCountTarget() <= 0)
-                ? DEFAULT_WORD_COUNT_TARGET : p.getWordCountTarget();
+        // 09-27-shared-layout-rules R2:默认值归一委托共享 LayoutRules(输出值不变)。
+        int target = com.sparkora.service.LayoutRules.normalizeTarget(p == null ? null : p.getWordCountTarget());
         StringBuilder user = new StringBuilder("目标字数：").append(target).append('\n');
         user.append("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
