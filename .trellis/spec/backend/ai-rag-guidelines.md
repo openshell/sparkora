@@ -26,7 +26,8 @@ AiClient.ChatResult chatJson(String systemPrompt, String userPrompt, int maxToke
 AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxTokens)   // 多轮，不强制 JSON
 ```
 - `messages` 每项 `{role, content}`，`role∈{system,user,assistant}`；顺序即对话顺序。
-- `ChatResult{content, model, totalTokens}`。
+- `ChatResult{content, model, totalTokens, finishReason}`（09-27-brief-writing-linkage-fix：第 4 分量 `finishReason` 透出 `finish_reason`；**保留 3 参构造器**默认 null——既有 `new ChatResult(content,model,tokens)` 调用方与测试编译不受影响）。
+  - **非 JSON 调用的截断判定**：`chat`/`chatMessages`（不强制 JSON）在 `finish_reason=length` 时**不抛异常**（内容为半截），调用方须自判 `"length".equals(cr.finishReason())` 并提额重试（先例 `DeepWriterService.write` 4096→8192）；`chatJson` 仍由 `parseChat` 直接抛截断 `AiException`。
 
 ### 3. Contracts
 - 三方法共用同一 `rest` 实例（`AiProperties.baseUrl/apiKey/timeoutMs`）、`resolveTextModel()`、`parseChat()`。
@@ -714,6 +715,16 @@ public void persistCarDoc(CarDocEntity doc, String vec) {
 **Fix**: 检索 query 在短问题/有历史时拼接最近 2 轮 user 问题（`QaService.buildSearchQuery`，≤300 字）。
 
 **Prevention**: 多轮链路的检索 query 与送 LLM 的 messages 分别构造——送 LLM 保留结构化历史，检索用拼接补指代。
+
+### Common Mistake: 追加可选段落时改写公共尾部/双路径追加块头
+
+**Symptom**: 向现有 prompt 追加可选字段（如简报四字段注入写作 prompt）时，把原有固定的尾部指引句一并改写（如「…已如上列出」），对**字段为空**的历史输入并不成立——prompt 与旧行为不再等价，模型被误导。另一形态：解析前先追加段头 `标题候选:\n`，`catch` 的原文兜底路径又追加一次 → 畸形 JSON 时出现重复块头。
+
+**Cause**: 追加逻辑与「解析成功才拼接」两件事混在一条路径上；把「字段存在」当成默认前提，忽略了空/`null`/`[]`/`{}` 的历史退化分支。
+
+**Fix**: ① 公共尾部指引句保持逐字不变，可选内容只作为**其前方的追加块**；② 段头只在解析成功后追加，兜底路径为**单一路径**、不重复追加；③ 全程 `try/catch` 仅 warn、绝不因单个字段解析失败中断主流程。
+
+**Prevention**: 任何「可选内容注入既有 prompt」的改动都要有**空字段等价性回归测试**（断言空/`[]`/`{}` 时 prompt 与旧行为逐字一致）与**畸形 JSON 不重复块头**测试；先例 `DeepWriterServicePromptTest`（09-27-brief-writing-linkage-fix）。
 
 ### Common Mistake: @ConfigurationProperties 前缀漂移导致整块配置静默失效
 

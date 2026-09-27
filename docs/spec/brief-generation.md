@@ -80,10 +80,10 @@ graph TD
 - **WEB 策略路由（09-25，取代旧硬编码 SEARXNG→Tavily）**：`WebSearchRouter`（`com.sparkora.deep.search`）按快照策略顺序逐个尝试 provider，首个产出**有效命中**即采信并停止；provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源。每次研究启动时解析一次 `WebSearchSnapshot`（策略 + 双开关），同批次全部子代理共用，启动后设置变更不影响。MVP 仅两策略：`TAVILY_FIRST`（默认，`TAVILY,SEARXNG`）/ `SEARXNG_FIRST`（`SEARXNG,TAVILY`）；不支持 BOTH 双源聚合。**默认反转**显式推翻 2026-09-15「SEARXNG 优先」决策（Tavily 已配置却从未被调用、SearxNG 上游曾全部不可用）。
 - **WEB 结果治理（R8/R9）**：`WebResultNormalizer` 在子代理/LLM 之前完成协议校验（仅 http/https 绝对 URL）、URL 规范化（去 fragment、小写 scheme/host）、按规范化 URL 去重、截断，并分配稳定 `sourceId`（`W1,W2…` 按本次输入顺序）。`SearchHit` 增量带 `sourceId`/`provider`（旧 7 参构造器保留兼容）。
 - **事实后验校验（R9）**：`SubAgentRunner.validateFacts` 只接受引用本次输入 `sourceId` 且 URL/provider 匹配的 WEB 事实；未知 sourceId / URL 或 provider 不匹配 → 从 facts 剔除并转为 gap（不整条 agent 失败）。模型生成的 URL 不作为可信证据——**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**（即使模型漏标/误标 `type`），通过后 `type` 归一为 `WEB`（防 FactSheet 默认按 KB 0.9 采信）；仅缺 `type` 且无 `url`/`sourceId` 的 KB 事实沿用既有行为。
-- **WEB query 构造（R7）**：项目主题 + 研究问题 + **已锁定**澄清答案（`clarify_answers` 中非空 `a`，去重）；未锁定答案绝不进入 query。
+- **WEB query 构造（R7）**：项目主题 + 研究问题 + **已锁定**澄清答案（`clarify_answers` 中非空 `a`，去重）；未锁定答案绝不进入 query。**否定答案过滤（R5，09-27-brief-writing-linkage-fix）**：语义为「放弃/无偏好」的否定值（精确匹配「不对比/不比较/无所谓/都可以/都行/不限/无偏好/随便/暂无/不需要/无/没有/不涉及/跳过」+ `不对比`/`不需要` 前缀）不注入 query——「不对比」描述的是用户的不选择，拼入只会制造搜索噪声；正常答案不受影响（仅精确匹配 + 两前缀，不做模糊包含以免误伤「无框车门」这类正常答案）。
 - 每子代理 `webQuota=max(1, 8/n)` = **单 provider 返回条数上限**（不是全程调用预算）；`SEARCH_WEB_ENABLED=false` 或运行时 `webSearchEnabled=false` 时为 0（纯 KB）。
 - **KB 锚点感知检索（R1，2026-09-06）**：`KnowledgeSearchTool.search(query, maxResults, anchors)` 委托 `retrieveForGeneration`（锚点加权 + 参数级子查询 + 核心块/权益块分层配额）；锚点由 `DeepResearchService.resolveAnchors` 解析（项目关联车型为准 → `CarModelMatcherService` 按主题识别兜底，失败不阻断）；子代理 KB 检索 query 用「主题 + 问题」复合语料（纯问题如「价格对比」缺车型上下文相似度必散）。非 OK 状态返回空列表归 gaps（行为同旧）。
-- **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块（命中含 MODEL_INFO/价格区间文本）时跳过 WEB 补查——WEB 只补 KB 缺口，不与 KB 平行全问题重搜、不得覆盖 KB 结论。
+- **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块（命中含 MODEL_INFO/价格区间文本）时跳过 WEB 补查——WEB 只补 KB 缺口，不与 KB 平行全问题重搜、不得覆盖 KB 结论。**仅对参数型问题生效（R2，09-27-brief-writing-linkage-fix）**：命中权威块且问题非背景型（`ClarifyService.isBackgroundQuestion` 判定为背景/来龙去脉型，命中 `BACKGROUND_TERMS ∪ BACKGROUND_SIGNALS` 任一）才跳过；**背景题永不因 KB 命中 MODEL_INFO 跳过 WEB**——KB 是车型库，不含行业战略类背景内容，而车型锚定主题下背景题的复合 query（主题+问题+锚点加权）几乎必然命中该车型 MODEL_INFO，旧判定会机制性阻断背景题的外部素材。
 - **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB 来源 → **KB 胜出**（不比较相似度/置信度，量纲不同不可比；按来源身份定优先级：本系统知识库（比亚迪同步清洗）> 外部 WEB）。WEB 条目降级为该条目 `alternatives`（URL 列表）去重后留证据，并写 warnings「以知识库为准；外部来源(N 条)有异说,未采用」。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
 - **近似 claim 归并（09-25-fact-claim-merge，取代纯字符串精确匹配）**：`FactSheetService.merge` 用 `ClaimSimilarity` 贪心聚类——按事实出现顺序，与簇首条（代表 fact）满足 `sameClaim` 即归入，否则新开簇；代表 fact 决定条目 `key/claim/value`（「首条为准」，与旧精确匹配一致）。
   - **数值签名硬前提**：`sameClaim` 先按 claim+value 抽出的数值集合（`numberValues`，去千分位、万×1e4、亿×1e8，`BigDecimal` 归一，使 `200000`≡`20万`）比较，**集合必须完全相等**；数值冲突（第2000座 vs 第1500座）或一侧有数值另一侧没有 → 直接不合并（绝不越过）。
@@ -110,7 +110,8 @@ graph TD
 
 ## 6. 深度写作与数值回查
 
-- `DeepWriterService.write`：`fact_sheet` 条目进 prompt（条目带 `snippet` 时追加 `| 证据:{snippet}`，≤200） + 铁律「数值必须逐字出自手册」→ `AiClient.chat`（非 JSON 方法）→ 落 version（复用版本链路，见 [version-generation.md](version-generation.md)）。
+- `DeepWriterService.write`：`fact_sheet` 条目进 prompt（条目带 `snippet` 时追加 `| 证据:{snippet}`，≤200） + **简报四字段显式注入**（R1，09-27-brief-writing-linkage-fix：`titleCandidates`/`coreViewpoints`/`outline`/`factRisks` 经 `appendBriefSection` 追加——数组逐项 `- ` 列出、outline 用 `toString`、空/null/`[]`/`{}` 跳过、解析失败按原文追加且全程 try/catch 仅 warn；历史 brief 无字段时 prompt 与旧行为逐字等价）+ 铁律「数值必须逐字出自手册」→ `AiClient.chat`（非 JSON 方法）→ 落 version（复用版本链路，见 [version-generation.md](version-generation.md)）。
+- **正文截断提额重试（R4，09-27-brief-writing-linkage-fix）**：正文是全链路最长输出，此前是唯一无重试的 AI 调用。`write` 首次 `chat(system,user,4096)`；任何失败（`finish_reason=length` 截断 / 异常）提额 `8192` **重试一次**（附纠错说明），仅两次均失败才抛 `AiException` → `runBatch` catch 计入该版本失败（部分/整体失败语义不变）。`AiClient.ChatResult` 增第 4 分量 `finishReason`（保留 3 参构造器兼容既有调用方/测试），`parseChat` 始终透出 `finish_reason`——非 JSON 调用截断时不抛异常，调用方须据此判定重试。重试只包裹 AI 调用，版本 `insert` 仍只执行一次（无重复落库）。
 - 数值回查（正则，0 次 LLM）：抽取正文数值（万/千分位/百分比/带单位 `km|kWh|kW|mm|L/100km|s`）与手册比对，手册外数值 → `fact_risks` `[{claim,riskLevel:"high",suggestion:"发布前必须人工核实或删除"}]` 落版本字段。
 - 2026-09-04 实测：version 1917 字符，捕获手册外「25万」high 1 条。
 
@@ -143,7 +144,7 @@ graph TD
 | `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署，2026-09-04 迁移至 192.168.3.108:5676） |
 | `CRAWL4AI_BASE_URL` | 空 | 预留：正文抓取工具未接入（摘要级搜索的后续增强） |
 | `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap） |
-| `DEEP_MAX_AGENTS` | `6` | 子代理数上限（R5 09-26 由 4 放宽为 6；虚拟线程 per-task executor；计划问题数超过时按前 N 条截断，总检索预算约 8 → `webQuota=max(1,8/n)`） |
+| `DEEP_MAX_AGENTS` | `6` | 子代理数上限（R5 09-26 由 4 放宽为 6；虚拟线程 per-task executor；总检索预算约 8 → `webQuota=max(1,8/n)`）。**窗口选择（R3，09-27-brief-writing-linkage-fix）**：计划问题数超过预算时不再「截前 N 条」——`DeepResearchService.selectResearchWindow` 在预算内**优先保背景/来龙去脉型问题**（`ClarifyService.isBackgroundQuestion`），其余按原序补足，最终索引升序归位（`run` 落占位与 `doRunAsync` 执行共用同一选择器，question↔toolHints 索引对齐）。动机：兜底背景题 append 在 `keyQuestions` 尾部，旧截断优先丢它 |
 
 ---
 
