@@ -84,6 +84,6 @@
 
 ## 6. 关键实现路径
 
-- 后端：`com.sparkora.service.PreviewService`（渲染/降级/主题校验）、`com.sparkora.service.WenyanThemeCatalog`（15 主题权威目录 + CSS 物化）、`com.sparkora.wenyan.*`（CLI 调用）、`config.WenyanProperties`；控制器端点：`ArticleProjectController#preview` / `#savePreviewStyle` / `#savePublishMeta`、`ImageController#previewOptions`。
+- 后端：`com.sparkora.service.PreviewService`（渲染/降级/主题校验）、`com.sparkora.service.WenyanThemeCatalog`（15 主题权威目录 + CSS 物化）、`com.sparkora.wenyan.*`（CLI 调用）、`config.WenyanProperties`；控制器端点：`ProjectPreviewController#preview` / `#savePreviewStyle` / `#savePublishMeta` / `#publishOptions`、`ImageController#previewOptions`（09-27-split-monoliths 起预览相关端点自 `ArticleProjectController` 拆出，路径/鉴权不变）。
 - 前端：`views/project/StepPreview.vue`、`components/MarkdownEditor.vue`（`insertMd` / `insertMdAtAnchor`）、`utils/wenyanThemes.js`（浏览器预览 CSS 兜底）。
 - 表：`sparkora_article_project`（preview_* / author / source_url）、`sparkora_image_asset.storage_key`。

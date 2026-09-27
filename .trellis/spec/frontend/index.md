@@ -19,6 +19,7 @@
 | [API Layer](#api-layer) | 请求封装与 `R<T>` 拆包约定 | **已填** |
 | [Page Conventions](#page-conventions) | 页面结构/CSS 变量/响应式 | **已填** |
 | [State & Tabs](#state--tabs) | 状态保持与懒挂载 | **已填** |
+| [State & Tabs](#state--tabs) | 大组件拆分落位（组件子目录 / composables / utils） | **已填**（09-27-split-monoliths） |
 
 ---
 
@@ -115,6 +116,19 @@ editorRef.value?.insertMdAtAnchor?.(group.headingPath, `\n![](${url})\n`)  // �
 ---
 
 ## State & Tabs
+
+### Convention: 大组件拆分落位（09-27-split-monoliths）
+
+巨石 view 拆分的既定落位（先例：`StepPreview.vue` 994→460、`ImageLibrary.vue` 908→354）：
+
+- **子组件**：按域放 `src/components/<domain>/`（`preview/`、`image/`），域内单一用途组件不再堆扁平目录；跨域共用组件（`AiImageDrawer`/`MarkdownEditor`）保持 `src/components/` 扁平原位。
+- **composable**：放 `src/composables/`（本任务新建目录）。命名 `use<Domain><Concern>.js`，一个文件可导出多个相关 composable（如 `useImageLibraryOps.js` 导出 `useImageSourceTrace`/`useImageUpload`/`useImageCardOps`/`useImageTagDialogs`）。
+- **契约**：composable 接收 ref/回调（`projectId` ref、`onFilterChange`、`getSnapshot` 等），返回状态与动作；不吞宿主跨切状态（`contentMd`/`editorRef`/`saveState`/筛选态仍归宿主）。
+- **纯派生函数**（无响应式依赖）抽到 `src/utils/`（先例 `imageDisplay.js`/`imageRegenerate.js`），供多组件复用且可单测。
+- **子组件与父通信**：父持有状态的用 `props` + `emits`（对象式 props、数组式 emits）；父持有的 ref 传入子组件时经具名 `update:*` 事件回写（如 `busy` → `@update:busy`），不得在子组件内直接改 props。
+- 拆出的每个文件 ≤ ~400 行、宿主 view ≤ ~450 行为目标区间。
+
+**Related**: `frontend/src/components/preview/*`、`frontend/src/components/image/*`、`frontend/src/composables/*`。
 
 ### Pattern: Tab 面板用 `v-if` 懒挂载实现「首访加载 + 切回保留状态」
 

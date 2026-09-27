@@ -47,7 +47,7 @@ projectMapper.update(null, new UpdateWrapper<ArticleProjectEntity>()
 
 - `.set(boolean condition, column, value)` 的条件重载可做「非 null 才更新」；无条件 `.set(column, value)` 用于置空。
 - 反例：`updateById` 全实体写回还会覆盖并发请求刚改的其他列（读改写竞态），部分更新场景一律用 `UpdateWrapper`。
-- 先例：`ArticleProjectController` 的 `PUT /{id}/preview-style`、`PUT /{id}/publish-meta`。
+- 先例：`ProjectPreviewController`（09-27 前为 `ArticleProjectController`）的 `PUT /{id}/preview-style`、`PUT /{id}/publish-meta`。
 
 ---
 

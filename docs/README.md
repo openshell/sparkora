@@ -80,7 +80,7 @@ graph LR
 |---|---|---|
 | 系统约定（`R<T>`/错误矩阵/状态机/角色） | [spec/overview.md](spec/overview.md) | `com.sparkora.common.R`、`web.controller.ApiExceptionHandler` |
 | 登录与会话 | [spec/overview.md](spec/overview.md) | `com.sparkora.security.*`（`SecurityConfig`/`JwtAuthenticationFilter`/`JwtUtil`）、`web.controller.AuthController` / `views/LoginView.vue`、`store/user.js` |
-| 项目生命周期（工作台/新建/详情） | [spec/project-lifecycle.md](spec/project-lifecycle.md) | `web.controller.ArticleProjectController`、`domain.entity.ArticleProjectEntity` / `views/ProjectList.vue`、`ProjectEdit.vue`、`project/ProjectLayout.vue` |
+| 项目生命周期（工作台/新建/详情） | [spec/project-lifecycle.md](spec/project-lifecycle.md) | `web.controller.ArticleProjectController`（CRUD；简报/版本/配图/预览/发布子域已拆至 `ProjectBriefController`/`ProjectVersionController`/`ProjectImageController`/`ProjectPreviewController`/`ProjectPublishController`）、`domain.entity.ArticleProjectEntity` / `views/ProjectList.vue`、`ProjectEdit.vue`、`project/ProjectLayout.vue` |
 | 简报生成（深度模式·核心） | [spec/brief-generation.md](spec/brief-generation.md) | `deep.service.*`（`ClarifyService`/`DeepResearchService`/`FactSheetService`/`SubAgentRunner`）、`deep.tool.*`、`web.controller.DeepController`、`service.BriefService` / `project/StepBrief.vue`、`project/deep/*` |
 | 版本生成 | [spec/version-generation.md](spec/version-generation.md) | `service.VersionService`、`deep.service.DeepWriterService` / `project/StepVersions.vue` |
 | 风格库 | [spec/style-library.md](spec/style-library.md) | `web.controller.StyleController`、`service.StyleService`、`domain.entity.StyleProfileEntity` / `views/StyleLibrary.vue` |

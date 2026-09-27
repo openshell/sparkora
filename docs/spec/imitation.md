@@ -71,7 +71,7 @@
 
 ## 6. 关键实现路径
 
-- 后端：`com.sparkora.service.ImitationService`（分析/风格推荐/相似度自检）、`service.VersionService`（仿写分支 + `stripImages`）、`web.controller.ArticleProjectController`（analyze/imitation/generate-versions）。
+- 后端：`com.sparkora.service.ImitationService`（分析/风格推荐/相似度自检）、`service.VersionService`（仿写分支 + `stripImages`）、`web.controller.ProjectBriefController`（analyze/imitation）、`web.controller.ProjectVersionController`（generate-versions）。
 - 前端：`views/ProjectEdit.vue`、`views/project/StepBrief.vue`、`views/project/StepVersions.vue`。
 - 表：`sparkora_article_project` / `sparkora_article_brief` / `sparkora_article_version`（仿写列）。
 

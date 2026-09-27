@@ -23,7 +23,15 @@
 
 ## Error Handling Patterns
 
-### 控制器错误映射（惯例，参照 DeepController / ArticleProjectController）
+### Convention: 控制器按子域拆分，每个只注入自身依赖（09-27-split-monoliths）
+
+项目子资源端点不再堆在单个巨石控制器：`ArticleProjectController` 仅承载 Project CRUD；简报/仿写、版本、配图+配图建议、预览+发布参数、发布各自独立控制器，统一挂 `@RequestMapping("/api/projects/{projectId}")`（对齐 `DeepController` 的 `/api/projects/{projectId}/deep` 先例，无共享基类）。
+
+- **路径/方法/`@PreAuthorize`/返回类型/异常映射逐字等价**：拆分是纯搬迁，方法体不改；HTTP 最终路径必须与拆分前一致（用 `verb + full path` 清单 diff 验证）。
+- **已知不一致保留**：`preview` 端点 `IllegalStateException→400`（其余子域→409）是历史行为，搬迁时**逐字保留**，不得借机「修正」。
+- 新增子资源端点时放入对应子域控制器；仅注入该子域用到的依赖，避免重新堆积。
+
+### 控制器错误映射（惯例，参照 DeepController / ProjectVersionController / ProjectImageController / ProjectPreviewController）
 
 ```java
 try {

@@ -89,7 +89,7 @@
 
 ## 4. 关键实现路径
 
-- 后端：`com.sparkora.web.controller.ArticleProjectController`（CRUD + 生成入口 + 配图/发布元信息端点）、`com.sparkora.service.ArticleProjectCarService`、`domain.entity.ArticleProjectEntity`、`mapper.ArticleProjectMapper`。
+- 后端：`com.sparkora.web.controller.ArticleProjectController`（Project CRUD）、`com.sparkora.web.controller.ProjectBriefController`（简报/仿写）、`ProjectVersionController`（版本）、`ProjectImageController`（配图/配图建议）、`ProjectPreviewController`（预览/预览样式/发布参数）、`ProjectPublishController`（发布）——09-27-split-monoliths 按子域拆分，每个薄控制器只注入自身所需依赖（路由/鉴权等价）；`com.sparkora.service.ArticleProjectCarService`、`domain.entity.ArticleProjectEntity`、`mapper.ArticleProjectMapper`。
 - 前端：`views/ProjectList.vue`（工作台）、`views/ProjectEdit.vue`（新建/编辑，含仿写分支）、`views/project/ProjectLayout.vue`（步骤条 + 子路由）、`constants/project.js`（状态映射唯一事实源）。
 - 表：`sparkora_article_project`（Flyway `db/migration/V1__baseline.sql` 建表）。
 
