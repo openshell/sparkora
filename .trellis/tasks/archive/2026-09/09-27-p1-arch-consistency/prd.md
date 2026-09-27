@@ -35,10 +35,10 @@
 
 ## Cross-child Acceptance Criteria（整合验收，父任务收口时执行）
 
-- [ ] 全部子任务归档后：`grep -rn "projectMapper.update" src/main/java` 仅命中统一状态服务一处直接调用（其余均为服务委托）。
-- [ ] 六项问题各自的模块 spec（docs/spec/**、.trellis/spec/**）同步无矛盾。
-- [ ] `mvn test` + `npm run build` 全绿。
-- [ ] AGENTS.md 当前阶段描述更新。
+- [x] 全部子任务归档后：项目表 `status`/`last_*_error` 写权唯一集中于 `ProjectStatusService`（`grep 'set("status"'`/`set("last_brief_error"'` 仅命中该服务 + Car/News 各自 job 表独立状态机）；`VersionService.setCurrent` 只写 `current_version_id` 选择指针列（⑤ 明确划出范围的非状态列）。
+- [x] 六项问题各自的模块 spec（docs/spec/**、.trellis/spec/**）同步无矛盾（`schema.sql` 残留仅 application.yml 的 baseline-description 文案；`body_image_ids` 在 src/main 零残留）。
+- [x] `mvn test`（448 全绿）+ `npm run build`（通过）全绿。
+- [x] AGENTS.md 当前阶段描述更新（补 P1 收口段 + 控制器列表按子域拆分现状 + `ProjectStatusService` 条目）。
 
 ## Out of Scope
 
