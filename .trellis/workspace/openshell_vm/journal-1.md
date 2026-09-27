@@ -773,3 +773,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: Session 19: 深度写作注入目标字数 + 自适应小标题分节
+<!-- trellis-session: v=2 fp=27c0a8105c83a529 -->
+
+**Date**: 2026-09-27
+**Task**: Session 19: 深度写作注入目标字数 + 自适应小标题分节
+**Branch**: `main`
+
+### Summary
+
+任务 09-27-deep-writing-adaptive-sections：R1 write 读项目 wordCountTarget 注入 user prompt「目标字数：N」(null/≤0→1500)；R2/R3 纯静态 sectionSpec/layoutRule 按目标字数分档小标题数与每节段数(≤800→2~3/801~1800→3~5/1801~3000→5~8/>3000→8~12)替换写死「2~4」；R4 重构 DeepWriterServicePromptTest 逐字断言为实质断言；write 取一次 project 快照复用 extractH1 不放大查询。check 修复分隔符半角→全角对齐 VersionService + 补 4 处测试覆盖。mvn test 488 全绿；无 schema/前端/配置变更；后端镜像重建 healthy。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fbad06b` | feat(deep): 深度写作注入目标字数并按长度自适应小标题分节 |
+
+### Status
+
+[OK] **Completed**
