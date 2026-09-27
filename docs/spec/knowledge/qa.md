@@ -10,7 +10,7 @@
 
 ---
 
-## 1. 数据模型（schema.sql S12 区块，幂等 `CREATE TABLE IF NOT EXISTS`）
+## 1. 数据模型（Flyway `db/migration/V1__baseline.sql` S12 区块，`CREATE TABLE IF NOT EXISTS`）
 
 | 表 | 字段 | 说明 |
 |---|---|---|

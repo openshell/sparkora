@@ -35,7 +35,7 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 | 只读核对 | `SELECT` 不受限，鼓励使用 |
 
 - 核对/验证结束时必须复核总量（如 `versions/projects/images/dismiss` 计数）恢复到基线，并**显式声明未修改既有生产行**。
-- 结构变更只允许执行 `schema.sql` 里已有的幂等语句（`CREATE ... IF NOT EXISTS`），不手工 DDL。
+- 结构变更只允许新增 Flyway 迁移脚本（`db/migration/V<n>__<desc>.sql`），不手工 DDL、不改已应用脚本。
 
 ---
 

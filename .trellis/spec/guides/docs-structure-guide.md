@@ -68,4 +68,4 @@ grep -rn "s0-spec\|docs/spec\|docs/README" --include=*.md --include=*.java --inc
 1. 在 `docs/README.md` 模块索引表补一行：`模块 | 文档链接 | 权威代码路径`（后端包·关键类 / 前端视图）。
 2. 文档顶部加回链总览。
 3. 若从既有文档拆出，更新原文档的交叉引用与代码注释中的旧指向。
-4. 表结构变更仍「三处同步」：`schema.sql` + entity/mapper + `docs/spec/**` 对应模块字段级表格。
+4. 表结构变更仍「三处同步」：Flyway 迁移脚本（`db/migration/V<n>__<desc>.sql`）+ entity/mapper + `docs/spec/**` 对应模块字段级表格。

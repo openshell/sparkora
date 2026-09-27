@@ -7,7 +7,7 @@
 ## Overview
 
 - MyBatis-Plus 3.5.7 + PostgreSQL。表前缀 `sparkora_`、`id-type: auto`、逻辑删除字段 `deleted`（`@TableLogic`）、下划线转驼峰。
-- `src/main/resources/db/schema.sql` 是唯一建表/迁移入口，`spring.sql.init.mode: always` 启动自动执行——**必须是幂等的**（`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`）。
+- `src/main/resources/db/migration/` 是唯一建表/迁移入口（**Flyway 版本化迁移**）：历史全量结构固化为 `V1__baseline.sql`，后续结构变更新增 `V<n>__<desc>.sql`；由 `spring.flyway.*` 在启动时按版本执行，`flyway_schema_history` 记录执行历史。既有库经 `baseline-on-migrate` 标记基线 V1 后跳过，不重跑历史 DDL。
 
 ---
 
@@ -227,22 +227,34 @@ public R<...> generate(
 
 ## Migrations
 
-- 全部写进 `schema.sql`（幂等写法，启动自动执行），不引入独立迁移工具。
-- 注意：**不能用 `DO $$` 块**——Spring ScriptUtils 不支持 dollar-quote（会把块按 `;` 截断）；列搬数用「补列 → UPDATE 搬数据 → DROP 旧列」三条单语句实现。
-- 表结构变更三处同步：`schema.sql`（幂等）+ 对应 entity/mapper + `docs/spec/**` 对应模块文档字段级表格（规格入口 `docs/README.md`）。
+- **Flyway 版本化迁移**：全部结构变更写进 `src/main/resources/db/migration/V<n>__<desc>.sql`（命名约定两个下划线），由 `spring.flyway.*` 启动时执行；`flyway_schema_history` 表记录版本/checksum/执行时间。
+- **`V1__baseline.sql` 是历史基线**：= 改造前 `schema.sql` 全文（逐字固化），**不得修改**；既有库由 `baseline-on-migrate=true` + `baseline-version=1` 记为 `BSLN`@1 后跳过，空库正常执行 V1 自举。
+- **已应用的迁移脚本不得改**：`validate-on-migrate: true` 会校验 checksum，事后改动会导致启动失败；修正只能**新增更高版本脚本**。
+- **迁移脚本无需写 `IF NOT EXISTS` 兜底**（Flyway 按版本只执行一次）；V1 保留原幂等写法仅为语义等价固化，新脚本按普通 DDL 写即可。
+- `clean` 保持 Flyway 10 默认禁用（`cleanDisabled=true`），**不得**开启；迁移中不执行破坏性 DROP（索引类型切换的 `DROP INDEX IF EXISTS` 先例除外）。
+- 表结构变更三处同步：新增迁移脚本 + 对应 entity/mapper + `docs/spec/**` 对应模块文档字段级表格（规格入口 `docs/README.md`）。
+- 约定/目录说明见 `src/main/resources/db/migration/README.md`。
 
-### 索引幂等切换（改索引类型/名字，不每次启动重建）
+### 列搬数（不可用 `DO $$` 块）
 
-`schema.sql` 每次启动都执行，改索引时若用裸 `CREATE INDEX` 会反复重建。切换索引类型时用「DROP 旧名 + CREATE 新名」并靠改名保证幂等（09-11 先例：KB 向量索引 IVFFLAT → HNSW）：
+Flyway / Spring ScriptUtils **不支持 dollar-quote**（会把块按 `;` 截断），迁移脚本里不得用 `DO $$ ... $$`。列搬数用「补列 → UPDATE 搬数据 → DROP 旧列」三条单语句实现：
 
 ```sql
--- 首次启动:删旧 IVFFLAT,建 HNSW;后续启动:DROP 旧名 no-op + 新名已存在跳过
+ALTER TABLE sparkora_x ADD COLUMN IF NOT EXISTS new_col VARCHAR(20);
+UPDATE sparkora_x SET new_col = old_col WHERE new_col IS NULL;
+ALTER TABLE sparkora_x DROP COLUMN IF EXISTS old_col;
+```
+
+### 索引切换（版本化脚本中改索引类型/名字）
+
+迁移脚本按版本**只执行一次**，不存在「每次启动重建」问题；切换索引类型直接用 `DROP INDEX IF EXISTS 旧名` + `CREATE INDEX 新名`（09-11 先例：KB 向量索引 IVFFLAT → HNSW）。**换新名**，不要复用旧名：
+
+```sql
 DROP INDEX IF EXISTS idx_kb_chunk_emb_vec;
 CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec_hnsw ON sparkora_kb_chunk_embedding
     USING hnsw (embedding vector_cosine_ops);
 ```
 
-- **不要**复用旧索引名（`CREATE INDEX IF NOT EXISTS 旧名` 会因已存在而跳过，改不到新类型）；**换新名**才能让旧类型真正被替换。
 - 向量索引统一 HNSW `vector_cosine_ops`（车型域 `idx_car_doc_emb_vec`、KB 域 `idx_kb_chunk_emb_vec_hnsw`）。
 
 ### 逻辑删除实体 + 物理向量表：级联清理
@@ -290,12 +302,26 @@ SELECT * FROM (
 
 ## Common Mistakes
 
-### Common Mistake: 非幂等迁移语句
+### Common Mistake: 修改已应用的迁移脚本 / 漏引 postgres 方言模块
 
-**Symptom**: 二次部署启动失败（column already exists / table exists）。
+**Symptom**: 二次部署启动失败（`Migration checksum mismatch` / `Found non-empty schema without schema history` / `Unsupported Database: PostgreSQL`）。
 
-**Cause**: schema.sql 里写了裸 `ADD COLUMN` / `CREATE TABLE`（无 IF NOT EXISTS）。
+**Cause**:
 
-**Fix**: 全部补 `IF NOT EXISTS`；默认值用 `DEFAULT` 子句使旧行自动回填。
+1. 改动了已应用（已在 `flyway_schema_history` 中）的迁移脚本 —— `validate-on-migrate: true` 校验 checksum 失败；
+2. 引入 Flyway 时漏了 `baseline-on-migrate` —— 既有非空库无历史表，Flyway 直接拒绝启动；
+3. 只加 `flyway-core` 未加 `flyway-database-postgresql` —— Flyway 10 起方言拆分，报 `Unsupported Database`。
 
-**Prevention**: 新增迁移段注释开头标明阶段号，并自检「重复执行无副作用」。
+**Fix**: 已应用脚本**只增不改**（修正走新 `V<n+1>__...sql`）；既有库保留 `baseline-on-migrate=true` + `baseline-version=1`；pom 同时引 `flyway-core` 与 `flyway-database-postgresql`（版本走 Boot BOM）。
+
+**Prevention**: 新增迁移脚本注释开头标明阶段号；提交前自检「脚本未被改动」与「依赖成对」。
+
+### Common Mistake: Flyway 版本落后于 PostgreSQL 主版本（仅告警，非阻断）
+
+**Symptom**: 启动日志出现 `Flyway upgrade recommended: PostgreSQL <x> is newer than this version of Flyway`。
+
+**Cause**: Boot 3.3.4 BOM 管理的 Flyway 10.10.0 官方支持上限为 PG16，而产线库为 PG17。
+
+**Fix**: 实测基线/迁移/checksum/幂等重启均正常，**保持现状**——升级 Flyway 会偏离「版本走 Boot BOM」约定并带来 Boot 兼容风险；待 Boot 升级抬升 Flyway 版本后自然消除。
+
+**Prevention**: 见到此告警先确认迁移是否实际成功（查 `flyway_schema_history`），不要把告警当失败；仅在确认新语法/类型不兼容时才考虑显式提升 Flyway 版本。

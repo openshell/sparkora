@@ -138,7 +138,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 - **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发返回 409）。
 - **READY**：简报就绪（`current_brief_id` 指向最新简报；S0 语义「记录创建成功」已由 S1 取代）。
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发返回 409）。
-- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。深度写作 `/deep/generate`（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成）同样推进 →VERSIONS_READY（源态 READY/DRAFT/VERSIONS_READY，由 `DeepWriterService.runBatch` 委托 `ProjectStatusService.advanceVersionsReady` + 首版设 current）。**存量数据自愈（09-10-versions-page-fix）**：`schema.sql` 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等，与 R3 字段回填同段）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。**S6 起：版本就绪后直接可预览/发布**（配图已并入预览步骤，不再有 IMAGES_READY）。深度写作 `/deep/generate`（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成）同样推进 →VERSIONS_READY（源态 READY/DRAFT/VERSIONS_READY，由 `DeepWriterService.runBatch` 委托 `ProjectStatusService.advanceVersionsReady` + 首版设 current）。**存量数据自愈（09-10-versions-page-fix）**：启动迁移把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等，与 R3 字段回填同段；该回填已固化为 Flyway 基线 `V1__baseline.sql`）。
 - **PUBLISHED_DRAFT**（S5 新增，终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱，拿到 media_id）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿，刷新 `publish_media_id`/`published_at`/`publish_theme`；发布失败状态原样保留并写 `last_publish_error`（成功后清空）；`publish` 仅在 VERSIONS_READY/PUBLISHED_DRAFT 可调用，否则 `R.fail(400)`（错误经状态校验文案提示，如「尚未生成正文版本，无法预览」）。
 - 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 `isPublishable`/`isPublished`）。**S6 起 `statusMeta` 对历史残留 `IMAGES_READY` 归一为 `VERSIONS_READY`**（兼容旧数据，避免历史项目无法预览/发布）。
 - **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
@@ -229,5 +229,5 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 ### 8.4 其他全局惯例
 
 - 实体审计字段（`created_by` / `created_at` / `updated_at` / `deleted`）由控制器手工赋值。
-- 表结构变更三处同步：`schema.sql`（幂等）+ 对应 entity/mapper + 对应模块文档字段级表格。
+- 表结构变更三处同步：新增 Flyway 迁移脚本（`db/migration/V<n>__<desc>.sql`）+ 对应 entity/mapper + 对应模块文档字段级表格。
 - 排序字段白名单：用户可控的 `orderBy`/`orderDir` 只允许映射到固定列名常量，原始参数绝不透传 `QueryWrapper`（如 `GET /api/projects` 的 `orderBy` 白名单 `updatedAt`(默认)/`createdAt`，`orderDir` `desc`(默认)/`asc`，非法值静默回退默认）。

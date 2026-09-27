@@ -14,7 +14,7 @@
 
 ---
 
-## 2. 数据层（schema.sql S7 区块，幂等）
+## 2. 数据层（Flyway `db/migration/V1__baseline.sql` S7 区块）
 
 | 表 | 字段 | 说明 |
 |---|---|---|

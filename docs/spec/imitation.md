@@ -8,7 +8,7 @@
 
 ---
 
-## 1. 数据模型（schema.sql 幂等 ADD COLUMN，回滚仅需代码回退）
+## 1. 数据模型（Flyway `db/migration/V1__baseline.sql` `ADD COLUMN IF NOT EXISTS`，回滚仅需代码回退）
 
 - `sparkora_article_project` 增列：
   - `gen_source VARCHAR(20) NOT NULL DEFAULT 'TOPIC'`（`TOPIC`/`IMITATION`）

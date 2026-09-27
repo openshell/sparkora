@@ -91,7 +91,7 @@
 
 - 后端：`com.sparkora.web.controller.ArticleProjectController`（CRUD + 生成入口 + 配图/发布元信息端点）、`com.sparkora.service.ArticleProjectCarService`、`domain.entity.ArticleProjectEntity`、`mapper.ArticleProjectMapper`。
 - 前端：`views/ProjectList.vue`（工作台）、`views/ProjectEdit.vue`（新建/编辑，含仿写分支）、`views/project/ProjectLayout.vue`（步骤条 + 子路由）、`constants/project.js`（状态映射唯一事实源）。
-- 表：`sparkora_article_project`（`src/main/resources/db/schema.sql` 幂等建表）。
+- 表：`sparkora_article_project`（Flyway `db/migration/V1__baseline.sql` 建表）。
 
 ---
 

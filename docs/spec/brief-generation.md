@@ -31,7 +31,7 @@ graph TD
 
 ---
 
-## 2. 数据模型（§13，schema.sql 幂等，已同步 entity）
+## 2. 数据模型（§13，Flyway `db/migration/V1__baseline.sql` 建表/补列，已同步 entity）
 
 - `sparkora_article_brief` 增列：
   - `gen_mode TEXT DEFAULT 'FAST'`（2026-09-09 模式收敛：新 brief 恒为 DEEP，FAST 默认值仅存量语义；存量行不迁移）

@@ -120,7 +120,7 @@ docker compose build backend && docker compose up -d backend
 ```
 
 - `docker compose restart backend` 与裸 `docker compose up -d` **不会重新构建镜像**，仍跑旧代码——改代码后必须带 `--build`。
-- `schema.sql` 幂等（`spring.sql.init.mode: always`），容器每次启动都会执行建表/回填，无需手工迁移。
+- `db/migration/*.sql` 由 Flyway 版本化迁移（`spring.flyway.*`），容器每次启动执行「未应用的」迁移；既有库经 `baseline-on-migrate` 标记基线 V1 后跳过，无需手工迁移。
 
 ---
 

@@ -68,7 +68,7 @@
 
 ## 2. 图片标签（09-13 image-tags，独立标签表）
 
-**数据模型（`sparkora_image_tag`，schema.sql S-tags 段幂等 `CREATE TABLE IF NOT EXISTS`）**：
+**数据模型（`sparkora_image_tag`，Flyway `db/migration/V1__baseline.sql` S-tags 段 `CREATE TABLE IF NOT EXISTS`）**：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -141,7 +141,7 @@
 
 **语义**：让图片可被**自然语言检索**（「销量海报」「出海签约的照片」），为配图建议与问答语义配图提供检索能力。图片本身没有可嵌入文本，用**描述性文本代理**（来源新闻标题 / 标签 / AI prompt / 文件名）向量化。
 
-**数据模型（`sparkora_image_embedding`，schema.sql 09-15 img-semantic-search 段幂等 `CREATE TABLE IF NOT EXISTS`）**：
+**数据模型（`sparkora_image_embedding`，Flyway `db/migration/V1__baseline.sql` 09-15 img-semantic-search 段 `CREATE TABLE IF NOT EXISTS`）**：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|

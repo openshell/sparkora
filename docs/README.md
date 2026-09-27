@@ -30,7 +30,7 @@ graph LR
         SVC["service + ai + deep + car/kb/news/qa"]
         MP["mapper + domain.entity ← MyBatis-Plus"]
     end
-    DB[("PostgreSQL + pgvector<br/>schema.sql 幂等启动执行")]
+    DB[("PostgreSQL + pgvector<br/>Flyway 迁移（db/migration）启动执行")]
     AI["axonhub 统一入口<br/>（OpenAI 兼容）"]
     WY["本机 wenyan CLI（预览）<br/>远程 wenyan-server（发布）"]
     QN["七牛图床"]
@@ -137,14 +137,14 @@ graph TD
 - **GENERATING_BRIEF**：简报生成进行中（先落库再调 AI，前端可观察；再次触发 409）。
 - **READY**：简报就绪（`current_brief_id` 指向最新简报）。
 - **GENERATING_VERSIONS**：多版本生成进行中（每风格一版；再次触发 409）。
-- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。S6 起版本就绪后**直接可预览/发布**。深度写作 `/deep/generate`（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成）同样推进 READY/DRAFT/VERSIONS_READY→VERSIONS_READY（`DeepWriterService.runBatch` 委托 `ProjectStatusService.advanceVersionsReady` + 首版设 current）。**存量数据自愈**（09-10-versions-page-fix）：`schema.sql` 启动时把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等）。
+- **VERSIONS_READY**：至少一版成功（`current_version_id` 默认指向本次第一版；全部失败才回退 READY）。S6 起版本就绪后**直接可预览/发布**。深度写作 `/deep/generate`（**09-27-gen-async 起为批量异步**：`styleIds[]` 一次触发、后台逐风格生成）同样推进 READY/DRAFT/VERSIONS_READY→VERSIONS_READY（`DeepWriterService.runBatch` 委托 `ProjectStatusService.advanceVersionsReady` + 首版设 current）。**存量数据自愈**（09-10-versions-page-fix；该回填已固化为 Flyway 基线 `V1__baseline.sql`，不再每次启动执行）：启动迁移把历史「有版本但仍 READY/DRAFT」的项目推到 VERSIONS_READY，`current_version_id` 为空时设首版（幂等）。
 - **PUBLISHED_DRAFT**（S5 新增，终态）：发布成功（渲染 HTML 经 wenyan-server 写入公众号草稿箱，拿到 `media_id`）。可重发：再次 `POST /publish` 重新渲染并覆盖草稿，刷新 `publish_media_id`/`published_at`/`publish_theme`；发布失败状态原样保留并写 `last_publish_error`（成功后清空）；`publish` 仅在 VERSIONS_READY/PUBLISHED_DRAFT 可调用，否则 `R.fail(400)`。
 - 前端状态映射唯一事实源：`frontend/src/constants/project.js`（文案/标签色/步骤推进/生成中判定/发布判定 `isPublishable`/`isPublished`）。S6 起 `statusMeta` 对历史残留 `IMAGES_READY` 归一为 `VERSIONS_READY`。
 - **状态守护（2026-09-01 定稿）：下游步骤已触发后，上游生成动作前后端双重拦截，禁止状态机回退。**
   - 后端：`generate/brief` 仅在 DRAFT/READY、`generate/versions` 仅在 READY/VERSIONS_READY 放行（条件更新 WHERE 白名单；「生成中且陈旧超 10 分钟」分支自愈但同样限定生成中状态）；违反返回 `R.fail(409, "…下游步骤已触发，不支持回退重做")`。
   - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见。
 - **并发防护（S2a 补）**：项目处于 GENERATING_BRIEF/GENERATING_VERSIONS 时再次触发返回 `R.fail(409, "该项目正在生成中…")`，不重复调 AI；生成中状态陈旧（`updated_at` 超 10 分钟，如 JVM 中途死亡）时原子条件更新放行重新生成以自愈。brief 未就绪时触发版本生成返回 `R.fail(400)`。
-- **状态写权收敛（09-27-state-machine-service）**：项目 status / last_brief_error / last_version_error / last_publish_error 的写入全部收敛到 `com.sparkora.service.ProjectStatusService`（抢占/成功推进/失败回退/发布终态/错误列写入清空），BriefService/ImitationService/VersionService/DeepController/PublishService/ClarifyService 均为纯委托。唯二例外：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）、`schema.sql` 启动回填（存量修复，随 Flyway 子任务处置）。各转换的 WHERE 白名单/SET 列语义不变（单测 `ProjectStatusServiceTest` 逐项断言）。
+- **状态写权收敛（09-27-state-machine-service）**：项目 status / last_brief_error / last_version_error / last_publish_error 的写入全部收敛到 `com.sparkora.service.ProjectStatusService`（抢占/成功推进/失败回退/发布终态/错误列写入清空），BriefService/ImitationService/VersionService/DeepController/PublishService/ClarifyService 均为纯委托。唯二例外：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）、`V1__baseline.sql` 启动回填（存量修复，已固化为 Flyway 基线）。各转换的 WHERE 白名单/SET 列语义不变（单测 `ProjectStatusServiceTest` 逐项断言）。
 - **生成链路异步化（09-27-gen-async）**：三条项目状态驱动的生成链路（`imitation/analyze`、`generate/versions` 仿写、`deep/generate` 深度写作）统一为「同步毫秒级：校验 + `ProjectStatusService.claim*` 置生成中 + `self.run*`（`@Async`，自注入代理触发）+ 返回占位标记」+「后台 `run*`：重取实体 → AI 调用 → `advance*`/`fail*`（异步体顶层 catch 必调 fail 回写，不外抛）」。响应保持 **HTTP 200 + `R.ok(占位标记)`**（不引入 HTTP 202，与 `/deep/clarify` 先例一致）；前端不 await 结果，靠 `store.startPolling`（项目状态翻转）刷新。`/deep/generate` 由「单风格单版、前端串行多次」改为「`styleIds[]` 一次批量」并补 claim（源态 READY/DRAFT/VERSIONS_READY，专用 `claimDeepVersionsGenerating`，与 `claimVersionsGenerating` 源态白名单不同不合并）；`advanceVersionsReadyFromReady` 已随改造移除。`publish`/`qa ask` 载体不同，异步化另立子任务。
 - 深度模式的 `CLARIFYING`/`RESEARCHING`/`PLANNING` 等是 **brief 侧展示态**（`/deep/status`），不改项目状态机。
 
@@ -175,7 +175,7 @@ graph TD
 
 | 分组 | 变量 | 模块文档 |
 |---|---|---|
-| 数据库 | `SPARKORA_DB_HOST/PORT/NAME/USER/PASSWORD` | —（`schema.sql` 幂等建表） |
+| 数据库 | `SPARKORA_DB_HOST/PORT/NAME/USER/PASSWORD` | —（Flyway 迁移建表） |
 | JWT / 端口 | `JWT_SECRET`、`JWT_EXPIRE_MINUTES`、`SERVER_PORT`（默认 8080）、`BACKEND_PORT`/`FRONTEND_PORT`（Docker 产线端口，见 [deploy.md](deploy.md)） | [spec/overview.md](spec/overview.md)、[deploy.md](deploy.md) |
 | AI 统一入口 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` / `AI_EMBEDDING_MODEL` / `AI_TIMEOUT_MS` / `AI_TEMPERATURE` | [spec/overview.md](spec/overview.md) |
 | AI 图像 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS`（多模型逗号分隔轮询，图生图）+ `AI_IMAGE_MIN_SCORE` | [spec/image.md](spec/image.md) |
@@ -194,7 +194,7 @@ graph TD
 ## 7. 已定决策摘要
 
 - **会话方式**：Spring Security + JWT（`JWT_SECRET` / `JWT_EXPIRE_MINUTES` 从 `.env` 读）。
-- **数据库**：PostgreSQL，连接参数从 `.env` 的 `SPARKORA_DB_*` 读取；`schema.sql` 幂等可重复执行。
+- **数据库**：PostgreSQL，连接参数从 `.env` 的 `SPARKORA_DB_*` 读取；结构由 Flyway 版本化迁移（`db/migration/V*.sql`，`flyway_schema_history` 记录）管理。
 - **前端工程位置**：`frontend/`，单独 Vue3 + Element Plus 工程。
 - **模型入口**：axonhub 统一入口 `https://axo.caiqz.cn`（OpenAI 兼容），`AI_*` 从 `.env` 读。
 - **wenyan-server**：S4/S5 双通道；发布通道可用性只看 `WENYAN_MCP_SERVER_URL` + `WENYAN_MCP_SERVER_API_KEY`（旧 `WENYAN_MCP_ENABLED`/`WENYAN_MCP_BIN` stdio 模式已于 S5 废弃移除）。
@@ -208,5 +208,5 @@ graph TD
 
 - 模块变更只改对应模块文档；跨模块契约（检索、状态机、`R<T>`）落在本总览或对应横切文档（[spec/retrieval.md](spec/retrieval.md)、[spec/overview.md](spec/overview.md)）。
 - 每份模块文档顶部回链本总览；总览模块索引表新增行必须链接到真实文件（无死链）。
-- 表结构变更三处同步：`schema.sql`（幂等）+ 对应 entity/mapper + 对应模块文档字段级表格。
+- 表结构变更三处同步：新增 Flyway 迁移脚本（`db/migration/V<n>__<desc>.sql`）+ 对应 entity/mapper + 对应模块文档字段级表格。
 - 代码注释引用文档时用 `docs/spec/<module>.md` 路径（旧 `§N` 编号体系已随本次重构移除）。

@@ -82,7 +82,7 @@ statusService.markPublishFailure(projectId, message);  // 压缩空白+截断 99
 statusService.writeBriefError(projectId, reasonOrNull); // 单列写入/清空(ClarifyService 异步链路)
 ```
 
-- **唯二例外**（不走状态服务）：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）；`schema.sql` 启动回填（存量数据修复，随 Flyway 子任务处置）。
+- **唯二例外**（不走状态服务）：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）；`V1__baseline.sql` 启动回填（存量数据修复，已随 Flyway 子任务固化为基线，不再每次启动执行）。
 - **常量与判定收编**：`STALE_GENERATING_MS`（10 分钟）唯一定义在状态服务；`stuckGenerating(p)` / `guardMsg(p, action)`（409 守卫提示语）由服务持有，调用方不再各自复制。
 - **语义不变契约**：各转换的 WHERE 状态白名单、SET 列、两拆分顺序、截断口径（1000/990）、409 提示语与 P0 修复后实现逐字等价——新增/修改转换时必须在 `ProjectStatusServiceTest` 补对应断言（WHERE 白名单/两拆分/截断）。
 - **源态白名单不同的转换不合并**：多版本链路源态 `READY/VERSIONS_READY`（`claimVersionsGenerating`），深度批量链路源态 `READY/DRAFT/VERSIONS_READY`（`claimDeepVersionsGenerating`，因 `/deep/generate` 可从 DRAFT「跳过简报」或 VERSIONS_READY「追加」进入）——语义不同，显式化为两个方法。
@@ -196,6 +196,6 @@ public void runGenerate(Long projectId, ...) {
 
 **Cause**: 生成链路只写了产物表，没对齐既有链路（VersionService.generate）的完整语义：① 不推进项目状态机（停在 READY，`maxReachableStepOf` 锁死下游步骤）；② 不设 `current_version_id`；③ 漏填展示字段（version_label/style_tag/word_count/title）。FAST 封死、新模式成唯一主路径后，历史「补充链路」的缺陷必现。
 
-**Fix**: 双保险——① 生成成功分支对齐既有链路语义（状态白名单推进 READY/DRAFT→VERSIONS_READY + `currentVersionId==null` 才设默认当前，追加不覆盖用户已选）；② 展示字段全部落库（title=正文首 H1 回退 topic / label 按版本数续编 / styleTag 传风格名回退兜底 / word_count=length）；③ 前端模板层对 null 字段兜底（`v.styleTag || '深度'`）+ schema.sql 幂等回填存量 NULL 行（**含同根因的项目状态自愈**）。
+**Fix**: 双保险——① 生成成功分支对齐既有链路语义（状态白名单推进 READY/DRAFT→VERSIONS_READY + `currentVersionId==null` 才设默认当前，追加不覆盖用户已选）；② 展示字段全部落库（title=正文首 H1 回退 topic / label 按版本数续编 / styleTag 传风格名回退兜底 / word_count=length）；③ 前端模板层对 null 字段兜底（`v.styleTag || '深度'`）+ 幂等回填存量 NULL 行（**含同根因的项目状态自愈**；该回填已固化为 Flyway 基线 `V1__baseline.sql`）。
 
 **Prevention**: 新增任何「落库产物」的链路时，对照既有主链路逐字段核对：状态机推进点、current 指向、展示字段清单；「只写产物不改状态」的旧先例不是放行理由——一旦旧路径被封死（模式收敛），新路径就是主路径，缺陷即必现。
