@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-09-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~797 | Active |
+| `journal-1.md` | ~819 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-09-27 | Session 20: 提取共享分节档位 LayoutRules 并统一 VersionService | `aaa3db8` | `main` |
 | 30 | 2026-09-27 | Session 19: 深度写作注入目标字数 + 自适应小标题分节 | `fbad06b` | `main` |
 | 29 | 2026-09-27 | Session 18: 背景题 Tavily 正文补抓 + 事实手册 kind 分类 + 简报注入研究假设 | `652b187` | `main` |
 | 28 | 2026-09-27 | P1 架构一致性父任务收口(Cross-child 整合验收) | `7b49298` | `main` |

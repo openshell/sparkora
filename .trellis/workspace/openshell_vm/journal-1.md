@@ -795,3 +795,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: Session 20: 提取共享分节档位 LayoutRules 并统一 VersionService
+<!-- trellis-session: v=2 fp=3ba716cc60d32324 -->
+
+**Date**: 2026-09-27
+**Task**: Session 20: 提取共享分节档位 LayoutRules 并统一 VersionService
+**Branch**: `main`
+
+### Summary
+
+任务 09-27-shared-layout-rules：R1 新增 com.sparkora.service.LayoutRules（纯静态：DEFAULT_WORD_COUNT_TARGET/normalizeTarget/SectionSpec/sectionSpec）；R2 DeepWriterService 删内部档位类型改委托共享类、layoutRule 文案逐字零回归；R3 VersionService.generateOne 排版铁律首行按项目 wordCountTarget 自适应(TOPIC/IMITATION 两分支同源)，其余两 bullet 逐字保留；R4 新增 LayoutRulesTest 边界 + VersionServiceAsyncTest 分档断言。只共享分类结果不统一文案格式。check 无缺陷；mvn test 494 全绿；无 schema/配置/前端/响应结构变更；后端镜像重建 healthy。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aaa3db8` | refactor(deep): 提取共享分节档位 LayoutRules 并统一 VersionService 自适应分节 |
+
+### Status
+
+[OK] **Completed**
