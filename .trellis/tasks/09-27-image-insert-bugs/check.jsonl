@@ -1,0 +1,4 @@
+{"file": "docs/spec/image.md", "reason": "核对：计数口径/关联表登记/失效图语义是否与本任务实现一致"}
+{"file": "docs/spec/preview.md", "reason": "核对：失效 token 占位、警示条、去发布/复制阻断是否覆盖"}
+{"file": "docs/spec/publish.md", "reason": "核对：发布页插图计数与 token 阻断是否与预览口径一致"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对：新增/修改的前端约定是否与既有 ObjectURL/暂存范式冲突"}

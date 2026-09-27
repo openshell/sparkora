@@ -401,7 +401,9 @@ const thumbOf = (img) => img?.thumbUrl || img?.url || ''
 const originOf = (img) => img?.url || ''
 
 /** 统一收口：成功则展示候选、写会话缓存（持有本地参考图时）、通知宿主刷新。
- *  `reason` 供宿主区分「首次生成」与「重生成」（预览页仅首次生成沿用 n=1 自动插入正文行为）。 */
+ *  `reason`（`generate`/`regenerate`）仅作信息透传给宿主，当前**无任何宿主据此自动写入正文**——
+ *  预览页曾按「首次 n=1 自动插入」处理，那正是把封面图误塞进正文的来源，
+ *  也违反 .trellis/spec/frontend/index.md「不得提供任何自动写入路径」的硬约束（09-27-image-insert-bugs 已移除）。 */
 const doGenerate = async (req, ctx) => {
   generating.value = true
   try {

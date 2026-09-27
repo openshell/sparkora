@@ -1,0 +1,4 @@
+{"file": "docs/spec/image.md", "reason": "配图模块权威契约：§5 版本-图片关联表、§6 projectImages/bodyImage API、§7.7 手动插图不登记债务、§8 页面职责与计数"}
+{"file": "docs/spec/preview.md", "reason": "预览渲染与粘贴暂存 token 契约、失效处理与拦截点"}
+{"file": "docs/spec/publish.md", "reason": "发布链路、封面必选、插图计数口径与发布防呆"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端约定：ObjectURL 所有权、会话缓存去重/revoke、暂存+token 占位范式（本任务需扩展为失效可见化）"}

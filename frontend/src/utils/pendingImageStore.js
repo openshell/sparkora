@@ -12,15 +12,17 @@
  *   （仅含 `[A-Za-z0-9_-]`，与正文 token 正则一致）。
  * - **ObjectURL 所有权**：同一 File 全局只建一个 URL（跨条目按 `file` 引用去重）；
  *   remove/clear 时确认无其他条目仍引用该 File 才 revoke（复用 imageRefCache 范式）。
- * - 暂存图**不登记** `sparkora_article_version_image`（沿用「markdown 为渲染真值、手动插图不登记」
- *   的既有口径，见 docs/spec/image.md 已知限制）。
+ * - 09-27-image-insert-bugs：暂存图在**上传成功后**由 `usePendingImageFlush` best-effort 补登记
+ *   `sparkora_article_version_image`（此前完全不登记，见 docs/spec/image.md §7.7 债务）。
+ * - **token 前缀字面量只有这一处**（`TOKEN_PREFIX`）：`utils/bodyImageRefs.js` 的插图计数也按它
+ *   区分「图床 URL」与「未上传占位」，两处各写一份必然漂移，故显式导出给下游 import。
  */
 
-/** 正文占位 token 的正则（id 仅含 URL 安全字符）。 */
-export const TOKEN_RE = /sparkora-img:([A-Za-z0-9_-]+)/g
+/** token 前缀（后端发布防呆只做存在性判断，与前端同一字面量；下游 import 复用，勿再各写一份）。 */
+export const TOKEN_PREFIX = 'sparkora-img:'
 
-/** token 前缀（后端发布防呆只做存在性判断，与前端同一字面量）。 */
-const TOKEN_PREFIX = 'sparkora-img:'
+/** 正文占位 token 的正则（id 仅含 URL 安全字符）。 */
+export const TOKEN_RE = new RegExp(`${TOKEN_PREFIX}([A-Za-z0-9_-]+)`, 'g')
 
 /** @type {Map<string, object>} key=id -> 条目 */
 const store = new Map()
@@ -75,7 +77,7 @@ export function get(id) {
   return store.get(String(id))
 }
 
-/** 取 token 对应的本地预览 URL（无条目返回空串，调用方保留原 src 显示破图）。 */
+/** 取 token 对应的本地预览 URL（无条目返回空串 = 暂存已失效，调用方须给出可见提示而非破图）。 */
 export function previewUrl(id) {
   if (id == null) return ''
   return store.get(String(id))?.previewUrl || ''
@@ -157,17 +159,35 @@ export function replaceAllTokens(md, resolver) {
   return String(md || '').replace(new RegExp(TOKEN_RE.source, 'g'), (m, id) => resolver?.(id) || m)
 }
 
+/** 失效占位块的类名与文案（CSS 在 PreviewPane 以 :deep() 定义；文案集中在此便于统一改口）。 */
+const MISSING_CLASS = 'sparkora-img-missing'
+const MISSING_TEXT = '粘贴图片已失效，请重新粘贴'
+
 /**
- * 渲染产物的**预览投影**替换：只把 `src="sparkora-img:<id>"` 换成 resolver 给出的本地 URL。
+ * 渲染产物的**预览投影**：把 `src="sparkora-img:<id>"` 换成 resolver 给出的本地 URL；
+ * resolver 返回空（无暂存条目 = 刷新/标签丢弃后失效）时，把整个 `<img>` 替换为**可见的失效占位块**。
+ *
+ * 为什么用 DOM 而不是字符串替换：失效时需要产出 `<span>` 占位元素，纯正则换不了节点；
+ * 而「保留原 src 显示破图」等于**静默丢失**——用户看不出发生了什么（09-27-image-insert-bugs R1.1）。
+ * 可见失效 + 顶部警示 + 阻断发布，是「不持久化暂存图」策略下唯一诚实的体验。
+ *
  * @wenyan-md/core(marked 15) 对 `![](sparkora-img:<id>)` 原样输出 `<img src="sparkora-img:<id>">`
- * （已实测，未做协议过滤），故在渲染后、sanitize 前按 src 属性精确替换即可，**不污染落库正文**。
- * resolver 返回空（无暂存条目）时保留原 src（显示破图），由发布防呆兜底。
+ * （已实测，未做协议过滤）。本函数只改**展示 HTML**，**不污染落库正文**。
+ * 必须在 sanitize 之前调用：sanitize 只摘除危险节点/属性，占位 span 可安全通过。
  */
-export function mapTokenSrc(html, resolver) {
-  return String(html || '').replace(/src="sparkora-img:([A-Za-z0-9_-]+)"/g, (m, id) => {
+export function projectBodyTokens(html, resolver) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html')
+  doc.querySelectorAll(`img[src^="${TOKEN_PREFIX}"]`).forEach((img) => {
+    const id = img.getAttribute('src').slice(TOKEN_PREFIX.length)
     const url = resolver?.(id)
-    return url ? `src="${url}"` : m
+    if (url) { img.setAttribute('src', url); return }
+    const ph = doc.createElement('span')
+    ph.className = MISSING_CLASS
+    ph.setAttribute('role', 'img')
+    ph.textContent = MISSING_TEXT
+    img.replaceWith(ph)
   })
+  return doc.body.innerHTML
 }
 
 export default { add, get, previewUrl, entries, hasAny, remove, clearProject, clearOthers, size }

@@ -58,7 +58,7 @@
     <span class="ctrl-divider" aria-hidden="true"></span>
     <el-button size="small" @click="emit('open-images')">
       <el-icon style="margin-right: 4px"><Picture /></el-icon>
-      配图 {{ insertedCount }}/{{ snapshotCount }}
+      配图 {{ insertedCount }}<template v-if="pendingCount"> · 待传 {{ pendingCount }}</template>
     </el-button>
     <span class="flex-sp"></span>
     <el-tag v-if="saveState === 'dirty'" type="warning" effect="plain" size="small">未保存</el-tag>
@@ -93,8 +93,10 @@ const props = defineProps({
   copying: { type: Boolean, default: false },
   dirty: { type: Boolean, default: false },
   renderError: { type: String, default: '' },
+  // 09-27-image-insert-bugs：insertedCount 为**正文解析口径**的已就绪插图数（不含封面，也不含未上传占位）。
+  // 旧口径把「项目图快照张数」当分母，而快照含封面 → 封面被算作插图，故不再向下传分母。
   insertedCount: { type: Number, default: 0 },
-  snapshotCount: { type: Number, default: 0 }
+  pendingCount: { type: Number, default: 0 }
 })
 const emit = defineEmits([
   'update:theme', 'update:highlight', 'update:macStyle', 'update:footnote', 'update:previewWidth',

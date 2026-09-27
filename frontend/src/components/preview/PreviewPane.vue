@@ -91,6 +91,16 @@ defineExpose({ scrollToPercent, currentPercent })
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 .preview-skeleton { padding: 16px; }
 
+/* 失效粘贴图占位块(09-27-image-insert-bugs):暂存图丢失后必须「看得见」,
+   不能静默退化成破图。内容由 v-html 注入,故用 :deep() 且不依赖 scoped 属性。 */
+:deep(.sparkora-img-missing) {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 44px; margin: 12px 0; padding: 10px 12px;
+  border: 1px dashed var(--el-color-danger); border-radius: var(--radius-sm);
+  background: var(--el-color-danger-light-9); color: var(--el-color-danger);
+  font-size: 13px; line-height: 1.5; text-align: center;
+}
+
 /* 主题/渲染进度条:双栏头部下侧的细条 */
 .theme-progress { height: 2px; position: relative; overflow: hidden; background: transparent; }
 .theme-progress::before { content: ""; position: absolute; inset: 0; width: 40%; background: var(--brand); opacity: 0; transition: opacity .15s ease; }

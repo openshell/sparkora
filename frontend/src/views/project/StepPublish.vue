@@ -59,8 +59,8 @@
               <div class="summary-title">版本标题: {{ versionTitle || '(未命名)' }}</div>
               <div class="summary-sub">
                 <el-tag size="small" effect="plain">正文 {{ wordCount }} 字</el-tag>
-                <el-tag size="small" effect="plain" :type="bodyImageIds.length ? 'success' : 'info'">
-                  插图 {{ bodyImageIds.length }} 张
+                <el-tag size="small" effect="plain" :type="bodyImageCount ? 'success' : 'info'">
+                  插图 {{ bodyImageCount }} 张
                 </el-tag>
                 <el-tag size="small" effect="plain" :type="coverUrl ? 'success' : 'danger'">
                   {{ coverUrl ? '已选封面' : '未选封面(公众号要求必选)' }}
@@ -138,7 +138,8 @@ import { useProjectDetailStore } from '../../store/project-detail'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { WarningFilled, SuccessFilled } from '@element-plus/icons-vue'
 import { isPublishable } from '../../constants/project'
-import { hasToken, hasAny } from '../../utils/pendingImageStore'
+import { hasToken, hasAny, extractTokens, get } from '../../utils/pendingImageStore'
+import { countBodyImages } from '../../utils/bodyImageRefs'
 
 /**
  * Step 4 · 发布(S5):同源渲染(与 Step3 preview 完全同参)→ wenyan-server(公众号草稿箱)。
@@ -204,17 +205,18 @@ const themeLabel = (t) => themeMeta(t)?.name || t || ''
 const versionTitle = ref('')
 const contentMd = ref('')
 const coverUrl = ref('')
-const bodyImageIds = ref([])
+/** 插图数:解析正文图片引用,与预览页工具栏同一口径(09-27-image-insert-bugs)。
+ *  不再数关联表(bodyImageIds)——它对「手工编辑正文」不敏感(删图不摘登记),数出来会虚高。 */
+const bodyImageCount = computed(() => countBodyImages(contentMd.value))
 const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
 
 const loadSummary = async () => {
   summaryLoaded.value = false
   try {
-    // 项目图快照(含 currentVersionId/coverImageId/bodyImageIds) + 版本列表取标题与正文
+    // 项目图快照(含 currentVersionId/coverImageId/coverImage) + 版本列表取标题与正文
     const res = await imageApi.projectImages(projectId.value)
     if (res.code !== 0) throw new Error(res.msg || '配图快照加载失败')
     const vid = res.data?.currentVersionId
-    bodyImageIds.value = res.data?.bodyImageIds || []
     coverUrl.value = ''
     // S10:封面 URL 改读服务端解析的 coverImage.url（不再自行从全量 images find）
     const img = res.data?.coverImage
@@ -309,14 +311,19 @@ const confirmPublish = () => {
 }
 
 const doPublish = async () => {
-  // 发布防呆(09-27-preview-clipboard-image R5.2):正文含 token 占位时阻止发布;摘要尚未加载完(shell 未知)
-  // 且本项目仍有暂存条目时也阻止(无法确认正文干净,宁可不发)。后端另有同口径兜底(R5.3)。
   // 防重入(/publish 非幂等,重复执行会产生重复草稿)。按钮 loading 已隐式禁用,
   // 但「双击开出两个确认弹层」「Enter 快速确认」等路径仍可能在 publishing 置位后再次进来,这里兜底。
   if (publishing.value) return
+  // 发布防呆(09-27-preview-clipboard-image R5.2):正文含 token 占位时阻止发布;摘要尚未加载完(shell 未知)
+  // 且本项目仍有暂存条目时也阻止(无法确认正文干净,宁可不发)。后端另有同口径兜底(R5.3)。
   const pendingUnverified = !summaryLoaded.value && hasAny(projectId.value)
   if (hasToken(contentMd.value) || pendingUnverified) {
-    ElMessage.warning('当前正文含未上传的粘贴图,请回到「预览」步骤点「去发布」完成上传后再发布')
+    // 09-27-image-insert-bugs：区分「待上传」与「已失效」。已失效的（页面重载丢了暂存）
+    // 点「去发布」也传不上去,提示必须指向「重新粘贴/删占位」,否则是把用户引到无效操作。
+    const lost = extractTokens(contentMd.value).filter((id) => !get(id)).length
+    ElMessage.warning(lost
+      ? `当前正文含 ${lost} 处已失效的粘贴图（页面重载后暂存丢失），请回到「预览」步骤重新粘贴或删除占位后再发布`
+      : '当前正文含未上传的粘贴图，请回到「预览」步骤点「去发布」完成上传后再发布')
     return
   }
   publishing.value = true

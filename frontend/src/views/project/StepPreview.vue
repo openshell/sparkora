@@ -23,13 +23,22 @@
         :theme="theme" :highlight="highlight" :mac-style="macStyle" :footnote="footnote"
         :preview-width="previewWidth" :theme-options="themeOptions" :highlight-options="highlightOptions"
         :save-state="saveState" :saved-at="savedAt" :saving="saving" :copying="copying" :dirty="dirty"
-        :render-error="renderError" :inserted-count="insertedCount" :snapshot-count="snapshotImages.length"
+        :render-error="renderError" :inserted-count="insertedCount" :pending-count="pendingCount"
         @update:theme="(v) => onStyleFieldChange('theme', v)"
         @update:highlight="(v) => onStyleFieldChange('highlight', v)"
         @update:macStyle="(v) => onStyleFieldChange('macStyle', v)"
         @update:footnote="(v) => onStyleFieldChange('footnote', v)"
         @update:previewWidth="onPreviewWidthChange"
         @save="saveContent" @copy="copyRich" @publish="goPublish" @open-images="imgDrawer = true" />
+
+      <!-- 粘贴图失效警示(09-27-image-insert-bugs):暂存区在内存中,整页重载(刷新/标签丢弃)即丢,
+           且此时无法再上传。必须显式告知,否则正文里的占位会静默变成一张破图。 -->
+      <el-alert
+        v-if="unresolvedTokens.length" class="lost-image-alert" type="warning" :closable="false" show-icon>
+        <template #title>
+          正文含 {{ unresolvedTokens.length }} 张已失效的粘贴图（页面重载后暂存丢失，无法再上传），请重新粘贴或删除占位。
+        </template>
+      </el-alert>
 
       <!-- 正文加载失败 -->
       <div v-if="loadError && !loaded" class="state-error">
@@ -101,7 +110,8 @@ import PreviewImageDrawer from '../../components/preview/PreviewImageDrawer.vue'
 import { usePreviewStylePersist } from '../../composables/usePreviewStylePersist'
 import { usePreviewRender } from '../../composables/usePreviewRender'
 import { usePendingImageFlush } from '../../composables/usePendingImageFlush'
-import { clearProject, clearOthers } from '../../utils/pendingImageStore'
+import { clearProject, clearOthers, extractTokens, get } from '../../utils/pendingImageStore'
+import { parseBodyImageRefs } from '../../utils/bodyImageRefs'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 
@@ -154,20 +164,33 @@ const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').leng
 
 const draftKey = computed(() => `sparkora-preview-draft-${projectId.value}`)
 
-// ==== 配图快照口径(与 StepPublish 同一接口数据;S10 起 images=当前版本引用图集合) ====
-const snapshotImages = computed(() => imgSnapshot.value?.images || [])
+// ==== 配图快照(与 StepPublish 同一接口数据) ====
 const coverImageId = computed(() => imgSnapshot.value?.coverImageId ?? null)
 
-/** 正文已引用的本地 URL 集合:面板「已插入」状态与后端组装去重口径一致(含 URL 即视为已插入)。
- *  S10 起基于「当前版本引用图集合」计算(全量图库已分页化,未引用图不可能出现在正文——插入动作即产生引用)。 */
-const insertedUrls = computed(() => {
-  const body = contentMd.value || ''
-  return new Set(snapshotImages.value.map(img => originUrl(img)).filter(u => body.includes(u)))
-})
-/** 已插入正文的插图数量(配图按钮角标)。 */
-const insertedCount = computed(() => insertedUrls.value.size)
 /** 图库图片图床公网 URL(入库即已转存,后端填充 url 字段)。 */
 const originUrl = (img) => img?.url || ''                 // 插入正文/大图预览用原图 URL
+
+// ==== 配图数量:唯一口径 = 解析正文图片引用(09-27-image-insert-bugs) ====
+// 此前工具栏用「快照 images」当分母(含封面)、分子取「快照∩正文」,发布页却数关联表,
+// 三处口径互不一致 → 同一篇文章在不同页面显示不同的配图数,且封面被算成插图。
+// 现在两边都调 bodyImageRefs：封面走 cover_image_id,天然不参与正文插图计数。
+const bodyImageRefs = computed(() => parseBodyImageRefs(contentMd.value))
+/** 已就绪插图数(不含未上传的粘贴图占位)。 */
+const insertedCount = computed(() => bodyImageRefs.value.urls.length)
+/** token 是否**仍可上传**(条目在且属当前项目);与 usePendingImageFlush 的可上传判定同口径。 */
+const isPendingToken = (id) => {
+  const e = get(id)
+  return !!e && e.projectId === String(projectId.value)
+}
+/** 待上传的粘贴图占位数(剪贴板暂存图,点「去发布」才转存图床)。
+ *  **只算仍可上传的**:已失效的(重载丢失)不叫「待传」——点「去发布」也传不上去,那样展示会误导用户。 */
+const pendingCount = computed(() => bodyImageRefs.value.tokenIds.filter(isPendingToken).length)
+/** 已失效(暂存丢失,无法再上传)的占位数 → 顶部警示 + 阻断。
+ *  取词用 `extractTokens`(与 flushPendingImages 的阻断口径逐字一致)而非图片语法解析:
+ *  宁可多提示,也不能出现「无警示却仍被阻断」。 */
+const unresolvedTokens = computed(() => extractTokens(contentMd.value).filter((id) => !isPendingToken(id)))
+/** 正文已引用的图床 URL 集合:抽屉「已插入」角标。 */
+const insertedUrls = computed(() => new Set(bodyImageRefs.value.urls))
 
 // ==== 渲染:正文 400ms 防抖走纯渲染;首次/出错时同样入口 ====
 const { html, rendering, renderError, scheduleRender, renderMarkdown, dispose: disposeRender } =
@@ -324,10 +347,14 @@ const saveContent = async () => {
 }
 
 /** 复制排版:buildWechatHtml 内联输出(与发布同参),富文本进剪贴板。输入纯正文(不含 frontmatter)。
- *  含未上传暂存图(token)时拦截——否则复制出的 HTML 会带失效 src(09-27-preview-clipboard-image R4)。 */
+ *  含未上传暂存图(token)时拦截——否则复制出的 HTML 会带失效 src(09-27-preview-clipboard-image R4)。
+ *  09-27-image-insert-bugs:拦截文案区分「待上传」与「已失效」——已失效的点「去发布」也传不上去,
+ *  统一提示「先去发布」会把用户引到无效操作上(AC2 要求提示可执行)。 */
 const copyRich = async () => {
   if (hasPendingToken()) {
-    ElMessage.warning('正文含未上传的粘贴图,请先点「去发布」上传后再复制')
+    ElMessage.warning(unresolvedTokens.value.length
+      ? `正文含 ${unresolvedTokens.value.length} 处已失效的粘贴图（页面重载后暂存丢失），请重新粘贴或删除占位后再复制`
+      : '正文含未上传的粘贴图，请先点「去发布」上传后再复制')
     return
   }
   copying.value = true
@@ -356,6 +383,11 @@ const insertBodyImage = (img) => {
   // 2026-09-11-quanzhanlan-broken-image:插入正文必须用原图 URL(originUrl),
   // 不能用 thumbUrl(imageView2+format/webp 派生)——webp 微信素材接口不支持(40113 unsupported file type)
   editorRef.value?.insertMd?.(`\n![](${originUrl(img)})\n`)
+  // 09-27-image-insert-bugs:补登记关联表。markdown 才是渲染真值,故先插入再登记;
+  // 登记失败只 warn,不能因此回滚已插入的正文(计数口径已改为解析正文,不受影响)。
+  if (img?.id) imageApi.addBodyImage(projectId.value, img.id).catch((e) => {
+    console.warn('[preview] 插图登记失败（不影响正文）', e)
+  })
 }
 
 /** 供抽屉内建议采用按标题插入（找不到标题由编辑器内部退回光标处）。 */
@@ -377,11 +409,13 @@ const onSetCover = async (imageId) => {
   } finally { busy.value = false }
 }
 
-/** AI 生图完成（共用组件 emit generated）：刷新配图快照；**首次生成** n=1 沿用旧行为自动插入正文光标处
- *  （重生成不自动插入——与既有 S10 行为一致，重生成结果由用户点「插入正文」）。 */
-const onGenerated = async (list, meta) => {
+/** AI 生图完成（共用组件 emit generated）：仅刷新配图快照。
+ *
+ *  09-27-image-insert-bugs：**移除「首次 n=1 自动插入正文」**。旧行为会在用户把生成图
+ *  设为封面时，顺手把它也塞进正文，于是同一张图既是封面又是插图，而工具栏又把封面计入分母
+ *  → 「配图 1/1」这种把封面算作插图的结果。改为只刷新快照，是否插入完全由用户点「插入正文」决定。 */
+const onGenerated = async () => {
   try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响生成结果展示 */ }
-  if (meta?.reason === 'generate' && list?.length === 1 && list[0]?.id) insertBodyImage(list[0])
 }
 
 watch(saveState, (s) => { if (s !== 'dirty') return })
@@ -440,6 +474,9 @@ onBeforeUnmount(() => { disposeRender(); flushSavePreviewStyle() })
 .state-error { padding: 36px 16px; }
 .state-title { font-weight: 700; margin: 8px 0 4px; }
 .state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+
+/* 粘贴图失效警示(09-27-image-insert-bugs) */
+.lost-image-alert { margin-bottom: 12px; }
 
 .duo { display: grid; grid-template-columns: minmax(280px, 5fr) minmax(320px, 7fr); gap: 16px; align-items: stretch; }
 .pane { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--paper); display: flex; flex-direction: column; }

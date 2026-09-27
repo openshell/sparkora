@@ -256,19 +256,19 @@ for (const f of info.files || []) {
 
 **What**: 用户在前端产生、但**不应即时上传**的资源（09-27 先例：预览页剪贴板粘贴图，只在点「去发布」时才上传七牛），统一用**自定义 token 占位**表示，而不是把临时 URL（`blob:`/临时对象存储 URL）写进会落库的正文。
 
-- 正文（会落库）写 `![](sparkora-img:<id>)`，`<id>` 仅含 `[A-Za-z0-9_-]`；资源本体放**模块级会话暂存区**（`utils/pendingImageStore.js`，内存 Map、**不持久化**，同 `imageRefCache` 约定）。
-- **预览投影**与**落库内容**分离：渲染产物的展示层把 token 的 `src` 换成 `blob:` URL（`mapTokenSrc`，渲染后按属性精确匹配）；markdown 输入侧与落库正文**始终保留 token**。绝不在 markdown 阶段替换成 blob URL（会污染落库/草稿）。
+- 正文（会落库）写 `![](sparkora-img:<id>)`，`<id>` 仅含 `[A-Za-z0-9_-]`；资源本体放**模块级会话暂存区**（`utils/pendingImageStore.js`，内存 Map、**不持久化**，同 `imageRefCache` 约定）。**token 前缀字面量只允许存在一份**：`pendingImageStore.TOKEN_PREFIX`（`TOKEN_RE` 由它拼出），下游（如 `bodyImageRefs` 计数解析）一律 import，不各写一份。
+- **预览投影**与**落库内容**分离：渲染产物的展示层把 token 的 `src` 换成 `blob:` URL（`projectBodyTokens`，渲染后按属性精确匹配）；markdown 输入侧与落库正文**始终保留 token**。绝不在 markdown 阶段替换成 blob URL（会污染落库/草稿）。
 - 上传触发点收敛到**一个显式动作**（本例＝预览页「去发布」）；转存成功后把 token 精确替换为公网 `url`，再落库正文。
+- **落库必须先于清理（09-27 P0 教训）**：`remove(id)`/`revokeObjectURL` 只能发生在「URL 版正文保存**成功**」之后。反过来（先清后存）会留下「图床已有对象 / 正文仍是 token / 内存条目已删」的窗口，窗口内一次整页重载就是永久静默丢失。保存失败 → 保留全部条目 + 中止跳转 + 可直接重试；`goPublish` 开头的 `isDirty → saveContent` 保证重试时补存 URL 版正文（`extractTokens` 转空后不再重复上传），不会「不保存正文就跳转」。
+- **失效必须可见（09-27）**：暂存区不持久化 ⇒ token 一定会「有失效的一天」。解析不到条目时**不许留破图/留空**，渲染为可见占位块（`<span class="…-missing">中文处置提示</span>`，样式用 `:deep()` 定义以穿透 `v-html`），并在页面顶部挂警示条；同时在**每一个会产出对外产物的动作**（复制排版 / 去发布 / 发布）阻断，且**文案区分「待上传」与「已失效」**——失效场景点「去发布」也传不上去，笼统提示「先去发布」等于把用户引到无效操作。
 - **token 替换必须带 id 边界断言**：`replaceToken` 用 `sparkora-img:<id>(?![A-Za-z0-9_-])`，否则 `i1` 会命中 `i12` 前缀，误改其他图的引用。
-- **防呆双保险**：前端（复制/发布前 `hasToken` 拦截）+ 后端（组装前 `content.contains("sparkora-img:")` 中止），防刷新丢失暂存后带失效占位发布。
+- **防呆双保险**：前端（复制/发布前 `hasToken` 拦截）+ 后端（组装前 `content.contains("sparkora-img:")` 中止），防刷新丢失暂存后带失效占位发布。**警示/阻断的取词口径要与阻断方一致**（都用 `extractTokens`），否则会出现「无警示却仍被阻断」。
 - **跨项目隔离 + 释放**：暂存按 `projectId` 分组；项目切换时清旧项目条目并 revoke；`watch(projectId)` 的 oldId 在「卸载重挂载」路径为 `undefined`，须额外在 `onMounted` 调 `clearOthers(currentProjectId)` 兜底，否则旧项目 blob URL 会话级泄漏。
 - **token 与渲染管线的兼容前提**：`@wenyan-md/core`(marked 15) 对非法 `src` 协议**原样保留**（实测 `![![](sparkora-img:x)` → `<img src="sparkora-img:x" alt="" title="">`），故 HTML 侧替换成立；若未来渲染器改为清洗未知协议，需回归此假设。
 
 **Why**: 会落库的正文若写入 `blob:`（刷新即失效、跨设备不可移植）或临时 URL，会产生死链且难以检测；自定义 token 可被前端、后端、测试一致识别，替换点单一可审计。
 
 **Related**: `frontend/src/utils/pendingImageStore.js`、`frontend/src/composables/usePendingImageFlush.js`、`frontend/src/components/MarkdownEditor.vue`、`docs/spec/preview.md` §4.1。
-
----
 
 ### Convention: 同步长耗时操作（非幂等）的等待提示必须与实耗相符 + 禁止重复触发
 
@@ -285,6 +285,21 @@ for (const f of info.files || []) {
   （先例 `StepPublish.doPublish`）。非幂等操作**永远不要**依赖 UI 禁用单点防重。
 
 **Related**: `frontend/src/views/project/StepPublish.vue`、`frontend/src/api/index.js`、`.trellis/spec/backend/external-cli-integration.md`（后端侧同一约定的非幂等条款）、[docs/spec/publish.md](../../../docs/spec/publish.md) §1.1。
+
+### Convention: 「数量」类展示以**解析正文/正文真源**为唯一口径，不用关联表也不用派生快照
+
+**What**: 同一事实（本文「正文插图数」）在多个页面/组件出现时，只能有**一个计算函数**，其余地方 import 它；真值必须是「会被渲染/发布的那份数据」。
+
+- 09-27 先例：预览工具栏与发布页摘要的插图数统一走 `utils/bodyImageRefs.js` 的 `countBodyImages(md)`（解析 markdown `![](target)`，按 target 去重）。**弃用**的两个口径：① 「图库快照 images 集合」当分母（**含封面**→封面被算成插图）；② 「版本-图片关联表 `bodyImageIds`」当分子（登记是 best-effort，手工编辑正文不摘登记→虚高）。
+- **封面走独立字段（`cover_image_id`），天然不参与正文插图计数**；别为了「凑一个分母」把它拉进来。
+- **不同状态分开呈现**：已就绪 / 待上传 / 已失效是三态。「待传 N」只算**还能传**的（暂存条目仍在），已失效的另由警示条呈现——把失效也算进「待传」会误导用户去点一个注定失败的动作。
+- 配套约定：需要「写入真源 + 登记辅助表」时，**先写真源（渲染/正文）再 best-effort 登记**，登记失败不阻断、不回滚正文；辅助表只服务引用保护/查询，**不得升格为计数真源**。
+
+**Why**: 三个口径各算各的，用户在预览页看到 3 张、发布页看到 2 张且封面混在里面，排障成本远高于写一个纯函数；纯函数还能被多处复用与单测。
+
+**Related**: `frontend/src/utils/bodyImageRefs.js`、`frontend/src/views/project/StepPreview.vue`、`frontend/src/views/project/StepPublish.vue`、`docs/spec/image.md` §7.7。
+
+---
 
 ## Anti-patterns
 

@@ -348,7 +348,8 @@
 ### 7.7 已知债务（本任务不修复，记录在案）
 
 - `body_image_ids`（现 `sparkora_article_version_image` 关联表）**不参与渲染**：`PreviewService.buildMarkdown()` 的 `bodyImageUrls` 参数完全未被使用，正文插图落点只由 `contentMd` 中的 `![](url)` 决定。
-- **手动插图（预览页图库/AI 生图面板）只写 markdown、不登记关联表**（前端 `insertBodyImage` 仅调 `editorRef.insertMd()`）；仅「智能建议采用」两处都写。历史 34 个版本中 4 个插图登记非空且正文 `![` 出现 0 次，两者本就脱节。
+- ~~**手动插图只写 markdown、不登记关联表**~~ → **09-27-image-insert-bugs 已部分修复**：预览页手动插图（图库/AI 生图，`StepPreview.insertBodyImage`）在 `insertMd` 之后 best-effort 补 `POST /projects/{id}/images/{imageId}/body`；剪贴板暂存图在「去发布」上传成功后由 `usePendingImageFlush` 同样补登记。**登记一律 best-effort**（失败仅 warn，不回滚已插入的正文、不阻断发布）。
+- 关联表与正文**仍可能短暂不一致**（用户手工删除正文里的图片不会摘登记；历史数据不回填）。因此**关联表不得作为计数真值**——预览工具栏与发布页摘要的插图数一律「解析正文 markdown 图片引用」（`frontend/src/utils/bodyImageRefs.js`）。登记的唯一作用是删图引用保护与关联查询。
 - 修复方向是「登记改为基于正文解析」，波及 `delete` 引用保护、`projectImages`、发布页计数，超出本任务范围（用户选择「markdown + 登记」双写，非大规模修复）。
 - **P1-⑦ 已消除**：原 `ImageService.modifyBodyImage` 清空逗号列时用 `updateById`（MyBatis-Plus `NOT_NULL` 策略）会把 `null` 跳过、导致移除最后一张插图后字段不清空；改为关联表按行删（`deleteByVersionAndImage`），该缺陷自然消失。
 
@@ -356,7 +357,7 @@
 
 ## 8. 页面职责（2026-08-30 调整；2026-09-03 S6 配图并入预览；2026-09-06 S10 检索/生成升级；2026-09-13 image-tags 标签能力；2026-09-26 image-gen-drawer-ux 生图抽屉共用组件 + 粘贴/本地参考图；09-26 img2img-multi-ref 多参考图 ≤4）
 
-- **AI 生图界面共用组件 `components/AiImageDrawer.vue`（09-26 image-gen-drawer-ux）**：图库页与预览页的生图 UI/逻辑统一到同一组件，消除两套近乎重复的实现（AC-1）。props：`modelValue`(v-model)/`projectId`(空=全局图库)/`mode`(`library`|`preview`)/`presetTags`/`showCoverAction`；emits：`update:modelValue`/`generated(images,{reason})`/`insert(image)`/`set-cover(imageId)`/`locate(image)`。**宿主差异由 `mode` + emits 承担**：library 模式为独立抽屉（生成后「定位到列表」）、preview 模式内联在预览「配图」抽屉的 AI 生图 tab 内（生成后「插入正文 / 设为封面」）；组件不写宿主状态，宿主在 `generated` 回调里刷新列表/快照（预览页 `reason==='generate'` 且 n=1 时沿用自动插入正文行为）。`presetTags` 由图库页上传标签预选注入。
+- **AI 生图界面共用组件 `components/AiImageDrawer.vue`（09-26 image-gen-drawer-ux）**：图库页与预览页的生图 UI/逻辑统一到同一组件，消除两套近乎重复的实现（AC-1）。props：`modelValue`(v-model)/`projectId`(空=全局图库)/`mode`(`library`|`preview`)/`presetTags`/`showCoverAction`；emits：`update:modelValue`/`generated(images,{reason})`/`insert(image)`/`set-cover(imageId)`/`locate(image)`。**宿主差异由 `mode` + emits 承担**：library 模式为独立抽屉（生成后「定位到列表」）、preview 模式内联在预览「配图」抽屉的 AI 生图 tab 内（生成后「插入正文 / 设为封面」）；组件不写宿主状态，宿主在 `generated` 回调里刷新列表/快照。**09-27-image-insert-bugs 起预览页 `generated` 回调只刷新快照，不再有任何自动插入**：旧行为「`reason==='generate'` 且 n=1 自动插入正文」会把用户随后设为封面的图顺带塞进正文（同一张图既是封面又是插图），且违反 `.trellis/spec/frontend/index.md`「不得提供任何自动写入路径」。`reason` 字段保留仅作信息透传。「插入正文」与「设为封面」两个动作完全独立，互不影响。`presetTags` 由图库页上传标签预选注入。
   - **参考图多来源多张（09-26 img2img-multi-ref，上限 4）**：① 粘贴（Ctrl/⌘+V，window paste 监听，遍历 `DataTransferItemList` **可一次多张**，仅在抽屉打开时挂载）② 本地文件（`accept=.png,.jpg,.jpeg,.webp`，`multiple`）③ 图库选图（**多选**，组件自持独立数据源 + 页内搜索 300ms 防抖 + 分页，不复用宿主主列表）。**三来源可追加、可混合**，总数上限 `REF_MAX=4`（再加第 5 张 → warning「最多支持 4 张参考图」；0 张提交 → warning「请至少选择 1 张参考图」）。参考图区为缩略图网格（来源角标 + 逐张移除 `uid` 定位 + `n/4` 计数 + 清空）。本地/粘贴来源用 `URL.createObjectURL` 即时预览，同一 `File` 引用全局只建一个 URL（跨条目 + 条目内数组去重），移除/清空/卸载 `revokeObjectURL`；参考图**不落图库**。
   - **展示顺序 = 提交顺序**：界面按来源分组渲染（本地组在前、图库组在后），与后端契约「先 `files` 后 `refImageIds`」天然一致；**统一走多图 `generateFromImageUpload(projectId, files, refImageIds, prompt, size, n, tags)`（旧单图 JSON `generateFromImage` 分支已从图生图 UI 移除，导出保留为 API 面）**。
   - **重生成缓存（`utils/imageRefCache.js`，模块级单例 Map，LRU 上限 20，不持久化）**：生成成功时把**每张结果图 id** → **整组参考图** `{files[], refImageIds[], names[], previewUrls[], prompt, size, tags, projectId}` 写入缓存（缓存自持 ObjectURL，按 `files` 逐项去重/revoke，淘汰/删除/清空时释放）。重生成分支：缓存命中且 `files.length || refImageIds.length` → 用缓存整组参考图 + prompt 走多图 multipart 产新图（新结果 id 同样写回该整组缓存，支持连续重生成）；图库单图图生图（结果 `refImageId != null`）/文生图（prompt）→ 后端 `/{id}/regenerate`；多图/本地来源且缓存失效（如刷新后）→ 按钮置灰 + tooltip「参考图未入库且会话缓存已失效，无法重生成」。图库页卡片重生成与组件内候选重生成**同口径**（`canRegenerate`；语义检索命中 `img.score != null` 交后端判定不误置灰）。
@@ -365,7 +366,7 @@
   - **主题分类筛选与来源展示（09-15 img-classify）**：标签筛选改 **multiple**（`tagFilter` 由字符串改数组，多标签 **AND**），chip 条**逐个展示可单独清除**（点已选标签再点即取消）；下拉按 `/` 前缀用 `el-option-group` **分组展示**（`主题` / `年份` / `其他`）；卡片 hover 层（移动端常显行）显示**来源行**「来源：<新闻标题> · <日期>」，点击跳新闻原文（走 `GET /api/images/{id}/source`，页内批查懒加载，非新闻图不显示）；支持外部入口 `/images?tag=主题/销量`（预置筛选，供新闻卡片点主题标签跳转）。**路由与筛选双向同步**：挂载时按 `route.query.tag` 预置筛选；chip 单独清除 / 全清 / 点卡片标签后 `router.replace` 把 URL 同步为当前选中（`syncRouteTag`）——否则清掉 chip 后 URL 仍留旧 tag，再次从新闻页点同一主题时 query 未变、vue-router 判定重复导航、watch 不触发，出现「点了没反应」。
   - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（`sparkora_image_embedding`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由配图建议/问答配图承载）。
 - **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。详见 [knowledge/news.md](knowledge/news.md)。
-- **预览步配图面板（项目向导预览步）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；**09-26 起同一 `AiImageDrawer`（`mode="preview"`）渲染，图生图支持粘贴/本地文件/图库三来源参考图**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。详见 [preview.md](preview.md)。
+- **预览步配图面板（项目向导预览步）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；**09-26 起同一 `AiImageDrawer`（`mode="preview"`）渲染，图生图支持粘贴/本地文件/图库三来源参考图**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。**09-27-image-insert-bugs**：①无任何自动插入/自动设封面，一律用户显式点；②工具栏角标口径 = **解析正文图片引用**（`utils/bodyImageRefs.js`），显示「配图 N · 待传 M」——`N` 为已就绪插图数（不含封面、不含未上传占位），`M` 为**仍可上传**的粘贴图占位数（已失效的不计入，避免误导）；③正文含失效占位时顶部黄色警示条 + 复制/去发布/发布三处阻断。详见 [preview.md](preview.md)。
 - **预览页「智能建议」tab（09-15 article-auto-illustrate 子C）**：配图抽屉第 3 个 tab（`imgTab='suggest'`）。顶部：相似度门槛（默认 0.3）+ 标签预过滤多选（AND，数据源 `GET /api/images/tags`）+「生成建议/重新生成」按钮 + 提示「系统只给建议，点采用才写入正文」。按锚点分组卡片：锚点标题（`headingPath` 或「开头段落」）+ 锚点文本摘要 + 候选网格（缩略图/相关度百分比/标签）。每张候选「插入到此段」；每组「全部采用」/「忽略此段」。**空态三态**：未生成（引导点生成）/ 生成后无候选（提示调低门槛、换标签或先去图库补图）/ 全部被忽略。**建议不自动触发**——须用户点「生成建议」（避免打开抽屉即产生 embedding 调用）。移动端单列、触控目标 ≥44px。
 
 ---
@@ -381,8 +382,8 @@
 ## 10. 已知限制
 
 - 标签变更不触发实时重嵌（`source_text` 与当前标签漂移；用重建接口修正）。
-- `body_image_ids`（现 `sparkora_article_version_image` 关联表）不参与渲染 + 手动插图不登记（见「已知债务」）。
+- `body_image_ids`（现 `sparkora_article_version_image` 关联表）不参与渲染（见「已知债务」）；手动插图与粘贴图已补登记（best-effort），但关联表**不能当计数真值**（手工编辑正文不同步登记）。
 - 车型库图片接入预留（暂不开发）。
 - 非七牛图床实现下 `thumbUrl` 降级为原图 URL。
 - **参考图不落库 + 多图重生成依赖前端会话缓存（09-26 image-gen-drawer-ux / img2img-multi-ref）**：粘贴/本地文件参考图仅用于本次生成（参考图未入库，「重生成」依赖前端 `utils/imageRefCache.js` 会话缓存复用**整组**参考图）；缓存不持久化，**刷新页面后丢失 → 该来源图的重生成按钮置灰 + tooltip**（需重新粘贴/选图生成）。`ref_image_id` 为**单列**无法表达多对多：**多张参考图生成的结果一律 `ref_image_id=NULL`**（即便全来自图库），仅「单张且来自图库」保留 `ref_image_id` 走后端 `/{id}/regenerate`。multipart 请求体上限需满足 `IMAGE_MAX_REQUEST_MB ≥ 4 × IMAGE_MAX_UPLOAD_MB`（默认 45 ≥ 4×10，运维调整单张上限时须同步）。
-- **预览页剪贴板暂存图（09-27-preview-clipboard-image）**：预览页粘贴的图片先在前端会话暂存（`utils/pendingImageStore.js`，正文占位 `sparkora-img:<id>`），**点预览页「去发布」时才统一 `POST /api/images/upload`**，因此粘贴瞬间图库里并不存在该图，刷新未上传即丢失（沿用「markdown 为渲染真值」口径，暂存图**不登记** `sparkora_article_version_image`）。契约与防呆详见 [preview.md](preview.md) §4.1。
+- **预览页剪贴板暂存图（09-27-preview-clipboard-image；09-27-image-insert-bugs 修订）**：预览页粘贴的图片先在前端会话暂存（`utils/pendingImageStore.js`，正文占位 `sparkora-img:<id>`），**点预览页「去发布」时才统一 `POST /api/images/upload`**，因此粘贴瞬间图库里并不存在该图，刷新未上传即丢失。上传成功后**先落库 URL 版正文、成功后才清内存条目**，并 best-effort 补登记 `sparkora_article_version_image`。失效（重载丢失）的占位在预览里渲染为**可见占位块** + 顶部警示条，并阻断复制/去发布/发布。契约与防呆详见 [preview.md](preview.md) §4.1。

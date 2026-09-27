@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { renderMarkdownHtml, sanitizeWenyanHtml } from '../utils/wenyanRender'
-import { mapTokenSrc, previewUrl } from '../utils/pendingImageStore'
+import { projectBodyTokens, previewUrl } from '../utils/pendingImageStore'
 
 /**
  * 预览页正文渲染编排：400ms 防抖 → 纯 markdown 渲染 + 旧结果丢弃（seq）。
@@ -33,8 +33,8 @@ export function usePreviewRender(getContent, isLoaded) {
     try {
       const raw = await renderMarkdownHtml(getContent() || '')
       if (seq !== renderSeq) return // 过期结果丢弃
-      // 暂存 token → 本地 blob URL（仅预览投影，落库正文不动）
-      html.value = sanitizeWenyanHtml(mapTokenSrc(raw, previewUrl))
+      // 暂存 token → 本地 blob URL；无法解析的 token → 可见的失效占位块（仅预览投影，落库正文不动）
+      html.value = sanitizeWenyanHtml(projectBodyTokens(raw, previewUrl))
       renderError.value = ''
     } catch (e) {
       if (seq === renderSeq) renderError.value = '渲染失败: ' + (e?.message || e) + '(正文已本地暂存)'
