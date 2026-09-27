@@ -817,3 +817,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 32: 预览页剪贴板传图：前端暂存 + 发布时转存七牛
+<!-- trellis-session: v=2 fp=df2e4bd6bf775e58 -->
+
+**Date**: 2026-09-27
+**Task**: 预览页剪贴板传图：前端暂存 + 发布时转存七牛
+**Branch**: `main`
+
+### Summary
+
+预览页粘贴图片不再即时上传七牛，改前端会话暂存（pendingImageStore + 占位 token sparkora-img:<id>），右侧预览投影 blob 即时可见；点「去发布」时 usePendingImageFlush 逐张上传、token 替换为公网 URL 后落库；复制排版拦截、跨项目隔离、发布页+后端双防呆。检查修复 3 项（clearOthers 泄漏、replaceToken id 前缀碰撞、dead code）。npm build / mvn compile 通过，容器已 --build 重建。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d2bd68b` | feat(preview): 预览页剪贴板传图前端暂存 + 发布时转存七牛 |
+
+### Status
+
+[OK] **Completed**
