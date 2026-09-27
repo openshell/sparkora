@@ -97,8 +97,12 @@ sparkora:
     mac-style: ${WENYAN_MAC_STYLE:true}
     footnote: ${WENYAN_FOOTNOTE:true}
     render-timeout-ms: ${WENYAN_RENDER_TIMEOUT_MS:30000}
-    # S5 发布:远程 server HTTP 调用读超时(错误 key 曾有挂起行为,不宜过长)
-    publish-timeout-ms: ${WENYAN_MCP_PUBLISH_TIMEOUT_MS:30000}
+    # S5 发布:远程 server HTTP 调用读超时。09-27 实测带 7 图(17MB)的 /publish 实耗 ~43s,
+    # 原 30s 会「客户端超时但服务端已写入草稿」→ 前端报失败、草稿箱已有文章,重试即重复草稿。
+    # 兜底默认同步为 180s,避免漏配环境变量时退回 30s 重现事故。
+    publish-timeout-ms: ${WENYAN_MCP_PUBLISH_TIMEOUT_MS:180000}
+    # 探针(/verify、/health)读超时,必须独立于发布超时:否则通道不可用时发布页被挂住同值时长
+    verify-timeout-ms: ${WENYAN_MCP_VERIFY_TIMEOUT_MS:5000}
   image:
     storage-dir: ${IMAGE_STORAGE_DIR:./data/images}   # S6:数据盘目录(仅 wenyan 渲染临时文件落位;图片不再落本地)
     max-upload-mb: ${IMAGE_MAX_UPLOAD_MB:10}

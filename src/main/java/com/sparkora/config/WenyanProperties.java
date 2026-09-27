@@ -12,7 +12,12 @@ import java.util.List;
  * 双通道(方案 A):
  *  - 预览:本机 wenyan CLI(@wenyan-md/cli) `render` 命令 —— 与发布同核渲染引擎,纯排版不碰微信;
  *  - 发布(S5):远程 wenyan-server(serverUrl),Auth x-api-key,接口 /health /verify /upload /publish。
- * 注意:server 2.0.11 鉴权中间件对错误 key 会挂起(超时)而非 401,客户端须设较短超时并按「挂起=key 失效」处理。
+ *
+ * <p><b>09-27 更正</b>:原注释「server 2.0.11 鉴权中间件对错误 key 会挂起(超时)而非 401,
+ * 客户端须设较短超时」是<b>已被实测推翻</b>的旧结论——当前部署无效 key 即刻 401,不再挂起。
+ * 照旧结论把 {@code publishTimeoutMs} 压在 30s 正是「客户端超时但服务端已写入草稿 → 重试即重复草稿」
+ * 事故的根因(实耗 43s+)。阈值现按实测实耗设定,探针另用 {@link #verifyTimeoutMs} 独立短阈值。
+ * 详见 docs/wenyan.md §7 与 docs/spec/publish.md §1.1。
  */
 @Data
 @ConfigurationProperties(prefix = "sparkora.wenyan")
@@ -42,10 +47,21 @@ public class WenyanProperties {
     /** render 进程读超时(毫秒)。 */
     private long renderTimeoutMs = 30000;
     /**
-     * 发布(S5)HTTP 调用读超时(毫秒):server 2.0.11 鉴权中间件对错误 key 曾有挂起行为,
-     * 超时不宜过长;发布本身是 upload(秒级)+ publish(拉图+写微信草稿,可能十几秒)两步。
+     * 发布(S5)HTTP 调用读超时(毫秒)。
+     * <p>09-27 实测校正:带 7 张正文图(17MB)的 /publish 实耗 ~43s(拉图转存 + 微信写草稿),
+     * 原 30s 会「客户端超时但服务端已写入草稿」→ 前端报失败而草稿箱已有文章,重试即产生重复草稿。
+     * 故默认提到 180s(约 4 倍余量,覆盖图更多/微信侧慢/VPN 抖动)。调回 30s 以下会重现该事故。
+     * 注意:/verify 探针<b>不</b>用此超时,见 {@link #verifyTimeoutMs}。
      */
-    private long publishTimeoutMs = 30000;
+    private long publishTimeoutMs = 180000;
+
+    /**
+     * 探针(GET /verify、/health)读超时(毫秒)。
+     * <p>必须与 {@link #publishTimeoutMs} 解耦:两者曾共用一个 RestClient,调大发布超时会把探针
+     * 一起调到 180s,导致通道不可用时「发布参数」接口(进而整个发布页)被挂住 3 分钟。
+     * 探针是纯只读、同机往返毫秒级,5s 足够;也不加自动重试(通道真不可达时等待会翻倍)。
+     */
+    private long verifyTimeoutMs = 5000;
 
     /** 发布通道(S5)配置是否完整:serverUrl + serverApiKey 均非空。 */
     public boolean serverConfigured() {

@@ -104,3 +104,65 @@ classpath 资源打包进 jar 后 `getFile()` 不可用,故 `WenyanThemeCatalog.
 - 社区主题在微信编辑器的最终观感需真机/草稿箱人工确认(无法自动化)。
 - `--custom-theme` 不支持网络 URL,新增社区主题必须把 CSS 打进后端包。
 - wenyan-server 2.0.11 鉴权中间件对错误 key 挂起(不返回 401),客户端超时不宜过长。
+  > 2026-09-27 更正:当前部署 **无效 key 即刻 401**(`/verify` 实测),不再挂起。原「客户端超时不放宽」那条
+  > 正是初版把 `WENYAN_MCP_PUBLISH_TIMEOUT_MS` 压在 30s 的理由,属**误判**,已按实耗提到 180s(见 §7)。
+
+## 7. `/publish` 实测耗时与超时事故模式(09-27-wenyan-stale-conn)
+
+> 本节记录**实测**结论,目的是让后续排障**不再重复走弯路**。初版设计基于一个后来被证伪的假设
+> (「JDK 复用了失效的 keep-alive 连接」),若不显式记录,后续极可能重犯。
+
+### 7.1 环境事实
+
+| 事项 | 实测值 |
+|---|---|
+| wenyan-server 响应头 | `Keep-Alive: timeout=5` |
+| 部署拓扑 | wenyan-server 与 Postgres 同机(`10.126.126.1`),经 **`tun0` VPN 隧道**可达;本机 `10.126.126.3` |
+| `/publish` 实耗 | 宿主机 curl 43.4s / 13.2s / 5.5s;**容器内** curl 6.1s / 5.4s / 4.5s |
+
+`/publish` 的耗时**波动主因是这条 VPN 隧道,不是代码**;图越多越久(server 端需逐张 fetch 转存微信)。
+
+### 7.2 事故模式:客户端超时 < 服务端实耗 ⇒「假失败」+ 重复草稿
+
+```
+/publish 实耗 43.4s  >  客户端读超时 30s
+        ↓
+客户端 30s 抛读超时 → 前端显示「发布失败」+ last_publish_error
+        ↓
+服务端仍在跑,~43s 成功写入公众号草稿箱   ⇒ 草稿箱里已经有这篇文章
+        ↓
+用户重试(自然排障动作) ⇒ 又一篇重复草稿(脏数据自我放大)
+```
+
+**修法**:`WENYAN_MCP_PUBLISH_TIMEOUT_MS` 30000 → **180000**(实耗 ~4 倍余量),并在 `.env` /
+`.env.example` / `application.yml` 三处显式一致;探针另给独立的 `WENYAN_MCP_VERIFY_TIMEOUT_MS`
+(默认 5s),否则通道不可用时 `publish-options` 会被发布超时挂住 180s。契约详见
+[spec/publish.md](spec/publish.md) §1.1。
+
+**推广为通用教训**:任何**非幂等**的外部调用(写草稿/写库/扣款/发消息),客户端超阈值都必须
+(a) 提示「可能已生效,请先到下游确认再决定重试」,且 (b) **绝不自动重试**。三处超时必须单调:
+后端阈值 ≥ 实耗,前端 axios timeout ≥ 后端阈值,nginx `proxy_*_timeout` ≥ 前端最长 axios timeout ——
+任一侧倒挂就复现本事故。**详见 `.trellis/spec/backend/external-cli-integration.md` 的同名约定。**
+
+### 7.3 已被证伪的假设(勿重复排查)
+
+| 假设 | 证伪方式与结果 |
+|---|---|
+| JDK 复用失效 keep-alive 连接导致 EOF | 用真实 `java.net.http.HttpClient` 复现:同一 client 上 `verify → sleep(6000)`(> 服务端 `Keep-Alive: timeout=5`)→ `publish`,**200 成功,耗时 6.2s**。JDK 会自行丢弃失效连接 |
+| `Connection: close` 是可行修法 | JDK 直接抛 `IllegalArgumentException: restricted header name: "Connection"`,需全局 `-Djdk.httpclient.allowRestrictedHeaders=connection`,代价不划算 |
+| HTTP/2 h2c 升级导致异常 | 显式 `HTTP_1_1` 与默认 `HTTP_2` 耗时无差异(5.3~6.8s),均成功 |
+| 社区主题 CSS 外链图片拖慢发布(09-11 先例) | `grep -nE "url\(https?://" {src/main/resources,frontend/src/assets}/wenyan-themes/*.css` → 零命中 |
+| 7 张正文图下载慢 | 逐张实测全 200,合计 ~2.5s / 17MB |
+
+初版设计中的 `ChannelStatus` 五态分类、幂等/非幂等重试白名单、`Connection: close` 改造
+**均建立在「连接复用缺陷」这一被证伪的假设上,已刻意砍掉**——只保留「按实耗设阈值 + 超时提示防重复」。
+
+### 7.4 排障纪律:探测也会写数据
+
+`/publish` **非幂等**:定位过程中反复对真实 `fileId` 打 `/publish`,每次成功都会留一篇草稿
+(一次排障累计约 15 篇,已由用户在公众号后台清理)。**压测/探测阶段复用真实 fileId 同样会落草稿** ——
+应先用一次性的小载荷,并**提前告知用户草稿会累积**。
+
+> 顺带发现:`POST /api/projects/{id}/publish` 用 `@RequestParam`(query 参数)而非 JSON body;
+> 按 JSON body 发送会被**静默忽略**、主题回落 `default` 且无任何报错。契约见
+> [spec/publish.md](spec/publish.md) §2。

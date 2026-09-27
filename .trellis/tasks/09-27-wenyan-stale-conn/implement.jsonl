@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层与约定总索引：service/config/web 分层职责、@ConfigurationProperties 新增项写法、配置外置约定"}
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "最贴近本次改动：外部服务集成的降级链与错误契约、中文异常约定，是超时语义与错误文案改造的规范基座"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常分类与中文提示规范：禁止把框架内部异常串透给用户（D3 的直接依据）"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "本次验收走 docker（docker compose up -d --build 烘焙代码，restart 不生效），配置改动须随镜像重建才生效"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "publish/verify 的日志级别与内容约定：超时应可定位到「耗时 vs 阈值」"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "改动需保持既有风格、避免过度抽象（本次已刻意砍掉初版过度设计）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动跨 service→controller→前端文案，需按跨层契约检查传导"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "StepPublish 等待提示文案改动需符合前端约定与响应字段消费规范"}
+{"file": "docs/spec/publish.md", "reason": "发布模块权威契约：/publish 实耗 43s 与 180s 阈值依据、超时=可能已写入草稿的语义、探针超时独立于发布超时"}
+{"file": "docs/wenyan.md", "reason": "wenyan 集成深潜文档：Keep-Alive: timeout=5 实测、已证伪的 stale 连接假设、「客户端超时<服务端实耗 ⇒ 假失败+重复草稿」事故模式"}

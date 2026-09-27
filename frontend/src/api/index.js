@@ -26,8 +26,11 @@ export const projectApi = {
   setCurrentVersion: (id, versionId) => http.put(`/projects/${id}/current-version`, null, { params: { versionId } }),
   // S5 发布:参数清单(主题/高亮/默认值 + 通道就绪度 + 历史发布信息)
   publishOptions: (id) => http.get(`/projects/${id}/publish-options`),
-  // S5 发布到公众号草稿箱:渲染+上传+发布链路约十几秒,放宽超时(同 generateBrief);params={theme?, highlight?, macStyle?, footnote?}
-  publish: (id, params) => http.post(`/projects/${id}/publish`, null, { params, timeout: 120000 }),
+  // S5 发布到公众号草稿箱:渲染+上传+发布链路。params={theme?, highlight?, macStyle?, footnote?}
+  // 超时必须 >= 后端 WENYAN_MCP_PUBLISH_TIMEOUT_MS(默认 180s)。09-27 实测 /publish 单次可达 43s+,
+  // 若前端比后端先放弃,浏览器断开但后端仍在跑并写入草稿 → 前端报失败、草稿却已存在,重试即重复草稿
+  // (与「后端 30s 阈值 < 实耗」同一类事故)。取 300s(= 本文件最长值),后端到 180s 会先给出中文超时提示。
+  publish: (id, params) => http.post(`/projects/${id}/publish`, null, { params, timeout: 300000 }),
   // 编辑版本标题(S6);body={title}
   saveTitle: (id, versionId, title) =>
     http.put(`/projects/${id}/versions/${versionId}/title`, { title }),

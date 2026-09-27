@@ -61,6 +61,37 @@ public R<Void> handleBind(BindException ex) {
 - 新增带 `@Size`/`@NotBlank` 等约束的 DTO 时无需额外处理，错误信息取首个字段的中文 `message`。
 - `MethodArgumentNotValidException extends BindException`，一个 handler 覆盖两者，避免 ambiguous mapping。
 
+### Convention: 禁止把框架内部异常串直接透给用户（09-27-wenyan-stale-conn）
+
+`catch (Exception e) → R.fail(500, "操作失败: " + e.getMessage())` 这条**看似无害的兜底**是反模式：
+`e.getMessage()` 在框架包装类上常常是**纯内部串**，既不指向根因也不含可执行动作。
+
+09-27 实际被投诉的报错即此类：
+
+```
+发布请求失败: Error while extracting response for type [java.lang.String] and content type [application/octet-stream]
+```
+
+用户完全无法据此排障——它既没说「这是超时」，也没说「服务端还在跑」。
+
+**要求**：
+
+1. **传输层异常必须归因后再上抛**：抽一个纯函数遍历**整条 cause 链**做中文归因
+   （先例 `WenyanServerService.describeTransportFailure`：超时类型 → `请求超时`；框架内部串片段 → 中性中文；
+   否则取**根因**消息并压空白、截断）。纯函数应抽为可单测的静态方法（先例
+   `WenyanServerServiceTransportTest`）。
+2. **框架内部串要显式中和**：用「小写片段常量 + 比对前 `toLowerCase()`」的映射表把已知内部串换掉
+   （先例 `WenyanServerService.FRAMEWORK_NOISE`）。`Error while extracting response`、
+   `No suitable HttpMessageConverter`、`Unknown content type` 是三个高频项。
+   **片段必须小写**且按框架**真实拼写**写（camelCase 不插空格）——大小写或空格写错都会静默漏判。
+3. **兜底文案要压长度**：`getMessage()` 可能极长，既灌进 `last_*_error` 列（截断 990/1000）又灌进前端黄条。
+   归因结果先 `replaceAll("\\s+", " ")` 再截断（先例截 200 字）。
+4. **归因顺序：超时优先于框架串**。框架串是「读响应失败」的**外层包装**，若不先判 cause 链里的超时类型，
+   超时会被误归因为「响应内容无法解析」，把「服务端可能还在处理」这一关键语义丢掉。
+
+> **Warning**: 非幂等的下游调用（写草稿/写库/扣款/发消息）超时，**错误文案必须说明「可能已生效」并指引先到下游确认**，
+> 且**绝不自动重试**。超时不等于失败——详见 `external-cli-integration.md` 的同名约定。
+
 ### 状态机生成类服务（BriefService / ImitationService 同构）
 
 1. 前置检查：`IllegalArgumentException`（项目不存在/模式不符/缺素材）。

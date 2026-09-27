@@ -270,6 +270,22 @@ for (const f of info.files || []) {
 
 ---
 
+### Convention: 同步长耗时操作（非幂等）的等待提示必须与实耗相符 + 禁止重复触发
+
+**What**：调用**非幂等**下游操作（发布到草稿箱、扣款、发消息、批量重建）时，等待中提示要写「**大致量级 + 明确不要重复触发**」，而不是随口写「约十几秒」。
+
+- **等待提示必须 ≥ 实耗量级**：09-27 先例——`/publish` 实测 43s+，文案写「约十几秒」会让用户以为卡死，
+  **刷新/重试**（自然排障动作）→ 而超时不等于失败，服务端可能已写入 → **每次重试一篇重复草稿**。
+  现文案：`约 1 分钟…请勿刷新或重复点击(重复发布会产生重复草稿)`。
+- **axios timeout 必须 ≥ 后端阈值**：`projectApi.publish` 的 timeout（300s）必须 ≥ 后端
+  `WENYAN_MCP_PUBLISH_TIMEOUT_MS`（180s）。前端先放弃 = 浏览器断开但后端仍在写 = 同一类事故。
+  改后端阈值时**必须联动** `frontend/src/api/index.js` 与 `frontend/nginx.conf.template`。
+- **入口加防重入守卫**：`el-button :loading` 会隐式禁用，但「双击开出两个确认弹层」「Enter 快速确认」
+  仍可能在 `publishing` 置位后二次进入。异步动作函数入口补一行 `if (busy.value) return`
+  （先例 `StepPublish.doPublish`）。非幂等操作**永远不要**依赖 UI 禁用单点防重。
+
+**Related**: `frontend/src/views/project/StepPublish.vue`、`frontend/src/api/index.js`、`.trellis/spec/backend/external-cli-integration.md`（后端侧同一约定的非幂等条款）、[docs/spec/publish.md](../../../docs/spec/publish.md) §1.1。
+
 ## Anti-patterns
 
 ### Don't: 直接使用数据库原始字段名渲染派生数据

@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "核对改动落在正确分层、@ConfigurationProperties 新增项写法与既有风格一致"}
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "重点核对新增约定（外部服务超阈值按实测留余量；非幂等调用超时提示『可能已生效』防重复执行）是否与该文件契约一致无冲突"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对超时错误文案可读、无框架内部异常串泄漏，且三类分支（超时/HTTP错误/其他）均有中文可执行提示"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "核对配置改动在 docker 下的生效方式（必须 --build 重建），避免验收时拿到旧镜像"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对无过度抽象、无死代码、双 RestClient 抽取是否真正去重"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对响应键语义未破坏、探针门禁行为对前端无回归传导"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核对超时判定方法被真正复用（publish/get/postForData 三处）而非各写一份"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 StepPublish 改动克制、等待提示与实耗相符、不诱导重复点击"}
+{"file": "docs/spec/publish.md", "reason": "验收权威契约：字段级语义与实现一致；重点核对 /publish 无重试、探针与发布超时解耦、阈值依据已登记"}
+{"file": "docs/wenyan.md", "reason": "核对 Keep-Alive 实测与被证伪假设被如实记录，避免文档保留错误结论（初版设计曾基于该错误假设）"}

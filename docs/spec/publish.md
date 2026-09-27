@@ -28,6 +28,35 @@ PublishService.publish
 - **粘图占位防呆（09-27-preview-clipboard-image）**：组装 `gzhContent` 前若当前版本 `content_md` 含 `sparkora-img:`（预览页剪贴板暂存图占位 token，见 [preview.md](preview.md) §4.1），抛 `IllegalStateException("正文含未上传的粘贴图，请回到预览页点「去发布」上传后再发布")` → 控制器转 `R.fail(400)` 并写 `last_publish_error`；防御绕过前端的路径（如刷新后直接从发布页发布）。发布页前端另有同口径拦截。
 - 重发：再次 `POST /publish` 重新渲染并覆盖草稿，刷新 `publish_media_id`/`published_at`/`publish_theme`（`PUBLISHED_DRAFT` 为终态，不回退）。
 
+### 1.1 超时阈值与「超时不等于失败」（09-27-wenyan-stale-conn）
+
+**实测依据**：`/publish` 单次实耗随正文图量与链路抖动浮动很大——带 7 张正文图（17MB，server 端需逐张 fetch 并转存微信）实测 **43.4s**；同一次排障中另见 68s；而 `10.126.126.1` 上的 wenyan-server 与 Postgres 同机、经 **`tun0` VPN 隧道**可达（本机 `10.126.126.3`），I/O 抖动会进一步放大耗时。
+
+**阈值选取**：`WENYAN_MCP_PUBLISH_TIMEOUT_MS` 由 **30000 → 180000**（约实耗 4 倍余量，覆盖图更多/微信侧慢/隧道抖动）。选 60s 不够：43s 已用掉 60s 的 72%，图翻倍即逼近上限。三处默认值一致（`.env` / `.env.example` / `application.yml` 兜底），避免漏配环境变量时退回 30s 重现事故。
+
+**事故形态（本条存在的全部理由）**：阈值 < 实耗时，前端报「发布失败」，**而服务端仍继续执行并成功写入草稿** → 用户据此重试 → **每次重试多一篇重复草稿**，使「重试」这一自然排障动作本身成为制造脏数据的动作。
+
+**由此确立的三条契约**：
+
+1. **探针超时必须独立**（`WENYAN_MCP_VERIFY_TIMEOUT_MS`，默认 5s）。`WenyanServerService` 持有**两个** `RestClient`：`probeRest`（`/verify`、`/health`）与 `rest`（`/upload`、`/publish`）。二者曾共用一个客户端且读超时取 `max(publishTimeoutMs, 5000)`——把发布超时调到 180s 会让**通道不可用时的 `publish-options` 挂住 180s**（比修之前更糟）。探针是纯只读、同机往返毫秒级，5s 足够，且**不加自动重试**（通道真不可达时重试只会让等待翻倍）。
+2. **`/publish` 绝不自动重试**（非幂等）。超时不等于失败：服务端很可能仍在处理甚至已写入草稿，故错误文案必须指引「先到草稿箱确认，确认缺失后再重发」，走既有「重发（覆盖草稿）」路径。
+3. **错误提示可读、且不含框架内部串**。框架在读响应体超时时抛的是 `RestClientException: Error while extracting response for type [java.lang.String] and content type [application/octet-stream]`（09-27 用户实际看到的报错），既不说明「超时」也不说明「服务端还在跑」。`WenyanServerService.describeTransportFailure` 遍历整条 cause 链把它翻译为中文归因：命中 `SocketTimeoutException`/`HttpTimeoutException`/`InterruptedIOException` → `请求超时`；命中框架内部串片段 → 中性中文（见 `FRAMEWORK_NOISE`）；否则取**根因**消息并压空白、截断 200 字。
+
+**提示语（`last_publish_error` 与前端黄条同源）**：
+
+| 情形 | 文案 |
+|---|---|
+| 读超时 | `发布超时:服务端可能仍在处理并已写入公众号草稿箱,请先到草稿箱确认,确认缺失后再重发` |
+| 其它传输层失败 | `发布请求失败(<中文归因>):服务端可能已写入草稿,请先到草稿箱确认` |
+
+单测锁定：`WenyanServerServiceTransportTest`（超时识别/框架串不泄漏/两客户端独立/提示含「草稿箱」指引）。
+
+**前端配套**：`StepPublish.vue` 发布中提示为「约 1 分钟…请勿刷新或重复点击（重复发布会产生重复草稿）」——原文案「约十几秒」与实耗不符，会让用户以为卡死而刷新/重试，正是制造重复草稿的动作；`doPublish` 入口加 `publishing` 防重入。
+
+> 已被实验**证伪**、勿重复排查的假设：① JDK 复用失效 keep-alive 连接（同一 client 上 `verify → sleep(6s) → publish` 实测仍 6.2s 成功）；② `Connection: close`（JDK 抛 `restricted header name`）；③ HTTP/2 h2c 升级（强制 `HTTP_1_1` 与默认 `HTTP_2` 耗时无差异）；④ 社区主题 CSS 外链图片（零命中）；⑤ 正文图下载慢（7 张共 ~2.5s）。详见 [wenyan.md](../wenyan.md) §6。
+
+> **风险登记**：`180s` 是**余量而非根治**。VPN 抖动仍可能让 `/publish` 变慢；根治需 wenyan-server 侧异步化（本期范围外）。
+
 ---
 
 ## 2. 接口契约（全部 `R<T>` 包装；HTTP 200）
@@ -38,8 +67,9 @@ PublishService.publish
 | POST | `/api/projects/{id}/publish` | ADMIN/EDITOR | `?theme=&highlight=&macStyle=&footnote=`（query，与 preview 同形） | 成功 `{mediaId, theme, publishedAt}`；前置不满足/渲染参数非法/通道未配置 `R.fail(400)`；链路失败 `R.fail(500)`；失败均回写 `last_publish_error` |
 
 - 项目不存在时 `publish-options` 返回 `R.fail(404, "项目不存在")`。
-- 通道就绪度（懒探测，失败不阻塞页面）：`publishConfigOk = WENYAN_MCP_SERVER_URL + API KEY 齐备`；`publishEnabled = configOk && serverVerify()`（`/verify` GET 探针）；未配置时 `publishDisabledReason="发布通道未配置(WENYAN_MCP_SERVER_URL / WENYAN_MCP_SERVER_API_KEY)"`，不可达/key 无效时 `"发布通道不可用(API Key 无效或 server 不可达)"`；`wenyanServer` 为 server 健康信息。
-- 配置：`WENYAN_MCP_SERVER_URL`（带 scheme）/`WENYAN_MCP_SERVER_API_KEY`/`WENYAN_MCP_PUBLISH_TIMEOUT_MS`（默认 30s）；未配置时 `publishEnabled=false` + 中文原因，`publish` 返回 `R.fail(400)`。
+- 通道就绪度（懒探测，失败不阻塞页面）：`publishConfigOk = WENYAN_MCP_SERVER_URL + API KEY 齐备`；`publishEnabled = configOk && serverVerify()`（`/verify` GET 探针）；未配置时 `publishDisabledReason="发布通道未配置(WENYAN_MCP_SERVER_URL / WENYAN_MCP_SERVER_API_KEY)"`，不可达/key 无效时 `"发布通道不可用(API Key 无效或 server 不可达)"`；`wenyanServer` 为 server 健康信息。**探针是 `publishEnabled` 的唯一门禁**（09-27：探针超时有独立的短阈值，故通道不可用时本页在秒级出结论并禁用按钮，用户不会走到发布）。
+- 配置：`WENYAN_MCP_SERVER_URL`（带 scheme）/`WENYAN_MCP_SERVER_API_KEY`/`WENYAN_MCP_PUBLISH_TIMEOUT_MS`（**默认 180s**，依据见 §1.1）/`WENYAN_MCP_VERIFY_TIMEOUT_MS`（**默认 5s**，探针专用，**独立于发布超时**）；未配置时 `publishEnabled=false` + 中文原因，`publish` 返回 `R.fail(400)`。
+- **超时阈值联动（三处，缺一即重现「假失败 + 重复草稿」）**：后端 `WENYAN_MCP_PUBLISH_TIMEOUT_MS` ≥ 实耗；前端 `projectApi.publish` 的 axios timeout（当前 **300s**，`frontend/src/api/index.js`）≥ 后端阈值；nginx `proxy_read_timeout/send_timeout`（300s）≥ 前端最长 axios timeout。**任一侧小于上一侧 ⇒ 客户端先放弃而服务端仍在写草稿**。
 - 前端：`StepPublish.vue`（子路由 `/projects/:id/publish`）：摘要（标题/封面缩略/插图数）+ **排版参数只读回显**（主题/高亮/Mac/脚注，值来自预览页落库的 `preview*`，不在此编辑；发布时原样传给 wenyan-server）+ 作者/原文地址手填（项目级落库）+ 发布确认弹层 + 成功态（mediaId/时间/重发）+ 失败黄条；viewer 只读；`maxReachableStepOf` 放开到 index=3，`StepPreview` 状态判断含 PUBLISHED_DRAFT 并加「去发布」衔接。
 
 ---

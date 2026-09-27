@@ -122,7 +122,7 @@
               {{ published ? '重发(覆盖草稿)' : '确认发布到草稿箱' }}
             </el-button>
           </template>
-          <span v-if="publishing" class="pub-hint">正在渲染并通过 wenyan-server 写入草稿箱,约十几秒…</span>
+          <span v-if="publishing" class="pub-hint">正在渲染并通过 wenyan-server 写入草稿箱,约 1 分钟…请勿刷新或重复点击(重复发布会产生重复草稿)</span>
         </div>
       </template>
     </template>
@@ -311,6 +311,9 @@ const confirmPublish = () => {
 const doPublish = async () => {
   // 发布防呆(09-27-preview-clipboard-image R5.2):正文含 token 占位时阻止发布;摘要尚未加载完(shell 未知)
   // 且本项目仍有暂存条目时也阻止(无法确认正文干净,宁可不发)。后端另有同口径兜底(R5.3)。
+  // 防重入(/publish 非幂等,重复执行会产生重复草稿)。按钮 loading 已隐式禁用,
+  // 但「双击开出两个确认弹层」「Enter 快速确认」等路径仍可能在 publishing 置位后再次进来,这里兜底。
+  if (publishing.value) return
   const pendingUnverified = !summaryLoaded.value && hasAny(projectId.value)
   if (hasToken(contentMd.value) || pendingUnverified) {
     ElMessage.warning('当前正文含未上传的粘贴图,请回到「预览」步骤点「去发布」完成上传后再发布')
