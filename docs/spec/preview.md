@@ -64,7 +64,7 @@
 
 ## 4. 前端
 
-- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤三）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；`degraded=true` 顶部黄条；移动端适配。
+- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤三）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；`degraded=true` 顶部黄条；PC-only（双 pane 可拖拽分栏，拖拽条记忆 localStorage）。
 - 四步流程 `maxReachableStepOf` 扩到 `index=3`（发布），发布步对 VERSIONS_READY/PUBLISHED_DRAFT 解锁。
 - 配图并入预览：工具栏「配图」面板提供图库插入 + AI 生图（文生图/图生图，产物进图库后插入正文）两种来源；封面走 frontmatter `cover` 元信息（见 [image.md](image.md)）。**无任何自动写入路径**（09-27-image-insert-bugs：AI 生图完成不再自动插入正文，插入/设封面一律用户显式点）。
 - **配图计数口径（09-27-image-insert-bugs）**：工具栏「配图 N · 待传 M」与发布页「插图 N 张」**同源**，都调 `frontend/src/utils/bodyImageRefs.js` 的 `countBodyImages`/`parseBodyImageRefs`——**唯一真值 = 当前正文 markdown 里的图片引用**（`![](target)`，按 target 去重）。`N` = 非 token 的图片目标数（**封面不计入**：封面走 `cover_image_id`，不经正文）；`M` = **仍可上传**的粘贴图占位数（`sparkora-img:` 且内存条目仍在、属当前项目）；已失效占位既不计入 `N` 也不计入 `M`，由顶部警示条单独呈现。此前口径（分母=图库快照 images 含封面、分子=快照∩正文、发布页数关联表）三处互不一致，已废弃。

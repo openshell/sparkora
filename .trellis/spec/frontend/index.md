@@ -8,7 +8,7 @@
 
 - Vue 3 (`<script setup>`) + Vite 5 + Element Plus 2.8 + Pinia + vue-router。
 - Element Plus 组件由 `unplugin-auto-import` / `unplugin-vue-components` **自动引入**（模板里直接用 `<el-*>`）；**图标必须显式 import**（`@element-plus/icons-vue`）。
-- 移动端优先响应式；不引 Vant 等额外移动端框架。
+- **PC-only 桌面生产力工作台**（最小宽度 1280；低于时 `DesktopGuard` 不透明遮罩提示，不降级）。不引 Vant 等额外移动端框架。
 
 ---
 
@@ -89,29 +89,36 @@ editorRef.value?.insertMdAtAnchor?.(group.headingPath, `\n![](${url})\n`)  // �
 
 ## Page Conventions
 
-### Convention: 页面骨架统一
+### Convention: 页面骨架统一（AppShell + usePageHeader）
 
 ```vue
 <template>
-  <div>
-    <TopBar />
-    <div class="container">
-      <div class="page-header">
-        <div>
-          <span class="page-kicker">English Kicker</span>
-          <h2>中文标题</h2>
-        </div>
-        <div class="actions">...</div>
-      </div>
-      <!-- 三态：loading(骨架) / error(重试) / empty(el-empty) -->
-    </div>
+  <div class="page">
+    <!-- 三态：loading(骨架) / error(重试) / empty(el-empty) -->
+    <!-- 页内工具带 / 主体内容 … -->
   </div>
 </template>
+<script setup>
+import { onBeforeRouteLeave } from 'vue-router'
+import { usePageHeader } from '../composables/usePageHeader'
+const header = usePageHeader()
+const syncHeader = () => {
+  if (!header) return
+  header.crumbs = [{ label: '模块' }, { label: '当前页' }]          // 必须是对象数组,不要传字符串
+  header.actions = [{ key: 'new', label: '主操作', type: 'primary', onClick: handler }]
+}
+syncHeader()
+watch(userRoleReactive, syncHeader)
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
+</script>
 ```
 
+- 全局外壳 `AppShell`（`frontend/src/layouts/AppShell.vue`）统一提供：左侧 rail 模块导航 + 顶部上下文条（折叠钮 / 面包屑 / 主操作 actions / 主题切换）+ 用户区；页面**不再自绘页头**（`TopBar` / `page-header` 已退役）。登录路由不套壳。
+- 页面顶部信息经 `usePageHeader()` 注入的 reactive `{ crumbs, actions }` 写入上下文条：`crumbs` 为 `[{ label }]` 对象数组（`AppShell` 按 `c.label` 渲染，**传字符串会渲染 `undefined`**）；`actions` 为 `{ key, label, type, onClick, disabled?, icon? }[]`（`icon` 传图标组件对象）。离开页面用 `onBeforeRouteLeave` 清空，避免污染相邻页面；项目步骤页在 `route.name`/`project` 变化时重新 declare（子步骤清空后无人补写）。
 - 三态齐全是硬性要求：`v-if="loading"` 骨架、`v-else-if="error"` 错误+重试、空态 `el-empty`。
-- 样式使用 `frontend/src/assets/main.css` 的 CSS 变量（`--brand/--brand-weak/--ink/--muted/--faint/--line/--line-strong/--card/--paper/--radius/--shadow-hover` 等），不要硬编码颜色。
-- 移动端：`@media (max-width: 768px)`；可点元素/按钮 `min-height: 44px`（全局 `main.css` 已给 `.el-button` 兜底，自定义可点元素需自行保证）。
+- 样式使用 `frontend/src/assets/main.css` 的 CSS 变量（`--n-*` 色阶、`--brand` 语义别名、`--control-h-*` 档位、`--fs-*`、`--lh-*`、`--radius-*`、`--sp-*`、`--focus-ring`），不要硬编码颜色/字号/圆角/间距。
+- **PC-only 密度约定**：控件高度统一走 `--control-h-sm/md/lg` = 28/32/40px 档位，不引入移动端 44px 触控目标；交互态必须提供 `:focus-visible` 可见焦点环（`--focus-ring`），hover 显隐的操作在无 hover 环境靠 `:focus-within` 兜底。
+- **不可破坏类名契约**：`.wenyan-preview`（`utils/wenyanRender.js` 的 `PREVIEW_SELECTOR` 把 wenyan 主题 CSS 从 `#wenyan` 重写为该类注入 `document.head`，`PreviewPane` 渲染容器持该类——改名会**静默废掉全部 15 套主题**）与 `sparkora-img-missing`（`utils/pendingImageStore.js` 产出，`PreviewPane` 以 `:deep()` 消费失效占位样式）。凡涉及这两个类名的改动，改前改后必须 `grep` 确认两端仍匹配，并实测 1 内置 + 1 社区主题渲染。
 
 ---
 

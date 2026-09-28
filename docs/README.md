@@ -9,7 +9,7 @@
 ## 1. 系统定位与双模块架构
 
 - **后端** `src/` — Spring Boot 3.3.4（Java 21）+ MyBatis-Plus 3.5.7 + Spring Security（JWT，jjwt 0.12.6）+ PostgreSQL。入口 `src/main/java/com/sparkora/SparkoraApplication.java`，包结构 `com.sparkora`，Maven 构建（`pom.xml`）。
-- **前端** `frontend/` — Vue 3 + Vite 5 + Element Plus 2.8 + Pinia + vue-router，`unplugin-auto-import`/`unplugin-vue-components` 自动引入 Element Plus 组件。移动端优先响应式，不引 Vant 等额外移动端框架。
+- **前端** `frontend/` — Vue 3 + Vite 5 + Element Plus 2.8 + Pinia + vue-router，`unplugin-auto-import`/`unplugin-vue-components` 自动引入 Element Plus 组件。PC-only 桌面工作台（`AppShell` 左 rail 导航 + 上下文条，最小宽度 1280，低于则 `DesktopGuard` 遮罩提示），不引 Vant 等额外移动端框架。
 - **流程主线（四步）**：简报 → 版本 → 预览（含配图）→ 发布。2026-08-28 取消「校验」步；2026-09-03（S6）配图并入预览、移除 `IMAGES_READY`。
 - **生成主线（唯一）**：快速模式 FAST 已下线（接口保留但恒 410），所有简报生成/正文生成必走**深度模式**（六阶段）。权威契约见 [brief-generation.md](spec/brief-generation.md)。
 

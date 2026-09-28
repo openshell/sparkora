@@ -10,7 +10,7 @@
 
 - **范围**：S0 项目骨架 + Spring Security 登录 + 流程化工作台（项目列表）+ 新建创作任务 + 项目详情（生成入口）；后续各阶段模块契约见总览[模块索引表](../README.md)。
 - **技术栈**：Spring Boot 3 + MyBatis-Plus + Spring Security + Vue3/Element Plus（流程化创作工作台，不套重型 admin 外壳）。包结构 `com.sparkora`。
-- **前端适配**：**移动端适配**（响应式，移动优先）。Element Plus 响应式栅格 + 断点（xs/sm/md/lg）；移动端单列、汉堡顶栏、表格转卡片、表单单列堆叠、触控目标 ≥44px。不引 Vant 等额外移动端框架。
+- **前端适配**：**PC-only 桌面工作台**。`AppShell` 壳（左 rail 导航 + 上下文条），最小宽度 1280，低于则 `DesktopGuard` 遮罩提示、不降级；控件密度 `--control-h-sm/md/lg`(28/32/40px)。不引 Vant 等额外移动端框架。
 - **用途**：在真机上逐条打勾验收（S0 目标——能登录、能建项目、能看到生成入口）。
 - **修订历史（关键决策）**：
   - 2026-08-18 起**放弃若依**，规格按轻量栈重写。不再有 `sys_*` 复用、不再有 `@SaCheckPermission`/`v-hasPermi`，改用 Spring Security 原生。
@@ -31,7 +31,7 @@ S0 是从零搭骨架，以下能力**全部自建**（不引入若依等重型�
 | 登录 / 会话 | Spring Security + **JWT**（已定） | 自建 `AuthController` + `SecurityConfig`；密钥/过期读 `.env` |
 | 用户 / 角色 | `sparkora_user` + `sparkora_role`（最简：admin/editor/viewer） | MVP 单 workspace，先不做部门树 |
 | 工作台布局 | Vue3 + Element Plus，**向导式**而非侧栏 admin | 贴合「主题→brief→版本→编辑→预览→发布」流程 |
-| 移动端适配 | Element Plus 响应式栅格 + 断点，**移动优先** | 移动单列/汉堡栏/表格转卡片/触控 ≥44px；不引 Vant |
+| PC-only 桌面工作台 | `AppShell` 壳（rail 导航 + 上下文条），最小宽度 1280，低于 `DesktopGuard` 遮罩 | 控件密度 `--control-h-*`(28/32/40px)、`:focus-visible` 焦点环；不引 Vant |
 | 项目列表（工作台首页） | 自建 CRUD + 分页 | `ArticleProjectController` |
 | 新建创作任务 | 自建表单 + 校验 | Element Plus `el-form` |
 | 项目详情 / 生成入口 | 自建详情页 + 步骤条 | S0 仅第一步可点 |
@@ -192,7 +192,7 @@ VERSIONS_READY ──(发布成功,S5)──▶ PUBLISHED_DRAFT(终态,可重发
 ## 7. 交付物（§9）
 
 - Spring Boot 3 + MyBatis-Plus + Spring Security 后端骨架（`com.sparkora`）。
-- Vue3 + Element Plus 流程化工作台前端（`frontend/`），**移动端响应式适配**。
+- Vue3 + Element Plus 流程化工作台前端（`frontend/`），**PC-only 桌面工作台**（AppShell + 上下文条，最小宽度 1280）。
 - 业务表 `sparkora_article_project`、`sparkora_user`、`sparkora_role`（最简）。
 - 登录 + 工作台列表 + 新建任务表单 + 项目详情（步骤条占位）。
 
