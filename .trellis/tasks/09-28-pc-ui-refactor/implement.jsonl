@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-28-pc-ui-refactor/prd.md", "reason": "需求与验收唯一真源：8 条需求 R1-R8、6 条验收 AC、7 项已决决策、批 1 范围边界"}
+{"file": ".trellis/tasks/09-28-pc-ui-refactor/design.md", "reason": "技术设计：AppShell 架构与边界铁律、不可破坏类名契约、3 个试点页目标版式、迁移顺序、回滚点"}
+{"file": ".trellis/tasks/09-28-pc-ui-refactor/implement.md", "reason": "执行清单：8 步有序实施、每步验证命令、风险文件表、明确的非目标"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范：功能正确性约定（API 层 R<T> 拆包、正文 token、插图计数真源、原图预览、ObjectURL 计数、取消语义分层等）必须原样存活；其『页面骨架』与『移动端』两条本次需改写为 AppShell + PC-only"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "重构时避免重复造轮子：AppShell/DesktopGuard/usePageHeader 等新增能力须先查是否已有可复用实现"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "确认版式改造不越界到后端契约与数据域（store/api/utils 零改动铁律）"}
+{"file": "docs/spec/preview.md", "reason": "预览页权威契约：wenyan 渲染同源、.wenyan-preview 类契约、正文 token 占位与失效占位、预览样式项目级落库"}
+{"file": "docs/spec/image.md", "reason": "图库权威契约：图片来源、原图 vs 缩略图 URL、插图计数单一真源；ImageLibrary 改造不得破坏"}
+{"file": "docs/README.md", "reason": "系统总览与全局约定，用于核对模块边界与既有架构约束"}

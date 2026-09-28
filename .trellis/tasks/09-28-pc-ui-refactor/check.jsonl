@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/09-28-pc-ui-refactor/prd.md", "reason": "按 AC1-AC6 逐条核对：外壳导航与路由一致、PC-only 断点清零、token 字面量清零、试点页目标版式、关键契约存活、门禁与规范同步"}
+{"file": ".trellis/tasks/09-28-pc-ui-refactor/design.md", "reason": "核对边界铁律（store/api/utils/composables 零改动）、类名契约（.wenyan-preview / sparkora-img-missing）、迁移顺序与回滚点是否被遵守"}
+{"file": ".trellis/tasks/09-28-pc-ui-refactor/implement.md", "reason": "核对 8 步执行是否按序完成、验证命令是否通过、风险文件是否误改、明确的非目标是否被越界"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核心检查项：确认『页面骨架』与『移动端』两条已改为 AppShell + PC-only，且其余功能正确性条目一字未损；同时确认新骨架不再被判违规"}
+{"file": "docs/spec/preview.md", "reason": "核对预览页零回归：wenyan 主题渲染（1 内置 + 1 社区）、sanitizeWenyanHtml、编辑↔预览滚动同步、sparkora-img token 插图与失效占位样式"}
+{"file": "docs/spec/image.md", "reason": "核对图库零回归：上传/新建/AI 生图入口、筛选 chip 与 URL 双向同步、语义搜索进出、批量全选/打标/删除、网格横竖图不裁切"}
+{"file": "docs/README.md", "reason": "核对技术栈行已改为 PC-only + AppShell，全文无残留「移动端优先」表述"}
+{"file": "docs/spec/overview.md", "reason": "核对「前端适配」小节、架构决策表移动端适配行、结尾前端表述三处已同步改为 PC-only"}
+{"file": "docs/spec/publish.md", "reason": "核对发布链路未被版式改造破坏：预览样式落库、publish-meta、等待文案与非幂等提示（StepPreview 的『去发布』被上移到上下文条）"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "确认 git diff 不含 src/（后端零改动），版式改造未越界到 API 契约与数据域"}
