@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
     <div class="page-header">
       <div>
@@ -119,7 +118,6 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import TopBar from '../layouts/TopBar.vue'
 import AiImageDrawer from '../components/AiImageDrawer.vue'
 import ImageLibraryToolbar from '../components/image/ImageLibraryToolbar.vue'
 import ImageSemanticBar from '../components/image/ImageSemanticBar.vue'

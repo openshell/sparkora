@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -125,7 +124,6 @@ import { ref, nextTick, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, WarningFilled, Loading, Promotion } from '@element-plus/icons-vue'
-import TopBar from '../layouts/TopBar.vue'
 import CitationList from './project/deep/CitationList.vue'
 import { qaApi } from '../api'
 

@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div v-if="loading" class="loading"><el-skeleton :rows="6" animated /></div>
 
@@ -90,7 +89,6 @@ import { useRoute } from 'vue-router'
 import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage } from 'element-plus'
-import TopBar from '../layouts/TopBar.vue'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
 
 const route = useRoute()

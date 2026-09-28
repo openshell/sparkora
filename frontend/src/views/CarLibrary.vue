@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -108,7 +107,6 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import TopBar from '../layouts/TopBar.vue'
 import { Refresh, WarningFilled, Search, Loading, CircleCheck, Van, MagicStick } from '@element-plus/icons-vue'
 
 const user = useUserStore()

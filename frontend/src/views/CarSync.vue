@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -92,7 +91,6 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { carApi } from '../api'
 import { ElMessage } from 'element-plus'
-import TopBar from '../layouts/TopBar.vue'
 import { Refresh, WarningFilled, Search, Check, Loading, CircleCheck, Van } from '@element-plus/icons-vue'
 
 const loading = ref(false)

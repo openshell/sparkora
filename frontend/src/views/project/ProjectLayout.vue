@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header project-head">
         <div class="head-left">
@@ -58,7 +57,6 @@
 <script setup>
 import { ref, computed, watch, onErrorCaptured, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import TopBar from '../../layouts/TopBar.vue'
 import { useProjectDetailStore } from '../../store/project-detail'
 import { statusLabel, statusTagType, activeStepOf, maxReachableStepOf, isGenerating } from '../../constants/project'
 import { Check, Lock, WarningFilled } from '@element-plus/icons-vue'

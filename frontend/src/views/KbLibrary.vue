@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -73,7 +72,6 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, WarningFilled } from '@element-plus/icons-vue'
-import TopBar from '../layouts/TopBar.vue'
 import { kbApi } from '../api'
 import { useUserStore } from '../store/user'
 

@@ -301,23 +301,3 @@ h1, h2, h3 { font-family: var(--font-sans); letter-spacing: -.01em; }
 
 /* 分页 */
 .pager { margin-top: var(--sp-6); justify-content: flex-end; }
-
-/* ---------- 顶栏(批 1 步骤 3 删除) ---------- */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--sp-6);
-  height: 60px;
-  background: var(--card);
-  border-bottom: 1px solid var(--line);
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-.topbar .brand {
-  font-weight: 700;
-  font-size: var(--fs-18);
-  letter-spacing: -.01em;
-}
-.topbar .brand span { color: var(--brand); }

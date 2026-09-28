@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -130,7 +129,6 @@ import { ref, reactive, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { projectApi } from '../api'
 import { ElMessage } from 'element-plus'
-import TopBar from '../layouts/TopBar.vue'
 
 const router = useRouter()
 const formRef = ref()

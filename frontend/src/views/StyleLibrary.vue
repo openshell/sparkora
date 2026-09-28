@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -103,7 +102,6 @@ import { ref, onMounted } from 'vue'
 import { styleApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import TopBar from '../layouts/TopBar.vue'
 import { MagicStick, Plus, WarningFilled } from '@element-plus/icons-vue'
 
 const user = useUserStore()

@@ -1,6 +1,5 @@
 <template>
   <div class="page">
-    <TopBar />
     <div class="page-body">
       <div class="settings-card">
         <h2 class="serif">系统设置</h2>
@@ -66,7 +65,6 @@ import { onMounted, reactive, ref, computed } from 'vue'
 import { settingApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage } from 'element-plus'
-import TopBar from '../layouts/TopBar.vue'
 
 const user = useUserStore()
 const canEdit = computed(() => user.isAdmin)

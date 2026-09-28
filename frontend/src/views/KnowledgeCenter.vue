@@ -1,6 +1,5 @@
 <template>
   <div>
-    <TopBar />
     <div class="container">
       <div class="page-header">
         <div>
@@ -23,7 +22,6 @@
 
 <script setup>
 import { ref, reactive, watch, onMounted } from 'vue'
-import TopBar from '../layouts/TopBar.vue'
 import CarKnowledgePanel from './knowledge/CarKnowledgePanel.vue'
 import NewsKnowledgePanel from './knowledge/NewsKnowledgePanel.vue'
 
