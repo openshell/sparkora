@@ -1,44 +1,95 @@
 /* ============================================================
-   Sparkora 全局样式 —— 「纸墨」设计 token + 杂志感排版
-   - 设计 token 全部收敛在 :root / html.dark,组件只引用变量
-   - Element Plus 主色经 --el-color-primary 系列覆盖,全组件库跟随品牌
-   - 标题用衬线(杂志感),正文用黑体,移动端触控目标 ≥44px
+   Sparkora 全局样式 —— 中性冷灰「工具风」设计 token
+   - 中性色单一色阶 --n-* 驱动；语义别名(--ink/--muted/...)指向色阶
+   - 密度/字阶/圆角/阴影/间距全部走变量,组件只引用变量
+   - Element Plus 主色与形状经 --el-* 覆盖跟随品牌
+   - PC-only:不设 max-width 断点,最小宽度由 DesktopGuard 兜底
    ============================================================ */
 
-/* ---------- 设计 token:浅色(纸白) ---------- */
+/* ---------- 设计 token:浅色(冷灰纸面) ---------- */
 :root {
-  /* 品牌色(墨蓝) */
+  /* 中性色阶:冷灰(slate 相位),暖偏移归零 */
+  --n-0:   #ffffff;   /* 面 */
+  --n-25:  #fafbfc;   /* 页底 */
+  --n-50:  #f4f5f7;
+  --n-100: #eef0f3;
+  --n-150: #e6e9ee;
+  --n-200: #dde1e7;   /* 细线(默认描边) */
+  --n-300: #c5cad2;   /* 强描边 */
+  --n-400: #98a0ab;   /* 三级文字 / 图标 */
+  --n-500: #5b636e;   /* 次级文字 */
+  --n-600: #414954;
+  --n-700: #2b323b;
+  --n-900: #14181d;   /* 主墨色 */
+
+  /* 语义别名:组件只引用这一组,不直接用色阶 */
+  --paper: var(--n-25);        /* 页面底 */
+  --card: var(--n-0);          /* 卡片/面板面 */
+  --ink: var(--n-900);         /* 主文字 */
+  --muted: var(--n-500);       /* 次级文字 */
+  --faint: var(--n-400);       /* 三级文字 / 占位 */
+  --line: var(--n-200);        /* 描边 */
+  --line-strong: var(--n-300); /* 强描边 / 分隔 */
+
+  /* 品牌色(墨蓝):收窄使用面,仅主按钮 / 选中态 / focus 环 / 链接 */
   --brand: #4f46e5;
   --brand-strong: #4338ca;
-  --brand-weak: #eef2ff;
+  --brand-weak: #eef0fd;
   --brand-gradient: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-
-  /* 纸墨中性色 */
-  --paper: #faf9f7;        /* 页面底:暖纸白 */
-  --card: #ffffff;         /* 卡片面 */
-  --ink: #1a1714;          /* 主墨色 */
-  --muted: #6f6a63;        /* 次级文字 */
-  --faint: #a39d93;        /* 三级文字 */
-  --line: #e7e2da;         /* 纸线(边框) */
-  --line-strong: #d8d2c8;
 
   /* 功能色 */
   --ok: #15803d;
   --warn: #b45309;
   --err: #b91c1c;
 
-  /* 形状与阴影 */
-  --radius: 14px;
-  --radius-sm: 10px;
-  --shadow-card: 0 1px 2px rgba(26, 23, 20, .04), 0 4px 16px rgba(26, 23, 20, .04);
-  --shadow-hover: 0 2px 6px rgba(26, 23, 20, .06), 0 10px 28px rgba(26, 23, 20, .08);
-  --shadow-pop: 0 12px 40px rgba(26, 23, 20, .16);
+  /* 形状:锐利工具化 */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius: var(--radius-md);          /* 历史别名,批 2/3 迁移完删除 */
 
-  /* 字体:标题衬线(杂志感)/ 正文黑体 */
-  --font-serif: "Noto Serif SC", "Songti SC", "STSong", SimSun, Georgia, serif;
-  --font-sans: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  /* 层级:轻阴影,主要靠 1px 细线分隔 */
+  --shadow-1: 0 1px 2px rgba(20, 24, 29, .06);
+  --shadow-2: 0 2px 8px rgba(20, 24, 29, .08), 0 1px 2px rgba(20, 24, 29, .06);
+  --shadow-3: 0 8px 28px rgba(20, 24, 29, .14);
+  --shadow-card: var(--shadow-1);      /* 历史别名 */
+  --shadow-hover: var(--shadow-2);     /* 历史别名 */
+  --shadow-pop: var(--shadow-3);       /* 历史别名 */
 
-  /* Element Plus 主色系覆盖:让整个组件库跟随品牌墨蓝 */
+  /* 密度:控件高度三档 */
+  --control-h-sm: 28px;
+  --control-h-md: 32px;
+  --control-h-lg: 40px;
+
+  /* 字阶:8 级固定 + 行高 */
+  --fs-11: 11px;  --lh-11: 16px;
+  --fs-12: 12px;  --lh-12: 18px;
+  --fs-13: 13px;  --lh-13: 20px;
+  --fs-14: 14px;  --lh-14: 22px;
+  --fs-16: 16px;  --lh-16: 24px;
+  --fs-18: 18px;  --lh-18: 26px;
+  --fs-22: 22px;  --lh-22: 30px;
+  --fs-28: 28px;  --lh-28: 36px;
+
+  /* 间距刻度 */
+  --sp-1: 2px;  --sp-2: 4px;  --sp-3: 6px;  --sp-4: 8px;
+  --sp-5: 12px; --sp-6: 16px; --sp-7: 24px; --sp-8: 32px;
+
+  /* 字体:单一无衬线字族 + 等宽(编号/度量用) */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", "Courier New", monospace;
+  --font-serif: var(--font-sans);   /* 历史别名:Q1 已废弃衬线刊头 */
+
+  /* 焦点环 */
+  --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px var(--brand);
+
+  /* PC-only:最小可用宽度,低于则 DesktopGuard 遮罩 */
+  --min-app-width: 1280px;
+
+  /* Element Plus 覆盖:组件库跟随品牌与新形状/密度 */
   --el-color-primary: var(--brand);
   --el-color-primary-light-3: #7a74ec;
   --el-color-primary-light-5: #a5a2f3;
@@ -46,63 +97,92 @@
   --el-color-primary-light-8: #e0dffc;
   --el-color-primary-light-9: var(--brand-weak);
   --el-color-primary-dark-2: var(--brand-strong);
-  --el-border-radius-base: 8px;
-  --el-border-radius-small: 6px;
+  --el-border-radius-base: var(--radius-md);
+  --el-border-radius-small: var(--radius-sm);
   --el-font-family: var(--font-sans);
+  --el-font-size-base: 14px;
+  --el-component-size: var(--control-h-md);
+  --el-component-size-small: var(--control-h-sm);
+  --el-component-size-large: var(--control-h-lg);
   --el-text-color-primary: var(--ink);
-  --el-text-color-regular: #45403a;
+  --el-text-color-regular: var(--n-600);
   --el-text-color-secondary: var(--muted);
+  --el-text-color-placeholder: var(--faint);
   --el-border-color: var(--line);
   --el-border-color-light: var(--line);
   --el-border-color-lighter: var(--line);
-  --el-fill-color-light: #f4f1ec;
-  --el-fill-color-lighter: #f8f6f2;
+  --el-border-color-hover: var(--brand);
+  --el-fill-color: var(--n-100);
+  --el-fill-color-light: var(--n-100);
+  --el-fill-color-lighter: var(--n-50);
+  --el-fill-color-blank: var(--card);
   --el-bg-color: var(--card);
   --el-bg-color-page: var(--paper);
+  --el-disabled-bg-color: var(--n-100);
+  /* 表格密度:细线 + 弱表头底 */
+  --el-table-border-color: var(--line);
+  --el-table-header-bg-color: var(--n-50);
+  --el-table-header-text-color: var(--n-600);
+  --el-table-row-hover-bg-color: var(--n-50);
+  --el-table-tr-bg-color: var(--card);
+  --el-table-bg-color: var(--card);
 }
 
-/* ---------- 设计 token:暗色(纸黑) ---------- */
+/* ---------- 设计 token:暗色(冷灰纸黑) ---------- */
 html.dark {
+  /* 中性色阶反转:深底浅字,色阶编号保持语义不变 */
+  --n-0:   #14181e;   /* 面 */
+  --n-25:  #0e1116;   /* 页底 */
+  --n-50:  #191e25;
+  --n-100: #1f242c;
+  --n-150: #242a33;
+  --n-200: #2a3038;   /* 细线 */
+  --n-300: #3a424d;   /* 强描边 */
+  --n-400: #6b7480;   /* 三级文字 */
+  --n-500: #8b95a1;   /* 次级文字 */
+  --n-600: #aeb7c2;
+  --n-700: #d3dae2;
+  --n-900: #eef1f5;   /* 主墨色 */
+
   --brand: #818cf8;
   --brand-strong: #a5b4fc;
-  --brand-weak: #26264a;
+  --brand-weak: #232741;
   --brand-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-
-  --paper: #161412;
-  --card: #1e1c19;
-  --ink: #ece7df;
-  --muted: #a39d93;
-  --faint: #6f6a63;
-  --line: #322e29;
-  --line-strong: #3f3a34;
 
   --ok: #4ade80;
   --warn: #fbbf24;
   --err: #f87171;
 
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, .3);
-  --shadow-hover: 0 2px 8px rgba(0, 0, 0, .4);
-  --shadow-pop: 0 12px 40px rgba(0, 0, 0, .5);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .32);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, .4);
+  --shadow-3: 0 8px 28px rgba(0, 0, 0, .5);
 
-  --el-color-primary: var(--brand);
+  --focus-ring: 0 0 0 2px var(--card), 0 0 0 4px var(--brand);
+
   --el-color-primary-light-3: #4d4e9e;
   --el-color-primary-light-5: #383a75;
   --el-color-primary-light-7: #27284d;
   --el-color-primary-light-8: #20213f;
-  --el-color-primary-light-9: var(--brand-weak);
-  --el-color-primary-dark-2: var(--brand-strong);
   --el-bg-color: var(--card);
   --el-bg-color-page: var(--paper);
-  --el-bg-color-overlay: #242220;
+  --el-bg-color-overlay: #191e25;
   --el-text-color-primary: var(--ink);
-  --el-text-color-regular: #cfc9c0;
+  --el-text-color-regular: var(--n-600);
   --el-text-color-secondary: var(--muted);
+  --el-text-color-placeholder: var(--faint);
   --el-border-color: var(--line);
   --el-border-color-light: var(--line);
   --el-border-color-lighter: var(--line);
-  --el-fill-color-light: #292521;
-  --el-fill-color-lighter: #232019;
+  --el-fill-color: var(--n-100);
+  --el-fill-color-light: var(--n-100);
+  --el-fill-color-lighter: var(--n-50);
   --el-fill-color-blank: var(--card);
+  --el-disabled-bg-color: var(--n-100);
+  --el-table-header-bg-color: var(--n-50);
+  --el-table-header-text-color: var(--n-600);
+  --el-table-row-hover-bg-color: var(--n-50);
+  --el-table-tr-bg-color: var(--card);
+  --el-table-bg-color: var(--card);
 }
 
 /* ---------- 基础 ---------- */
@@ -115,6 +195,8 @@ html, body, #app {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  line-height: var(--lh-14);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -122,123 +204,120 @@ a { color: var(--brand); text-decoration: none; }
 
 ::selection { background: var(--brand-weak); color: var(--brand-strong); }
 
-/* 标题统一走衬线,做出「刊头」气质 */
-h1, h2, h3, .serif {
-  font-family: var(--font-serif);
-  letter-spacing: .01em;
+/* 标题统一无衬线(Q1 已废弃衬线刊头);字号由各页显式指定字阶 */
+h1, h2, h3 { font-family: var(--font-sans); letter-spacing: -.01em; }
+
+/* .serif 兼容占位:等价于无衬线,批 2/3 迁移完删掉该类 */
+.serif { font-family: var(--font-sans); }
+
+/* 键盘可达性:统一可见焦点环 */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
 }
 
-/* ---------- 页面骨架通用类(收敛自各页 scoped 重复) ---------- */
+/* ---------- 应用外壳骨架(AppShell 接管滚动) ---------- */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+.app-shell__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-shell__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ---------- 全幅页面容器(批 1 起的页面骨架) ---------- */
+.page {
+  width: 100%;
+  padding: var(--sp-5) var(--sp-7) var(--sp-8);
+}
+
+/* ---------- 以下为批 2/3 迁移前的兼容类,迁移完删除 ---------- */
+
+/* 居中窄栏容器:仅未迁移页面仍在用 */
 .container {
-  padding: 20px 16px 48px;
+  padding: var(--sp-5) var(--sp-6) var(--sp-8);
   max-width: 1100px;
   margin: 0 auto;
 }
 
-/* 页头: kicker + 衬线大标题 + 操作区,底部细线(杂志刊头) */
+/* 页头: kicker + 大标题 + 操作区,底部细线 */
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 12px;
-  padding-bottom: 14px;
-  margin-bottom: 20px;
+  gap: var(--sp-5);
+  padding-bottom: var(--sp-5);
+  margin-bottom: var(--sp-6);
   border-bottom: 1px solid var(--line);
 }
-.page-header h2 { margin: 0; font-size: 26px; font-weight: 700; line-height: 1.2; }
+.page-header h2 { margin: 0; font-size: var(--fs-22); font-weight: 600; line-height: var(--lh-22); }
 .page-kicker {
   display: block;
-  font-family: var(--font-sans);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .18em;
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  font-weight: 500;
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--faint);
-  margin-bottom: 4px;
+  margin-bottom: var(--sp-1);
 }
-.page-header .actions { display: flex; gap: 8px; flex-shrink: 0; }
+.page-header .actions { display: flex; gap: var(--sp-4); flex-shrink: 0; }
 
-/* 卡片:纸面 + 细线 + 浅阴影 */
+/* 卡片:细线 + 轻阴影 */
 .el-card {
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   border-color: var(--line);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-1);
 }
-.el-card.is-hover-shadow:hover, .el-card[shadow="hover"]:hover { box-shadow: var(--shadow-hover); }
+.el-card.is-hover-shadow:hover, .el-card[shadow="hover"]:hover { box-shadow: var(--shadow-2); }
 
 /* 步骤卡片(创作向导内) */
-.step-card { margin-bottom: 12px; }
+.step-card { margin-bottom: var(--sp-4); }
 .step-card > .el-card__header {
-  border-bottom: 1px dashed var(--line);
-  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  padding: var(--sp-5) var(--sp-6);
 }
 
-/* 空态 / 加载态 */
-.empty, .loading { padding: 48px 0; }
+/* 空态 / 加载态 / 错误态 */
+.empty, .loading { padding: var(--sp-8) 0; }
 .state-error {
-  padding: 48px 16px;
+  padding: var(--sp-8) var(--sp-6);
   text-align: center;
   color: var(--muted);
 }
-.state-error .state-title { font-family: var(--font-serif); font-size: 17px; color: var(--ink); margin: 12px 0 4px; }
-.state-error .state-msg { font-size: 13px; margin-bottom: 16px; word-break: break-all; }
+.state-error .state-title { font-size: var(--fs-16); font-weight: 600; color: var(--ink); margin: var(--sp-5) 0 var(--sp-1); }
+.state-error .state-msg { font-size: var(--fs-13); margin-bottom: var(--sp-6); word-break: break-all; }
 
 /* 分页 */
-.pager { margin-top: 20px; justify-content: center; }
+.pager { margin-top: var(--sp-6); justify-content: flex-end; }
 
-/* ---------- 触控目标 ≥44px(移动端) ---------- */
-@media (max-width: 768px) {
-  .el-button { min-height: 44px; }
-  .el-button--small { min-height: 40px; }
-  .el-input__inner, .el-textarea__inner { font-size: 16px; } /* 防 iOS 聚焦自动放大 */
-  .container { padding: 14px 14px 40px; }
-  .page-header h2 { font-size: 22px; }
-  .pager { flex-wrap: wrap; }
-}
-
-/* ---------- 列表响应式:桌面表格 / 移动卡片 ---------- */
-.responsive-table .el-table { display: none; }
-.responsive-table .card-list { display: grid; gap: 12px; }
-@media (min-width: 769px) {
-  .responsive-table .el-table { display: block; }
-  .responsive-table .card-list { display: none; }
-}
-
-/* ---------- 顶栏 ---------- */
+/* ---------- 顶栏(批 1 步骤 3 删除) ---------- */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 var(--sp-6);
   height: 60px;
-  background: color-mix(in srgb, var(--card) 88%, transparent);
-  backdrop-filter: blur(10px);
+  background: var(--card);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
   z-index: 100;
 }
 .topbar .brand {
-  font-family: var(--font-serif);
-  font-weight: 800;
-  font-size: 19px;
-  letter-spacing: .02em;
+  font-weight: 700;
+  font-size: var(--fs-18);
+  letter-spacing: -.01em;
 }
 .topbar .brand span { color: var(--brand); }
-
-/* ---------- 通用小元件 ---------- */
-.divider-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--faint);
-  font-size: 12px;
-  letter-spacing: .12em;
-  margin: 20px 0 12px;
-}
-.divider-label::before, .divider-label::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
