@@ -86,7 +86,7 @@ graph LR
 | 风格库 | [spec/style-library.md](spec/style-library.md) | `web.controller.StyleController`、`service.StyleService`、`domain.entity.StyleProfileEntity` / `views/StyleLibrary.vue` |
 | 配图 | [spec/image.md](spec/image.md) | `web.controller.ImageController`、`service.ImageService`/`ImageTagService`/`ImageEmbeddingService`/`IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`storage.ImageStorage`/`QiniuService` / `views/ImageLibrary.vue`、`components/MarkdownEditor.vue` |
 | 知识库检索（RAG 必查+降级可见） | [spec/retrieval.md](spec/retrieval.md) | `com.sparkora.car`（`CarRagService.retrieveForGeneration`）、`mapper.CarDocEmbeddingMapper.searchTopKUnified`、`ai.EmbeddingClient` / `project/deep/CitationList.vue` |
-| 系统检索设置 | [spec/settings.md](spec/settings.md) | `web.controller.SettingController`、`service.SettingService`、`domain.entity.SettingEntity` / `views/SettingsView.vue`、`layouts/TopBar.vue` |
+| 系统检索设置 | [spec/settings.md](spec/settings.md) | `web.controller.SettingController`、`service.SettingService`、`domain.entity.SettingEntity` / `views/SettingsView.vue`、`layouts/AppShell.vue` |
 | 排版预览 | [spec/preview.md](spec/preview.md) | `service.PreviewService`/`WenyanThemeCatalog`/`WenyanServerService` / `project/StepPreview.vue` |
 | 公众号发布 | [spec/publish.md](spec/publish.md) | `service.PublishService`/`WenyanServerService`、`wenyan.*` / `project/StepPublish.vue` |
 | 文章仿写 | [spec/imitation.md](spec/imitation.md) | `service.ImitationService`、`service.VersionService`（仿写分支） / `views/ProjectEdit.vue`、`project/StepBrief.vue`、`project/StepVersions.vue` |

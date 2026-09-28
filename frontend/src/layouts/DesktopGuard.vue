@@ -29,6 +29,6 @@
 
 @media (max-width: 1279px) {
   .desktop-guard { display: flex; }
-  body { overflow: hidden; }
+  :global(body) { overflow: hidden; }
 }
 </style>

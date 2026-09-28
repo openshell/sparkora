@@ -15,7 +15,7 @@
 | `/knowledge` | `views/KnowledgeCenter.vue` | 知识中心，`meta.auth`；`el-tabs` 仅「车型」「新闻」两个 Tab |
 
 - 现有路由不变：`/car`、`/car/sync`、`/car/:id`、`/kb`。
-- TopBar 新增「知识中心」导航项（登录后可见）；「车型库」「知识库」链接保留。
+- AppShell 左 rail 新增「知识中心」导航项（登录后可见）；「车型库」「知识库」链接保留。
 
 ---
 
@@ -37,7 +37,7 @@
 
 ## 3. 关键实现路径
 
-- 前端：`views/KnowledgeCenter.vue`、`views/knowledge/CarKnowledgePanel.vue`、`views/knowledge/NewsKnowledgePanel.vue`、`router/index.js`（`/knowledge`）、`layouts/TopBar.vue`。
+- 前端：`views/KnowledgeCenter.vue`、`views/knowledge/CarKnowledgePanel.vue`、`views/knowledge/NewsKnowledgePanel.vue`、`router/index.js`（`/knowledge`）、`layouts/AppShell.vue`。
 - 后端：复用车型（[car.md](car.md)）/新闻（[news.md](news.md)）既有接口，无新增后端。
 
 ---

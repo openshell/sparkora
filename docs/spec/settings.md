@@ -57,8 +57,8 @@ Flyway `db/migration/V1__baseline.sql` 单行表（固定 `id=1`，首次读取�
 
 ## 5. 前端
 
-- `/settings` 路由（TopBar「设置」，EDITOR 及以上可见）；双 `el-switch` + **策略 `el-select`（Tavily 优先 / SearxNG 优先）** + 说明文案 + 双关警示；写入口仅 ADMIN（`user.isAdmin` 隐藏保存按钮，后端 `@PreAuthorize` 兜底）。
-- 前端文件：`views/SettingsView.vue`、`layouts/TopBar.vue`、`api/index.js`（`settingApi`）。
+- `/settings` 路由（AppShell 左 rail 底部「设置」，EDITOR 及以上可见）；双 `el-switch` + **策略 `el-select`（Tavily 优先 / SearxNG 优先）** + 说明文案 + 双关警示；写入口仅 ADMIN（`user.isAdmin` 隐藏保存按钮，后端 `@PreAuthorize` 兜底）。
+- 前端文件：`views/SettingsView.vue`、`layouts/AppShell.vue`、`api/index.js`（`settingApi`）。
 
 ---
 

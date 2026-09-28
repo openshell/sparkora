@@ -96,7 +96,7 @@ QaController ─▶ QaService.ask(sessionId, question, user)
 | `views/project/deep/CitationList.vue` | 新增 `NEWS` 分支（`官方新闻` / `danger`），纯增量，不影响既有 CAR/KB/WEB/MULTI |
 | `api/index.js` | `qaApi`（createSession/listSessions/getSession/ask/removeSession；`ask` 超时 120s） |
 | `router/index.js` | `/qa`（`meta.auth`），紧随 `/knowledge` |
-| `layouts/TopBar.vue` | 新增「知识问答」导航（登录可见） |
+| `layouts/AppShell.vue` | 新增「知识问答」导航（登录可见） |
 
 - 配图展示契约（09-15）：`imgRefsOf(m)` **兼容 `imageRefs` 为 JSON 字符串或数组**两种形态（后端存字符串，同 `citations` 惯例）；字段名以 `QaImageRef` record 为准（`imageId`，非实体 `id`）；`el-image` 缩略用 `thumbUrl || url`，**`preview-src-list` 必须用 `url`（原图）**——`thumbUrl` 是七牛 webp 派生，既有教训；`preview-teleported` + 移动端横向滚动、触控目标 ≥44px；历史消息无 `imageRefs` → `v-if` 不渲染。
 

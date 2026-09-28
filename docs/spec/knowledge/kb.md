@@ -45,7 +45,7 @@
 | DELETE | `/api/kb/docs/{id}` | 删除（逻辑删文档 + 物理清块） |
 | POST | `/api/kb/docs/{id}/rebuild` | 手动重建，返回 `{total, success, failed}` |
 
-- 前端：`views/KbLibrary.vue`（列表卡片/新建编辑抽屉/删除确认/重建向量含失败提示；移动端单列），TopBar「知识库」入口；`api/index.js` 的 `kbApi`。
+- 前端：`views/KbLibrary.vue`（列表卡片/新建编辑抽屉/删除确认/重建向量含失败提示；移动端单列），AppShell 左 rail「知识库」入口；`api/index.js` 的 `kbApi`。
 
 ---
 
