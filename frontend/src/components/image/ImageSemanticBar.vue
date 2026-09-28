@@ -28,11 +28,8 @@ const emit = defineEmits(['exit-semantic'])
 </script>
 
 <style scoped>
-/* 语义搜索提示条（09-15 img-semantic-search 子B） */
-.sem-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); flex-wrap: wrap; }
-.sem-bar-text { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
-
-@media (max-width: 768px) {
-  .sem-bar .el-button { min-height: 44px; }
-}
+/* 语义搜索提示条（09-15 img-semantic-search 子B）：细薄一条，非卡片面 */
+.sem-bar { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-5); background: var(--brand-weak); border: 1px solid var(--el-color-primary-light-8); border-radius: var(--radius-md); flex-wrap: wrap; }
+.sem-bar-text { display: inline-flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-12); color: var(--n-700); }
+.sem-bar-text :deep(.el-icon) { color: var(--brand); }
 </style>

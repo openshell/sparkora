@@ -115,24 +115,23 @@ const semanticMinScoreModel = computed({ get: () => props.semanticMinScore, set:
 </script>
 
 <style scoped>
-/* 工具条两段式 */
-.lib-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-.tb-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 工具条:单行密集带（左主操作 / 右浏览控制），不做卡片面，仅靠控件密度与分隔线 */
+.lib-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+.tb-group { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
 .tb-primary { flex: none; }
 .tb-browse { flex: 1; min-width: 0; justify-content: flex-end; }
-.kw-input { width: 220px; }
-.sem-input { width: 260px; }
-.src-filter { width: 110px; }
-.tag-filter { width: 150px; }
-.score-filter { width: 130px; }
-.tag-preset { width: 180px; }
-.proj-filter { width: 180px; }
-
-@media (max-width: 768px) {
-  .tb-browse { justify-content: flex-start; }
-  .kw-input { width: 100%; }
-  .sem-input { width: 100%; }
-  .tag-filter, .tag-preset, .src-filter, .proj-filter, .score-filter { width: calc(50% - 5px); }
-  .lib-toolbar .el-button { min-height: 44px; }
-}
+.kw-input { width: 200px; }
+.sem-input { width: 240px; }
+.src-filter { width: 104px; }
+.tag-filter { width: 140px; }
+.score-filter { width: 120px; }
+.tag-preset { width: 168px; }
+.proj-filter { width: 168px; }
+/* 密集档：控件统一 28px 一档，输入/下拉不再顶高行 */
+.tb-group :deep(.el-input__wrapper),
+.tb-group :deep(.el-select__wrapper) { min-height: var(--control-h-sm); box-shadow: 0 0 0 1px var(--line) inset; }
+.tb-group :deep(.el-input__wrapper:hover),
+.tb-group :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px var(--line-strong) inset; }
+.tb-group :deep(.el-input__wrapper.is-focus),
+.tb-group :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px var(--brand) inset, 0 0 0 3px var(--brand-weak) !important; }
 </style>

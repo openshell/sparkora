@@ -1,32 +1,26 @@
 <template>
-  <div>
-    <div class="container">
-    <div class="page-header">
-      <div>
-        <span class="page-kicker">Image Library</span>
-        <h2 class="serif">图库</h2>
-      </div>
-      <span class="muted-small">共 {{ total }} 张 · 文章配图在项目「预览」步骤从图库选用</span>
+  <div class="page">
+    <!-- 工具条:左主操作 / 右浏览控制(单行粘性)+ 图库计数说明 -->
+    <div class="lib-head">
+      <ImageLibraryToolbar
+        :can-edit="user.isEditorOrAbove" :uploading="uploading"
+        :keyword="keyword" :source-filter="sourceFilter" :tag-filter="tagFilter" :project-filter="projectFilter"
+        :projects="projects" :tag-groups="tagGroups" :tag-option-names="tagOptionNames" :preset-tags="presetTags"
+        :semantic-mode="semanticMode" :semantic-query="semanticQuery" :semantic-tags="semanticTags"
+        :semantic-min-score="semanticMinScore" :semantic-loading="semanticLoading"
+        :density="density" :select-mode="selectMode" :images-length="images.length"
+        :before-upload="beforeUpload" :do-upload="doUpload"
+        @update:keyword="(v) => (keyword = v)" @update:source-filter="(v) => (sourceFilter = v)"
+        @update:tag-filter="(v) => (tagFilter = v)" @update:project-filter="(v) => (projectFilter = v)"
+        @update:preset-tags="(v) => (presetTags = v)"
+        @update:semantic-query="(v) => (semanticQuery = v)" @update:semantic-tags="(v) => (semanticTags = v)"
+        @update:semantic-min-score="(v) => (semanticMinScore = v)"
+        @keyword-input="onKeywordInput" @filter-change="onFilterChange"
+        @toggle-semantic="toggleSemanticMode" @run-semantic="runSemanticSearch"
+        @exit-semantic="exitSemantic" @refresh-semantic="refreshSemantic"
+        @toggle-density="toggleDensity" @reload="load" @ai-gen="aiDrawer = true" @enter-select="enter" />
+      <span class="lib-meta">共 {{ total }} 张 · 文章配图在项目「预览」步骤从图库选用</span>
     </div>
-
-    <!-- 工具条两段式:左主操作 / 右浏览控制 -->
-    <ImageLibraryToolbar
-      :can-edit="user.isEditorOrAbove" :uploading="uploading"
-      :keyword="keyword" :source-filter="sourceFilter" :tag-filter="tagFilter" :project-filter="projectFilter"
-      :projects="projects" :tag-groups="tagGroups" :tag-option-names="tagOptionNames" :preset-tags="presetTags"
-      :semantic-mode="semanticMode" :semantic-query="semanticQuery" :semantic-tags="semanticTags"
-      :semantic-min-score="semanticMinScore" :semantic-loading="semanticLoading"
-      :density="density" :select-mode="selectMode" :images-length="images.length"
-      :before-upload="beforeUpload" :do-upload="doUpload"
-      @update:keyword="(v) => (keyword = v)" @update:source-filter="(v) => (sourceFilter = v)"
-      @update:tag-filter="(v) => (tagFilter = v)" @update:project-filter="(v) => (projectFilter = v)"
-      @update:preset-tags="(v) => (presetTags = v)"
-      @update:semantic-query="(v) => (semanticQuery = v)" @update:semantic-tags="(v) => (semanticTags = v)"
-      @update:semantic-min-score="(v) => (semanticMinScore = v)"
-      @keyword-input="onKeywordInput" @filter-change="onFilterChange"
-      @toggle-semantic="toggleSemanticMode" @run-semantic="runSemanticSearch"
-      @exit-semantic="exitSemantic" @refresh-semantic="refreshSemantic"
-      @toggle-density="toggleDensity" @reload="load" @ai-gen="aiDrawer = true" @enter-select="enter" />
 
     <!-- 语义搜索提示条：结果按相关度排序，展示命中原因（嵌入原文） -->
     <ImageSemanticBar
@@ -77,7 +71,7 @@
       </el-empty>
     </div>
 
-    <!-- 图库网格:卡片瘦身,元数据入 hover 层;移动端 ··· 兜底 -->
+    <!-- 图库网格:元数据入 hover 层 -->
     <template v-else>
       <div class="img-grid" :class="{ compact: density === 'compact' }" v-loading="loading" element-loading-text="加载中…">
         <ImageCard v-for="img in images" :key="img.id"
@@ -87,7 +81,7 @@
                    :can-regenerate="canRegenerate(img)" :deleting="deletingId === img.id" :regenerating="regenId === img.id"
                    :page-origin-urls="pageOriginUrls"
                    @card-click="onCardClick" @filter-tag="filterByTag" @edit-tags="openTagDialog"
-                   @regen="onRegenerate" @delete="onDelete" @open-news="openNews" @mobile-cmd="onMobileCmd" />
+                   @regen="onRegenerate" @delete="onDelete" @open-news="openNews" />
       </div>
       <!-- 分页：语义搜索为 topK 无分页，仅图库浏览态显示 -->
       <div v-if="!semanticMode" class="pager-row">
@@ -112,12 +106,12 @@
 
     <!-- 上传隐藏触发（空态按钮复用） -->
     <input ref="uploadInput" type="file" accept=".png,.jpg,.jpeg,.webp" multiple class="hidden-input" @change="onUploadInput" />
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import AiImageDrawer from '../components/AiImageDrawer.vue'
 import ImageLibraryToolbar from '../components/image/ImageLibraryToolbar.vue'
 import ImageSemanticBar from '../components/image/ImageSemanticBar.vue'
@@ -126,6 +120,7 @@ import ImageTagDialog from '../components/image/ImageTagDialog.vue'
 import ImageBulkTagDialog from '../components/image/ImageBulkTagDialog.vue'
 import { imageApi, projectApi } from '../api'
 import { useUserStore } from '../store/user'
+import { usePageHeader } from '../composables/usePageHeader'
 import { useImageFilters } from '../composables/useImageFilters'
 import { useSemanticSearch } from '../composables/useSemanticSearch'
 import { useBulkSelect } from '../composables/useBulkSelect'
@@ -290,13 +285,6 @@ const { deletingId, regenId, canRegenerate, onDelete, onRegenerate } = useImageC
 const { tagDialog, tagDialogImage, tagSaving, openTagDialog, onSaveTags, bulkTagDialog, bulkTagAction, bulkTagSaving, openBulkTag, onBulkTag } =
   useImageTagDialogs({ selectedIds, exitSelectMode: exit, refreshView, tagDialogTags, bulkTagTags })
 
-/** 移动端 ··· 命令分派 */
-const onMobileCmd = (cmd, img) => {
-  if (cmd === 'delete') onDelete(img)
-  else if (cmd === 'regen') onRegenerate(img)
-  else if (cmd === 'tags') openTagDialog(img)
-}
-
 // ==== AI 生图（09-26 image-gen-drawer-ux：抽屉 UI/逻辑抽到共用组件 AiImageDrawer.vue） ====
 // 仅保留宿主关心的状态与联动：抽屉开关 + 生成后刷新当前视图（refreshView）+ 候选定位（locateInList）。
 const aiDrawer = ref(false)
@@ -316,37 +304,34 @@ const locateInList = async (img) => {
 
 onMounted(() => { applyFilterFromRoute(); load() })
 onBeforeUnmount(() => { clearTimeout(kwTimer) })
+
+// ==== 页头（09-28-pc-ui-refactor 批1：标题/计数并入 AppShell 上下文条 + 页内工具带） ====
+const header = usePageHeader()
+if (header) header.crumbs = [{ label: '资产' }, { label: '图库' }]
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
 </script>
 
 <style scoped>
-.page-header { align-items: baseline; justify-content: space-between; display: flex; flex-wrap: wrap; gap: 8px; }
-.page-header h2 { margin: 2px 0 0; }
-.muted-small { color: var(--muted); font-size: 12px; }
+/* 工具条外壳 + 图库计数（工具条组件内部结构不变，单行粘性；页内错误/空态用全局 .state-error/.empty-state） */
+.lib-head { position: sticky; top: 0; z-index: 20; display: flex; align-items: flex-start; gap: var(--sp-4); margin-bottom: var(--sp-4); padding-bottom: var(--sp-2); background: var(--paper); }
+.lib-head :deep(.lib-toolbar) { flex: 1; min-width: 0; margin-bottom: 0; }
+.lib-meta { flex: none; font-size: var(--fs-12); color: var(--faint); line-height: var(--control-h-md); white-space: nowrap; }
 
 /* 批量选择态 */
-.bulk-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 8px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.bulk-count { font-size: 13px; font-weight: 600; color: var(--text); }
+.bulk-bar { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-5); background: var(--el-color-primary-light-9); border: 1px solid var(--el-color-primary-light-8); border-radius: var(--radius-md); }
+.bulk-count { font-size: var(--fs-13); font-weight: 600; color: var(--brand-strong); }
 
 /* 筛选 chip */
-.chip-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.chip-row { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); flex-wrap: wrap; }
 
-.state-error { padding: 36px 16px; text-align: center; }
-.state-title { font-weight: 700; margin: 8px 0 4px; }
-.state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-.empty-state { padding: 40px 0; }
-.empty-desc { color: var(--muted); font-size: 13px; }
-.empty-actions { display: flex; gap: 10px; justify-content: center; margin-top: 14px; }
+.empty-state { padding: var(--sp-8) 0; }
+.empty-desc { color: var(--muted); font-size: var(--fs-13); }
+.empty-actions { display: flex; gap: var(--sp-4); justify-content: center; margin-top: var(--sp-5); }
 .hidden-input { display: none; }
 
-/* 网格:舒适/紧凑双密度 */
-.img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; min-height: 200px; }
-.img-grid.compact { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+/* 网格:舒适/紧凑双密度（PC-only，去掉 2 列移动端塌陷） */
+.img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-5); min-height: 200px; }
+.img-grid.compact { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--sp-3); }
 
-.pager-row { display: flex; justify-content: center; margin-top: 18px; }
-
-@media (max-width: 768px) {
-  .img-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .img-grid.compact { grid-template-columns: repeat(3, 1fr); }
-  .bulk-bar .el-button { min-height: 44px; }
-}
+.pager-row { display: flex; justify-content: flex-end; margin-top: var(--sp-6); }
 </style>
