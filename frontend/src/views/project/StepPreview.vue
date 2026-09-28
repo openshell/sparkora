@@ -1,15 +1,5 @@
 <template>
-  <el-card class="step-card" shadow="never">
-    <template #header>
-      <span class="card-head">
-        <span class="head-main">
-          <span class="step-title serif">Step 3 · 排版预览</span>
-          <span class="step-sub">微信样式实时预览 · 与发布同源(文颜)</span>
-        </span>
-        <span class="meta">左编辑 · 右预览</span>
-      </span>
-    </template>
-
+  <div class="page preview-page">
     <!-- 前置未就绪 -->
     <div v-if="!previewable" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
@@ -48,9 +38,9 @@
         <el-button type="primary" plain @click="loadContent">重试</el-button>
       </div>
 
-      <!-- 双栏:左 CodeMirror 编辑 / 右微信样式滚动同步预览 -->
-      <div v-else-if="loaded" class="duo">
-        <div class="pane pane-left">
+      <!-- 双栏:左 CodeMirror 编辑 / 右微信样式滚动同步预览(可拖拽分隔条) -->
+      <div v-else-if="loaded" ref="splitRef" class="duo" :class="{ dragging: isSplitDragging }">
+        <div class="pane pane-left" :style="{ flex: `0 0 ${splitPercent}%` }">
           <div class="pane-head">
             <span>Markdown</span>
             <span class="pane-meta">{{ wordCount }} 字</span>
@@ -68,16 +58,18 @@
           </div>
         </div>
 
+        <div
+          class="splitter" role="separator" aria-orientation="vertical" tabindex="0"
+          :aria-valuenow="Math.round(splitPercent)" :aria-valuemin="30" :aria-valuemax="75"
+          title="拖拽(或用方向键)调整编辑/预览分栏比例"
+          @pointerdown="onSplitDown" @keydown="onSplitKey"
+        ></div>
+
         <PreviewPane
           ref="previewPaneRef"
           :html="html" :rendering="rendering" :theme-loading="themeLoading" :render-error="renderError"
           :preview-width="previewWidth"
           @scroll="onPreviewScroll" @retry="renderMarkdown" />
-      </div>
-
-      <!-- 底部:进入下一步(与简报/版本同款 next-row;发布成功后消失) -->
-      <div v-if="canGoPublish" class="next-row">
-        <el-button type="success" :disabled="!!renderError" @click="goPublish">去发布 →</el-button>
       </div>
     </template>
 
@@ -94,12 +86,12 @@
       :refresh-snapshot="refreshImgSnapshot"
       @update:busy="(v) => (busy = v)"
       @insert="insertBodyImage" @set-cover="onSetCover" @generated="onGenerated" />
-  </el-card>
+  </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
 import { useProjectDetailStore } from '../../store/project-detail'
 import { applyPreviewTheme, buildWechatHtml } from '../../utils/wenyanRender'
@@ -110,6 +102,7 @@ import PreviewImageDrawer from '../../components/preview/PreviewImageDrawer.vue'
 import { usePreviewStylePersist } from '../../composables/usePreviewStylePersist'
 import { usePreviewRender } from '../../composables/usePreviewRender'
 import { usePendingImageFlush } from '../../composables/usePendingImageFlush'
+import { usePageHeader } from '../../composables/usePageHeader'
 import { clearProject, clearOthers, extractTokens, get } from '../../utils/pendingImageStore'
 import { parseBodyImageRefs } from '../../utils/bodyImageRefs'
 import { ElMessage } from 'element-plus'
@@ -208,6 +201,54 @@ const { goPublish, hasPendingToken } = usePendingImageFlush({
   goNext: () => router.push({ name: 'project-publish', params: { id: projectId.value } }),
   isSaving: () => saving.value
 })
+
+// ==== 上下文条(外壳 topbar):面包屑 + 主 CTA「去发布」(取代原底部 next-row)====
+// 挂载在 goPublish 之后:action 直接引用它(避免 TDZ)
+const header = usePageHeader()
+const syncHeader = () => {
+  if (!header) return
+  header.crumbs = [{ label: '项目' }, { label: '预览' }]
+  header.actions = canGoPublish.value
+    ? [{ key: 'publish', label: '去发布 →', type: 'primary', onClick: goPublish, disabled: !!renderError.value }]
+    : []
+}
+syncHeader()
+watch([canGoPublish, renderError], syncHeader)
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
+
+// ==== 分栏比例:可拖拽分隔条,30%~75%,记忆到 localStorage ====
+const SPLIT_KEY = 'sparkora.previewSplit'
+const splitRef = ref(null)                                   // .duo 容器(换算指针 x → 百分比)
+const isSplitDragging = ref(false)
+const splitPercent = ref(clampSplit(Number(localStorage.getItem(SPLIT_KEY)) || 50))
+function clampSplit(p) { return Math.min(75, Math.max(30, p || 50)) }
+const onSplitDown = (e) => {
+  isSplitDragging.value = true
+  window.addEventListener('pointermove', onSplitMove)
+  window.addEventListener('pointerup', onSplitUp)
+  e.preventDefault()
+}
+function onSplitMove(e) {
+  const box = splitRef.value
+  if (!isSplitDragging.value || !box) return
+  const rect = box.getBoundingClientRect()
+  if (!rect.width) return
+  splitPercent.value = clampSplit(((e.clientX - rect.left) / rect.width) * 100)
+}
+function onSplitUp() {
+  if (!isSplitDragging.value) return
+  isSplitDragging.value = false
+  window.removeEventListener('pointermove', onSplitMove)
+  window.removeEventListener('pointerup', onSplitUp)
+  localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent.value)))
+}
+/** 键盘可达:左右方向键微调分栏比例 */
+const onSplitKey = (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  const step = e.shiftKey ? 10 : 2
+  splitPercent.value = clampSplit(splitPercent.value + (e.key === 'ArrowLeft' ? -step : step))
+  localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent.value)))
+}
 
 // ==== 预览样式落库(项目级,跨会话保持):防抖 400ms,失败仅 warn 不阻塞预览 ====
 const { schedule: scheduleSavePreviewStyle, flush: flushSavePreviewStyle, styleDefaults, applyEffectiveStyle, markApplied, isApplied } =
@@ -462,35 +503,41 @@ watch(projectId, (newId, oldId) => {
 })
 
 watch(previewable, (ok) => { if (ok && !loaded.value && !loadError.value) loadContent() })
-onBeforeUnmount(() => { disposeRender(); flushSavePreviewStyle() })
+onBeforeUnmount(() => { onSplitUp(); disposeRender(); flushSavePreviewStyle() })
 </script>
 
 <style scoped>
-.card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
-.head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.step-title { font-size: 16px; font-weight: 700; }
-.step-sub { font-size: 12px; color: var(--faint); }
-.card-head .meta { font-size: 12px; color: var(--muted); }
-.state-error { padding: 36px 16px; }
-.state-title { font-weight: 700; margin: 8px 0 4px; }
-.state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+/* 整页定高:工具栏常驻,双 pane 填满剩余高度并各自内部滚动 */
+.preview-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.state-error { padding: var(--sp-8) var(--sp-6); }
+.state-title { font-weight: 600; margin: var(--sp-4) 0 var(--sp-2); }
+.state-msg { color: var(--muted); font-size: var(--fs-13); margin-bottom: var(--sp-5); }
 
-/* 粘贴图失效警示(09-27-image-insert-bugs) */
-.lost-image-alert { margin-bottom: 12px; }
+/* 粘贴图失效警示(09-27-image-insert-bugs):工具带之下的条带 */
+.lost-image-alert { flex: none; margin-bottom: var(--sp-4); }
 
-.duo { display: grid; grid-template-columns: minmax(280px, 5fr) minmax(320px, 7fr); gap: 16px; align-items: stretch; }
-.pane { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; background: var(--paper); display: flex; flex-direction: column; }
-.pane-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); background: var(--el-fill-color-light); }
+/* 双 pane:左编辑 / 右预览,中间可拖拽分隔条(30%~75%,localStorage 记忆) */
+.duo { display: flex; align-items: stretch; flex: 1; min-height: 320px; }
+.duo.dragging { cursor: col-resize; user-select: none; }
+.pane { border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: var(--card); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.pane-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--line); font-size: var(--fs-12); font-weight: 600; color: var(--muted); background: var(--n-50); flex: none; }
 .pane-meta { margin-left: auto; font-weight: 400; }
-.editor-wrap { flex: 1; min-height: 620px; max-height: 720px; display: flex; flex-direction: column; }
+.editor-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .editor-wrap > :deep(.cm-host) { flex: 1; }
-.editor-loading { padding: 24px; }
+.editor-loading { padding: var(--sp-7); }
 
-/* 底部进入下一步(与简报/版本同款 next-row) */
-.next-row { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
-.next-row .el-button:last-child { margin-left: auto; }
+/* 右侧预览 pane(PreviewPane 根元素):吃掉剩余宽度,内部手机框铺满高度 */
+.pane-right { flex: 1 1 0; min-width: 0; }
+.pane-right :deep(.wechat-body) { max-height: none; min-height: 0; flex: 1; }
 
-@media (max-width: 900px) {
-  .duo { grid-template-columns: 1fr; }
+/* 分隔条:细竖线,hover/聚焦变品牌色 */
+.splitter { position: relative; flex: 0 0 6px; cursor: col-resize; touch-action: none; }
+.splitter::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px;
+  background: var(--line); transition: background .15s ease;
+}
+.splitter:hover::after, .splitter:focus-visible::after { background: var(--brand); }
+@media (prefers-reduced-motion: reduce) {
+  .splitter::after { transition: none; }
 }
 </style>

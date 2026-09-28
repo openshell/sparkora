@@ -746,15 +746,4 @@ onBeforeUnmount(() => {
 .ref-cell-thumb { width: 100%; max-height: 180px; border-radius: var(--radius-sm); background: var(--paper); }
 .ref-cell-name { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ref-pager { display: flex; justify-content: center; margin-top: 12px; }
-
-/* 移动端：单列候选、比例选择器 2×2、触控目标 ≥44px */
-@media (max-width: 768px) {
-  .cand-grid { grid-template-columns: 1fr; }
-  .ratio-picker { grid-template-columns: repeat(2, 1fr); }
-  .ref-empty-actions .el-button,
-  .ref-ops .el-button,
-  .cand-actions .el-button { min-height: 44px; }
-  .ref-thumbs { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
-  .ref-zone.is-empty { padding: 20px 12px; }
-}
 </style>

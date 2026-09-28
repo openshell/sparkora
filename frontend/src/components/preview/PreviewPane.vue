@@ -109,11 +109,6 @@ defineExpose({ scrollToPercent, currentPercent })
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 900px) {
-  .phone-device,
-  .phone.w-tablet .phone-device,
-  .phone.w-full .phone-device { width: 100%; max-width: 430px; }
-}
 @media (prefers-reduced-motion: reduce) {
   .wenyan-preview { animation: none; }
   .theme-progress { display: none; }

@@ -1,19 +1,35 @@
 <template>
-  <div>
-    <div class="container">
-      <div class="page-header project-head">
-        <div class="head-left">
-          <el-button text @click="$router.push('/')">← 返回工作台</el-button>
-          <div class="head-title">
-            <span class="page-kicker">{{ project ? `Project #${project.id}` : 'Project' }}</span>
-            <h2 class="serif">{{ project?.topic || loadFailedLabel }}</h2>
-          </div>
-        </div>
-        <el-tag v-if="project" :type="statusTagType(project.status)" effect="light" round>
+  <div class="page project-page">
+    <!-- 左侧竖排步骤导航(自绘,可点/锁定/当前态) -->
+    <aside class="step-rail">
+      <button type="button" class="back-btn" @click="$router.push('/')">
+        <el-icon :size="14"><ArrowLeft /></el-icon>工作台
+      </button>
+
+      <nav v-if="!loadError" class="steps-nav" aria-label="创作步骤">
+        <button v-for="(s, i) in STEPS" :key="s.key" type="button"
+                class="step-item" :class="stepClass(i)" :disabled="i > maxReachable"
+                :title="i > maxReachable ? '完成前置步骤后解锁' : s.title"
+                @click="onStepClick(i)">
+          <span class="step-mark">
+            <el-icon v-if="i < activeStep" :size="12"><Check /></el-icon>
+            <el-icon v-else-if="i > maxReachable" :size="12"><Lock /></el-icon>
+            <template v-else>{{ i + 1 }}</template>
+          </span>
+          <span class="step-name">{{ s.title }}</span>
+        </button>
+      </nav>
+
+      <!-- 状态 tag:从原页头下移至 rail 底部(标题并入上下文条) -->
+      <div v-if="project" class="rail-status">
+        <el-tag :type="statusTagType(project.status)" effect="light" round>
           {{ statusLabel(project.status) }}
         </el-tag>
       </div>
+    </aside>
 
+    <!-- 步骤内容主区 -->
+    <div class="project-main">
       <!-- 项目详情加载失败:可见化 + 重试(此前静默会卡死步骤导航) -->
       <div v-if="loadError" class="state-error">
         <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
@@ -25,21 +41,6 @@
       <template v-else>
         <el-alert v-if="project && project.lastVersionError" type="warning" :closable="false" show-icon
                   :title="`版本生成提示：${project.lastVersionError}`" class="top-alert" />
-
-        <!-- 五步创作向导:编号式步骤导航(自绘,可点/锁定/当前态),移动端横向滑动 -->
-        <nav class="steps-nav" aria-label="创作步骤">
-          <button v-for="(s, i) in STEPS" :key="s.key" type="button"
-                  class="step-pill" :class="stepClass(i)" :disabled="i > maxReachable"
-                  :title="i > maxReachable ? '完成前置步骤后解锁' : s.title"
-                  @click="onStepClick(i)">
-            <span class="step-num">
-              <el-icon v-if="i < activeStep" :size="13"><Check /></el-icon>
-              <el-icon v-else-if="i > maxReachable" :size="13"><Lock /></el-icon>
-              <template v-else>{{ i + 1 }}</template>
-            </span>
-            <span class="step-name">{{ s.title }}</span>
-          </button>
-        </nav>
 
         <!-- 当前步骤内容由子路由渲染;渲染层异常时以错误卡片替代,不再整片空白 -->
         <div v-if="captureError" class="state-error">
@@ -56,10 +57,11 @@
 
 <script setup>
 import { ref, computed, watch, onErrorCaptured, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useProjectDetailStore } from '../../store/project-detail'
+import { usePageHeader } from '../../composables/usePageHeader'
 import { statusLabel, statusTagType, activeStepOf, maxReachableStepOf, isGenerating } from '../../constants/project'
-import { Check, Lock, WarningFilled } from '@element-plus/icons-vue'
+import { Check, Lock, WarningFilled, ArrowLeft } from '@element-plus/icons-vue'
 
 const STEPS = [
   { key: 'brief', title: '简报', route: 'brief' },
@@ -95,6 +97,18 @@ const stepClass = (i) => ({
   current: i === routeStepIndex.value,
   locked: i > maxReachable.value
 })
+
+// ==== 上下文条(外壳 topbar):面包屑「项目 / #id / 主题」,状态 tag 留在 rail 底部 ====
+// 依赖 route.name:步骤间切换时重新申明,避免子步骤清空后无人补写
+const header = usePageHeader()
+const syncHeader = () => {
+  if (!header) return
+  const id = route.params.id
+  const tail = project.value?.topic || (loadError.value ? loadFailedLabel : '')
+  header.crumbs = [{ label: '项目' }, { label: `#${id}` }, ...(tail ? [{ label: tail }] : [])]
+}
+watch([() => route.params.id, () => route.name, project, loadError], syncHeader, { immediate: true })
+onBeforeRouteLeave(() => { if (header) header.crumbs = [] })
 
 const loadProject = async () => {
   loadingProject.value = true
@@ -137,60 +151,93 @@ onUnmounted(() => store.stopPolling())
 </script>
 
 <style scoped>
-.project-head { align-items: flex-start; }
-.head-left { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.head-title .page-kicker { margin-bottom: 2px; }
-.head-title h2 { margin: 0; font-size: 24px; line-height: 1.25; }
-.top-alert { margin: 0 0 14px; }
-.state-error { padding: 36px 16px; }
+/* 整页定高(= 外壳内容区高度):步骤主区内部滚动,rail 状态 tag 贴底 */
+.project-page { display: flex; align-items: stretch; gap: var(--sp-7); height: 100%; }
 
-/* 步骤导航:编号药丸,完成的打勾、未解锁的上锁 */
-.steps-nav {
+/* 左侧竖排步骤 rail(取代原顶部药丸步骤条) */
+.step-rail {
+  width: 200px;
+  flex-shrink: 0;
   display: flex;
-  gap: 8px;
-  margin: 4px 0 18px;
-  padding-bottom: 6px;
-  overflow-x: auto;          /* 移动端横向滑动,不再挤压 */
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding-right: var(--sp-5);
+  border-right: 1px solid var(--line);
 }
-.steps-nav::-webkit-scrollbar { display: none; }
-.step-pill {
-  flex: 0 0 auto;
+.back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 14px 0 8px;
+  gap: var(--sp-2);
+  height: var(--control-h-sm);
+  padding: 0 var(--sp-3);
   border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--card);
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-12);
   cursor: pointer;
-  transition: border-color .2s, color .2s, background .2s;
+  align-self: flex-start;
 }
-.step-pill:not(:disabled):hover { border-color: var(--brand); color: var(--brand); }
-.step-num {
+.back-btn:hover { color: var(--brand); border-color: var(--brand); }
+
+.steps-nav { display: flex; flex-direction: column; gap: var(--sp-1); }
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: var(--control-h-lg);
+  padding: 0 var(--sp-4);
+  border: none;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-13);
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.step-item:not(:disabled):hover { background: var(--n-50); color: var(--ink); }
+.step-mark {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
+  width: 20px;
+  height: 20px;
   border: 1px solid var(--line-strong);
-  font-size: 12px;
+  border-radius: 50%;
+  background: var(--card);
+  font-size: var(--fs-11);
   font-weight: 600;
-  background: var(--paper);
 }
-.step-pill.done { color: var(--ok); }
-.step-pill.done .step-num { border-color: var(--ok); color: var(--ok); }
-.step-pill.current { border-color: var(--brand); color: var(--brand-strong); background: var(--brand-weak); font-weight: 600; }
-.step-pill.current .step-num { border-color: var(--brand); background: var(--brand); color: #fff; }
-.step-pill.locked { opacity: .55; cursor: not-allowed; background: transparent; }
+.step-name { white-space: nowrap; }
+.step-item.done { color: var(--ok); }
+.step-item.done .step-mark { border-color: var(--ok); color: var(--ok); }
+.step-item.current {
+  border-left-color: var(--brand);
+  background: var(--brand-weak);
+  color: var(--brand-strong);
+  font-weight: 600;
+}
+.step-item.current .step-mark { border-color: var(--brand); background: var(--brand); color: #fff; }
+.step-item.locked { opacity: .5; cursor: not-allowed; }
+.step-item:disabled { cursor: not-allowed; }
 
-@media (max-width: 768px) {
-  .head-title h2 { font-size: 20px; }
-  .step-pill { height: 44px; } /* 触控目标 ≥44px */
+.rail-status { margin-top: auto; padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+
+/* 步骤主区:固定高度内滚动,子步骤可自行撑高(批 2/3 的页面不受影响) */
+.project-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.top-alert { flex: none; margin: 0 0 var(--sp-4); }
+
+@media (prefers-reduced-motion: reduce) {
+  .step-item { transition: none; }
 }
 </style>

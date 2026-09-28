@@ -119,45 +119,37 @@ const communityThemes = computed(() => (props.themeOptions || []).filter((t) => 
 /* 控件微动效(150-200ms,无布局位移) */
 .ctrl-bar :deep(.el-button) { transition: background-color .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease; }
 .ctrl-bar :deep(.el-switch__core) { transition: background-color .2s ease; }
-/* ===== 工具栏(三段分组:选择器 | 开关 | 动作;统一 36px 高度) ===== */
+/* ===== 工具栏(选择器 | 开关 | 动作;控件 28px 一档,窄屏允许换行不横滚) ===== */
 .ctrl-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
-  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: var(--el-fill-color-light);
-  /* 粘性工具栏:长文滚动时操作不丢失(停在顶栏下方) */
-  position: sticky; top: 68px; z-index: 20;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .04);
-  backdrop-filter: blur(6px);
+  display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
+  margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--card);
+  /* 粘性工具栏:停在滚动容器顶边(外壳内容区),长文滚动时操作不丢失 */
+  position: sticky; top: 0; z-index: 20;
 }
-.ctrl-group { display: inline-flex; align-items: center; gap: 8px; }
-.ctrl-divider { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+.ctrl-group { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.ctrl-divider { width: 1px; height: 16px; background: var(--line); flex: none; }
 /* 宽度档位分段控件(仅预览视觉,不改渲染内容) */
 .width-toggle { flex: none; }
-.width-toggle :deep(.el-radio-button__inner) { padding: 6px 12px; }
+.width-toggle :deep(.el-radio-button__inner) { padding: 3px 10px; }
 
 :deep(.theme-select .el-select__wrapper),
-:deep(.hl-select .el-select__wrapper) { height: 34px; border-radius: 8px; }
-:deep(.theme-select .el-select__selection) { display: inline-flex; align-items: center; gap: 7px; }
+:deep(.hl-select .el-select__wrapper) { height: var(--control-h-sm); border-radius: var(--radius-sm); }
+:deep(.theme-select .el-select__selection) { display: inline-flex; align-items: center; gap: var(--sp-3); }
 /* 字段标签(收起态语义可见,无需点开下拉) */
-.field-label { font-size: 13px; color: var(--muted); flex: none; white-space: nowrap; }
+.field-label { font-size: var(--fs-12); color: var(--muted); flex: none; white-space: nowrap; }
 /* 固定宽度防塌陷:收起态完整显示 色点+名称 */
-.theme-select { width: 188px; flex: none; }
-.hl-select { width: 190px; flex: none; }
-.theme-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
-.theme-dot.is-bright { box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
-.select-label-text { font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.option-row { display: inline-flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.theme-select { width: 180px; flex: none; }
+.hl-select { width: 170px; flex: none; }
+.theme-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px var(--n-200); }
+.theme-dot.is-bright { box-shadow: inset 0 0 0 1px var(--n-400); }
+.select-label-text { font-size: var(--fs-12); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.option-row { display: inline-flex; align-items: center; gap: var(--sp-4); width: 100%; min-width: 0; }
 .option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .option-check { color: var(--brand); flex: none; }
 
-.switch-item { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.switch-label { font-size: 13px; color: var(--muted); user-select: none; }
-.flex-sp { flex: 1; }
-
-@media (max-width: 900px) {
-  .theme-select, .hl-select { width: 100%; flex: auto; }
-  .ctrl-divider { display: none; }
-  .ctrl-bar { position: static; top: auto; box-shadow: none; }
-  .width-toggle { display: none; } /* 移动端容器已满宽,档位无意义 */
-}
+.switch-item { display: inline-flex; align-items: center; gap: var(--sp-3); cursor: pointer; }
+.switch-label { font-size: var(--fs-12); color: var(--muted); user-select: none; white-space: nowrap; }
+.flex-sp { flex: 1; min-width: var(--sp-5); }
 </style>

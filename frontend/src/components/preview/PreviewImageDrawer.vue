@@ -230,15 +230,4 @@ watch(imgTab, (t) => { if (t === 'suggest') loadSugTags() })
 .sug-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 20px; }
 .sug-tag-row .el-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .sug-insert { width: 100%; margin-top: 6px; min-height: 32px; }
-
-@media (max-width: 900px) {
-  /* 移动端配图抽屉全屏,网格两列 */
-  .img-drawer { --el-drawer-size: 100% !important; }
-  .img-pop-grid { grid-template-columns: repeat(2, 1fr); }
-  /* 智能建议:移动端单列 + 触控目标 >=44px */
-  .sug-grid { grid-template-columns: 1fr; }
-  .sug-group-actions .el-button,
-  .sug-insert { min-height: 44px; }
-  .sug-head .el-button { min-height: 44px; }
-}
 </style>
