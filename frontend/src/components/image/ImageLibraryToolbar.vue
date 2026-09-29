@@ -6,11 +6,6 @@
         <el-button type="primary" :loading="uploading" icon="Upload">上传图片</el-button>
       </el-upload>
       <el-button v-if="canEdit" type="primary" plain icon="MagicStick" @click="emit('ai-gen')">AI 生图</el-button>
-      <!-- 上传标签预选(09-13 image-tags):上传与 AI 生图共读,不持久化;可新建/可清空 -->
-      <el-select v-if="canEdit" v-model="presetTagsModel" multiple filterable allow-create default-first-option
-                 clearable collapse-tags collapse-tags-tooltip placeholder="上传标签" class="tag-preset" size="default">
-        <el-option v-for="t in tagOptionNames" :key="t" :label="t" :value="t" />
-      </el-select>
     </div>
     <div class="tb-group tb-browse">
       <!-- 语义搜索模式(09-15 img-semantic-search 子B):自然语言找图,与下方精确筛选互斥 -->
@@ -83,8 +78,6 @@ const props = defineProps({
   projectFilter: { type: [String, Number], default: '' },
   projects: { type: Array, default: () => [] },
   tagGroups: { type: Array, default: () => [] },
-  tagOptionNames: { type: Array, default: () => [] },
-  presetTags: { type: Array, default: () => [] },
   semanticMode: { type: Boolean, default: false },
   semanticQuery: { type: String, default: '' },
   semanticTags: { type: Array, default: () => [] },
@@ -97,7 +90,7 @@ const props = defineProps({
   doUpload: { type: Function, required: true }
 })
 const emit = defineEmits([
-  'update:keyword', 'update:sourceFilter', 'update:tagFilter', 'update:projectFilter', 'update:presetTags',
+  'update:keyword', 'update:sourceFilter', 'update:tagFilter', 'update:projectFilter',
   'update:semanticQuery', 'update:semanticTags', 'update:semanticMinScore',
   'keyword-input', 'filter-change', 'toggle-semantic', 'run-semantic', 'exit-semantic', 'refresh-semantic',
   'toggle-density', 'reload', 'ai-gen', 'enter-select'
@@ -108,7 +101,6 @@ const keywordModel = computed({ get: () => props.keyword, set: (v) => emit('upda
 const sourceFilterModel = computed({ get: () => props.sourceFilter, set: (v) => emit('update:sourceFilter', v) })
 const tagFilterModel = computed({ get: () => props.tagFilter, set: (v) => emit('update:tagFilter', v) })
 const projectFilterModel = computed({ get: () => props.projectFilter, set: (v) => emit('update:projectFilter', v) })
-const presetTagsModel = computed({ get: () => props.presetTags, set: (v) => emit('update:presetTags', v) })
 const semanticQueryModel = computed({ get: () => props.semanticQuery, set: (v) => emit('update:semanticQuery', v) })
 const semanticTagsModel = computed({ get: () => props.semanticTags, set: (v) => emit('update:semanticTags', v) })
 const semanticMinScoreModel = computed({ get: () => props.semanticMinScore, set: (v) => emit('update:semanticMinScore', v) })
@@ -125,7 +117,6 @@ const semanticMinScoreModel = computed({ get: () => props.semanticMinScore, set:
 .src-filter { width: 104px; }
 .tag-filter { width: 140px; }
 .score-filter { width: 120px; }
-.tag-preset { width: 168px; }
 .proj-filter { width: 168px; }
 /* 密集档：控件统一 28px 一档，输入/下拉不再顶高行 */
 .tb-group :deep(.el-input__wrapper),

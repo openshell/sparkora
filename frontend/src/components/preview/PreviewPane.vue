@@ -67,7 +67,7 @@ defineExpose({ scrollToPercent, currentPercent })
 .pane-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); background: var(--el-fill-color-light); }
 
 /* ===== 手机拟真(参照 iPhone 外观;背景渐变模拟桌面环境) ===== */
-.phone { background: linear-gradient(160deg, #f0eee9 0%, #e7e3db 100%); padding: 20px 0; display: flex; justify-content: center; flex: 1; }
+.phone { background: linear-gradient(160deg, #f0eee9 0%, #e7e3db 100%); padding: 20px 0; display: flex; justify-content: center; flex: 1; min-height: 0; }
 /* 宽度档位:phone 430 / tablet 720 / full 100%(仅视觉容器宽度,不改渲染内容) */
 .phone.w-tablet .phone-device { width: 720px; max-width: 100%; }
 .phone.w-full .phone-device { width: 100%; max-width: 100%; border-radius: 14px; padding: 6px 10px 8px; }
@@ -78,7 +78,7 @@ defineExpose({ scrollToPercent, currentPercent })
   background: #fff; border-radius: 28px; padding: 6px 10px 8px;
   border: 1px solid rgba(0,0,0,.06);
   box-shadow: 0 0 0 2px #2c2c2e, 0 1px 3px rgba(0,0,0,.18), var(--shadow-hover);
-  display: flex; flex-direction: column; max-height: 100%;
+  display: flex; flex-direction: column; max-height: 100%; min-height: 0;
 }
 .phone-status { display: flex; align-items: center; justify-content: space-between; padding: 4px 14px 2px; color: #1a1a1a; }
 .status-time { font-size: 12px; font-weight: 600; letter-spacing: .2px; font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif; }

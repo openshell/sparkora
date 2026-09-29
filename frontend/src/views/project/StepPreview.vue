@@ -523,7 +523,7 @@ onBeforeUnmount(() => { onSplitUp(); disposeRender(); flushSavePreviewStyle() })
 .pane-head { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--line); font-size: var(--fs-12); font-weight: 600; color: var(--muted); background: var(--n-50); flex: none; }
 .pane-meta { margin-left: auto; font-weight: 400; }
 .editor-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.editor-wrap > :deep(.cm-host) { flex: 1; }
+.editor-wrap > :deep(.cm-host) { flex: 1; min-height: 0; }
 .editor-loading { padding: var(--sp-7); }
 
 /* 右侧预览 pane(PreviewPane 根元素):吃掉剩余宽度,内部手机框铺满高度 */

@@ -232,6 +232,8 @@ h1, h2, h3 { font-family: var(--font-sans); letter-spacing: -.01em; }
 .app-shell__body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
 }
