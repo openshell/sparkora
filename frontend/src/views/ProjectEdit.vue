@@ -1,133 +1,117 @@
 <template>
-  <div>
-    <div class="container">
-      <div class="page-header">
-        <div>
-          <span class="page-kicker">New Project</span>
-          <h2>新建创作任务</h2>
-          <p class="head-sub">主题创作或粘贴原文仿写，AI 将据此生成创作简报</p>
+  <!-- 批 2:去掉 .container 窄卡 + 页内页头(标题/动作并入上下文条),改为全幅双列分区表单 -->
+  <div class="page edit-page">
+    <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="form-body">
+      <div class="form-grid">
+        <div class="form-col">
+          <!-- 区块零:创作方式(主题创作/文章仿写;仿写时下方分支切换) -->
+          <section class="form-sec">
+            <div class="sec-head">
+              <span class="sec-index">00</span>
+              <div class="sec-title">
+                <div class="sec-name">创作方式</div>
+                <div class="sec-desc">从主题开始，或贴一篇好文章仿写成自己的风格</div>
+              </div>
+            </div>
+            <el-form-item prop="genSource">
+              <el-radio-group v-model="form.genSource">
+                <el-radio-button value="TOPIC">主题创作</el-radio-button>
+                <el-radio-button value="IMITATION">文章仿写</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="isImitation" prop="imitationText">
+              <template #label>
+                <span>参考原文 <span class="req-mark">必填</span></span>
+              </template>
+              <el-input v-model="form.imitationText" type="textarea" :rows="10" maxlength="20000" show-word-limit
+                        placeholder="粘贴要仿写的参考原文（≤20000 字）。仿写保留其观点组织与信息脉络，以你选定的风格重新表达；原文图片不会保留，配图由你在配图步自行完成。" />
+            </el-form-item>
+            <el-form-item v-if="isImitation">
+              <el-alert type="info" :closable="false" show-icon
+                        title="仿写流程"
+                        description="创建后进入「原文分析」：AI 分析题材/结构/句式并从风格库推荐匹配风格（≤3 个），选风格后仿写生成多版正文。生成后自动自检与原文的相似度，过度相似会红色警示。" />
+            </el-form-item>
+          </section>
+
+          <!-- 区块一:创作主题(主输入,突出) -->
+          <section class="form-sec">
+            <div class="sec-head">
+              <span class="sec-index">01</span>
+              <div class="sec-title">
+                <div class="sec-name">{{ isImitation ? '任务名' : '创作主题' }}</div>
+                <div class="sec-desc">{{ isImitation ? '任务名用于项目列表与标题兜底，正文内容由仿写产出' : '一句话说清要写什么，这是简报与正文的锚点' }}</div>
+              </div>
+            </div>
+            <el-form-item prop="topic" class="topic-item">
+              <el-input v-model="form.topic" maxlength="200" show-word-limit size="large" @keydown="onEnterSubmit"
+                        :placeholder="isImitation ? '如：仿写那篇 AI 模型选型文章' : '如：如何选择自部署的国产 AI 模型'" />
+            </el-form-item>
+            <!-- 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):取消快速/深度双选,所有生成必走深度流程(研究+反问) -->
+            <el-form-item v-if="!isImitation">
+              <el-alert type="info" :closable="false" show-icon
+                        title="生成流程:深度研究模式"
+                        description="创建后 AI 先生成研究计划并向你反问补充信息,确认后多代理并行研究(按系统设置启用内部知识库/外部搜索)再写作。创作不限于车型——任何汽车相关主题都可研究。" />
+            </el-form-item>
+          </section>
         </div>
-        <div class="actions">
-          <el-button text @click="$router.push('/')">← 返回</el-button>
+
+        <div class="form-col">
+          <!-- 区块二:内容设定 -->
+          <section class="form-sec">
+            <div class="sec-head">
+              <span class="sec-index">02</span>
+              <div class="sec-title">
+                <div class="sec-name">内容设定</div>
+                <div class="sec-desc">关键词、读者与篇幅，让生成更贴合目标</div>
+              </div>
+            </div>
+            <el-form-item label="关键词">
+              <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" @keydown="onEnterSubmit" />
+            </el-form-item>
+            <el-form-item label="目标读者">
+              <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" @keydown="onEnterSubmit" />
+            </el-form-item>
+            <el-form-item label="目标字数">
+              <el-input-number v-model="form.wordCountTarget" :min="100" :max="10000" :step="100" controls-position="right" style="width:100%" />
+            </el-form-item>
+          </section>
+
+          <!-- 区块三:素材与约束 -->
+          <section class="form-sec">
+            <div class="sec-head">
+              <span class="sec-index">03</span>
+              <div class="sec-title">
+                <div class="sec-name">素材与约束</div>
+                <div class="sec-desc">补充个人见解与独家素材，让内容有据可依</div>
+              </div>
+            </div>
+            <!-- 2026-09-09(dec-dd4ba6e1c6bfb7e7):移除「写作锚点车型」选择入口——创作不与车型绑定,
+                 知识库停用期间该字段无生效点;后端关联逻辑保留,存量项目不受影响 -->
+            <el-form-item label="补充信息（可选）">
+              <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
+                        placeholder="个人见解、独家资讯等，生成简报/正文时会作为创作素材融入，如：我了解到该车型 2026 款将新增 XX 配置…" />
+              <div class="form-tip">填写后，生成简报/正文时会注入这些信息作为创作素材，不会遗漏关键内容。</div>
+            </el-form-item>
+            <el-form-item label="备注">
+              <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="500" placeholder="可选" />
+            </el-form-item>
+          </section>
         </div>
       </div>
 
-      <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="form-card">
-        <!-- 区块零:创作方式(主题创作/文章仿写;仿写时下方分支切换) -->
-        <section class="form-sec">
-          <div class="sec-head">
-            <span class="sec-index">00</span>
-            <div class="sec-title">
-              <div class="sec-name">创作方式</div>
-              <div class="sec-desc">从主题开始，或贴一篇好文章仿写成自己的风格</div>
-            </div>
-          </div>
-          <el-form-item prop="genSource">
-            <el-radio-group v-model="form.genSource" size="large">
-              <el-radio-button value="TOPIC">主题创作</el-radio-button>
-              <el-radio-button value="IMITATION">文章仿写</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item v-if="isImitation" prop="imitationText">
-            <template #label>
-              <span>参考原文 <span class="req-mark">必填</span></span>
-            </template>
-            <el-input v-model="form.imitationText" type="textarea" :rows="10" maxlength="20000" show-word-limit
-                      placeholder="粘贴要仿写的参考原文（≤20000 字）。仿写保留其观点组织与信息脉络，以你选定的风格重新表达；原文图片不会保留，配图由你在配图步自行完成。" />
-          </el-form-item>
-          <el-form-item v-if="isImitation">
-            <el-alert type="info" :closable="false" show-icon
-                      title="仿写流程"
-                      description="创建后进入「原文分析」：AI 分析题材/结构/句式并从风格库推荐匹配风格（≤3 个），选风格后仿写生成多版正文。生成后自动自检与原文的相似度，过度相似会红色警示。" />
-          </el-form-item>
-        </section>
-
-        <!-- 区块一:创作主题(主输入,突出) -->
-        <section class="form-sec">
-          <div class="sec-head">
-            <span class="sec-index">01</span>
-            <div class="sec-title">
-              <div class="sec-name">{{ isImitation ? '任务名' : '创作主题' }}</div>
-              <div class="sec-desc">{{ isImitation ? '任务名用于项目列表与标题兜底，正文内容由仿写产出' : '一句话说清要写什么，这是简报与正文的锚点' }}</div>
-            </div>
-          </div>
-          <el-form-item prop="topic" class="topic-item">
-            <el-input v-model="form.topic" maxlength="200" show-word-limit size="large"
-                      :placeholder="isImitation ? '如：仿写那篇 AI 模型选型文章' : '如：如何选择自部署的国产 AI 模型'" />
-          </el-form-item>
-          <!-- 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):取消快速/深度双选,所有生成必走深度流程(研究+反问) -->
-          <el-form-item v-if="!isImitation" class="depth-item">
-            <el-alert type="info" :closable="false" show-icon
-                      title="生成流程:深度研究模式"
-                      description="创建后 AI 先生成研究计划并向你反问补充信息,确认后多代理并行研究(按系统设置启用内部知识库/外部搜索)再写作。创作不限于车型——任何汽车相关主题都可研究。" />
-          </el-form-item>
-        </section>
-
-        <!-- 区块二:内容设定 -->
-        <section class="form-sec">
-          <div class="sec-head">
-            <span class="sec-index">02</span>
-            <div class="sec-title">
-              <div class="sec-name">内容设定</div>
-              <div class="sec-desc">关键词、读者与篇幅，让生成更贴合目标</div>
-            </div>
-          </div>
-          <el-form-item label="关键词">
-            <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" />
-          </el-form-item>
-          <el-row :gutter="12">
-            <el-col :xs="24" :sm="12">
-              <el-form-item label="目标读者">
-                <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" />
-              </el-form-item>
-            </el-col>
-            <el-col :xs="24" :sm="12">
-              <el-form-item label="目标字数">
-                <el-input-number v-model="form.wordCountTarget" :min="100" :max="10000" :step="100" style="width:100%" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-        </section>
-
-        <!-- 区块三:素材与约束 -->
-        <section class="form-sec">
-          <div class="sec-head">
-            <span class="sec-index">03</span>
-            <div class="sec-title">
-              <div class="sec-name">素材与约束</div>
-              <div class="sec-desc">补充个人见解与独家素材，让内容有据可依</div>
-            </div>
-          </div>
-          <!-- 2026-09-09(dec-dd4ba6e1c6bfb7e7):移除「写作锚点车型」选择入口——创作不与车型绑定,
-               知识库停用期间该字段无生效点;后端关联逻辑保留,存量项目不受影响 -->
-          <el-form-item label="补充信息（可选）">
-            <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
-                      placeholder="个人见解、独家资讯等，生成简报/正文时会作为创作素材融入，如：我了解到该车型 2026 款将新增 XX 配置…" />
-            <div class="form-tip" style="text-align:left;margin-top:4px">填写后，生成简报/正文时会注入这些信息作为创作素材，不会遗漏关键内容。</div>
-          </el-form-item>
-          <el-form-item label="备注">
-            <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="500" placeholder="可选" />
-          </el-form-item>
-        </section>
-
-        <div class="form-actions">
-          <!-- 主操作唯一:「创建并生成简报」;仅存草稿降为次级按钮,取消为文字按钮 -->
-          <el-button text @click="$router.push('/')">取消</el-button>
-          <el-button :loading="saving" @click="onSave">仅存草稿</el-button>
-          <el-button type="primary" :loading="loading" @click="onSaveAndGenerate">{{ isImitation ? '创建并分析原文 →' : '创建并生成简报 →' }}</el-button>
-        </div>
-        <p class="form-tip">{{ isImitation
-          ? '「创建并分析原文」会进入详情页并调用 AI 分析原文与推荐风格（通常需要 10~30 秒）。'
-          : '「创建并生成简报」会立即进入详情页并调用 AI 生成创作简报（通常需要 1~2 分钟）；深度模式先生成研究计划并进入反问环节。' }}</p>
-      </el-form>
-    </div>
+      <!-- 提交按钮已并入上下文条,此处只留流程说明(与主 CTA 强相关) -->
+      <p class="form-tip form-tip-lead">{{ isImitation
+        ? '「创建并分析原文」会进入详情页并调用 AI 分析原文与推荐风格（通常需要 10~30 秒）。'
+        : '「创建并生成简报」会立即进入详情页并调用 AI 生成创作简报（通常需要 1~2 分钟）；深度模式先生成研究计划并进入反问环节。' }}</p>
+    </el-form>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import { projectApi } from '../api'
+import { usePageHeader } from '../composables/usePageHeader'
 import { ElMessage } from 'element-plus'
 
 const router = useRouter()
@@ -187,10 +171,12 @@ const onSave = async () => {
 // 详情页据 brief 侧 PLANNING 态展示「研究计划生成中」并自轮询。
 // 仿写模式:保持原交互(创建后跳详情页并直接发起「分析原文」,失败也在详情页可见重试)。
 const onSaveAndGenerate = async () => {
-  await formRef.value.validate()
+  // 同步重入守卫:validate 是异步的,防双击/连按 Enter 并发建两次项目(loading 必须在 validate 前置位)
+  if (loading.value) return
   loading.value = true
   const imitation = isImitation.value
   try {
+    await formRef.value.validate()
     const id = await doSave()
     if (imitation) {
       router.push(`/projects/${id}?gen=imitation`)
@@ -215,22 +201,52 @@ const onSaveAndGenerate = async () => {
     // 仅创建本身失败(网络异常):留在此页;表单校验失败由 rules 提示,不重复弹窗
   } finally { loading.value = false }
 }
+
+// ==== 关键表单 Enter 提交(R6)====
+// 只挂在单行输入上(创作主题/关键词/目标读者);textarea 保留换行不绑定。
+// isComposing / keyCode 229:中文输入法组字过程中的回车是「选词」而非「提交」,
+// 不加这个判断会在拼音上屏瞬间误触发创建(与 StepBrief 的 ClarifyForm 同一口径)。
+const onEnterSubmit = (e) => {
+  if (e.isComposing || e.keyCode === 229) return
+  e.preventDefault()
+  // 校验失败时 validate() 会 reject(错误已由表单就地提示),此处吞掉避免未捕获拒绝
+  onSaveAndGenerate().catch(() => {})
+}
+
+// ==== 上下文条(外壳 topbar):面包屑 + 提交动作(取代原 .form-actions 按钮行)====
+// 两个 handler 均为 async,validate 失败会 reject;统一包一层 catch 再交给外壳 @click。
+const guard = (fn) => () => Promise.resolve().then(fn).catch(() => {})
+const header = usePageHeader()
+const syncHeader = () => {
+  if (!header) return
+  header.crumbs = [{ label: '项目' }, { label: '新建创作任务' }]
+  header.actions = [
+    { key: 'draft', label: '仅存草稿', loading: saving.value, disabled: loading.value, onClick: guard(onSave) },
+    {
+      key: 'create',
+      label: isImitation.value ? '创建并分析原文 →' : '创建并生成简报 →',
+      type: 'primary',
+      loading: loading.value,
+      disabled: saving.value,
+      onClick: guard(onSaveAndGenerate)
+    }
+  ]
+}
+syncHeader()
+watch([loading, saving, isImitation], syncHeader)
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
 </script>
 
 <style scoped>
-.form-card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 8px 22px 24px;
-  box-shadow: var(--shadow-card);
-}
-.head-sub { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+/* 批 2:全幅双列分区(左:创作方式+主题;右:内容设定+素材),各分区自带卡片面 */
+.edit-page { display: flex; flex-direction: column; }
+.form-body { width: 100%; }
+.form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
+.form-col { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
 
-/* 分区:编号 + 标题 + 描述,底部细线分隔 */
-.form-sec { padding: 20px 0 4px; }
-.form-sec + .form-sec { border-top: 1px dashed var(--line); }
-.sec-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+/* 分区:编号 + 标题 + 描述,细描边面板(替代原整表一张大卡) */
+.form-sec { padding: var(--sp-5); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); }
+.sec-head { display: flex; align-items: flex-start; gap: var(--sp-3); margin-bottom: var(--sp-5); }
 .sec-index {
   flex-shrink: 0;
   display: inline-flex;
@@ -238,25 +254,21 @@ const onSaveAndGenerate = async () => {
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--brand-weak);
   color: var(--brand-strong);
-  font-family: var(--font-serif);
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
   font-weight: 700;
 }
-.sec-title { display: flex; flex-direction: column; gap: 2px; }
-.sec-name { font-family: var(--font-serif); font-size: 16px; font-weight: 700; color: var(--ink); }
-.sec-desc { font-size: 12px; color: var(--faint); }
+.sec-title { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.sec-name { font-size: var(--fs-16); font-weight: 700; color: var(--ink); }
+.sec-desc { font-size: var(--fs-12); color: var(--faint); line-height: var(--lh-12); }
 
 /* 主题主输入:更大、更醒目 */
-.topic-item :deep(.el-input__inner) { font-size: 16px; }
-.req-mark { color: var(--el-color-danger); font-size: 12px; margin-left: 4px; }
+.topic-item :deep(.el-input__inner) { font-size: var(--fs-16); }
+.req-mark { color: var(--el-color-danger); font-size: var(--fs-12); margin-left: var(--sp-1); }
 
-.form-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
-.form-tip { margin: 10px 0 0; font-size: 12px; color: var(--faint); text-align: right; }
-@media (max-width: 768px) {
-  .form-actions .el-button { flex: 1; }
-  .form-tip { text-align: left; }
-}
+.form-tip { margin: var(--sp-1) 0 0; font-size: var(--fs-12); color: var(--faint); line-height: var(--lh-12); }
+.form-tip-lead { margin: var(--sp-5) 0 0; padding-top: var(--sp-4); border-top: 1px solid var(--line); }
 </style>

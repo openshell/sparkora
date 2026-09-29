@@ -114,11 +114,15 @@ onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = []
 ```
 
 - 全局外壳 `AppShell`（`frontend/src/layouts/AppShell.vue`）统一提供：左侧 rail 模块导航 + 顶部上下文条（折叠钮 / 面包屑 / 主操作 actions / 主题切换）+ 用户区；页面**不再自绘页头**（`TopBar` / `page-header` 已退役）。登录路由不套壳。
-- 页面顶部信息经 `usePageHeader()` 注入的 reactive `{ crumbs, actions }` 写入上下文条：`crumbs` 为 `[{ label }]` 对象数组（`AppShell` 按 `c.label` 渲染，**传字符串会渲染 `undefined`**）；`actions` 为 `{ key, label, type, onClick, disabled?, icon? }[]`（`icon` 传图标组件对象）。离开页面用 `onBeforeRouteLeave` 清空，避免污染相邻页面；项目步骤页在 `route.name`/`project` 变化时重新 declare（子步骤清空后无人补写）。
+- 页面顶部信息经 `usePageHeader()` 注入的 reactive `{ crumbs, actions }` 写入上下文条：`crumbs` 为 `[{ label }]` 对象数组（`AppShell` 按 `c.label` 渲染，**传字符串会渲染 `undefined`**）；`actions` 为 `{ key, label, type, onClick, disabled?, icon? }[]`（`icon` 传图标组件对象）。离开页面用 `onBeforeRouteLeave` 清空，避免污染相邻页面。**必须整体持有 `usePageHeader()` 返回的 reactive 壳后改其属性**（`const hdr = usePageHeader(); hdr.crumbs = [...]`）——解构 `{ crumbs, actions }` 拿到的是普通数组，后续 `crumbs.value = ...` 写不进壳，面包屑/动作会静默不渲染（09-28 pc-ui 批 1 试点 → 批 2 首轮回归的坑，`StepBrief` 已修）。
+- **ProjectLayout 持有面包屑（09-28 实测）**：项目步骤页（`StepBrief`/`StepVersions`/`StepPublish`/`StepPreview`）部署在 `ProjectLayout` 的 `<router-view>` 内，其 `watch([id, route.name, project, loadError], syncHeader, {immediate:true})` 每次路由切换都会把 `header.crumbs` 重写为 `项目/#id/<步骤名>`（Vue pre-flush 按 uid 排序，`ProjectLayout` watcher 晚于子页 `setup()` 执行，覆盖子页赋值）。因此**子步骤页写 `crumbs` 是死代码**——只写 `header.actions` 即可，面包屑统一由 `ProjectLayout` 呈现；若将来要子页接管，需移除 `ProjectLayout` 的 crumbs 写入。
 - 三态齐全是硬性要求：`v-if="loading"` 骨架、`v-else-if="error"` 错误+重试、空态 `el-empty`。
 - 样式使用 `frontend/src/assets/main.css` 的 CSS 变量（`--n-*` 色阶、`--brand` 语义别名、`--control-h-*` 档位、`--fs-*`、`--lh-*`、`--radius-*`、`--sp-*`、`--focus-ring`），不要硬编码颜色/字号/圆角/间距。
 - **PC-only 密度约定**：控件高度统一走 `--control-h-sm/md/lg` = 28/32/40px 档位，不引入移动端 44px 触控目标；交互态必须提供 `:focus-visible` 可见焦点环（`--focus-ring`），hover 显隐的操作在无 hover 环境靠 `:focus-within` 兜底。
 - **不可破坏类名契约**：`.wenyan-preview`（`utils/wenyanRender.js` 的 `PREVIEW_SELECTOR` 把 wenyan 主题 CSS 从 `#wenyan` 重写为该类注入 `document.head`，`PreviewPane` 渲染容器持该类——改名会**静默废掉全部 15 套主题**）与 `sparkora-img-missing`（`utils/pendingImageStore.js` 产出，`PreviewPane` 以 `:deep()` 消费失效占位样式）。凡涉及这两个类名的改动，改前改后必须 `grep` 确认两端仍匹配，并实测 1 内置 + 1 社区主题渲染。
+- **步骤页主体容器 `.step-body`（09-28 pc-ui 批 2）**：项目流步骤页（`StepBrief`/`StepVersions`/`StepPublish`）用 `.page.step-body` 作为主体——该容器自身撑满剩余高度并滚动，为 ctxbar 页级动作 + 全幅网格/面板提供工作台主从布局；`StepPreview` 例外（保留 `.preview-page`，内部有独立双 pane flex 布局）。页面不再自绘「去卡片/页头/动作行」，主操作统一进上下文条 `header.actions`。
+- **主从分栏用共用 composable `useSplitPane`（09-28 pc-ui 批 2）**：分栏列宽状态机（拖拽/键盘调宽/折叠 + localStorage 持久化）抽到 `src/composables/useSplitPane.js`（先例 `QaChat.vue` 会话栏），不要在各页内联复制。localStorage 键约定 `sparkora.<域名>SideWidth` / `sparkora.<域名>SideCollapsed`；读写在隐私/禁用模式下可能抛 `SecurityError`，用 `try/catch` 兜底；`pointercancel` 与 `pointerup` 都要结束拖拽清理监听。
+- **Enter 提交必须 IME 安全（09-28 pc-ui 批 2）**：`@keyup.enter` 提交表单前判 `if (e.isComposing || e.keyCode === 229) return`——中文输入法组字过程中回车是「选词」而非「提交」，不判会在拼音上屏瞬间误触发创建/发送（与 `StepBrief` 的 `ClarifyForm`、`ProjectEdit.onEnterSubmit`、`QaChat` 发送同一口径）。**非幂等提交入口必须有同步重入守卫**（`if (loading.value) return` 且置 loading 必须早于第一个 `await`）——`validate()` 是异步的，先 await 校验再置 loading 会让双击/连按 Enter 并发执行两次创建（09-28 实测 `ProjectEdit` 重复建项目）。
 
 ---
 

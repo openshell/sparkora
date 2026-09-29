@@ -1,15 +1,6 @@
 <template>
-  <el-card class="step-card" shadow="never">
-    <template #header>
-      <span class="card-head">
-        <span class="head-main">
-          <span class="step-title serif">Step 2 · 多版本正文生成</span>
-          <span class="step-sub">从风格库选风格，每版一种风格，生成后对比挑选</span>
-        </span>
-        <span v-if="versions.length" class="meta">共 {{ versions.length }} 版 · 当前：{{ currentVersionLabel }}</span>
-      </span>
-    </template>
-
+  <!-- 批 2:去掉 el-card 包裹与页内页头(标题并入上下文条),改为 ProjectLayout 内全幅步骤主体 -->
+  <div class="step-body versions-step">
     <!-- 生成中:以 project.status 为唯一事实源(刷新/切页返回也能恢复),轮询直至状态翻转 -->
     <div v-if="generatingVersions" class="generating">
       <el-skeleton :rows="8" animated />
@@ -55,7 +46,7 @@
         <div v-else-if="!styleOptions.length" class="empty-style">
           风格库为空，请先到 <router-link to="/styles">风格库</router-link> 提炼入库。
         </div>
-        <el-checkbox-group v-else v-model="selectedStyleIds" class="style-list">
+        <el-checkbox-group v-else v-model="selectedStyleIds" class="style-grid">
           <el-checkbox v-for="s in styleOptions" :key="s.id" :label="s.id" border class="style-cb">
             <el-tag v-if="recommendedIds.includes(s.id)" size="small" type="warning" effect="plain" round class="rec-tag">推荐</el-tag>
             <span class="style-name">{{ s.name }}</span>
@@ -63,6 +54,8 @@
           </el-checkbox>
         </el-checkbox-group>
         <div class="gen-actions">
+          <!-- 上下文条只承载页级动作(去预览/再生成);生成 CTA 文案随勾选数变化,留在此处就近可读 -->
+          <span class="gen-count">已选 {{ selectedStyleIds.length }} 个风格 · 每个风格生成一版</span>
           <el-button v-if="appending && versions.length" @click="appending = false">取消</el-button>
           <el-button type="primary" :disabled="!selectedStyleIds.length" :loading="submitting" @click="onGenerate">
             <el-icon class="btn-icon"><MagicStick /></el-icon>生成 {{ selectedStyleIds.length || '' }} 版
@@ -71,8 +64,8 @@
       </div>
 
       <!-- 版本对比区 -->
-      <div v-else>
-        <!-- 汇总条:全部版本一览 + 对比模式入口 -->
+      <div v-else class="versions-stage">
+        <!-- 汇总条:全部版本一览 + 对比模式入口 + 计数 meta(原 el-card 头部 meta 下沉至此) -->
         <div class="summary-bar">
           <div class="s-chips">
             <button v-for="v in versions" :key="v.id" type="button" class="s-chip"
@@ -82,6 +75,7 @@
               <span class="chip-label">{{ v.versionLabel || '—' }}</span>{{ v.styleTag || '深度' }} · {{ v.wordCount || '—' }}字
             </button>
           </div>
+          <span class="s-meta">共 {{ versions.length }} 版 · 当前:{{ currentVersionLabel }}</span>
           <el-select v-model="compareIds" multiple collapse-tags collapse-tags-tooltip
                      placeholder="选 2 版对比" size="small" class="compare-select">
             <!-- 09-10-versions-page-fix:label/styleTag 空值兜底 -->
@@ -144,28 +138,20 @@
             </div>
           </div>
         </div>
-
-        <div class="next-row">
-          <!-- 再生成其他风格只在 VERSIONS_READY 可见:发布后属增量编辑,再触发会把状态机拉回 VERSIONS_READY -->
-          <el-button v-if="project?.status === 'VERSIONS_READY'" :loading="submitting" @click="openAppend">再生成其他风格</el-button>
-          <!-- 09-10-versions-page-fix:「进入预览」——后端已推 VERSIONS_READY(深度生成成功即推进),
-               此按钮兜底服务存量 READY-with-versions 项目(历史深度生成未推状态机)与防御 -->
-          <el-button v-if="project?.status === 'VERSIONS_READY' || (versions.length && project?.status === 'READY')"
-                     type="success" @click="goPreview">进入预览 →</el-button>
-        </div>
       </div>
     </template>
-  </el-card>
+  </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingVersions } from '../../constants/project'
 import { useProjectDetailStore } from '../../store/project-detail'
+import { usePageHeader } from '../../composables/usePageHeader'
 import { Loading, WarningFilled, Edit, MagicStick } from '@element-plus/icons-vue'
 import CitationList from './deep/CitationList.vue'
 import { reactive } from 'vue'
@@ -319,6 +305,33 @@ const openAppendWith = (ids) => {
 }
 watch(appending, (on) => { if (on) compareIds.value = [] })
 
+// ==== 上下文条(外壳 topbar):面包屑 + 「再生成其他风格 / 进入预览」主 CTA(取代原底部 next-row)====
+// 声明放在 goPreview/openAppend 之后(action 直接引用它们,避免 TDZ);
+// 风格选择态不挂动作:该态主 CTA 是「生成 N 版」,文案随勾选数变化,留在页内工具条。
+const header = usePageHeader()
+/** 仅版本对比态挂页级动作:风格选择态/生成中/加载失败态由页内自己给出口。 */
+const showStageNav = computed(() => !!versions.value.length && !appending.value && !generatingVersions.value)
+const syncHeader = () => {
+  if (!header) return
+  header.crumbs = [{ label: '项目' }, { label: '版本' }]
+  const actions = []
+  if (showStageNav.value) {
+    // 「再生成其他风格」只在 VERSIONS_READY 可见:发布后属增量编辑,再触发会把状态机拉回 VERSIONS_READY
+    if (props.project?.status === 'VERSIONS_READY') {
+      actions.push({ key: 'append', label: '再生成其他风格', loading: submitting.value, onClick: () => openAppend() })
+    }
+    // 「进入预览」——后端已推 VERSIONS_READY(深度生成成功即推进),
+    // 此处兜底服务存量 READY-with-versions 项目(历史深度生成未推状态机)与防御
+    if (props.project?.status === 'VERSIONS_READY' || props.project?.status === 'READY') {
+      actions.push({ key: 'preview', label: '进入预览 →', type: 'primary', onClick: () => goPreview() })
+    }
+  }
+  header.actions = actions
+}
+syncHeader()
+watch([showStageNav, () => props.project?.status, submitting], syncHeader)
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
+
 const onSetCurrent = async (versionId) => {
   const res = await projectApi.setCurrentVersion(route.params.id, versionId)
   if (res.code === 0) { await store.ensureProject(route.params.id, { force: true }); ElMessage.success('已设为当前版本') }
@@ -373,114 +386,115 @@ watch(() => props.project?.status, (after, before) => {
 </script>
 
 <style scoped>
-.card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
-.head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.step-title { font-size: 16px; font-weight: 700; }
-.step-sub { font-size: 12px; color: var(--faint); }
-.card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
-.muted { color: var(--muted); font-size: 13px; line-height: 1.7; }
-.state-error { padding: 36px 16px; }
-.btn-icon { margin-right: 2px; }
+/* 批 2:步骤主体全幅(纵向 flex),页头已并入上下文条 */
+.versions-step { gap: var(--sp-6); }
+
+.state-error { padding: var(--sp-8) var(--sp-4); }
+.btn-icon { margin-right: var(--sp-1); }
+.muted { color: var(--muted); font-size: var(--fs-13); line-height: 1.7; }
 
 /* 风格选择 hero */
-.pick-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.pick-hero { display: flex; align-items: center; gap: var(--sp-5); margin-bottom: var(--sp-4); }
 .pick-icon {
   flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-  width: 52px; height: 52px; border-radius: 14px;
+  width: 52px; height: 52px; border-radius: var(--radius-lg);
   background: var(--brand-gradient); color: #fff; box-shadow: var(--shadow-hover);
 }
 .pick-text { min-width: 0; }
-.pick-title { font-size: 18px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+.pick-title { font-size: var(--fs-18); font-weight: 700; color: var(--ink); margin-bottom: var(--sp-1); }
 .pick-text .muted { margin: 0; }
 
-.generating { padding: 4px 0; }
-.gen-tip { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.generating { padding: var(--sp-1) 0; }
+.gen-tip { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-4) 0 0; font-size: var(--fs-13); color: var(--muted); line-height: 1.6; }
 .spin { animation: spin 1.2s linear infinite; color: var(--brand); }
 @keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 
-.style-list { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+/* 风格选择:全幅自适应网格(2560 下多列并排,不再单列长条) */
+.style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-3);
+  margin: var(--sp-4) 0;
+  width: 100%;
+}
 .style-cb {
   display: flex; align-items: flex-start; height: auto; white-space: normal; margin-right: 0;
-  padding: 12px 14px; border-radius: var(--radius-sm);
+  padding: var(--sp-4) var(--sp-5); border-radius: var(--radius-sm);
   transition: border-color .2s, box-shadow .2s, background .2s;
 }
 .style-cb:hover { border-color: var(--brand); }
-.style-cb :deep(.el-checkbox__label) { white-space: normal; line-height: 1.5; }
-.style-name { font-weight: 600; margin-right: 6px; }
-.style-desc { color: var(--muted); font-size: 12px; }
-.empty-style { font-size: 13px; color: var(--muted); margin: 8px 0; }
-.gen-actions { display: flex; gap: 8px; }
+.style-cb :deep(.el-checkbox__label) { white-space: normal; line-height: 1.5; min-width: 0; }
+.style-name { font-weight: 600; margin-right: var(--sp-2); }
+.style-desc { color: var(--muted); font-size: var(--fs-12); }
+.empty-style { font-size: var(--fs-13); color: var(--muted); margin: var(--sp-2) 0; }
+.gen-actions { display: flex; align-items: center; gap: var(--sp-3); }
+.gen-count { flex: 1; font-size: var(--fs-12); color: var(--muted); min-width: 0; }
 
-/* 汇总条 */
-.summary-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-.s-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+/* 汇总条:版本 chip 一行铺满 + 计数 meta + 对比选择器 */
+.summary-bar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+.s-chips { display: flex; gap: var(--sp-2); flex-wrap: wrap; flex: 1; min-width: 0; }
 .s-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  height: 30px; padding: 0 10px;
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  height: var(--control-h-sm); padding: 0 var(--sp-3);
   border: 1px solid var(--line); border-radius: 999px;
-  background: var(--card); color: var(--muted); font-size: 12px; cursor: pointer;
+  background: var(--card); color: var(--muted); font-size: var(--fs-12); cursor: pointer;
 }
 .s-chip .chip-label { font-weight: 700; color: var(--ink); }
 .s-chip.active { border-color: var(--ok); color: var(--ok); background: transparent; }
 .s-chip.active .chip-label { color: var(--ok); }
 .s-chip.picked { border-color: var(--brand); color: var(--brand); }
-.compare-select { width: 150px; flex-shrink: 0; }
-.compare-hint { margin: 0 0 10px; font-size: 12px; color: var(--faint); }
+.s-meta { font-size: var(--fs-12); color: var(--muted); white-space: nowrap; }
+.compare-select { width: 170px; flex-shrink: 0; }
+.compare-hint { margin: 0 0 var(--sp-3); font-size: var(--fs-12); color: var(--faint); }
 
-.version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+/* 版本卡网格:全幅自适应列(宽屏并排更多版本) */
+.versions-stage { display: flex; flex-direction: column; gap: var(--sp-3); }
+.version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--sp-5); }
 .version-card {
-  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 16px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--sp-5);
   background: var(--card); transition: box-shadow .2s, border-color .2s, transform .2s;
 }
 .version-card:hover { box-shadow: var(--shadow-hover); transform: translateY(-2px); }
 .version-card.active { border-color: var(--ok); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 18%, transparent); }
 /* 对比模式:等高铺开,长文完整滚动阅读 */
-.version-grid.compare { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: stretch; }
+.version-grid.compare { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: stretch; }
 .version-grid.compare .version-card { display: flex; flex-direction: column; }
 .version-grid.compare .version-content { flex: 1; max-height: none; }
-.version-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.version-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); }
 .v-label { font-weight: 600; }
-.version-meta { font-size: 12px; color: var(--muted); margin-left: auto; }
-.version-title { font-weight: 700; font-size: 15px; margin-bottom: 8px; line-height: 1.45; }
-.version-title-row { display: flex; align-items: flex-start; gap: 8px; }
-.version-title-row .version-title { flex: 1; margin-bottom: 8px; }
+.version-meta { font-size: var(--fs-12); color: var(--muted); margin-left: auto; }
+.version-title { font-weight: 700; font-size: var(--fs-16); margin-bottom: var(--sp-2); line-height: 1.45; }
+.version-title-row { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.version-title-row .version-title { flex: 1; margin-bottom: var(--sp-2); }
 .edit-title-btn { flex-shrink: 0; margin-top: -2px; }
-.title-edit { margin-bottom: 8px; }
-.title-edit-actions { display: flex; justify-content: flex-end; gap: 4px; margin-top: 6px; }
-.version-content { font-size: 14px; line-height: 1.8; max-height: 520px; overflow-y: auto; }
-.version-content :deep(h1) { font-size: 18px; margin: 12px 0 6px; }
-.version-content :deep(h2) { font-size: 16px; margin: 10px 0 5px; }
-.version-content :deep(h3) { font-size: 15px; margin: 8px 0 4px; }
-.version-content :deep(p) { margin: 6px 0; }
-.version-content :deep(ul), .version-content :deep(ol) { padding-left: 20px; margin: 6px 0; }
-.version-content :deep(code) { background: var(--el-fill-color-light); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
-.version-actions { display: flex; gap: 8px; margin-top: 12px; }
-.version-cites { margin: 10px 0; padding: 10px 12px; background: var(--el-fill-color-light, #f7f7f7); border-radius: 8px; }
-.next-row { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; }
-.next-row .el-button:last-child { margin-left: auto; }
+.title-edit { margin-bottom: var(--sp-2); }
+.title-edit-actions { display: flex; justify-content: flex-end; gap: var(--sp-1); margin-top: var(--sp-2); }
+.version-content { font-size: var(--fs-14); line-height: 1.8; max-height: 520px; overflow-y: auto; }
+.version-content :deep(h1) { font-size: var(--fs-18); margin: var(--sp-4) 0 var(--sp-2); }
+.version-content :deep(h2) { font-size: var(--fs-16); margin: var(--sp-3) 0 var(--sp-2); }
+.version-content :deep(h3) { font-size: var(--fs-14); margin: var(--sp-3) 0 var(--sp-1); }
+.version-content :deep(p) { margin: var(--sp-2) 0; }
+.version-content :deep(ul), .version-content :deep(ol) { padding-left: var(--sp-6); margin: var(--sp-2) 0; }
+.version-content :deep(code) { background: var(--el-fill-color-light); padding: 1px var(--sp-1); border-radius: var(--radius-xs); font-size: var(--fs-13); }
+.version-actions { display: flex; gap: var(--sp-2); margin-top: var(--sp-4); }
+.version-cites { margin: var(--sp-3) 0; padding: var(--sp-3) var(--sp-4); background: var(--el-fill-color-light, #f7f7f7); border-radius: var(--radius-sm); }
 
 /* 仿写:原文摘要卡 + 推荐角标 + 相似度行 */
-.imitation-src { margin-bottom: 14px; }
-.imitation-src :deep(.el-collapse-item__header) { font-size: 13px; color: var(--muted); }
-.src-text { font-size: 13px; line-height: 1.8; color: var(--muted); white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
-.rec-tag { margin-right: 4px; }
-.sim-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+.imitation-src { margin-bottom: var(--sp-4); }
+.imitation-src :deep(.el-collapse-item__header) { font-size: var(--fs-13); color: var(--muted); }
+.src-text { font-size: var(--fs-13); line-height: 1.8; color: var(--muted); white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+.rec-tag { margin-right: var(--sp-1); }
+.sim-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin: var(--sp-2) 0 var(--sp-1); padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm); font-size: var(--fs-12); }
 .sim-row.sim-ok { background: color-mix(in srgb, var(--el-color-success) 10%, transparent); color: var(--el-color-success); }
 .sim-row.sim-warn { background: color-mix(in srgb, var(--el-color-warning) 12%, transparent); color: var(--el-color-warning); }
 .sim-row.sim-high { background: color-mix(in srgb, var(--el-color-danger) 12%, transparent); color: var(--el-color-danger); }
 .sim-score { font-weight: 700; }
-.sim-hint { font-size: 12px; }
+.sim-hint { font-size: var(--fs-12); }
 .sim-toggle { margin-left: auto; }
-.sim-detail { margin: 4px 0 8px; padding: 8px 12px; background: var(--el-fill-color-light); border-radius: 6px; }
-.sim-run { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 12px; }
+.sim-detail { margin: var(--sp-1) 0 var(--sp-2); padding: var(--sp-2) var(--sp-4); background: var(--el-fill-color-light); border-radius: var(--radius-sm); }
+.sim-run { display: flex; align-items: baseline; gap: var(--sp-2); padding: var(--sp-1) 0; font-size: var(--fs-12); }
 .sim-run-len { flex-shrink: 0; color: var(--faint); font-weight: 700; }
 .sim-run-text { color: var(--muted); word-break: break-all; }
 .sim-run.max { color: var(--el-color-danger); }
-
-@media (max-width: 768px) {
-  .version-grid, .version-grid.compare { grid-template-columns: 1fr; }
-  .version-actions .el-button, .next-row .el-button { flex: 1; }
-  .next-row .el-button:last-child { margin-left: 0; }
-  .compare-select { width: 100%; }
-}
 </style>

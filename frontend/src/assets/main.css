@@ -244,6 +244,17 @@ h1, h2, h3 { font-family: var(--font-sans); letter-spacing: -.01em; }
   padding: var(--sp-5) var(--sp-7) var(--sp-8);
 }
 
+/* ---------- 步骤页主体(项目流子步骤骨架,批 2 起) ----------
+   挂在 ProjectLayout 的 .page.project-page 内(外层已给页面 padding),
+   因此自身不再加 padding,只负责「填满剩余高度 + 纵向 flex」。
+   需要满高分栏的步骤页(预览)在此基础上再声明 min-height。 */
+.step-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ---------- 以下为批 2/3 迁移前的兼容类,迁移完删除 ---------- */
 
 /* 居中窄栏容器:仅未迁移页面仍在用 */

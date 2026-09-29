@@ -1,15 +1,6 @@
 <template>
-  <el-card class="step-card" shadow="never">
-    <template #header>
-      <span class="card-head">
-        <span class="head-main">
-          <span class="step-title serif">Step 4 · 发布</span>
-          <span class="step-sub">发布到微信公众号草稿箱 · 与预览同源(文颜)</span>
-        </span>
-        <span class="meta">确认排版后发布</span>
-      </span>
-    </template>
-
+  <!-- 批 2:去掉 el-card 包裹与页内页头(标题并入上下文条),动作行并入上下文条 -->
+  <div class="step-body publish-step">
     <!-- 前置未就绪(状态不该到这步:步骤导航已锁,兜底防护) -->
     <div v-if="!publishable" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
@@ -74,67 +65,75 @@
           </template>
         </div>
 
-        <!-- 排版参数:只读回显预览页保存的值(不在此编辑;发布时原样传给 wenyan-server) -->
-        <div class="ctrl-bar style-readonly">
-          <div class="ctrl-group">
-            <span class="field-label">主题</span>
-            <span class="ro-value">
-              <span class="theme-dot" :style="{ background: themeColor(theme) }" :class="{ 'is-bright': themeIsBright(theme) }"></span>
-              <span class="ro-text">{{ themeLabel(theme) }}</span>
-            </span>
-            <span class="field-label">高亮</span>
-            <span class="ro-value"><span class="ro-text">{{ highlight }}</span></span>
-          </div>
-          <span class="ctrl-divider" aria-hidden="true"></span>
-          <div class="ctrl-group">
-            <span class="ro-value"><span class="ro-text">Mac 代码块</span>
-              <el-tag size="small" :type="macStyle ? 'success' : 'info'" effect="plain">{{ macStyle ? '开' : '关' }}</el-tag>
-            </span>
-            <span class="ro-value"><span class="ro-text">链接转脚注</span>
-              <el-tag size="small" :type="footnote ? 'success' : 'info'" effect="plain">{{ footnote ? '开' : '关' }}</el-tag>
-            </span>
-          </div>
-          <span class="flex-sp"></span>
-          <span class="ro-hint">排版参数在「预览」步骤设置</span>
+        <!-- 排版参数(只读回显) + 发布元信息(手填):全幅双列,替代原两条通栏条 -->
+        <div class="pub-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <span class="panel-title">排版参数</span>
+              <span class="panel-hint">在「预览」步骤设置,发布时原样传给 wenyan-server</span>
+            </div>
+            <div class="style-readonly">
+              <div class="ctrl-group">
+                <span class="field-label">主题</span>
+                <span class="ro-value">
+                  <span class="theme-dot" :style="{ background: themeColor(theme) }" :class="{ 'is-bright': themeIsBright(theme) }"></span>
+                  <span class="ro-text">{{ themeLabel(theme) }}</span>
+                </span>
+              </div>
+              <div class="ctrl-group">
+                <span class="field-label">高亮</span>
+                <span class="ro-value"><span class="ro-text">{{ highlight }}</span></span>
+              </div>
+              <div class="ctrl-group">
+                <span class="field-label">Mac 代码块</span>
+                <span class="ro-value"><span class="ro-text">代码块样式</span>
+                  <el-tag size="small" :type="macStyle ? 'success' : 'info'" effect="plain">{{ macStyle ? '开' : '关' }}</el-tag>
+                </span>
+              </div>
+              <div class="ctrl-group">
+                <span class="field-label">链接转脚注</span>
+                <span class="ro-value"><span class="ro-text">外链脚注</span>
+                  <el-tag size="small" :type="footnote ? 'success' : 'info'" effect="plain">{{ footnote ? '开' : '关' }}</el-tag>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <span class="panel-title">发布元信息</span>
+              <span class="panel-hint">选填,项目级落库,留空不发送</span>
+            </div>
+            <div class="meta-form">
+              <div class="meta-field">
+                <span class="field-label">作者</span>
+                <el-input v-model="author" maxlength="100" clearable placeholder="选填,写入公众号作者"
+                          :disabled="!editorOrAbove || publishing" @input="onMetaChange" />
+              </div>
+              <div class="meta-field">
+                <span class="field-label">原文地址</span>
+                <el-input v-model="sourceUrl" maxlength="500" clearable placeholder="选填,写入公众号原文链接"
+                          :disabled="!editorOrAbove || publishing" @input="onMetaChange" />
+              </div>
+            </div>
+            <p v-if="!editorOrAbove" class="readonly-tip">viewer 只读,发布需 ADMIN/EDITOR 角色</p>
+          </section>
         </div>
 
-        <!-- 发布元信息(手填,项目级落库;留空不发送) -->
-        <div class="meta-bar">
-          <div class="meta-field">
-            <span class="field-label">作者</span>
-            <el-input v-model="author" maxlength="100" clearable placeholder="选填,写入公众号作者"
-                      :disabled="!editorOrAbove || publishing" @input="onMetaChange" />
-          </div>
-          <div class="meta-field">
-            <span class="field-label">原文地址</span>
-            <el-input v-model="sourceUrl" maxlength="500" clearable placeholder="选填,写入公众号原文链接"
-                      :disabled="!editorOrAbove || publishing" @input="onMetaChange" />
-          </div>
-        </div>
-
-        <!-- 发布动作区 -->
-        <div class="publish-actions">
-          <el-button size="small" plain @click="goPreview">← 返回预览</el-button>
-          <template v-if="editorOrAbove">
-            <el-button size="small" plain :disabled="!published || publishing" @click="recheckPreview">再检查一遍渲染</el-button>
-            <el-button type="primary" :loading="publishing" :disabled="!publishEnabled || !coverUrl"
-                       @click="confirmPublish">
-              {{ published ? '重发(覆盖草稿)' : '确认发布到草稿箱' }}
-            </el-button>
-          </template>
-          <span v-if="publishing" class="pub-hint">正在渲染并通过 wenyan-server 写入草稿箱,约 1 分钟…请勿刷新或重复点击(重复发布会产生重复草稿)</span>
-        </div>
+        <!-- 发布进行中提示(/publish 非幂等:重复点击会产生重复草稿,必须显式警示) -->
+        <p v-if="publishing" class="pub-hint">正在渲染并通过 wenyan-server 写入草稿箱,约 1 分钟…请勿刷新或重复点击(重复发布会产生重复草稿)</p>
       </template>
     </template>
-  </el-card>
+  </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { useProjectDetailStore } from '../../store/project-detail'
+import { usePageHeader } from '../../composables/usePageHeader'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { WarningFilled, SuccessFilled } from '@element-plus/icons-vue'
 import { isPublishable } from '../../constants/project'
@@ -360,6 +359,35 @@ const goPreview = () => {
 /** 「再检查一遍渲染」:跳回预览步复核后再回来。 */
 const recheckPreview = goPreview
 
+// ==== 上下文条(外壳 topbar):面包屑 + 发布动作(取代原 .publish-actions 按钮行)====
+// 声明放在 goPreview/recheckPreview/confirmPublish 之后(action 直接引用它们,避免 TDZ)。
+// 禁用条件与原按钮逐字一致:通道未就绪或未选封面不可发布;发布中 loading/disabled 双重防重入。
+const header = usePageHeader()
+const syncHeader = () => {
+  if (!header) return
+  header.crumbs = [{ label: '项目' }, { label: '发布' }]
+  // 参数尚未装载(加载中/失败)时不挂动作:此时按钮状态不可信,交给页内错误卡片给重试
+  if (!publishable.value || !optionsLoaded.value) { header.actions = []; return }
+  const actions = [{ key: 'back', label: '← 返回预览', onClick: () => goPreview() }]
+  if (editorOrAbove.value) {
+    if (published.value) {
+      actions.push({ key: 'recheck', label: '再检查一遍渲染', disabled: publishing.value, onClick: () => recheckPreview() })
+    }
+    actions.push({
+      key: 'publish',
+      label: published.value ? '重发(覆盖草稿)' : '确认发布到草稿箱',
+      type: 'primary',
+      loading: publishing.value,
+      disabled: !publishEnabled.value || !coverUrl.value,
+      onClick: () => confirmPublish()
+    })
+  }
+  header.actions = actions
+}
+syncHeader()
+watch([publishable, optionsLoaded, published, editorOrAbove, publishing, publishEnabled, coverUrl], syncHeader)
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
+
 onMounted(() => {
   loadOptions()
   loadSummary()
@@ -373,83 +401,66 @@ onBeforeUnmount(() => { flushSaveMeta() })
 </script>
 
 <style scoped>
-.card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
-.head-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.step-title { font-size: 16px; font-weight: 700; }
-.step-sub { font-size: 12px; color: var(--faint); }
-.card-head .meta { font-size: 12px; color: var(--muted); }
-.state-error { padding: 36px 16px; }
-.state-title { font-weight: 700; margin: 8px 0 4px; }
-.state-msg { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
-.top-alert { margin-bottom: 14px; }
+/* 批 2:步骤主体全幅(纵向 flex),页头/动作行已并入上下文条 */
+.publish-step { gap: var(--sp-5); }
+
+.state-error { padding: var(--sp-8) var(--sp-4); }
+.state-title { font-weight: 700; margin: var(--sp-2) 0 var(--sp-1); }
+.state-msg { color: var(--muted); font-size: var(--fs-13); margin-bottom: var(--sp-4); }
+.top-alert { margin-bottom: 0; }
 
 /* 成功态卡片 */
 .success-box {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
-  padding: 20px; margin-bottom: 14px;
-  border: 1px solid var(--ok); border-radius: var(--radius-sm);
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2);
+  padding: var(--sp-5); border: 1px solid var(--ok); border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--ok) 7%, transparent);
 }
-.success-title { font-weight: 700; font-size: 15px; }
-.success-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--muted); }
-.success-meta code { font-size: 12px; word-break: break-all; }
+.success-title { font-weight: 700; font-size: var(--fs-16); }
+.success-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-5); font-size: var(--fs-12); color: var(--muted); }
+.success-meta code { font-size: var(--fs-12); word-break: break-all; }
 
-/* 发布摘要 */
+/* 发布摘要:封面 + 标题/字数/插图(与预览渲染同源数据) */
 .summary {
-  display: flex; gap: 14px; align-items: flex-start;
-  padding: 16px; margin-bottom: 14px; min-height: 96px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper);
+  display: flex; gap: var(--sp-5); align-items: flex-start;
+  padding: var(--sp-5); min-height: 96px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card);
 }
-.summary-cover { width: 96px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
+.summary-cover { width: 120px; height: 80px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line); flex: none; }
 .summary-cover-empty {
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; color: var(--muted); background: var(--el-fill-color-light);
+  font-size: var(--fs-12); color: var(--muted); background: var(--el-fill-color-light);
 }
 .summary-info { min-width: 0; }
-.summary-topic { font-weight: 700; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.summary-title { font-size: 13px; color: var(--ink); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.summary-sub { display: flex; gap: 8px; flex-wrap: wrap; }
+.summary-topic { font-weight: 700; font-size: var(--fs-16); margin-bottom: var(--sp-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-title { font-size: var(--fs-13); color: var(--ink); margin-bottom: var(--sp-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-sub { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .cover-required-tip {
-  display: flex; align-items: center; gap: 6px;
-  margin-top: 8px; font-size: 12px; color: var(--err);
+  display: flex; align-items: center; gap: var(--sp-2);
+  margin-top: var(--sp-2); font-size: var(--fs-12); color: var(--err);
 }
-.readonly-tip { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.readonly-tip { font-size: var(--fs-12); color: var(--muted); margin: var(--sp-2) 0 0; }
 
-/* 排版参数(只读回显,在预览步设置) */
-.ctrl-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
-  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: var(--el-fill-color-light);
-}
-.ctrl-group { display: inline-flex; align-items: center; gap: 8px; }
-.ctrl-divider { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
-.field-label { font-size: 13px; color: var(--muted); flex: none; white-space: nowrap; }
-.ro-value { display: inline-flex; align-items: center; gap: 6px; }
-.ro-text { font-size: 13px; color: var(--ink); white-space: nowrap; }
-.ro-hint { font-size: 12px; color: var(--faint); }
-.flex-sp { flex: 1; }
+/* 双列面板:左=排版参数只读 / 右=发布元信息(替代原两条通栏条) */
+.pub-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-5); align-items: start; }
+.panel { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); padding: var(--sp-5); }
+.panel-head { display: flex; align-items: baseline; gap: var(--sp-3); margin-bottom: var(--sp-4); padding-bottom: var(--sp-3); border-bottom: 1px solid var(--line); }
+.panel-title { font-size: var(--fs-14); font-weight: 700; color: var(--ink); }
+.panel-hint { font-size: var(--fs-12); color: var(--faint); }
+
+.style-readonly { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3) var(--sp-5); }
+.ctrl-group { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.field-label { font-size: var(--fs-13); color: var(--muted); flex: none; white-space: nowrap; }
+.ro-value { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.ro-text { font-size: var(--fs-13); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .theme-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
 .theme-dot.is-bright { box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
 
 /* 发布元信息(作者/原文地址,项目级落库) */
-.meta-bar {
-  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
-  padding: 10px 12px; margin-bottom: 14px;
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: var(--el-fill-color-light);
-}
-.meta-field { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 220px; }
-.meta-field .el-input { flex: 1; }
+.meta-form { display: flex; flex-direction: column; gap: var(--sp-4); }
+.meta-field { display: flex; align-items: center; gap: var(--sp-3); }
+.meta-field .field-label { width: 64px; }
+.meta-field .el-input { flex: 1; min-width: 0; }
 
-/* 动作区 */
-.publish-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.pub-hint { font-size: 12px; color: var(--muted); }
-
-@media (max-width: 768px) {
-  .ctrl-divider { display: none; }
-  .meta-field { flex: 1 1 100%; }
-  .meta-field .el-input :deep(.el-input__wrapper) { min-height: 44px; }
-  .publish-actions :deep(.el-button) { min-height: 44px; } /* 触控目标 ≥44px */
-  .summary { flex-wrap: wrap; }
-}
+/* 发布进行中提示条 */
+.pub-hint { margin: 0; font-size: var(--fs-12); color: var(--muted); }
 </style>

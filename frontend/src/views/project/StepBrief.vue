@@ -1,15 +1,33 @@
 <template>
-  <el-card class="step-card" shadow="never">
-    <template #header>
-      <span class="card-head">
-        <span class="step-title serif">{{ isImitation ? 'Step 1 · 原文分析' : 'Step 1 · 生成创作简报' }}</span>
-        <span v-if="brief" class="meta">模型 {{ brief.aiModel }} · {{ brief.tokenUsage }} tokens</span>
-        <!-- S6.1:知识库检索状态(随 brief 落库,刷新/重进可见) -->
-        <span v-if="brief && brief.ragStatus" class="meta rag-meta">
-          <el-tag :type="ragTagType(brief.ragStatus)" size="small" effect="plain" round>知识库 · {{ ragLabel(brief.ragStatus) }}</el-tag>
-        </span>
-      </span>
-    </template>
+  <div class="step-body brief-step">
+    <!-- 「Step 1 · 简报 / 原文分析」标题与下一步动作已并入外壳上下文条(见 script syncHeader);
+         原 el-card 头部的元信息下沉为下方属性条,页面回到全幅无卡片形态 -->
+    <div v-if="brief" class="prop-strip">
+      <div class="prop">
+        <span class="prop-k">模型</span>
+        <span class="prop-v">{{ brief.aiModel || '—' }}</span>
+      </div>
+      <div class="prop">
+        <span class="prop-k">词元</span>
+        <span class="prop-v">{{ brief.tokenUsage || '—' }}</span>
+      </div>
+      <!-- S6.1:知识库检索状态(随 brief 落库,刷新/重进可见) -->
+      <div class="prop">
+        <span class="prop-k">知识库</span>
+        <el-tag v-if="brief.ragStatus" :type="ragTagType(brief.ragStatus)" size="small" effect="plain" round>
+          {{ ragLabel(brief.ragStatus) }}
+        </el-tag>
+        <span v-else class="prop-v">—</span>
+      </div>
+      <div class="prop">
+        <span class="prop-k">标题偏好</span>
+        <span class="prop-v" :class="{ 'is-muted': !selectedTitle }">{{ selectedTitle || '未选用' }}</span>
+      </div>
+      <div class="prop">
+        <span class="prop-k">风险点</span>
+        <span class="prop-v">{{ riskSummary(brief) }}</span>
+      </div>
+    </div>
 
     <!-- 文章仿写模式(09-09-article-imitation):独立视图(分析中/分析结果+风格推荐/引导语) -->
     <template v-if="isImitation">
@@ -28,7 +46,7 @@
                   :title="`上次分析失败：${project.lastBriefError}`" class="brief-alert" />
         <div class="intro-hero">
           <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
-          <div class="intro-title serif">分析原文，推荐风格，一键仿写</div>
+          <div class="intro-title">分析原文，推荐风格，一键仿写</div>
           <p>AI 将分析参考原文的题材、结构骨架与句式特征，并从风格库推荐最适合仿写这篇的 ≤3 个风格。</p>
           <div class="gen-mode-row">
             <el-button type="primary" :loading="imitationBusy" @click="onAnalyze" size="large">
@@ -73,7 +91,7 @@
           <div v-else class="rec-list">
             <div v-for="(r, i) in imitation.recommendations" :key="r.styleId" class="rec-item">
               <div class="rec-head">
-                <span class="rec-name serif">{{ r.name }}</span>
+                <span class="rec-name">{{ r.name }}</span>
                 <el-tag size="small" effect="plain" round>匹配度 {{ Math.round((r.matchScore || 0) * 100) }}%</el-tag>
               </div>
               <div class="rec-reason">{{ r.reason }}</div>
@@ -81,12 +99,8 @@
           </div>
         </section>
 
-        <div class="brief-actions">
-          <el-button v-if="canRegenerateBrief" :loading="imitationBusy" @click="onAnalyze">重新分析</el-button>
-          <!-- 下一步按状态给出唯一动作:READY 进入版本生成;版本已生成(含已发布)查看版本 -->
-          <el-button v-if="canGoVersions" type="success" @click="gotoVersions">进入多版本生成 →</el-button>
-          <el-button v-else-if="canViewVersions" type="success" @click="gotoVersions">查看版本 →</el-button>
-        </div>
+        <!-- 下一步动作(重新分析 / 进入多版本生成 / 查看版本)已上移至上下文条 actions,
+             逻辑与显隐条件逐字不变(canRegenerateBrief / canGoVersions / canViewVersions) -->
       </div>
     </template>
 
@@ -121,7 +135,7 @@
         </div>
         <div class="tag-row">
           <button v-for="(t,i) in brief.titleCandidates" :key="i" type="button"
-                  class="title-tag serif" :class="{ picked: t === selectedTitle, disabled: !canPickTitle }"
+                  class="title-tag" :class="{ picked: t === selectedTitle, disabled: !canPickTitle }"
                   :disabled="!canPickTitle"
                   :title="!canPickTitle ? '版本已生成，标题偏好已锁定' : (t === selectedTitle ? '已选中，点击取消' : '点击选用此标题')"
                   @click="onPickTitle(t)">
@@ -144,26 +158,29 @@
         </section>
       </div>
 
-      <!-- 大纲:编号章节 -->
-      <section class="brief-sec">
-        <div class="brief-label"><el-icon><Tickets /></el-icon>大纲</div>
-        <div v-for="(o,i) in brief.outline" :key="i" class="outline-item">
-          <div class="outline-head serif"><span class="outline-num">{{ i+1 }}</span>{{ o.heading }}</div>
-          <ul class="sub-list"><li v-for="(s,j) in o.subPoints" :key="j">{{ s }}</li></ul>
-        </div>
-      </section>
-
-      <!-- 事实风险点 -->
-      <section class="brief-sec">
-        <div class="brief-label"><el-icon><Warning /></el-icon>事实风险点</div>
-        <div v-for="(r,i) in brief.factRisks" :key="i" class="risk-item">
-          <div class="risk-line">
-            <el-tag :type="riskType(r.riskLevel)" size="small" class="risk-tag">{{ riskLabel(r.riskLevel) }}</el-tag>
-            <div class="risk-claim">{{ r.claim }}</div>
+      <!-- 大纲 + 事实风险点:宽屏并排(全幅利用横向空间,窄栏时 grid 自动收敛为单列) -->
+      <div class="brief-cols">
+        <!-- 大纲:编号章节 -->
+        <section class="brief-sec">
+          <div class="brief-label"><el-icon><Tickets /></el-icon>大纲</div>
+          <div v-for="(o,i) in brief.outline" :key="i" class="outline-item">
+            <div class="outline-head"><span class="outline-num">{{ i+1 }}</span>{{ o.heading }}</div>
+            <ul class="sub-list"><li v-for="(s,j) in o.subPoints" :key="j">{{ s }}</li></ul>
           </div>
-          <div class="risk-sug">建议：{{ r.suggestion }}</div>
-        </div>
-      </section>
+        </section>
+
+        <!-- 事实风险点 -->
+        <section class="brief-sec">
+          <div class="brief-label"><el-icon><Warning /></el-icon>事实风险点</div>
+          <div v-for="(r,i) in brief.factRisks" :key="i" class="risk-item">
+            <div class="risk-line">
+              <el-tag :type="riskType(r.riskLevel)" size="small" class="risk-tag">{{ riskLabel(r.riskLevel) }}</el-tag>
+              <div class="risk-claim">{{ r.claim }}</div>
+            </div>
+            <div class="risk-sug">建议：{{ r.suggestion }}</div>
+          </div>
+        </section>
+      </div>
 
       <!-- R3:知识库引用明细(本次简报检索注入 AI 的命中块,可展开核查) -->
       <section class="brief-sec">
@@ -173,13 +190,8 @@
         <CitationList :citations="brief.ragCitations" :rag-status="brief.ragStatus" :fact-sheet="brief.factSheet" />
       </section>
 
-      <div class="brief-actions">
-        <!-- 重新生成(2026-09-09 模式收敛):走深度流程重新研究,不再调快速生成接口 -->
-        <el-button v-if="canRegenerateBrief" @click="onRegenerateDeep">重新研究生成</el-button>
-        <!-- 下一步按状态给出唯一动作:READY 进入版本生成;版本已生成(含已发布)查看版本 -->
-        <el-button v-if="canGoVersions" type="success" @click="gotoVersions">进入多版本生成 →</el-button>
-        <el-button v-else-if="canViewVersions" type="success" @click="gotoVersions">查看版本 →</el-button>
-      </div>
+      <!-- 下一步动作(重新研究生成 / 进入多版本生成 / 查看版本)已上移至上下文条 actions,
+           逻辑与显隐条件逐字不变;此处不再重复渲染按钮 -->
     </div>
 
     <!-- ④ 无简报区间(或重启流程中):唯一 deepStage 状态机,同一状态恒渲染同一 UI -->
@@ -208,18 +220,14 @@
         <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
         <ResearchProgress :brief-id="deepBriefId" @done="onResearchDone" />
         <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
-        <div class="deep-actions">
-          <!-- 研究完成:自动简报已在后台生成;若失败(lastBriefError)可手动重试,也可跳过简报直接写正文 -->
-          <el-button v-if="deepStage === 'RESEARCH_DONE' && project && (project.lastBriefError || project.status === 'DRAFT')"
-                     type="warning" :loading="deepBusy" @click="onDeepBriefRetry">重新生成简报</el-button>
-          <el-button v-if="deepStage === 'RESEARCH_DONE'" :loading="deepBusy" @click="onDeepGenerate">跳过简报,直接生成正文 →</el-button>
-        </div>
+        <!-- 研究完成后的「重新生成简报 / 跳过简报直接生成正文」已上移至上下文条 actions
+             (见 script syncHeader,条件与 loading 逐字不变);原位置不再渲染按钮 -->
       </template>
 
       <!-- 引导页(唯一主操作「开始深度研究」;失败原因由上方 alert 展示,点击即重试) -->
       <div v-else class="intro-hero">
         <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
-        <div class="intro-title serif">让 AI 先想清楚，再动笔</div>
+        <div class="intro-title">让 AI 先想清楚，再动笔</div>
         <p>AI 先生成研究计划并向你反问补充信息，多代理并行研究后产出标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入版本生成。</p>
         <div class="gen-mode-row">
           <el-button type="primary" :loading="deepBusy" @click="startDeep" size="large">
@@ -230,12 +238,12 @@
       </div>
     </div>
     </template>
-  </el-card>
+  </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { projectApi } from '../../api'
 import { ElMessage } from 'element-plus'
 import { isGeneratingBrief } from '../../constants/project'
@@ -247,6 +255,7 @@ import ResearchProgress from './deep/ResearchProgress.vue'
 import FactSheetSummary from './deep/FactSheetSummary.vue'
 import CitationList from './deep/CitationList.vue'
 import http from '../../api/http'
+import { usePageHeader } from '../../composables/usePageHeader'
 
 // 数据全部来自 project-detail store(布局层已负责装载与轮询,这里只读 + 触发动作)
 const props = defineProps({ project: Object })
@@ -549,99 +558,169 @@ const onDeepGenerate = async () => {
     ElMessage.success('已开始生成正文，生成完成后自动刷新')
     await store.ensureProject(route.params.id, { force: true })
     router.push({ name: 'project-versions', params: { id: route.params.id } })
-  } catch (e) { ElMessage.error(e?.response?.data?.msg || '深度写作失败') }
+  }   catch (e) { ElMessage.error(e?.response?.data?.msg || '深度写作失败') }
   finally { deepBusy.value = false }
 }
+
+// ==================== 批 2(09-28-pc-ui-refactor):属性条 + 上下文条 ====================
+// 属性条「风险点」文案:按 high/medium/low 计数,空则「无」;仅视图派生,不改后端口径
+const riskSummary = (b) => {
+  const rs = Array.isArray(b?.factRisks) ? b.factRisks : []
+  if (!rs.length) return '无'
+  const n = (l) => rs.filter((r) => r.riskLevel === l).length
+  return [
+    n('high') ? `高 ${n('high')}` : '',
+    n('medium') ? `中 ${n('medium')}` : '',
+    n('low') ? `低 ${n('low')}` : '',
+  ].filter(Boolean).join(' · ')
+}
+
+// 挂载在全部动作声明之后:action 直接引用 gotoVersions / onRegenerateDeep / onAnalyze(避免 TDZ)
+// 契约(批 1 试点同款):usePageHeader() 返回 reactive 壳,必须整体持有后写属性。
+// 不可解构后按 ref 用(crumbs.value = ...)——reactive 解构拿到的是普通数组,写 .value 不会回到壳里,
+// 外壳读 header.crumbs/actions 仍是旧值,表现为面包屑与动作全部不出现。
+const header = usePageHeader()
+onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
+function syncHeader() {
+  if (!header) return
+  const im = isImitation.value
+  header.crumbs = [{ label: '项目' }, { label: im ? '原文分析' : '简报' }]
+  const acts = []
+  if (canRegenerateBrief.value) {
+    acts.push(im
+      // 仿写:重新分析(analyzeImitation);主题:重新研究生成(走深度流程)
+      ? { key: 'regen', label: '重新分析', loading: imitationBusy.value, disabled: generatingBrief.value, onClick: onAnalyze }
+      : { key: 'regen', label: '重新研究生成', loading: deepBusy.value, disabled: generatingBrief.value, onClick: onRegenerateDeep })
+  }
+  // 下一步按状态给出唯一动作:READY 进入版本生成;版本已生成(含已发布)查看版本
+  if (canGoVersions.value) acts.push({ key: 'next', label: '进入多版本生成 →', type: 'primary', onClick: gotoVersions })
+  else if (canViewVersions.value) acts.push({ key: 'next', label: '查看版本 →', type: 'primary', onClick: gotoVersions })
+  // 深度流程研究完成态:自动简报已在后台生成;失败可重试,也可跳过简报直接写正文
+  if (deepActive.value && deepStage.value === 'RESEARCH_DONE') {
+    if (props.project && (props.project.lastBriefError || props.project.status === 'DRAFT')) {
+      acts.push({ key: 'deep-retry', label: '重新生成简报', loading: deepBusy.value, onClick: onDeepBriefRetry })
+    }
+    acts.push({ key: 'deep-gen', label: '跳过简报,直接生成正文 →', loading: deepBusy.value, onClick: onDeepGenerate })
+  }
+  header.actions = acts
+}
+syncHeader()
+watch([isImitation, canRegenerateBrief, canGoVersions, canViewVersions, deepBusy, imitationBusy, generatingBrief, deepActive, deepStage,
+  () => `${props.project?.lastBriefError || ''}|${props.project?.status || ''}`], syncHeader)
 </script>
 
 <style scoped>
-.card-head { display: flex; justify-content: space-between; align-items: baseline; width: 100%; gap: 12px; }
-.step-title { font-size: 16px; font-weight: 700; }
-.card-head .meta { font-size: 12px; color: var(--muted); font-weight: normal; white-space: nowrap; }
-.rag-meta { margin-left: 8px; }
+/* 批 2(09-28-pc-ui-refactor):扁平全幅,去卡片头/移动断点,全部走 token */
+.brief-step { display: flex; flex-direction: column; gap: var(--sp-6); }
 
-.muted { color: var(--muted); font-size: 13px; }
-.brief-alert { margin-bottom: 12px; }
-.state-error { padding: 36px 16px; }
-.btn-icon { margin-right: 2px; }
+/* 属性条:取代原 el-card 头,常驻展示生成元信息 */
+.prop-strip {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--sp-1) var(--sp-6);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.prop { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.prop-k { color: var(--faint); font-size: var(--fs-12); line-height: var(--lh-12); }
+.prop-v {
+  color: var(--ink); font-size: var(--fs-13); line-height: var(--lh-13); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 32ch;
+}
+.prop-v.is-muted { color: var(--muted); font-weight: 500; }
 
-/* 引导态:居中 hero */
-.intro-hero { text-align: center; padding: 28px 12px 8px; }
+.muted { color: var(--muted); font-size: var(--fs-13); line-height: var(--lh-13); }
+.brief-alert { margin-bottom: var(--sp-4); }
+.state-error { padding: var(--sp-8) var(--sp-4); }
+.btn-icon { margin-right: var(--sp-1); }
+
+/* 引导态:居中 hero(全幅列内居中,不再压在卡片里) */
+.intro-hero { text-align: center; padding: var(--sp-8) var(--sp-4) var(--sp-4); }
 .intro-icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 64px; height: 64px; border-radius: 18px;
+  width: 64px; height: 64px; border-radius: var(--radius-lg);
   background: var(--brand-gradient); color: #fff;
-  margin-bottom: 14px;
+  margin-bottom: var(--sp-4);
   box-shadow: var(--shadow-hover);
 }
-.intro-title { font-size: 20px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
-.intro-hero p { line-height: 1.7; max-width: 420px; margin: 0 auto 18px; }
+.intro-title { font-size: var(--fs-22); line-height: var(--lh-22); font-weight: 700; color: var(--ink); margin-bottom: var(--sp-2); }
+.intro-hero p { line-height: var(--lh-16); max-width: 52ch; margin: 0 auto var(--sp-5); color: var(--muted); }
+.intro-hero .muted { max-width: 60ch; margin: 0 auto; display: block; }
 
-.generating { padding: 4px 0; }
-.gen-tip { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.generating { padding: var(--sp-1) 0; }
+.gen-tip { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-3) 0 0; font-size: var(--fs-13); line-height: var(--lh-14); color: var(--muted); }
 .spin { animation: spin 1.2s linear infinite; color: var(--brand); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.brief-sec { margin-bottom: 18px; }
-.brief-label { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-bottom: 8px; font-size: 13px; letter-spacing: .04em; color: var(--ink); }
+/* 受众 + 观点:并排双列(全幅列内,窄栏自动收敛为单列) */
+/* 受众/观点、题材/结构/句式:随可用宽度自动增列(纯 grid,无媒体查询) */
+.brief-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-4); }
+.brief-cols { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--sp-7); }
+/* 状态容器内的纵向节奏:首个状态块(简报正文 / 深度引导)统一由父级 gap 承担 */
+.brief > * + *, .intro > * + * { margin-top: var(--sp-5); }
+.brief-sec { min-width: 0; }
+.brief-label {
+  display: flex; align-items: center; gap: var(--sp-2);
+  font-weight: 700; margin-bottom: var(--sp-3);
+  font-size: var(--fs-13); line-height: var(--lh-13); letter-spacing: .04em; color: var(--ink);
+}
 .brief-label .el-icon { color: var(--brand); }
-.label-hint { font-weight: normal; font-size: 12px; color: var(--faint); letter-spacing: 0; }
-.brief-text { font-size: 14px; line-height: 1.7; }
+.label-hint { font-weight: normal; font-size: var(--fs-12); color: var(--faint); letter-spacing: 0; }
+.brief-text { font-size: var(--fs-14); line-height: var(--lh-16); color: var(--ink); }
 
-/* 受众 + 观点:两栏卡片 */
-.brief-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.panel { background: var(--el-fill-color-light); border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 18px; }
-.panel .brief-label { margin-bottom: 6px; }
+.panel { background: var(--el-fill-color-lighter); border-radius: var(--radius-sm); padding: var(--sp-4); }
+.panel .brief-label { margin-bottom: var(--sp-2); }
 
-.tag-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .title-tag {
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--sp-2);
   max-width: 100%; height: auto; white-space: normal !important; word-break: break-word;
-  line-height: 1.5; padding: 8px 14px; font-size: 15px;
-  border: 1px solid var(--line-strong); border-radius: 8px;
+  line-height: var(--lh-14); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-14);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   background: var(--card); color: var(--ink);
   cursor: pointer; text-align: left;
   transition: border-color .2s, color .2s, background .2s, box-shadow .2s;
 }
 .title-tag:hover { border-color: var(--brand); color: var(--brand); }
+.title-tag:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .title-tag.picked { border-color: var(--brand); background: var(--brand-weak); color: var(--brand-strong); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 15%, transparent); }
 .title-tag.disabled { cursor: not-allowed; opacity: .6; }
 .title-tag.disabled:hover { border-color: var(--line-strong); color: var(--ink); }
 .pick-check { color: var(--brand-strong); }
-.pick-tip { margin: 8px 0 0; font-size: 12px; color: var(--brand-strong); }
+.pick-tip { margin: var(--sp-2) 0 0; font-size: var(--fs-12); color: var(--brand-strong); }
 .pick-tip.locked { color: var(--faint); }
-.list, .sub-list { margin: 0; padding-left: 18px; }
-.list li, .sub-list li { font-size: 14px; line-height: 1.8; }
+.list, .sub-list { margin: 0; padding-left: var(--sp-5); }
+.list li, .sub-list li { font-size: var(--fs-14); line-height: var(--lh-18); color: var(--ink); }
 
 /* 大纲:编号章节 */
-.outline-item { margin-bottom: 10px; }
-.outline-head { display: flex; align-items: baseline; gap: 10px; font-weight: 700; font-size: 14px; }
+.outline-item { margin-bottom: var(--sp-3); }
+.outline-head { display: flex; align-items: baseline; gap: var(--sp-2); font-weight: 700; font-size: var(--fs-14); line-height: var(--lh-14); color: var(--ink); }
 .outline-num {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 6px;
+  width: 22px; height: 22px; border-radius: var(--radius-xs);
   background: var(--brand-weak); color: var(--brand-strong);
-  font-size: 12px; font-weight: 700;
+  font-size: var(--fs-12); line-height: var(--lh-12); font-weight: 700;
 }
-.sub-list { margin-top: 2px; }
-.sub-list li { color: var(--muted); font-size: 13px; }
+.sub-list { margin-top: var(--sp-1); }
+.sub-list li { color: var(--muted); font-size: var(--fs-13); line-height: var(--lh-16); }
 
-.risk-item { background: var(--el-fill-color-light); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; }
-.risk-line { display: flex; align-items: flex-start; gap: 8px; }
+/* 风险点 */
+.risk-item { background: var(--el-fill-color-lighter); border-radius: var(--radius-sm); padding: var(--sp-3); margin-bottom: var(--sp-2); }
+.risk-line { display: flex; align-items: flex-start; gap: var(--sp-2); }
 .risk-tag { flex-shrink: 0; margin-top: 2px; }
-.risk-claim { font-size: 14px; line-height: 1.6; }
-.risk-sug { font-size: 12px; color: var(--muted); margin-top: 4px; }
-.rec-empty { margin-bottom: 8px; }
-.rec-list { display: flex; flex-direction: column; gap: 10px; }
-.rec-item { background: var(--el-fill-color-light); border-radius: var(--radius-sm); padding: 12px 14px; }
-.rec-head { display: flex; align-items: center; gap: 8px; }
-.rec-name { font-weight: 700; font-size: 15px; color: var(--ink); }
-.rec-reason { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 6px 0 10px; }
-.brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.risk-claim { font-size: var(--fs-14); line-height: var(--lh-14); color: var(--ink); }
+.risk-sug { font-size: var(--fs-12); line-height: var(--lh-12); color: var(--muted); margin-top: var(--sp-1); }
 
-@media (max-width: 768px) {
-  .brief-grid { grid-template-columns: 1fr; }
-  .title-tag { width: 100%; }
-  .brief-actions .el-button { flex: 1; }
-}
+/* 风格推荐(仿写模式) */
+.rec-empty { margin-bottom: var(--sp-2); }
+.rec-list { display: flex; flex-direction: column; gap: var(--sp-3); }
+.rec-item { background: var(--el-fill-color-lighter); border-radius: var(--radius-sm); padding: var(--sp-3) var(--sp-4); }
+.rec-head { display: flex; align-items: center; gap: var(--sp-2); }
+.rec-name { font-weight: 700; font-size: var(--fs-16); line-height: var(--lh-16); color: var(--ink); }
+.rec-reason { font-size: var(--fs-13); line-height: var(--lh-16); color: var(--muted); margin: var(--sp-2) 0 var(--sp-3); }
+
+/* 引导页主操作行 + 脚注(原为无样式的遗留钩子,本批按 token 归一) */
+.gen-mode-row { display: flex; justify-content: center; }
+.form-tip { margin: var(--sp-4) 0 0; font-size: var(--fs-12); line-height: var(--lh-12); color: var(--faint); text-align: center; }
 </style>

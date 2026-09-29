@@ -34,11 +34,13 @@ const openPanels = ref(['plan'])
 </script>
 
 <style scoped>
-.plan-title { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
-.plan-body { display: flex; flex-direction: column; gap: 10px; }
-.plan-label { color: var(--faint); font-size: 12px; margin-right: 8px; }
-.plan-list { margin: 4px 0 0; padding-left: 20px; }
+/* 批 2(09-28-pc-ui-refactor):去掉 768px 断点(PC-only),走 token */
+.plan-title { display: inline-flex; align-items: center; gap: var(--sp-2); font-weight: 600; font-size: var(--fs-14); line-height: var(--lh-14); }
+.plan-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-4) var(--sp-7); }
+.plan-sec { min-width: 0; }
+.plan-label { color: var(--faint); font-size: var(--fs-12); line-height: var(--lh-12); }
+.plan-list { margin: var(--sp-1) 0 0; padding-left: var(--sp-5); }
+.plan-list li { font-size: var(--fs-14); line-height: var(--lh-18); color: var(--ink); }
 .plan-list.plain { list-style: none; padding-left: 0; }
-.tool-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
-@media (max-width: 768px) { .deep-plan { font-size: 13px; } }
+.tool-row { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-1); }
 </style>

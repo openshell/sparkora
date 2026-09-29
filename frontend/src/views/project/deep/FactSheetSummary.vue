@@ -52,14 +52,14 @@ function safeParse(s) { try { return JSON.parse(s) } catch { return {} } }
 </script>
 
 <style scoped>
-.fs-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 600; }
-.entry { padding: 8px 0; border-bottom: 1px dashed var(--line); }
-.e-key { font-weight: 600; font-size: 13px; }
-.e-val { margin-top: 4px; display: flex; align-items: center; gap: 8px; }
-.e-val .num { font-size: 16px; }
-.conf { color: var(--faint); font-size: 12px; letter-spacing: 2px; }
-.e-claim { color: var(--faint); font-size: 12px; margin-top: 2px; }
-.gaps { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); }
-.g-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
-@media (max-width: 768px) { .fs-head { flex-wrap: wrap; } }
+/* 批 2:全幅工作台,去掉 max-width 断点;行内数值与标签改为自适应换行 */
+.fs-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); font-weight: 600; }
+.entry { padding: var(--sp-2) 0; border-bottom: 1px dashed var(--line); }
+.e-key { font-weight: 600; font-size: var(--fs-13); }
+.e-val { margin-top: var(--sp-1); display: flex; align-items: center; gap: var(--sp-2); }
+.e-val .num { font-size: var(--fs-16); }
+.conf { color: var(--faint); font-size: var(--fs-12); letter-spacing: 2px; }
+.e-claim { color: var(--faint); font-size: var(--fs-12); margin-top: var(--sp-1); }
+.gaps { margin-top: var(--sp-4); padding-top: var(--sp-2); border-top: 1px solid var(--line); }
+.g-title { font-weight: 600; font-size: var(--fs-13); margin-bottom: var(--sp-1); }
 </style>

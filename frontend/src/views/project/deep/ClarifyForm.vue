@@ -3,7 +3,7 @@
     <div class="clarify-head"><el-icon><ChatDotRound /></el-icon>补齐生成需求
       <span class="hint">{{ locked ? '需求已锁定(只读)' : '填写后 AI 将按此研究,避免空泛表述' }}</span>
     </div>
-    <el-form label-position="top" :disabled="locked">
+    <el-form label-position="top" :disabled="locked" class="clarify-grid">
       <el-form-item v-for="(q,i) in questions" :key="i" :required="q.required">
         <template #label><span class="q-text">{{ q.q }}</span></template>
         <el-radio-group v-if="q.type === 'single'" v-model="model[q.q]">
@@ -23,11 +23,16 @@
           v-model="model['__other_' + q.q]"
           class="other-input"
           maxlength="200"
-          :placeholder="q.required ? '请填写(必填)' : '请填写(可留空)'" />
-        <el-input v-else-if="!q.type || q.type === 'input'" v-model="model[q.q]" :placeholder="q.required ? '必填' : '可留空'" />
+          :placeholder="q.required ? '请填写(必填)' : '请填写(可留空)'"
+          @keydown="onEnter" />
+        <el-input v-else-if="!q.type || q.type === 'input'" v-model="model[q.q]" :placeholder="q.required ? '必填' : '可留空'"
+          @keydown="onEnter" />
       </el-form-item>
     </el-form>
-    <el-button v-if="!locked" type="primary" :loading="saving" @click="onSubmit">锁定需求,开始研究</el-button>
+    <div v-if="!locked" class="clarify-actions">
+      <el-button type="primary" :loading="saving" @click="onSubmit">锁定需求,开始研究</el-button>
+      <span class="hint">输入框内回车即可提交</span>
+    </div>
   </div>
 </template>
 
@@ -95,12 +100,32 @@ const onSubmit = () => {
   }
   emit('submit', out)
 }
+
+// Enter 提交(批 2 R6):keydown 事件从 el-input 内部原生 input 冒泡上来。
+// 不加 .prevent 修饰符——否则会连中文输入法组字确认的回车一起吞掉;
+// 组字中(isComposing / keyCode 229)与只读态一律放行。
+const onEnter = (e) => {
+  if (props.locked) return
+  if (e.isComposing || e.keyCode === 229) return
+  onSubmit()
+}
 </script>
 
 <style scoped>
-.clarify-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-weight: 600; }
+/* 批 2(09-28-pc-ui-refactor):问题按可用宽度自动增列(纯 grid,去掉 768px 断点),走 token */
+.clarify { display: flex; flex-direction: column; gap: var(--sp-4); }
+.clarify-head { display: flex; align-items: center; gap: var(--sp-2); font-weight: 600; font-size: var(--fs-14); line-height: var(--lh-14); }
 .clarify-head .el-icon { color: var(--brand); }
-.q-text { font-size: 14px; }
-.other-input { margin-top: 8px; max-width: 420px; }
-@media (max-width: 768px) { .el-radio-group { flex-direction: column; gap: 8px; } .other-input { max-width: 100%; } }
+.hint { font-weight: 400; font-size: var(--fs-12); line-height: var(--lh-12); color: var(--faint); }
+.q-text { font-size: var(--fs-14); line-height: var(--lh-14); }
+.clarify-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  column-gap: var(--sp-6);
+  row-gap: var(--sp-1);
+}
+.clarify-grid :deep(.el-radio-group),
+.clarify-grid :deep(.el-checkbox-group) { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); }
+.other-input { margin-top: var(--sp-2); max-width: 48ch; }
+.clarify-actions { display: flex; align-items: center; gap: var(--sp-3); }
 </style>

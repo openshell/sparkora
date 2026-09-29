@@ -169,17 +169,19 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <style scoped>
-.progress-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-weight: 600; }
-.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin: 12px 0; }
-.a-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
-.a-q { font-size: 13px; font-weight: 600; }
-.a-meta { color: var(--faint); font-size: 12px; margin-top: 6px; }
+/* 批 2(09-28-pc-ui-refactor):agent 卡片按可用宽度自动增列(纯 grid),去掉 768px 断点与 44px 触控目标 */
+.progress { display: flex; flex-direction: column; gap: var(--sp-3); }
+.progress-head { display: flex; align-items: center; gap: var(--sp-2); font-weight: 600; font-size: var(--fs-14); line-height: var(--lh-14); }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-3); }
+.agent-card { border-radius: var(--radius-sm); }
+.a-head { display: flex; justify-content: space-between; gap: var(--sp-2); align-items: flex-start; }
+.a-q { font-size: var(--fs-13); line-height: var(--lh-14); font-weight: 600; color: var(--ink); }
+.a-meta { color: var(--faint); font-size: var(--fs-12); line-height: var(--lh-12); margin-top: var(--sp-1); }
 .a-meta.err { color: var(--el-color-danger); }
-.tool-health { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
-.fallback-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--faint); }
-.fl-item { padding: 1px 6px; border: 1px dashed var(--line); border-radius: 4px; }
-.spin-hint { color: var(--faint); font-size: 12px; }
+.tool-health { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.fallback-line { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; font-size: var(--fs-12); line-height: var(--lh-12); color: var(--faint); }
+.fl-item { padding: var(--sp-1) var(--sp-2); border: 1px dashed var(--line); border-radius: var(--radius-xs); }
+.spin-hint { color: var(--faint); font-size: var(--fs-12); line-height: var(--lh-12); display: inline-flex; align-items: center; gap: var(--sp-1); }
 .spin { animation: r 1s linear infinite; }
 @keyframes r { to { transform: rotate(360deg); } }
-@media (max-width: 768px) { .agent-grid { grid-template-columns: 1fr; } .el-button { min-height: 44px; } }
 </style>
