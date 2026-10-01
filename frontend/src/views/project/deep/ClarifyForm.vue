@@ -24,9 +24,9 @@
           class="other-input"
           maxlength="200"
           :placeholder="q.required ? '请填写(必填)' : '请填写(可留空)'"
-          @keydown="onEnter" />
+          @keydown.enter="onEnter" />
         <el-input v-else-if="!q.type || q.type === 'input'" v-model="model[q.q]" :placeholder="q.required ? '必填' : '可留空'"
-          @keydown="onEnter" />
+          @keydown.enter="onEnter" />
       </el-form-item>
     </el-form>
     <div v-if="!locked" class="clarify-actions">

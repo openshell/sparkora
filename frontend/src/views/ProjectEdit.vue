@@ -43,7 +43,7 @@
               </div>
             </div>
             <el-form-item prop="topic" class="topic-item">
-              <el-input v-model="form.topic" maxlength="200" show-word-limit size="large" @keydown="onEnterSubmit"
+              <el-input v-model="form.topic" maxlength="200" show-word-limit size="large" @keydown.enter="onEnterSubmit"
                         :placeholder="isImitation ? '如：仿写那篇 AI 模型选型文章' : '如：如何选择自部署的国产 AI 模型'" />
             </el-form-item>
             <!-- 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):取消快速/深度双选,所有生成必走深度流程(研究+反问) -->
@@ -66,10 +66,10 @@
               </div>
             </div>
             <el-form-item label="关键词">
-              <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" @keydown="onEnterSubmit" />
+              <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" @keydown.enter="onEnterSubmit" />
             </el-form-item>
             <el-form-item label="目标读者">
-              <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" @keydown="onEnterSubmit" />
+              <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" @keydown.enter="onEnterSubmit" />
             </el-form-item>
             <el-form-item label="目标字数">
               <el-input-number v-model="form.wordCountTarget" :min="100" :max="10000" :step="100" controls-position="right" style="width:100%" />
