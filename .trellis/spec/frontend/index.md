@@ -20,6 +20,7 @@
 | [Page Conventions](#page-conventions) | 页面结构/CSS 变量/响应式 | **已填** |
 | [State & Tabs](#state--tabs) | 状态保持与懒挂载 | **已填** |
 | [State & Tabs](#state--tabs) | 大组件拆分落位（组件子目录 / composables / utils） | **已填**（09-27-split-monoliths） |
+| [Tests](#tests) | Playwright 视觉回归/冒烟基建、API 拦截层与基线更新 | **已填**（10-01-e2e-testing） |
 
 ---
 
@@ -350,6 +351,25 @@ for (const f of info.files || []) {
 **Why**: 三个口径各算各的，用户在预览页看到 3 张、发布页看到 2 张且封面混在里面，排障成本远高于写一个纯函数；纯函数还能被多处复用与单测。
 
 **Related**: `frontend/src/utils/bodyImageRefs.js`、`frontend/src/views/project/StepPreview.vue`、`frontend/src/views/project/StepPublish.vue`、`docs/spec/image.md` §7.7。
+
+---
+
+## Tests
+
+### Convention: Playwright 旁挂 `frontend/tests/`，spec 必须从 fixtures 导入（10-01-e2e-testing）
+
+**What**: 前端自动化门禁 = `npm run build` + Playwright（`frontend/playwright.config.js` + `frontend/tests/{fixtures,smoke,visual}`）。测试**完全旁挂、产品代码零改动**（不碰 `src/`、不碰 `vite.config.js`）。
+
+- **导入契约**：所有 spec 一律 `import { test, expect } from '../fixtures/index.js'`，**不要**从 `@playwright/test` 直连——扩展后的 `page` 上才装了「`/api` 全拦截 + 预置登录态」，直连会绕过 mock，页面 401 跳登录或打到真后端。
+- **API 全拦截**：`installMocks` 用 `page.route('**/*')` 且**先判 `u.pathname.startsWith('/api/')`** 再分派；**禁止用 `**/api/**` glob**——vite dev 自身的 `/src/api/*.js` 模块请求同样匹配，被回 JSON 后浏览器 MIME 校验拒载 → 应用白屏。未命中的 `/api/*` 返回 `R.fail(404,'未 mock')`，让前端走自身空态而不是抛错。
+- **登录态**：`authed()` 经 `addInitScript` 预置 `localStorage.sparkora_token` / `sparkora_user`（key 与 `store/user.js` 一致）；登录页用例单独 `localStorage.clear()` 冷启动走真实表单。
+- **视觉确定性**：`applyTheme(page, theme)` 必须在 `goto` **之前**调用（主题由启动时读 `localStorage.sparkora_theme` 应用，goto 后改 localStorage 不生效）；截图前 `prepareStable`（禁动画/过渡/光标 + `networkidle` + `document.fonts.ready`）+ 契约锚点可见；宽度×明暗矩阵单一真源 `tests/fixtures/matrix.js`。
+- **基线资产**：`tests/visual/*.spec.js-snapshots/*.png` **必须提交**；`test-results/`、`playwright-report/` 是运行产物（根 `.gitignore` 已忽略）。版式有意变更后用 `npx playwright test tests/visual --update-snapshots` 重录；**正式全量基线在 pc-ui 批 3 后一次性重录**（`10-01-e2e-testing` Deferred）。
+- **断言锚点**：优先契约类名/结构——`.wenyan-preview`、`sparkora-img-missing`、`.page.step-body`、`aside.step-rail`、`.ctxbar .crumb` / `.ctxbar-right button`、`.bubble-row`、`.splitter`——不写脆弱 `nth-child`。
+- **fixture 字段名必须对齐实体契约**：版本是 `versionLabel`（不是 `label`）、项目创建人是 `createdBy`（不是 `creator`）。字段写错时页面**静默渲染兜底值**（`—`/空），测试与截图都不报错，是最隐蔽的 fixture bug。
+- **步骤页路由会被状态机前跳**：`ProjectLayout.loadProject` 在 `routeStepIndex < activeStepOf(status)` 时 `router.replace` 自动前跳（`VERSIONS_READY` 落在 `/versions` 会跳到 `/preview`）。要截/测非活跃步骤页，走用户真实路径——先落活跃页再点步骤 rail（`onMounted` 才触发前跳，客户端切换不会再跳）。
+
+**Related**: `frontend/tests/`、`frontend/playwright.config.js`、`.trellis/tasks/10-01-e2e-testing/`（README 级用法见 `frontend/tests/README.md`）。
 
 ---
 

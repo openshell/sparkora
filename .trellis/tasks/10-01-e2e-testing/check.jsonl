@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-01-e2e-testing/prd.md", "reason": "验收真源：逐条核对 AC1~AC6（基建可用、视觉跑通且人为改token会报红、冒烟全绿、后端未启仍全绿证明拦截、连跑3次一致、文档注明更新基线流程）。"}
+{"file": ".trellis/tasks/10-01-e2e-testing/design.md", "reason": "设计符合性核对：测试目录结构与拦截路由表是否落地、登录态是否按 §1.3 预置 localStorage key、视觉是否按 §1.4 禁动画等稳、边界铁律（产品代码 src/ 零改动）是否被遵守。"}
+{"file": ".trellis/tasks/10-01-e2e-testing/implement.md", "reason": "执行符合性核对：验证命令（playwright install / test:smoke / test:visual / --update-snapshots）、边界自查（git diff --stat -- src/ 期望空）、风险缓解落实（禁flake三件套）。"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "规范核对：确认测试基建（tests/ 与 playwright.config.js）不违反前端 spec 的不可破坏类名契约与页面约定；确认未误改产品代码。并据此核对 3.3 spec 同步是否已增「前端测试基建」条目。"}
