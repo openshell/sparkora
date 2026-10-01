@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对修复后的模板绑定是否符合 Enter 提交定式（@keydown.enter / @keyup.enter），以及是否已把「禁止裸 @keydown 无条件 preventDefault/submit」的防回归条款补入规格。"}

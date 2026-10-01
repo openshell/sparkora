@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端约定来源：第126行 Enter 提交必须 IME 安全、非幂等提交入口同步重入守卫；本缺陷正是偏离「@keyup.enter / @keydown.enter」定式写成裸 @keydown。修改与补规格均以此为准。"}
