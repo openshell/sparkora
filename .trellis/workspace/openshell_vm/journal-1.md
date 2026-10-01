@@ -839,3 +839,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: Playwright 视觉回归 + 冒烟 E2E 基建
+<!-- trellis-session: v=2 fp=11c43c5151257532 -->
+
+**Date**: 2026-10-01
+**Task**: Playwright 视觉回归 + 冒烟 E2E 基建
+**Branch**: `main`
+
+### Summary
+
+为 PC UI 重构建前端自动化门禁:Playwright 旁挂 frontend/tests(/api 全拦截 + 预置登录态,后端零接触),7 条冒烟 + 6 页视觉基线(1280/2560 × 明暗 = 24 张),44/44 连续 3 次全绿;突变 --paper 改色验证 24/24 报红后还原;git diff src/ 与 frontend/src/ 为空,产品代码零改动;正式全量基线待 pc-ui 批 3 后重录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c6c876f` | test(ui): Playwright 视觉回归 + 冒烟 E2E 基建 |
+
+### Status
+
+[OK] **Completed**
