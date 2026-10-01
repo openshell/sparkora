@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 33
+- **Total Sessions**: 34
 - **Last Active**: 2026-10-01
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~863 | Active |
+| `journal-1.md` | ~885 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 34 | 2026-10-01 | 修复单行输入框 @keydown 缺 .enter 修饰符导致的按键误触发提交 | `572fa5d` | `main` |
 | 33 | 2026-10-01 | Playwright 视觉回归 + 冒烟 E2E 基建 | `c6c876f` | `main` |
 | 32 | 2026-09-27 | 预览页剪贴板传图：前端暂存 + 发布时转存七牛 | `d2bd68b` | `main` |
 | 31 | 2026-09-27 | Session 20: 提取共享分节档位 LayoutRules 并统一 VersionService | `aaa3db8` | `main` |

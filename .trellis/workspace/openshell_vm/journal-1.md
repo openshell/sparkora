@@ -861,3 +861,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 34: 修复单行输入框 @keydown 缺 .enter 修饰符导致的按键误触发提交
+<!-- trellis-session: v=2 fp=ea70eeddc91688e9 -->
+
+**Date**: 2026-10-01
+**Task**: 修复单行输入框 @keydown 缺 .enter 修饰符导致的按键误触发提交
+**Branch**: `main`
+
+### Summary
+
+定位并修复 pc-ui 批2 (537498b) 引入的回归:ProjectEdit 三处单行框与 ClarifyForm 两处自由输入绑定裸 @keydown,导致按任意键都 preventDefault/提交——创作主题无法输入数字(且直接触发简报生成)、Ctrl+V 粘贴失效、澄清表单任意键即锁定。改为 @keydown.enter(保留 keydown 以在 Enter 时 preventDefault 阻止单行框隐式提交),handler 逻辑零改动。前端 spec 补「Enter 提交必须带按键修饰符」定式与本次回归现象。npm run build 通过,grep 确认仅剩 splitter 类 @keydown。规划阶段同时定位了另一任务 10-01-fix-input-focus-brief-title 的两个根因(main.css 全局 :focus-visible 误伤 el-input inner;selected_title 未被 DeepWriterService 消费)。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `572fa5d` | fix(ui): 修复单行输入框 @keydown 缺 .enter 修饰符导致的按键误触发提交 |
+
+### Status
+
+[OK] **Completed**
