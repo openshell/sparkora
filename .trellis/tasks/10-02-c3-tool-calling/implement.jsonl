@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "工具可用性契约（available/configured/lastCallOk/toolHealth）、搜索策略路由、sourceId 治理——适配器必须不破坏这些契约"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "工具失败降级不抛出、框架内部串不泄漏、超时归因等约定"}
+{"file": ".trellis/tasks/10-02-c3-tool-calling/design.md", "reason": "本任务关键发现与增量边界（保留确定性编排，ToolCallback 作能力层）"}
+{"file": ".trellis/tasks/10-02-c3-tool-calling/implement.md", "reason": "执行清单与验证命令"}
