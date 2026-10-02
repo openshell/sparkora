@@ -906,3 +906,25 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 36: 澄清阶段AI思考过程+max_tokens截断修复+附属信息字段重构
+<!-- trellis-session: v=2 fp=aaa3bbfbab43bf4b -->
+
+**Date**: 2026-10-02
+**Task**: 澄清阶段AI思考过程+max_tokens截断修复+附属信息字段重构
+**Branch**: `main`
+
+### Summary
+
+定位澄清/研究计划阶段失败根因:AI_MODEL(deepseek-v4-pro-cus→deepseek-v4.1-flash)是reasoning模型,max_tokens=4096被推理token吃光→JSON截断。修复:1)AiClient.ChatResult增reasoning分量(回退reasoning_content、截断20000),澄清chatJson提额8192→16384重试一次;2)落research_reasoning并经/deep/status增量透出planReasoning,前端DeepPlanCard增'AI思考过程'折叠面板(修正:完成态简报正文分支也渲染,否则生成后消失);3)删keywords/remark、extraInfo改名contentDescription(V4迁移存量)、全链路注入(澄清/简报/深度写作/多版本;研究仅进子代理汇总ctx不改检索query)。验证:mvn test 534绿、npm run build绿、playwright 44绿、compose重建healthy。提交758cffa。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `758cffa` | feat(brief): 澄清阶段透出AI思考过程+修复max_tokens截断+附属信息字段重构 |
+
+### Status
+
+[OK] **Completed**
