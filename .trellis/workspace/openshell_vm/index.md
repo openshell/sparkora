@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 36
+- **Total Sessions**: 37
 - **Last Active**: 2026-10-02
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~930 | Active |
+| `journal-1.md` | ~969 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 37 | 2026-10-02 | 修复正文泄漏事实风险审校话术(手册未提供/无法计算) | `814457d`, `a677b07` | `main` |
 | 36 | 2026-10-02 | 澄清阶段AI思考过程+max_tokens截断修复+附属信息字段重构 | `758cffa` | `main` |
 | 35 | 2026-10-02 | 修复输入框聚焦样式与简报标题选择 | `d66e41f`, `83f6243` | `main` |
 | 34 | 2026-10-01 | 修复单行输入框 @keydown 缺 .enter 修饰符导致的按键误触发提交 | `572fa5d` | `main` |

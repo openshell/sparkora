@@ -928,3 +928,42 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 37: 修复正文泄漏事实风险审校话术(手册未提供/无法计算)
+<!-- trellis-session: v=2 fp=fce538f84d5d294c -->
+
+**Date**: 2026-10-02
+**Task**: 修复正文泄漏事实风险审校话术(手册未提供/无法计算)
+**Branch**: `main`
+
+### Summary
+
+线上 version 44 第 17/25 段泄漏作者向审校话术根因:DeepWriterService.appendBriefSection 把 fact_risks 整块(含 suggestion 祈使句)注入正文素材区,模型改写成第三人称陈述。三层防线:R1 新增 ReaderViewRules 只抽 claim 注入「禁止写入正文的断言」块(suggestion 永不入素材区、解析失败绝不按原文兜底);R2 两条正文链路 system 追加共用 READER_RULES 读者视角铁律;R3 新增 MetaLeakCleaner 落库前句级清洗(深度链路置于 ⑥ 数值回查之前、多版本非仿写分支,仿写跳过;清洗致空回退原文)。检查代理另修过度删除/落库隐患,并把共享契约从 VersionService 对 DeepWriterService 的 FQN 反向依赖迁到基础层(ReaderViewRules,与 LayoutRules 同范式)。mvn test 571 绿。
+
+### Main Changes
+
+- 新增 src/main/java/com/sparkora/service/ReaderViewRules.java(READER_RULES + forbiddenClaimsBlock/factRiskClaims,纯静态)
+- 新增 src/main/java/com/sparkora/service/MetaLeakCleaner.java(句级删除,零命中逐字原样返回,cleanForPersist 致空回退原文)
+- DeepWriterService:user prompt 改注禁写断言块 + system 加铁律 + 落库前清洗;VersionService:删事实风险点整块注入 + system 加铁律 + 非仿写分支清洗
+- 不动铁律 1~3 与「事实手册(数值唯一来源):」块头(既有逐字断言锁定);不回溯历史版本、不写生产库、无前端改动
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `814457d` | fix(deep): 修复正文泄漏事实风险审校话术(手册未提供/无法计算) |
+| `a677b07` | chore(task): archive 10-02-fix-meta-leak-in-article-body |
+
+### Testing
+
+- [OK] mvn -q -DskipTests compile 通过
+- [OK] mvn test 571 tests,0 failures/errors/skipped
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真实 AI 链路端到端复测(新生成正文确认无元话语泄漏);历史 version 44/19/15 如需修复须人工确认后再清洗
