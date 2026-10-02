@@ -1088,3 +1088,36 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 42: C5 向量层 Spring AI 化（EmbeddingModel + PgVectorStore 推迟）
+<!-- trellis-session: v=2 fp=de0934d1e275f8d1 -->
+
+**Date**: 2026-10-03
+**Task**: C5 向量层 Spring AI 化（EmbeddingModel + PgVectorStore 推迟）
+**Branch**: `main`
+
+### Summary
+
+embedding 后端改 Spring AI EmbeddingModel（公共 API 不变）；PgVectorStore 表替换因无法表达 JOIN 活表语义推迟为 Scope B
+
+### Main Changes
+
+- EmbeddingClient 后端改 EmbeddingModel 并保留维度 fail-fast
+- 更新 ai-rag spec 记录 C5 与 Scope B 推迟
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `804dca0` | feat(C5): embedding 后端切换为 Spring AI EmbeddingModel（保留 raw pgvector 检索） |
+| `356e4b7` | docs(spec): 记录 C5 EmbeddingModel 向量后端与 PgVectorStore Scope B 推迟 |
+| `74c571ae91469f5ae0916c76a0af22f7a95152df` | chore(task): archive 10-02-c5-pgvector-store |
+
+### Testing
+
+- [OK] mvn test 623 全绿；真实 axonhub embedding 1024 维
+
+### Status
+
+[OK] **Completed**
