@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 40
+- **Total Sessions**: 41
 - **Last Active**: 2026-10-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1068 | Active |
+| `journal-1.md` | ~1090 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 41 | 2026-10-03 | C4 ChatMemory 装配问答多轮 | `85ccb1d` | `main` |
 | 40 | 2026-10-03 | C3 检索工具 ToolCallback 能力层 | `4828458` | `main` |
 | 39 | 2026-10-03 | C2 结构化输出契约化（schema 单一来源 + 自纠错） | `4e00853`, `15af93c`, `26f235e` | `main` |
 | 38 | 2026-10-03 | C0 依赖升级预检 + axonhub 探针 | `e625709`, `d232873`, `7f091b8` | `main` |
