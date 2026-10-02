@@ -23,8 +23,9 @@ import java.util.Map;
  *
  * 数据流(ask):
  *   载入本会话历史 → 构造检索 query(短问题/追问拼接最近 2 轮 user 问题) →
- *   {@link CarRagService#retrieveForGeneration} 跨三域检索 → 组装多轮 messages(system + 历史 + 本轮) →
- *   {@link AiClient#chatMessages} 合成 → 解析答案配图({@link QaImageRefService},失败仅 warn 不阻断) →
+ *   {@link CarRagService#retrieveForGeneration} 跨三域检索 → 历史窗口 + system(含知识上下文) →
+ *   {@link AiClient#chatWithMemory} 经 Spring AI ChatMemory 装配历史后合成 →
+ *   解析答案配图({@link QaImageRefService},失败仅 warn 不阻断) →
  *   落 user + assistant 消息(citations/rag_status/image_refs)。
  *
  * 开关契约:问答链路**不读** {@code SettingService.kbEnabled}/sparkora_setting,浏览/问答独立于「生成注入」开关;
@@ -137,16 +138,16 @@ public class QaService {
         // 2) 跨三域检索(不改检索语义;锚点为 null;不读 kb_enabled)
         CarRagService.RagResult rag = ragService.retrieveForGeneration(searchQuery, RAG_TOPK, null);
 
-        // 3) 组装多轮 messages:system(含知识上下文) + 历史窗口 + 本轮 user
-        List<Map<String, String>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", buildSystemPrompt(rag)));
+        // 3) 历史窗口(契约不变:HISTORY_MAX_MESSAGES/单条截断/总长丢最旧;纯静态,已单测)
+        List<Map<String, String>> historyWindow = new ArrayList<>();
         for (HistoryMessage h : windowHistory(history)) {
-            messages.add(Map.of("role", h.role(), "content", h.content()));
+            historyWindow.add(Map.of("role", h.role(), "content", h.content()));
         }
-        messages.add(Map.of("role", "user", "content", q));
 
-        // 4) AI 合成(非 JSON;失败抛 AiException,由控制器映射 500,不落半截消息)
-        String answer = aiClient.chatMessages(messages, ANSWER_MAX_TOKENS).content();
+        // 4) AI 合成(C4:走 ChatMemory advisor 装配历史;非 JSON;失败抛 AiException,
+        //    由控制器映射 500,不落半截消息)。DB 仍是历史唯一权威,memory 仅本轮局部装配。
+        String answer = aiClient.chatWithMemory(
+                String.valueOf(sessionId), buildSystemPrompt(rag), q, historyWindow, ANSWER_MAX_TOKENS).content();
 
         // 4.5) 解析答案配图(只读附加展示;失败仅 warn,答案可用性优先——绝不阻断)
         //      新闻关联图(命中 NEWS 引用)+ 图片意图问法的语义检索图,合并去重后落 image_refs。

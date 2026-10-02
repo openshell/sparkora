@@ -5,7 +5,10 @@ import com.sparkora.config.AiProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.StructuredOutputValidationAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -243,15 +246,61 @@ public class AiClient {
     public ChatResult chatMessages(List<Map<String, String>> messages, int maxTokens) {
         List<Message> converted = new ArrayList<>(messages.size());
         for (Map<String, String> m : messages) {
-            String role = m.get("role");
-            String content = m.get("content");
-            converted.add(switch (role == null ? "" : role) {
-                case "system" -> new SystemMessage(content);
-                case "assistant" -> new AssistantMessage(content);
-                default -> new UserMessage(content);
-            });
+            converted.add(toMessage(m.get("role"), m.get("content")));
         }
         return call(TaskType.QA_CHAT, false, converted, maxTokens);
+    }
+
+    /**
+     * C4：多轮问答走 Spring AI {@code ChatMemory}（{@link MessageChatMemoryAdvisor}）。
+     *
+     * <p>调用方给「本轮 system + 本轮 user + 历史窗口」，历史由 {@link ChatMemory} 装配
+     * （advisor 在 system 之后、本轮 user 之前插入历史，与本服务旧手拼顺序逐字等价）。
+     * 每次调用用**局部** memory（DB 仍是历史唯一权威，不回写全局 memory），故无状态泄漏。
+     *
+     * @param conversationId 会话标识（advisor 取历史的 key；用 sessionId 稳定即可）
+     * @param systemPrompt   本轮 system（含知识上下文）
+     * @param userPrompt     本轮 user 问题
+     * @param history        历史窗口（时间升序；role∈system/user/assistant）
+     */
+    public ChatResult chatWithMemory(String conversationId, String systemPrompt, String userPrompt,
+                                     List<Map<String, String>> history, int maxTokens) {
+        ChatMemory memory = MessageWindowChatMemory.builder()
+                .maxMessages(Math.max((history == null ? 0 : history.size()) + 2, 2))
+                .build();
+        if (history != null && !history.isEmpty()) {
+            List<Message> seed = new ArrayList<>(history.size());
+            for (Map<String, String> m : history) seed.add(toMessage(m.get("role"), m.get("content")));
+            memory.add(conversationId, seed);
+        }
+        MessageChatMemoryAdvisor advisor = MessageChatMemoryAdvisor.builder(memory).build();
+        try {
+            OpenAiChatOptions.Builder opts = optionsFactory.forTask(TaskType.QA_CHAT);
+            opts.model(modelOverride != null ? modelOverride : resolveTextModel());
+            opts.maxTokens(maxTokens);
+            ChatResponse resp = chatClient().prompt()
+                    .system(systemPrompt)
+                    .user(userPrompt)
+                    .options(opts)
+                    .advisors(advisor)
+                    .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
+                    .call()
+                    .chatResponse();
+            return parseChat(resp, false);
+        } catch (AiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
+        }
+    }
+
+    /** role → Spring AI Message（缺省按 user 处理），供多轮组装复用。 */
+    private static Message toMessage(String role, String content) {
+        return switch (role == null ? "" : role) {
+            case "system" -> new SystemMessage(content);
+            case "assistant" -> new AssistantMessage(content);
+            default -> new UserMessage(content);
+        };
     }
 
     /** 统一调用：任务级 options + ChatClient + parseChat。 */

@@ -69,7 +69,9 @@ class QaServiceTest {
     }
 
     private void stubAnswer(String answer) {
-        when(aiClient.chatMessages(anyList(), anyInt())).thenReturn(new AiClient.ChatResult(answer, "m", 10));
+        // C4:QaService.ask 改走 ChatMemory 装配路径
+        when(aiClient.chatWithMemory(anyString(), anyString(), anyString(), anyList(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(answer, "m", 10));
     }
 
     private CarRagService.Citation cite(String source) {
@@ -102,6 +104,53 @@ class QaServiceTest {
         verify(messageMapper, org.mockito.Mockito.times(2)).insert(cap.capture());
         assertEquals("user", cap.getAllValues().get(0).getRole());
         assertEquals("assistant", cap.getAllValues().get(1).getRole());
+    }
+
+    @Test
+    void 多轮_历史窗口按序传入ChatWithMemory_含system与本轮问题() {
+        when(sessionMapper.selectById(5L)).thenReturn(ownedSession(5L));
+        QaMessageEntity h1 = msg(1L, "user", "老问题一");
+        QaMessageEntity h2 = msg(2L, "assistant", "老答案一");
+        when(messageMapper.selectList(any())).thenReturn(List.of(h1, h2));
+        CarRagService.RagResult rag = new CarRagService.RagResult(CarRagService.RagStatus.NO_KNOWLEDGE,
+                "", 0, 0.0, "", List.of());
+        when(ragService.retrieveForGeneration(anyString(), anyInt(), any())).thenReturn(rag);
+        stubAnswer("新答案");
+
+        service.ask(5L, "本轮问题", USER);
+
+        ArgumentCaptor<String> cid = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> sys = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> q = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Map<String, String>>> hist = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).chatWithMemory(cid.capture(), sys.capture(), q.capture(), hist.capture(), anyInt());
+
+        assertEquals("5", cid.getValue(), "会话标识应为 sessionId");
+        assertEquals("本轮问题", q.getValue());
+        assertTrue(sys.getValue().contains("知识库无相关命中"), "system 应含非 OK 降级说明: " + sys.getValue());
+        List<Map<String, String>> hw = hist.getValue();
+        assertEquals(2, hw.size(), "历史窗口应含既有 2 条");
+        assertEquals("user", hw.get(0).get("role"));
+        assertEquals("老问题一", hw.get(0).get("content"));
+        assertEquals("assistant", hw.get(1).get("role"));
+        assertEquals("老答案一", hw.get(1).get("content"));
+    }
+
+    @Test
+    void 问答链路不依赖SettingService_构造器仅五依赖() {
+        // 契约:QaService 不得注入 SettingService(浏览/问答独立于 kb_enabled 生成开关)
+        boolean anySetting = java.util.Arrays.stream(QaService.class.getDeclaredFields())
+                .anyMatch(f -> f.getType().getSimpleName().contains("Setting"));
+        org.junit.jupiter.api.Assertions.assertFalse(anySetting, "QaService 不得依赖 SettingService");
+    }
+
+    private static QaMessageEntity msg(Long id, String role, String content) {
+        QaMessageEntity m = new QaMessageEntity();
+        m.setId(id);
+        m.setRole(role);
+        m.setContent(content);
+        return m;
     }
 
     @Test

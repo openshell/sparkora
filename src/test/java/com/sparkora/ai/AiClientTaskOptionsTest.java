@@ -107,6 +107,28 @@ class AiClientTaskOptionsTest {
         assertEquals("u2", m.get(3).path("content").asText());
     }
 
+    /** C4:ChatMemory advisor 装配历史,线序必须为 system → 历史(升序) → 本轮 user。 */
+    @Test
+    void chatWithMemory_历史经advisor装配_线序system历史本轮() throws Exception {
+        List<Map<String, String>> history = new ArrayList<>();
+        history.add(Map.of("role", "user", "content", "老问题"));
+        history.add(Map.of("role", "assistant", "content", "老答案"));
+        client().chatWithMemory("qa-1", "系统提示", "本轮问题", history, 512);
+        JsonNode body = lastRequest();
+
+        JsonNode m = body.path("messages");
+        assertEquals(4, m.size(), "system + 2 条历史 + 本轮 = 4");
+        assertEquals("system", m.get(0).path("role").asText());
+        assertEquals("系统提示", m.get(0).path("content").asText());
+        assertEquals("user", m.get(1).path("role").asText());
+        assertEquals("老问题", m.get(1).path("content").asText());
+        assertEquals("assistant", m.get(2).path("role").asText());
+        assertEquals("老答案", m.get(2).path("content").asText());
+        assertEquals("user", m.get(3).path("role").asText());
+        assertEquals("本轮问题", m.get(3).path("content").asText());
+        assertEquals(0.5, body.path("temperature").asDouble(), 1e-9, "问答中温");
+    }
+
     @Test
     void 请求体不含密钥() {
         client().chat("s", "u", 100);
