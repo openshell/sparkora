@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 38
+- **Total Sessions**: 39
 - **Last Active**: 2026-10-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~993 | Active |
+| `journal-1.md` | ~1034 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 39 | 2026-10-03 | C2 结构化输出契约化（schema 单一来源 + 自纠错） | `4e00853`, `15af93c`, `26f235e` | `main` |
 | 38 | 2026-10-03 | C0 依赖升级预检 + axonhub 探针 | `e625709`, `d232873`, `7f091b8` | `main` |
 | 37 | 2026-10-02 | 修复正文泄漏事实风险审校话术(手册未提供/无法计算) | `814457d`, `a677b07` | `main` |
 | 36 | 2026-10-02 | 澄清阶段AI思考过程+max_tokens截断修复+附属信息字段重构 | `758cffa` | `main` |

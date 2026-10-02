@@ -991,3 +991,44 @@ Boot 3.3.4→4.0.1 + Spring AI 2.0.1 基座;572 用例全绿;探针定档 json_s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 39: C2 结构化输出契约化（schema 单一来源 + 自纠错）
+<!-- trellis-session: v=2 fp=8a22c7b977974967 -->
+
+**Date**: 2026-10-03
+**Task**: C2 结构化输出契约化（schema 单一来源 + 自纠错）
+**Branch**: `main`
+
+### Summary
+
+简报/澄清/子代理三链路改走 AiClient.structured（StructuredOutputValidationAdvisor 校验+错误回填自纠错），schema 由 DTO 类型单一派生、prompt {{schema}} 注入去字面量；新增 ClarifyPlanDto/SubAgentFactsDto；截断仍由 parseChat 独立抛异常；补 sanitize 围栏/控制字符回归与截断调用次数断言；604 用例全绿；更新 ai-rag spec 并归档 C2
+
+### Main Changes
+
+- AiClient 新增 structured(...)/jsonSchema(...)，保留旧 API
+- BriefService/ClarifyService/SubAgentRunner 走 structured，schema 单一来源
+- 3 个 prompt schema 字面量改 {{schema}} 占位(v1→v2)
+- 新增 ClarifyPlanDto/SubAgentFactsDto；修 ClarifyService 不可变 list bug
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4e00853` | feat(C2): 结构化输出契约化 - schema 单一来源 + 响应侧自纠错 |
+| `15af93c` | docs(spec): 记录 C2 结构化输出契约（schema 单一来源 + 自纠错） |
+| `26f235e` | chore(task): archive 10-02-c2-structured-output |
+
+### Testing
+
+- [OK] mvn -q -DskipTests compile 通过
+- [OK] mvn test = 604 用例全绿
+- [OK] 三站点 grep chatJson=0；prompt schema 字面量 grep=0
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- C3 Tool Calling 替换手写 agent（探针：tool calling 支持）
