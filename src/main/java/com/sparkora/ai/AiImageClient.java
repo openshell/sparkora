@@ -4,6 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.image.Image;
+import org.springframework.ai.image.ImageModel;
+import org.springframework.ai.image.ImagePrompt;
+import org.springframework.ai.image.ImageResponse;
+import org.springframework.ai.openai.OpenAiImageModel;
+import org.springframework.ai.openai.OpenAiImageOptions;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.core.io.ByteArrayResource;
@@ -15,7 +22,6 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 图片生成客户端：封装「多模型按序轮询」。
@@ -29,23 +35,57 @@ import java.util.Map;
  *  - 文生图：POST /v1/images/generations  → { model, prompt, n, size }
  *  - 图生图：POST /v1/images/edits         → multipart: model, prompt, image, size, n
  *
- * 返回统一为图片 URL（gpt-image-2-url 这类模型返回 data[].url）。
+ * 返回统一为图片 URL（gpt-image-2-url 这类模型返回 data[].url），若模型返回 base64 则转 data URL。
+ *
+ * <p><b>10-02-c6-image-model（C6）</b>：文生图改走 Spring AI 2.0 {@link ImageModel}
+ * （自动配置的 {@code OpenAiImageModel}，仅调 {@code /v1/images/generations}）。旧实现用
+ * {@code byte[]} 收响应是为了绕过 {@code RestClient} 的 String 转换器拒绝
+ * {@code application/octet-stream}——官方 {@code com.openai} SDK 对该 Content-Type 包裹的
+ * JSON 已实测可正常解析，故不再需要该 hack。图生图 {@code /v1/images/edits} multipart
+ * （多参考图保序重复 image part）无 Spring AI 支持，**原样保留自研 RestClient**。
  */
 @Slf4j
 @Component
 public class AiImageClient {
 
     private final AiProperties props;
+
+    /** Spring AI 自动配置注入的图片模型（生产装配）；单测直 new 时为 null，首次调用按 AiProperties 自建。 */
+    private final ImageModel imageModel;
+
+    /** 仅图生图（/v1/images/edits）走的自研 RestClient（Spring AI 不支持 edits multipart）。 */
     private final RestClient rest;
+
     private final ObjectMapper mapper = new ObjectMapper();
 
+    /** 单测/回退构造路径自建的图片模型（懒构建，避免未触发生图就构造网络客户端）。 */
+    private volatile ImageModel fallbackImageModel;
+
+    /** 生产装配：注入 Spring AI 自动配置的 {@link ImageModel}（spring.ai.openai.image.* 配置）。 */
+    @Autowired
+    public AiImageClient(AiProperties props, ImageModel imageModel) {
+        this.props = props;
+        this.imageModel = imageModel;
+        this.rest = buildRest(props);
+    }
+
+    /**
+     * 单测/回退构造器：无自动配置 {@link ImageModel}，首次调用文生图时按 {@link AiProperties}
+     * 自建 OpenAI 兼容 {@code OpenAiImageModel}（base-url 归一化补 {@code /v1}）。
+     * 保留既有 {@code new AiImageClient(props)} 用法（{@code AiImageClientMultiRefTest} 等直 new 单测）。
+     */
     public AiImageClient(AiProperties props) {
         this.props = props;
-        // 读超时消费 AI_TIMEOUT_MS(.env);图片生成较慢,读超时放宽一倍,连接超时仍 10s
+        this.imageModel = null;
+        this.rest = buildRest(props);
+    }
+
+    /** 自研 RestClient（仅供 edits）：读超时消费 AI_TIMEOUT_MS 放宽一倍，连接超时 10s。 */
+    private static RestClient buildRest(AiProperties props) {
         HttpClientSettings settings = HttpClientSettings.defaults()
                 .withConnectTimeout(Duration.ofSeconds(10))
                 .withReadTimeout(Duration.ofMillis(props.getTimeoutMs() * 2));
-        this.rest = RestClient.builder()
+        return RestClient.builder()
                 .baseUrl(props.getBaseUrl())
                 .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
                 .defaultHeader("Authorization", "Bearer " + props.getApiKey())
@@ -56,16 +96,16 @@ public class AiImageClient {
     public GenResult generateText2Image(String prompt, String size) {
         List<String> models = props.imageModelList();
         if (models.isEmpty()) throw new AiException("AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置", null);
+        String normSize = (size == null || size.isBlank()) ? "1024x1024" : size;
         StringBuilder errs = new StringBuilder();
         for (String model : models) {
             try {
-                Map<String, Object> body = Map.of(
-                        "model", model,
-                        "prompt", prompt,
-                        "n", 1,
-                        "size", size == null ? "1024x1024" : size);
-                String resp = postForJsonText("/v1/images/generations", body);
-                String url = parseFirstUrl(resp);
+                OpenAiImageOptions.Builder ob = OpenAiImageOptions.builder();
+                ob.model(model);
+                ob.n(1);
+                ob.size(normSize);
+                ImageResponse resp = imageModel().call(new ImagePrompt(prompt, ob.build()));
+                String url = firstUrl(resp);
                 log.info("文生图成功 model={} url={}", model, shorten(url));
                 return new GenResult(url, model);
             } catch (Exception e) {
@@ -74,6 +114,41 @@ public class AiImageClient {
             }
         }
         throw new AiException("所有图片模型均失败: " + errs, null);
+    }
+
+    /** 注入优先；单测/回退缺失时按 AiProperties 自建（懒构建，同 AiClient fallbackChatModel 规则补 /v1）。 */
+    private ImageModel imageModel() {
+        ImageModel m = imageModel;
+        if (m != null) return m;
+        ImageModel f = fallbackImageModel;
+        if (f == null) {
+            synchronized (this) {
+                f = fallbackImageModel;
+                if (f == null) {
+                    OpenAiImageOptions.Builder ob = OpenAiImageOptions.builder();
+                    ob.baseUrl(AiClient.normalizeBaseUrl(props.getBaseUrl()));
+                    ob.apiKey(props.getApiKey());
+                    ob.timeout(Duration.ofMillis(props.getTimeoutMs() * 2));
+                    ob.maxRetries(0);
+                    f = OpenAiImageModel.builder().options(ob.build()).build();
+                    fallbackImageModel = f;
+                }
+            }
+        }
+        return f;
+    }
+
+    /** 从 ImageResponse 取第一张图：url 非空优先，否则 b64_json 转 data URL；都无视为该模型失败。 */
+    private String firstUrl(ImageResponse resp) {
+        if (resp == null || resp.getResult() == null || resp.getResult().getOutput() == null) {
+            throw new AiException("图片返回无 data", null);
+        }
+        Image img = resp.getResult().getOutput();
+        String url = img.getUrl();
+        if (url != null && !url.isBlank()) return url;
+        String b64 = img.getB64Json();
+        if (b64 != null && !b64.isBlank()) return "data:image/png;base64," + b64;
+        throw new AiException("图片返回无 url/b64_json", null);
     }
 
     /**
@@ -128,23 +203,7 @@ public class AiImageClient {
     /** 生成结果：图片 URL + 实际命中模型名（S10 留档用）。 */
     public record GenResult(String url, String model) {}
 
-    /**
-     * POST JSON 并以 byte[] 收响应再转字符串。
-     * 不用 body(String.class)的原因:个别网关偶发给 JSON 响应标 application/octet-stream,
-     * String 转换器拒绝该 Content-Type 会抛 "Error while extracting response" 掩盖真实结果;
-     * byte[] 收取与 Content-Type 无关,响应文本原样交由 parseFirstUrl 解析。
-     */
-    private String postForJsonText(String path, Object body) {
-        byte[] bytes = rest.post()
-                .uri(path)
-                .header("Content-Type", "application/json")
-                .body(body)
-                .retrieve()
-                .body(byte[].class);
-        return bytes == null ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-    }
-
-    /** multipart 版本,同上以 byte[] 收取(见 postForJsonText 注释)。 */
+    /** multipart 版本（仅 edits）：以 byte[] 收取再转字符串，兼容网关偶发给 JSON 标 application/octet-stream。 */
     private String postMultipartForJsonText(String path, MultiValueMap<String, Object> multipart) {
         byte[] bytes = rest.post()
                 .uri(path)
@@ -155,7 +214,7 @@ public class AiImageClient {
         return bytes == null ? "" : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    /** 从 images 响应取第一个 data[].url（或 b64_json，若模型返回 base64）。 */
+    /** 从 edits 响应取第一个 data[].url（或 b64_json，若模型返回 base64）。 */
     private String parseFirstUrl(String resp) {
         try {
             JsonNode data = mapper.readTree(resp).path("data");

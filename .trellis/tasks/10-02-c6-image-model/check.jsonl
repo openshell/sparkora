@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线（契约等价/不可逆副作用/验证不碰生产数据）"}
+{"file": ".trellis/tasks/10-02-c6-image-model/prd.md", "reason": "C6 验收标准"}

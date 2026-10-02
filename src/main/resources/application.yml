@@ -67,6 +67,11 @@ spring:
       embedding:
         options:
           model: ${AI_EMBEDDING_MODEL:}
+      # C6:文生图改走 Spring AI ImageModel。实际模型仍由 per-call OpenAiImageOptions
+      # 按 AiProperties.imageModelList() 覆盖,此处仅供自动配置兜底(可留空)。
+      image:
+        options:
+          model: ${AI_IMAGE_MODEL:}
 
 mybatis-plus:
   configuration:
