@@ -967,3 +967,27 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Next Steps
 
 - 真实 AI 链路端到端复测(新生成正文确认无元话语泄漏);历史 version 44/19/15 如需修复须人工确认后再清洗
+
+
+## Session 38: C0 依赖升级预检 + axonhub 探针
+<!-- trellis-session: v=2 fp=5ea465431ec6e44a -->
+
+**Date**: 2026-10-03
+**Task**: C0 依赖升级预检 + axonhub 探针
+**Branch**: `main`
+
+### Summary
+
+Boot 3.3.4→4.0.1 + Spring AI 2.0.1 基座;572 用例全绿;探针定档 json_schema 退化/tool calling 支持/reasoning 支持/1024 维;Check 发现 CRITICAL(Reactor Netty 使 detect() 漂移破坏超时归因)→9 处 RestClient 改 .jdk() 并加回归锁定;更新 ai-rag/error-handling spec;归档 C0,父任务与 C1-C7 待规划
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e625709` | feat(deps): 升级 Boot 4.0.1 + 引入 Spring AI 2.0 基座并锁定 JDK HTTP 引擎 |
+| `d232873` | docs(spec): 记录 axonhub 能力边界与 Boot4 RestClient 传输引擎约定 |
+| `7f091b8` | chore(task): 建立 Spring AI 迁移任务树(父 + C0 探查 + C1-C7) |
+
+### Status
+
+[OK] **Completed**
