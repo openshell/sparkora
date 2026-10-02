@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端页面/CSS 约定：main.css 设计 token（--focus-ring/--control-h-*）、PC-only 密度与 :focus-visible 可达性要求、组件自动引入与不可破坏类名；缺陷1 修 main.css 前必读。"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI prompt 注入约定：可选字段注入不得改写固定尾部指引句、空字段须与旧 prompt 逐字等价（曾发生畸形 JSON 重复块头/误导模型）；缺陷2 向深度 prompt 追加选定标题块前后必读。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端质量约定：多步写入失败顺序、不可逆副作用隔离、验证禁改生产数据；影响 DeepWriterService/VersionService 落库改动的正确性审查。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义与错误映射；确认标题优先级改动不改变异常/状态机回退路径。"}
+{"file": "docs/spec/brief-generation.md", "reason": "深度写作链路权威契约：DeepWriterService.write 的 prompt 组装、简报字段注入、extractH1 复用描述；缺陷2 改动须与此同步（第122/125行等）。"}
+{"file": "docs/spec/version-generation.md", "reason": "版本生成契约与 title 列语义（第19/83/84行）：selected-title 接口、版本 title 展示字段要求；缺陷2 标题优先级与文档同步依据。"}

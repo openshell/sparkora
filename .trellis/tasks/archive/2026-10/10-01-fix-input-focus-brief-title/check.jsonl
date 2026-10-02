@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 CSS 改动是否符合前端 token/可达性/密度约定，未破坏 --focus-ring 与组件库聚焦态；确认未误伤不可破坏类名与已有 wrapper 覆盖。"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 prompt 注入是否保持空字段旧行为逐字等价、块头不重复、尾部指引句不变。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对多步写入/异常顺序与不可逆副作用隔离未受影响。"}
+{"file": "docs/spec/brief-generation.md", "reason": "对照权威契约逐条核对深度链路描述与实现一致（含选定标题注入与标题落库优先级）。"}
+{"file": "docs/spec/version-generation.md", "reason": "对照契约核对 version.title 来源优先级、selected-title 接口语义与文档同步。"}
+{"file": "docs/spec/overview.md", "reason": "核对状态机/链路总览与端到端标题流（brief→version→preview→publish）无冲突。"}
