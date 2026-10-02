@@ -81,8 +81,8 @@ QaController ─▶ QaService.ask(sessionId, question, user)
    1) 归属校验(created_by=本人;越权/不存在 → IllegalArgumentException → 404)
    2) 载入本会话历史,构造检索 query(短问题/追问拼接最近 2 轮 user 问题,≤300 字)
    3) CarRagService.retrieveForGeneration(query, 8, null)  ← 跨三域统一检索
-   4) 组装多轮 messages:system(含知识上下文/降级说明) + 历史窗口 + 本轮 user
-   5) AiClient.chatMessages(messages, 2048)  ← 非 JSON 文本合成
+   4) 历史窗口(windowHistory) + system(含知识上下文/降级说明)
+   5) AiClient.chatWithMemory(sessionId, system, 本轮问题, 历史窗口, 2048)  ← ChatMemory 装配后非 JSON 文本合成
    6) 落 user 消息 + assistant 消息(citations JSON / rag_status)
    7) 首问回填会话 title,刷新 updated_at
 ```

@@ -24,8 +24,11 @@
 // 现有（保持不动）
 AiClient.ChatResult chat(String systemPrompt, String userPrompt, int maxTokens)      // 纯文本
 AiClient.ChatResult chatJson(String systemPrompt, String userPrompt, int maxTokens)  // 强制 response_format=json_object
-// C4 新增（非破坏）
-AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxTokens)   // 多轮，不强制 JSON
+// 多轮（保留兼容；C4 起问答链路改用下方 chatWithMemory）
+AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxTokens)
+// C4 新增（非破坏）：由 Spring AI ChatMemory 装配历史
+AiClient.ChatResult chatWithMemory(String conversationId, String systemPrompt, String userPrompt,
+                                   List<Map<String,String>> history, int maxTokens)
 ```
 - `messages` 每项 `{role, content}`，`role∈{system,user,assistant}`；顺序即对话顺序。
 - `ChatResult{content, model, totalTokens, finishReason, reasoning}`（09-27-brief-writing-linkage-fix：第 4 分量 `finishReason` 透出 `finish_reason`；10-02-brief-reasoning-maxtokens：第 5 分量 `reasoning` 透出推理过程——读 `message.reasoning`，缺省回退 `message.reasoning_content`（不同模型字段名不同，实测 axonhub→`deepseek-v4.1-flash` 用 `reasoning`），落库/透出前按 `REASONING_MAX_CHARS=20000` 截断；**保留 3 参/4 参构造器**默认 null——既有 `new ChatResult(content,model,tokens[,finishReason])` 调用方与测试编译不受影响）
@@ -34,8 +37,9 @@ AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxToken
 
 ### 3. Contracts
 - 三方法共用同一懒构建 `ChatClient`（`OpenAiChatModel`；注入路径复用自动配置的 `ChatModel`，单测直 `new` 时按 `AiProperties` 自建）与 `parseChat()`。
-- **任务级温度（C1）**：`chatJson`→结构化低温（`sparkora.ai.temperature-structured`，默认 0.2）、`chat`→正文高温（`temperature-prose`，默认 0.7）、`chatMessages`→问答中温（`temperature-qa`，默认 0.5）；任务类型由调用方法唯一决定（`TaskType`）。`max_tokens` 仍由调用点显式传入。
-- `chatMessages` 不设 `response_format`。
+- **任务级温度（C1）**：`chatJson`→结构化低温（`sparkora.ai.temperature-structured`，默认 0.2）、`chat`→正文高温（`temperature-prose`，默认 0.7）、`chatMessages`/`chatWithMemory`→问答中温（`temperature-qa`，默认 0.5）；任务类型由调用方法唯一决定（`TaskType`）。`max_tokens` 仍由调用点显式传入。
+- `chatMessages`/`chatWithMemory` 不设 `response_format`。
+- **`chatWithMemory`（C4）**：局部 `MessageWindowChatMemory` + `MessageChatMemoryAdvisor`（per-call advisor + `.param(ChatMemory.CONVERSATION_ID, cid)`）装配历史；advisor 线序 `system → 历史升序 → 本轮 user`；`maxMessages=history.size()+2`；每调用独立 memory，**不跨调用持久化**（DB 为历史唯一权威）。
 - **`chatJson` 强制 `response_format=json_object`**（`OpenAiChatOptions.responseFormat(JSON_OBJECT)`），等价旧实现。
 - **base-url 归一化**：Spring AI OpenAI SDK 只追加 `chat/completions`（**不带 `/v1`**），故 `application.yml` 配 `${AI_BASE_URL}/v1`（`AiClient.normalizeBaseUrl` 自建路径同规则补 `/v1`）。`AI_BASE_URL` 语义仍为网关根地址（不含 `/v1`）。
 - **finish_reason 归一**：Spring AI/OpenAI SDK 返回大写（`STOP`/`LENGTH`，来自 `Generation.metadata.finishReason`），`parseChat` 归一为小写后再透出/判定，保持旧契约（调用方判 `"length"`）。
@@ -52,12 +56,12 @@ AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxToken
 - JSON 场景模型偶发裸控制字符 → 统一 `AiClient.sanitizeAiJson(raw)` 后再 `readTree`。
 
 ### 5. Good/Base/Bad Cases
-- Good: 多轮问答 `system`（含知识上下文）+ 历史 + 本轮 user，`chatMessages` 一次合成。
-- Base: 单轮文本 `chat`。
+- Good: 多轮问答历史经 `chatWithMemory`（`ChatMemory` advisor 装配，线序 system→历史升序→本轮）一次合成。
+- Base: 单轮文本 `chat`；无历史时 `chatWithMemory` 等价 `chat`。
 - Bad: 直接把历史逐条调 `chat` 再拼接（丢失对话结构、成本高）。
 
 ### 6. Tests Required
-- 断言 `chatMessages` 组装的 messages 顺序/角色；AI 返回空 content 抛 `AiException`。
+- 断言多轮组装的 messages 顺序/角色（`chatWithMemory`：wire 线序 system→历史→本轮，`AiClientTaskOptionsTest`；`chatMessages` 既有用例保留）；AI 返回空 content 抛 `AiException`。
 - **reasoning 透出**（10-02）：`parseChat` 读 `message.reasoning`；缺省回退 `message.reasoning_content`；超 `REASONING_MAX_CHARS` 截断；旧 3/4 参构造器兼容（`AiClientReasoningTest`）。
 
 ### 7. Wrong vs Correct
@@ -68,11 +72,8 @@ aiClient.chat(sys, history + "\n" + question, 2048);
 ```
 #### Correct
 ```java
-List<Map<String,String>> messages = new ArrayList<>();
-messages.add(Map.of("role","system","content", systemPrompt));
-messages.addAll(historyMessages);           // {role,content} 交替
-messages.add(Map.of("role","user","content", question));
-aiClient.chatMessages(messages, 2048);
+// 历史经 ChatMemory 装配（C4）：只传窗口历史 + system + 本轮，advisor 负责拼接
+aiClient.chatWithMemory(sessionId, systemPrompt, question, historyWindow, 2048);
 ```
 
 ---

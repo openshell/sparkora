@@ -27,7 +27,7 @@
 - **检索 query 构造**：`query = 当前问题`；若当前问题 ≤12 字（疑似指代）或会话已有历史，则拼接最近 2 轮 user 问题 + 当前问题（截断 ≤300 字）作为检索文本。
 - **送入 LLM 的历史窗口**：最近 `HISTORY_MAX_TURNS=6` 轮（12 条消息），单条 `content` 截断 2000 字，总历史 ≤12000 字，超出丢最旧。
 - **知识上下文**：`RagResult.context` 作 system 附加段，仅 `OK` 时注入；非 `OK` 时 system 标注降级原因（`LOW_CONFIDENCE`/`FAILED`/`NO_KNOWLEDGE`），让模型回答「知识库未覆盖」。
-- **AI 扩展**：`AiClient.chatMessages(List<Map<String,String>> messages, int maxTokens)`（C4 新增，不破坏既有 `chat`/`chatJson` 签名）；`temperature`/`model` 同 `chat`。
+- **AI 扩展**：多轮问答走 `AiClient.chatWithMemory(conversationId, systemPrompt, userPrompt, history, maxTokens)`（C4：由 Spring AI `ChatMemory`(`MessageChatMemoryAdvisor`) 装配历史，线序 `system → 历史升序 → 本轮 user`，与旧手拼逐条等价；每调用用**局部** memory，DB 仍是历史唯一权威）。`AiClient.chatMessages(...)` 保留兼容（不再被问答链路调用）；`temperature`/`model` 同问答中温。
 - 常量（`QaService`）：`ANSWER_MAX_TOKENS=2048`、`HISTORY_MAX_TURNS=6`、`HISTORY_MAX_MESSAGES=12`、`HISTORY_MSG_MAX=2000`、`HISTORY_TOTAL_MAX=12000`、`SEARCH_QUERY_MAX=300`、`PRONOUN_QUESTION_MAX=12`。
 - **无摘要压缩**：历史超限直接丢最旧，不引入摘要（明确取舍）。
 
@@ -43,8 +43,8 @@ QaController ─▶ QaService.ask(sessionId, question, user)
    1) 归属校验(created_by=本人;越权/不存在 → IllegalArgumentException → 404)
    2) 载入本会话历史,构造检索 query(短问题/追问拼接最近 2 轮 user 问题,≤300 字)
    3) CarRagService.retrieveForGeneration(query, 8, null)  ← 跨三域统一检索
-   4) 组装多轮 messages:system(含知识上下文/降级说明) + 历史窗口 + 本轮 user
-   5) AiClient.chatMessages(messages, 2048)  ← 非 JSON 文本合成
+   4) 历史窗口(windowHistory) + system(含知识上下文/降级说明)
+   5) AiClient.chatWithMemory(sessionId, system, 本轮问题, 历史窗口, 2048)  ← ChatMemory 装配后非 JSON 文本合成
    6) 解析答案配图(QaImageRefService,失败仅 warn 不阻断)
    7) 落 user 消息 + assistant 消息(citations JSON / rag_status / image_refs)
    8) 首问回填会话 title,刷新 updated_at
