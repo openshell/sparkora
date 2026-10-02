@@ -1072,3 +1072,65 @@ String system = PromptTemplateLoader.render("brief/deep-brief-system.st",
         Map.of("schema", AiClient.jsonSchema(BriefDto.class), ...));
 BriefDto dto = aiClient.structured(system, user, 8192, BriefDto.class).entity();
 ```
+
+---
+
+## Scenario: 检索工具暴露为 Spring AI ToolCallback（C3 能力层）
+
+### 1. Scope / Trigger
+- Trigger: 把检索工具暴露为 Spring AI `ToolCallback`、新增模型驱动检索链路，或改动 `SearchToolCallbacks`。
+
+### 2. Signatures
+```java
+// 工厂（非 bean）
+SearchToolCallbacks(KnowledgeSearchTool kbTool, WebSearchRouter webRouter, List<Long> anchors, WebSearchSnapshot snapshot)
+ToolCallback[] forTools(List<String> names)   // names ∈ {KB, TAVILY, SEARXNG, WEB}（大小写不敏感）
+// 工具名（对模型暴露）: kb_search / web_search
+```
+
+### 3. Contracts
+- **确定性编排不变**：`SubAgentRunner.research()`（KB → 策略路由 WEB → LLM 单次汇总）**不**改为模型驱动 agent loop；
+  检索仍由 Java 策略决定（provider 顺序 / gap 驱动跳过 / 背景题放行 / sourceId 治理）。本能力层是**增量**，
+  供未来显式选择「模型驱动检索」的链路复用。
+- **绝不注册为全局 `ToolCallback` bean（关键踩坑）**：Spring AI 自动配置会把容器内所有 `ToolCallback` bean
+  作为**所有** `ChatClient` 的默认工具 → 普通对话/结构化调用会被意外注入工具、模型可能吐 `tool_calls` → 行为漂移。
+  故工厂**无 stereotype 注解**、不产出 `ToolCallback` bean；由调用方按需 `new` + `forTools(...)` 后传给
+  `ChatClient...toolCallbacks(...)`。
+- **WEB 必须经 `WebSearchRouter`**：保留 provider 顺序、治理（协议校验/规范化/去重/截断）与稳定 `sourceId`；
+  **不得**直连 `TavilySearchTool`/`SearxngSearchTool`。
+- **可用性门控**：`available()==false` 的 KB 不暴露；WEB 仅当 `snapshot.webAllowed()` 且至少一个 provider
+  `configured()` 时暴露（与 `DeepResearchService.applySettingGates` 的 WEB 剔除语义一致）。
+- **工具名兼容 `WEB` 别名**：流水线词汇（`applySettingGates`/`parseTools`/`ClarifyService`）用 `KB`/`WEB`，
+  适配器同时认 `TAVILY`/`SEARXNG`/`WEB`（同名去重为一个 `web_search`）。
+- **异常绝不抛出**：工具方法内部捕获全部异常，返回中性提示串（不含异常原文/密钥，可能含 URL），仅类型化日志
+  ——与 `SearchTool`「绝不抛出」约定一致。
+
+### 4. Validation & Error Matrix
+- `names` 空/null/未知值 → 忽略，返回空数组（不返回 null）。
+- 工具 `available()==false` → 不暴露该工具。
+- WEB 开关关闭（`webAllowed=false`）→ 不暴露 WEB 且**不探测** provider 配置。
+- 工具调用内部异常 → 返回「暂不可用…」提示串，不抛出、不泄漏异常文本。
+
+### 5. Good/Base/Bad Cases
+- Good: 显式 `new SearchToolCallbacks(kb, router, anchors, snapshot).forTools(List.of("KB","WEB"))` →
+  传给特定 `ChatClient` 的一次请求。
+- Base: 无任何可用工具 → 空数组（模型无工具可调）。
+- Bad: 把工厂或任一 `ToolCallback` 注册为 `@Bean`/`@Component`（污染所有 ChatClient）。
+
+### 6. Tests Required
+- `SearchToolCallbacksTest`：名称稳定（`kb_search`/`web_search`）、`WEB` 别名、可用性门控（KB 不可用不暴露、
+  WEB 开关关闭不暴露且不探测 provider）、KB 委托（query/maxResults/锚点透传）、WEB 经 `WebSearchRouter`
+  （`verify`，结果保留 sourceId/url/provider）、异常降级不抛出且不泄漏异常文本。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 注册为全局 bean → Spring AI 注入所有 ChatClient,普通对话被塞入工具
+@Bean ToolCallback kbToolCallback() { return ToolCallbacks.from(new KbAdapter(...))[0]; }
+```
+#### Correct
+```java
+// 按需工厂,仅传给需要模型驱动检索的那一次请求;普通 ChatClient 零注入
+ToolCallback[] tools = new SearchToolCallbacks(kb, router, anchors, snapshot).forTools(List.of("KB", "WEB"));
+chatClient.prompt().user(q).toolCallbacks(tools).call().content();
+```
