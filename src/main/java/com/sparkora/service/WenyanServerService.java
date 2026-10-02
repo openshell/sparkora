@@ -99,8 +99,8 @@ public class WenyanServerService {
     /** 构造指定读超时的 RestClient;连接超时固定 5s。 */
     private static RestClient buildRest(Duration readTimeout) {
         return RestClient.builder()
-                .requestFactory(org.springframework.boot.web.client.ClientHttpRequestFactories.get(
-                        org.springframework.boot.web.client.ClientHttpRequestFactorySettings.DEFAULTS
+                .requestFactory(org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder.jdk().build(
+                        org.springframework.boot.http.client.HttpClientSettings.defaults()
                                 .withConnectTimeout(Duration.ofSeconds(5))
                                 .withReadTimeout(readTimeout)))
                 .build();

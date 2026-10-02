@@ -31,6 +31,23 @@ spring:
       embeddingModel: ${AI_EMBEDDING_MODEL:Qwen3-Embedding-8B}
   jackson:
     default-property-inclusion: non_null
+  # Boot 4 默认 Jackson 3,spring.jackson.* 现仅作用于 MVC 的 Jackson 3 序列化;
+  # 业务层注入的 Jackson 2 ObjectMapper(spring-boot-jackson2 兼容模块提供)读 spring.jackson2.*。
+  # 镜像同值以保持内部 JSON 拼装(JSON 列/快照)与 Boot 3.3 行为等价。
+  jackson2:
+    default-property-inclusion: non_null
+  # Spring AI 2.0(C0 引入基座):复用既有 AI_* 环境变量,不新增密钥变量;
+  # 自定义业务配置仍走 sparkora.ai.*(AiProperties),两者前缀不冲突,C1 起逐步切换调用点。
+  ai:
+    openai:
+      base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
+      api-key: ${AI_API_KEY:}
+      chat:
+        options:
+          model: ${AI_MODEL:}
+      embedding:
+        options:
+          model: ${AI_EMBEDDING_MODEL:}
 
 mybatis-plus:
   configuration:

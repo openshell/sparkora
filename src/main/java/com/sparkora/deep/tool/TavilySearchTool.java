@@ -3,7 +3,8 @@ package com.sparkora.deep.tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -50,8 +51,8 @@ public class TavilySearchTool implements SearchTool {
         this.contentMaxChars = deepProps == null ? 2000 : deepProps.effectiveWebContentMaxChars();
         this.apiBase = apiBase == null || apiBase.isBlank() ? DEFAULT_API_BASE : apiBase;
         this.rest = RestClient.builder()
-                .requestFactory(org.springframework.boot.web.client.ClientHttpRequestFactories.get(
-                        ClientHttpRequestFactorySettings.DEFAULTS.withConnectTimeout(Duration.ofSeconds(5))
+                .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(
+                        HttpClientSettings.defaults().withConnectTimeout(Duration.ofSeconds(5))
                                 .withReadTimeout(Duration.ofSeconds(15))))
                 .build();
         this.json = mapper;

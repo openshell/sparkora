@@ -241,6 +241,27 @@ class WenyanServerServiceTransportTest {
         }
     }
 
+    // ==================== C0:传输引擎必须锁定 JDK HttpClient(防 detect() 漂移) ====================
+
+    @Test
+    void 传输引擎锁定为JdkHttpClient而非自动探测() throws Exception {
+        // C0 升级踩坑:引入 spring-ai-starter-model-openai 后传递带入 Reactor Netty,
+        // ClientHttpRequestFactoryBuilder.detect() 会从 JDK HttpClient 改选 Reactor,
+        // 读超时抛 Netty ReadTimeoutException(RuntimeException,非 JDK/Simple 超时族),
+        // describeTransportFailure 无法识别 → 超时被误归因为普通传输失败、并泄漏框架串。
+        // 故 9 处 RestClient 一律显式 .jdk();此测试锁死该选择,防未来误改回 detect()。
+        WenyanServerService svc = newService(180000, 5000);
+        for (String fieldName : java.util.List.of("rest", "probeRest")) {
+            Object rest = readField(svc, fieldName);
+            Field factoryField = rest.getClass().getDeclaredField("clientRequestFactory");
+            factoryField.setAccessible(true);
+            Object factory = factoryField.get(rest);
+            assertEquals("org.springframework.http.client.JdkClientHttpRequestFactory",
+                    factory.getClass().getName(),
+                    fieldName + " 必须显式用 JDK HttpClient(.jdk());detect() 会因 Reactor Netty 在场而漂移");
+        }
+    }
+
     private static Object readFieldQuietly(Object target, String name) {
         try {
             return readField(target, name);

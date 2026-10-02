@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -44,12 +44,14 @@ public class AiClient {
     public AiClient(AiProperties props) {
         this.props = props;
         // 读超时/连接超时消费 AI_TIMEOUT_MS(.env),默认 120s;AI 卡死不再无限占用请求线程
-        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
+        HttpClientSettings settings = HttpClientSettings.defaults()
                 .withConnectTimeout(Duration.ofSeconds(10))
                 .withReadTimeout(Duration.ofMillis(props.getTimeoutMs()));
         this.rest = RestClient.builder()
                 .baseUrl(props.getBaseUrl())
-                .requestFactory(ClientHttpRequestFactories.get(settings))
+                // 显式 JDK HttpClient:Spring AI starter 传递引入 Reactor Netty 后,detect() 会改选
+                // Reactor(抛 Netty ReadTimeoutException),破坏超时归因;.jdk() 保持升级前引擎语义
+                .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
                 .defaultHeader("Authorization", "Bearer " + props.getApiKey())
                 .defaultHeader("Content-Type", "application/json")
                 .build();

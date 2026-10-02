@@ -7,8 +7,8 @@ import com.sparkora.car.dto.GoodsInfoDto;
 import com.sparkora.car.dto.GoodsParamsDto;
 import com.sparkora.config.CarProperties;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -40,11 +40,11 @@ public class BydCmsClient {
 
     public BydCmsClient(CarProperties props) {
         this.props = props;
-        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
+        HttpClientSettings settings = HttpClientSettings.defaults()
                 .withConnectTimeout(Duration.ofSeconds(10))
                 .withReadTimeout(Duration.ofMillis(props.getTimeoutMs()));
         this.rest = RestClient.builder()
-                .requestFactory(ClientHttpRequestFactories.get(settings))
+                .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
                 .build();
     }
 

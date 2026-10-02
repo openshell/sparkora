@@ -33,8 +33,8 @@ public class QiniuService implements ImageStorage {
     public QiniuService(QiniuProperties props) {
         this.props = props;
         this.rest = RestClient.builder()
-                .requestFactory(org.springframework.boot.web.client.ClientHttpRequestFactories.get(
-                        org.springframework.boot.web.client.ClientHttpRequestFactorySettings.DEFAULTS
+                .requestFactory(org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder.jdk().build(
+                        org.springframework.boot.http.client.HttpClientSettings.defaults()
                                 .withConnectTimeout(Duration.ofSeconds(10))
                                 .withReadTimeout(Duration.ofSeconds(30))))
                 .build();

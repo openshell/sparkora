@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.4</version>
+        <version>4.0.1</version>
         <relativePath/>
     </parent>
 
@@ -19,9 +19,24 @@
 
     <properties>
         <java.version>21</java.version>
-        <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <!-- Boot 4 需 mybatis-plus-spring-boot4-starter(boot3 starter 不适用);3.5.14 起才提供 boot4 starter -->
+        <mybatis-plus.version>3.5.17</mybatis-plus.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <!-- Spring AI 2.0(BOM 统一管理 starter 版本,不逐项写死) -->
+        <spring-ai.version>2.0.1</spring-ai.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- Web -->
@@ -57,11 +72,34 @@
             <version>${jjwt.version}</version>
             <scope>runtime</scope>
         </dependency>
-        <!-- MyBatis-Plus -->
+        <!-- MyBatis-Plus(Boot 4 专用 starter) -->
         <dependency>
             <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
             <version>${mybatis-plus.version}</version>
+        </dependency>
+        <!-- 3.5.9+ 起分页插件(jsqlparser 依赖)拆为独立模块;不引则 PaginationInnerInterceptor 缺失 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+        <!-- Spring AI 2.0:OpenAI 兼容模型(指向 axonhub,复用 AI_* 配置) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+        <!-- Spring AI 2.0:PgVectorStore(C5 向量迁移前置依赖,本子任务只引入不启用) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
+        </dependency>
+        <!-- Boot 4 默认 Jackson 3(tools.jackson),不再提供 com.fasterxml ObjectMapper Bean。
+             本项目业务层大量注入 Jackson 2 ObjectMapper(37 文件),C0 用官方兼容模块恢复该 Bean,
+             避免在依赖预检阶段做大范围 Jackson 3 迁移(留给后续子任务)。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jackson2</artifactId>
         </dependency>
         <!-- PostgreSQL 驱动 -->
         <dependency>
