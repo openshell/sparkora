@@ -92,6 +92,14 @@ public R<Void> handleBind(BindException ex) {
 > **Warning**: 非幂等的下游调用（写草稿/写库/扣款/发消息）超时，**错误文案必须说明「可能已生效」并指引先到下游确认**，
 > 且**绝不自动重试**。超时不等于失败——详见 `external-cli-integration.md` 的同名约定。
 
+> **Warning（Boot 4 传输引擎漂移，C0 踩坑）**: 上述归因依赖 **JDK HttpClient 的 `HttpTimeoutException`**。
+> Boot 4 的 `ClientHttpRequestFactoryBuilder.detect()` 按 `HttpComponents > Jetty > Reactor > Jdk > Simple` 探测；
+> 一旦 classpath 出现 Reactor Netty（如引入 `spring-ai-starter-model-openai` 会**传递带入** `spring-boot-starter-webclient` → `reactor-netty-http`），
+> `detect()` 会从 JDK HttpClient **静默改选 Reactor**，读超时抛的是 Netty `ReadTimeoutException`（`RuntimeException`，**不属** JDK/Simple 超时族）
+> → 归因函数识别不到 → 超时被误判为普通传输失败、并泄漏框架串。
+> **约定**：本项目所有 `RestClient` 传输引擎**显式 `.jdk()`**（`ClientHttpRequestFactoryBuilder.jdk()`），
+> **禁用 `.detect()`**；超时时长语义（connect/read）不变。回归锁定见 `WenyanServerServiceTransportTest.传输引擎锁定为JdkHttpClient而非自动探测`。
+
 ### 状态机生成类服务（BriefService / ImitationService 同构）
 
 1. 前置检查：`IllegalArgumentException`（项目不存在/模式不符/缺素材）。

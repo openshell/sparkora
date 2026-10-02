@@ -933,3 +933,65 @@ MetaLeakCleaner.CleanResult cleaned = MetaLeakCleaner.cleanForPersist(content);
 content = cleaned.content();
 List<String> unknown = verifyNumbers(content, b.getFactSheet());
 ```
+
+---
+
+## Scenario: axonhub 能力边界契约（C0 探针，Spring AI 迁移前置）
+
+### 1. Scope / Trigger
+- Trigger: 引入/迁移 Spring AI（C1–C7）、改动结构化输出、Tool Calling、reasoning 解析，或配置 `spring.ai.*`。
+- 依据：`.trellis/tasks/10-02-c0-upgrade-probe/research/axonhub-capability-probe.md`（2026-10-03 实测）。
+
+### 2. Signatures
+```yaml
+spring:
+  ai:
+    openai:
+      base-url: ${AI_BASE_URL:https://axo.caiqz.cn}   # OpenAI 兼容聚合代理
+      api-key: ${AI_API_KEY:}
+      chat.options.model: ${AI_MODEL:}                # 请求体标识;axonhub 路由到实际 serving 模型
+      embedding.options.model: ${AI_EMBEDDING_MODEL:} # Qwen3-Embedding-8B,维度 1024
+```
+- 复用既有 `AI_*` 环境变量；自定义业务配置仍是 `sparkora.ai.*`（`AiProperties`），**与 `spring.ai.*` 前缀不冲突**。
+
+### 3. Contracts（实测能力边界）
+| 能力 | 结论 | 约束 |
+|---|---|---|
+| `response_format.json_schema`（strict） | **退化**：2xx 但静默忽略 schema（中文字段名/缺 required/多余字段） | **不得**把正确性寄托于 `useProviderStructuredOutput()` |
+| `tools` / Tool Calling | **支持**：`finish_reason=tool_calls` + 标准 `tool_calls[]` | C3 可走标准 Tool Calling |
+| reasoning 字段 | **支持**，字段名 `reasoning`（非 `reasoning_content`） | `parseChat` 先读 `reasoning` 再回退 `reasoning_content` |
+| `response_format.json_object` | 支持 | 现有 `chatJson` 零回归 |
+| `/v1/embeddings` | 支持（Qwen3-Embedding-8B，**1024**） | `PgVectorStore.dimensions=1024`（与现向量表 DDL 一致） |
+
+- **结构化输出的正确性必须靠响应侧自纠错**：因 provider 原生 `json_schema` 退化，C2 走「prompt 内 schema + Spring AI `validateSchema()` 自纠错（校验错误回填重试）」。
+- **serving 模型名以响应 `model` 字段为准**，不是请求体 `AI_MODEL`（axonhub 会路由/别名，如 `deepseek-v4-pro-cus` → `deepseek-v4.1-flash`）。
+
+### 4. Validation & Error Matrix
+- provider 忽略 `json_schema` → 返回结构不合规 JSON → 由 `validateSchema()` 捕获并重试，**不能视为调用失败**。
+- 缺 `json_schema` 原生支持 → `useProviderStructuredOutput()` 自动退化，不影响 `validateSchema()` 生效。
+
+### 5. Good/Base/Bad Cases
+- Good: C2 用 `entity(X.class, spec -> spec.validateSchema())`；C3 用标准 Tool Calling。
+- Base: `useProviderStructuredOutput()` 保留为「provider 未来升级后的免费增强」开关，非正确性依赖。
+- Bad: 因 axonhub 返回 2xx 就认为它遵守了 `json_schema`；或把 `AI_MODEL` 当作 serving 模型名做选型判断。
+
+### 6. Tests Required
+- C2：构造「缺字段/类型错/多余字段」响应，断言模型收到具体校验错误后重试成功。
+- C3：断言工具调用走标准 `tool_calls`；`toolHealth`/`available()` 契约不变。
+- 解析：`reasoning` 优先、`reasoning_content` 回退。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// provider 原生结构化退化,却把正确性押在它上面 → 字段漂移静默入库
+BriefDto dto = chatClient.prompt().user(p).call()
+        .entity(BriefDto.class, spec -> spec.useProviderStructuredOutput());
+```
+#### Correct
+```java
+// 响应侧 schema 校验 + 错误回填自纠错,对 provider 是否原生支持不敏感
+BriefDto dto = chatClient.prompt().user(p).call()
+        .entity(BriefDto.class, spec -> spec
+                .useProviderStructuredOutput()   // 退化时自动忽略
+                .validateSchema());              // 正确性依赖此步
+```
