@@ -763,8 +763,10 @@ TextChunker.splitSentences(p, separators)                        // 全库唯一
 record EmbedStats(int total, int success, int failed)            // 全库唯一定义
 EmbeddingBatchRunner.run(List<T> items, Function<T,String> textFn, BiConsumer<T,String> persistFn,
                          String label, int maxParallel, int maxRetries) → EmbedStats
-// EmbeddingClient
-List<Double> embedList(String text)   // 校验 size == AiProperties.embeddingDim,不符抛 AiException
+// EmbeddingClient（C5：后端 = Spring AI EmbeddingModel，公共 API 不变）
+@Autowired EmbeddingClient(AiProperties, org.springframework.ai.embedding.EmbeddingModel)  // 主构造：注入自动配置 EmbeddingModel
+EmbeddingClient(AiProperties)         // 兼容构造（单测；embeddingModel=null，调 embedList 抛 AiException）
+List<Double> embedList(String text)   // 内部 embeddingModel.embed(text)→float[]→List<Double>；校验 size == AiProperties.embeddingDim,不符抛 AiException
 String modelName()                    // 写入/检索共用的当前模型名
 // AiProperties
 int embeddingDim = 1024               // env AI_EMBEDDING_DIM
@@ -778,6 +780,8 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
   - 收益同 IMAGE 范式：失败回滚不留孤儿块；`REQUIRES_NEW` 不污染调用方（`NewsService.upsertOne` 为 `@Transactional`）事务。
 - **向量模型名防护**：4 张向量表加 `embedding_model`；写入盖 `modelName()`、检索加 `embedding_model = #{model}`、对账/补齐口径同模型过滤；V3 用 Flyway placeholder 回填存量行 = 实际配置模型。详见 database-guidelines.md「向量模型名防护」。
 - **维度 fail-fast**：`embedList` 返回长度 ≠ `embeddingDim` 抛 `AiException`（含实际/期望与模型名）。
+- **embedding 后端 = Spring AI `EmbeddingModel`（C5）**：`EmbeddingClient` 内部改调 `EmbeddingModel.embed(text)`（OpenAI 兼容，指向 axonhub），**删除**原自研 RestClient/Jackson 调用；公共签名（`embed`/`embedList`/`modelName`/`toPgVector`）不变，8 个生产调用点与既有测试零改动。精度路径由 JSON→`List<Double>` 改为 SDK `float[]`→`double`，但 pgvector `vector` 本就是 float4，**检索结果 parity 不受影响**。**不建** `vector_store` 表、**不新增** Flyway 迁移、**不引** `PgVectorStore` 生命周期。~~「4 表全迁 `PgVectorStore`」~~（C5 勘察推翻：`PgVectorStore` 是 content 与 embedding 同表 + metadata filter 模型，无法表达现有检索依赖的 **JOIN 活表语义**（`car_doc.deleted=0`/`kb_doc.enabled=TRUE`/`news_doc.deleted=0`）；全量替换需反规范化正文 + 活表同步层，违背 C5 自身 parity AC → 推迟为 Scope B，见 `.trellis/tasks/archive/2026-10/10-02-c5-pgvector-store/research/c5-vector-store-mismatch.md`）。
+  - **注意**：C0 引入的 `spring-ai-starter-vector-store-pgvector` 会在运行期惰性装配一个 `PgVectorStore` bean（`initialize-schema` 默认 false → 不建表、无副作用）；**不得**开启 `spring.ai.vectorstore.pgvector.initialize-schema=true`（会在 Flyway 之外建并行 `vector_store` 表，违反迁移约定）。
 - **NEWS 手动重建端点**：`POST /api/news/{id}/rebuild`（ADMIN/EDITOR）→ `NewsDocService.rebuildForNews` 返回 `EmbedStats`。不做跨域一键重嵌编排。
 
 ### 4. Validation & Error Matrix
