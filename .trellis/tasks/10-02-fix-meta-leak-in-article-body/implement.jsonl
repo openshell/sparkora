@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 文本合成契约：新增「生成内容不得含内部元话语」三层契约（素材区分 claim/suggestion、读者视角铁律、确定性清洗）的权威落点"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "禁改生产数据（存量正文不回溯清洗）、不可逆副作用隔离、新增纯静态工具类的测试要求"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "READER_RULES 与 factRiskClaims 需在 DeepWriterService/VersionService 两链路共用，避免重复实现"}
+{"file": "docs/spec/brief-generation.md", "reason": "本任务权威契约：六阶段链路、DeepWriterService.write 的 prompt 注入点（:124 需改）"}
+{"file": "docs/spec/version-generation.md", "reason": "VersionService.buildUserPrompt 的事实风险点注入点与 generateOne 清洗接入的文档同步"}

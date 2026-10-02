@@ -14,6 +14,9 @@ import com.sparkora.mapper.ArticleBriefMapper;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.StyleProfileMapper;
+import com.sparkora.service.LayoutRules;
+import com.sparkora.service.MetaLeakCleaner;
+import com.sparkora.service.ReaderViewRules;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -38,7 +41,13 @@ import java.util.regex.Pattern;
  *  原「单风格单版」同步调用改为 {@link #startBatch} 一次触发多风格:
  *  同步毫秒级:校验 brief/风格 + claim GENERATING_VERSIONS + self.runBatch + 返回占位;
  *  @Async runBatch 循环 {@link #write} → 汇总 advanceVersionsReady / 失败 failVersionsToReady。
- *  批量改造根因:前端串行多次调用会撞第 2 次 claim 的 409;批量也顺带简化前端编排。
+ * 批量改造根因:前端串行多次调用会撞第 2 次 claim 的 409;批量也顺带简化前端编排。
+ *
+ * 10-02-fix-meta-leak-in-article-body(内部元话语泄漏三层防线,prompt 侧共用契约见 {@link ReaderViewRules}):
+ *  R1 简报 fact_risks 只抽 claim 注入「禁止写入正文的断言」块({@link ReaderViewRules#forbiddenClaimsBlock}),
+ *     写给作者的 suggestion 祈使句不再进素材区(线上 version 44 实测泄漏源);
+ *  R2 system 追加 {@link ReaderViewRules#READER_RULES} 读者视角铁律(与 VersionService 主题分支共用文本);
+ *  R3 落库前经 {@link MetaLeakCleaner} 句级清洗兜底,位置在 ⑥ 数值回查之前。
  */
 @Slf4j
 @Service
@@ -231,14 +240,14 @@ public class DeepWriterService {
                    不得据此新增任何数值(背景素材里出现的数字也不得写进正文)。
                 """ : "") + layoutRule(p == null ? null : p.getWordCountTarget()) + """
                 关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
-                """;
+                """ + ReaderViewRules.READER_RULES + "\n";
         // 09-10-style-library-enhance:风格指令从 user prompt 迁入 system prompt(与仿写链路统一注入位置)
         if (stylePrompt != null && !stylePrompt.isBlank()) {
             system = system + "\n文风要求:\n" + stylePrompt + "\n" + STYLE_ENFORCE;
         }
         // R1(09-27-deep-writing-adaptive-sections):注入目标字数(null/≤0 → 1500,口径对齐 VersionService)。
         // 09-27-shared-layout-rules R2:默认值归一委托共享 LayoutRules(输出值不变)。
-        int target = com.sparkora.service.LayoutRules.normalizeTarget(p == null ? null : p.getWordCountTarget());
+        int target = LayoutRules.normalizeTarget(p == null ? null : p.getWordCountTarget());
         StringBuilder user = new StringBuilder("目标字数：").append(target).append('\n');
         // 10-02 R4:创建输入注入写作 prompt(非空才加)
         if (p != null && p.getAudience() != null && !p.getAudience().isBlank()) {
@@ -263,7 +272,11 @@ public class DeepWriterService {
         }
         appendBriefSection(user, "核心观点", b.getCoreViewpoints(), true);
         appendBriefSection(user, "大纲", b.getOutline(), false);
-        appendBriefSection(user, "事实风险", b.getFactRisks(), true);
+        // R1(10-02-fix-meta-leak-in-article-body):原「事实风险:」整块注入改为「禁止写入正文的断言」——
+        // fact_risks[].suggestion 是写给作者的祈使句,进正文素材区必被复述/改写成读者话术(线上 version 44 实测);
+        // 只抽陈述性的 claim 作禁写清单,保留风险防护价值。
+        String forbidden = ReaderViewRules.forbiddenClaimsBlock(b.getFactRisks());
+        if (forbidden != null) user.append(forbidden);
         // 末尾指引句与旧实现逐字一致:空字段 brief 的 prompt 与旧行为等价(AC-01);有字段时其内容已在上方列出
         user.append("主题与大纲参考 brief(标题候选/核心观点/大纲),直接写正文 Markdown。");
         // R4(09-27-brief-writing-linkage-fix):正文是全链路最长输出,对齐 R4/R6 范式——
@@ -284,6 +297,15 @@ public class DeepWriterService {
             }
         }
         String content = cr.content();
+        // R3(10-02-fix-meta-leak-in-article-body):落库前确定性清洗内部元话语(句级删除,见 MetaLeakCleaner)。
+        // 位置在 ⑥ 数值回查之前:已删句不再参与数值比对,避免为「无法计算完成率」这类句子误报 high 风险。
+        // cleanForPersist:整篇皆为元话语(清洗致空)时回退原文,不落空正文。
+        MetaLeakCleaner.CleanResult cleaned = MetaLeakCleaner.cleanForPersist(content);
+        if (!cleaned.removed().isEmpty()) {
+            log.warn("深度写作清洗正文内部元话语 briefId={} 删句数={} 清洗后无正文回退原文={} 原文={}",
+                    briefId, cleaned.removed().size(), cleaned.content().equals(cr.content()), cleaned.removed());
+        }
+        content = cleaned.content();
 
         // ⑥ 数值回查
         List<String> unknown = verifyNumbers(content, b.getFactSheet());

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对未改生产数据、清洗器为纯函数无副作用、测试覆盖正/反例与幂等"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对读者视角铁律落点、suggestion 不再注入、清洗器接入位置在数值回查之前"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "核对 READER_RULES/factRiskClaims/clean 是否真共用而非两处复制"}
+{"file": "docs/spec/brief-generation.md", "reason": "逐条核对写作 prompt 契约与实现一致（禁写断言块/读者视角铁律/落库前清洗）"}
+{"file": "docs/spec/version-generation.md", "reason": "核对多版本链路死路径防御性对齐与文档标注一致"}

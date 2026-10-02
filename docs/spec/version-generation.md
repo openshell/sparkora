@@ -93,6 +93,8 @@
 - **必须推进状态机 + 设 current**：只写产物表不推状态会让步骤导航锁死下游（`maxReachableStepOf`），前端卡在上一步。
 - 深度批量 `/deep/generate` 与多版本 `VersionService.generate` 共享上述语义（前者追加不覆盖）。
 - **事实手册按 `kind` 分组呈现（R5，09-27-tavily-extract-kind-hypotheses）**：`DeepWriterService.write` 取 `fact_sheet.entries` 转写作 prompt 时，任一条目带 `kind`（`param`/`background`）即分「【参数事实】(可逐字引用数值)」与「【背景素材】(仅用于叙事,不得据此新增数值)」两段（缺 kind 条目兜底进参数组，空组写 `- (无)`）；`kind` 语义与手册字段契约见 [brief-generation.md §5](brief-generation.md)。**全无 `kind`（历史 fact_sheet）时退化为原平铺行为**——prompt 逐字与旧实现等价。逐条仍保留 09-26 R1 的「证据:{snippet}」（≤200 字）透传。
+- **内部元话语三层防线（10-02-fix-meta-leak-in-article-body，与深度链路共用 `com.sparkora.service.ReaderViewRules`）**：`buildUserPrompt` 原「- 事实风险点（写作时注意表述，按建议弱化或标注）：%s」整块注入**已删除**（`fact_risks` 原文含写给作者的祈使句 `suggestion`，进素材区必被复述/改写成读者话术），改为只抽 `claim` 的「【禁止写入正文的断言】」清单块（空/畸形 → 不追加）；主题分支 system（`layoutRules` 之后）追加同一份 `READER_RULES` 读者视角铁律；`generateOne` 在 `contentMd.isBlank()` 校验**之后**、落库之前经 `MetaLeakCleaner.cleanForPersist` 句级清洗（**仿写分支不接**——正文源自用户原文，二次清洗有误删作者原意风险）。**该链路为死路径**（`ProjectVersionController` 对 `genSource=TOPIC` 恒 410，见 §2），改动纯为防御性对齐、防止回归；完整契约见 [brief-generation.md §6](brief-generation.md)。
+- **共用 prompt 契约的落点**：`ReaderViewRules`（`READER_RULES` + `forbiddenClaimsBlock`/`factRiskClaims`）与 `MetaLeakCleaner` 均位于 `com.sparkora.service`，与 `LayoutRules` 同范式——**共享方（`deep.service` 子域模块）依赖基础层，禁止基础层反向依赖 deep**（否则 `service` ↔ `deep.service` 形成包级环）。
 - **排版分节档位自适应（09-27-shared-layout-rules R3）**：`VersionService.generateOne` 的 `layoutRules` 首行「全文用 X~Y 个「## 小标题」分节,每节 Z 段」按 `p.getWordCountTarget()` 经共享 `com.sparkora.service.LayoutRules.sectionSpec` 生成（分档与深度写作完全同档）；其余两条 bullet（加粗 / 单段 ≤5 行）逐字保留。此前写死「2~4 个」，与深度链路不一致；两链路只共享**分类结果**，文案格式不变（`VersionService` 仍为三段 bullet 列表、深度保持单行分号串）。
 
 ---

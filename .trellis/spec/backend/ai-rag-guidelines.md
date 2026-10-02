@@ -867,3 +867,69 @@ public void persistCarDoc(CarDocEntity doc, String vec) {
 **Fix**: 把分类逻辑抽成无 Spring 依赖的共享纯函数类（先例 `com.sparkora.service.LayoutRules`：`normalizeTarget`/`sectionSpec`，两链路同档），各链路只负责用自己的文案格式拼装（深度=单行分号串、VersionService=三段 bullet）；**只共享分类结果、不强行统一文案格式**，避免无关 diff 与既有断言回归。
 
 **Prevention**: 出现「同一规则被多处 prompt 引用」时，优先提取纯函数类并让所有消费方委托；迁移时用 `git show HEAD:<file>` 逐字比对被迁移方法的输出，确保**行为零回归**；新增边界单测（`null/≤0/档位边界/Integer.MAX_VALUE`）锁定分档表。先例 `LayoutRulesTest` + `VersionServiceAsyncTest`（09-27-shared-layout-rules）。
+
+---
+
+## Scenario: AI 生成的读者可见内容不得含内部元话语（10-02-fix-meta-leak-in-article-body）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改任何**面向读者**的 AI 产出链路（文章正文、问答答案、推送文案…），或改动写作 prompt 的素材注入块。
+
+### 2. Signatures
+```java
+// com.sparkora.service.ReaderViewRules(两条正文生成链路共用的 prompt 侧契约,纯静态)
+public static final String READER_RULES;                       // 读者视角铁律(黑名单 + 行为指令)
+public static String forbiddenClaimsBlock(String factRisksJson); // 「禁止写入正文的断言」块;不可用 → null
+static List<String> factRiskClaims(String factRisksJson);       // 只抽 claim;不可用 → null
+
+// com.sparkora.service.MetaLeakCleaner(落库前确定性清洗,纯静态)
+public record CleanResult(String content, List<String> removed) {}
+public static CleanResult clean(String markdown);             // 句级删除;零命中逐字原样返回
+public static CleanResult cleanForPersist(String markdown);    // 清洗后无正文(空白/只剩标题)时回退原文
+```
+
+### 3. Contracts
+- **写给作者的祈使指令 ≠ 写给读者的素材**：`fact_risks[].suggestion`（「此表述必须删除或改为 X」「建议正文以 Y 为主」）是作者向的第二人称指令；一旦进入正文素材区，模型必然复述/改写为第三人称陈述 → 元话语泄漏给读者。**唯一安全做法是不投 suggestion**，只投陈述性的 `claim` 作「禁止断言」清单（治本）。
+- **注入失败一律不兜底原文**：与普通 prompt 块的「解析失败按原文追加」**刻意相反**——原文含祈使句，兜底等于把泄漏源送回素材区。null/空白/`[]`/`{}`/非数组/解析失败/全部 claim 空 → `null` 不注入；claim 归一（空白压单空格 + 200 字上限，防多行 claim 破坏「- 」清单结构）。
+- **读者视角铁律放 system，黑名单 + 行为指令双写**：只禁词不禁行为，模型会换词绕开；「正文里不存在『资料/手册/简报』这些概念」先行切断把内部工件当叙述对象的动机；「禁止在正文中解释为什么没有这个数据」。**刻意不改**既有铁律 1~3 与「事实手册(数值唯一来源):」块头（约束语而非素材，既有测试逐字锁定）。
+- **prompt 不是硬保证 → 落库前必须有确定性清洗**：`MetaLeakCleaner` 句级删除、**整句删不改写**（改写等于二次创作）；段按空行切、段内按句读 `。！？!?；;` + 闭合引号/括号切句；Markdown 块行（列表/有序项/标题/引用/表格行）行前换行亦为句界（否则一行泄漏连带删掉表头或相邻列表项）；**软换行多行块命中时收窄到行级删除**；段内全删则删段；**零命中逐字原样返回**（不归一空白），保证「未命中则逐字不变」与幂等。清洗位置必须在**数值回查之前**（已删句不再参与数值比对）与 `isBlank()` 校验之后；**仿写/用户原文派生内容不接**清洗器（误删作者原意风险）。
+- **清洗不得毁掉整次生成**：`cleanForPersist` 在清洗后无正文（空白或只剩标题）且原文有正文时回退原文并保留 `removed`，绝不落空壳正文。删除审计走 `log.warn`，**不落库、不给前端**（零契约变更）。
+- **模式表宁漏不误伤**：每条模式都是「内部词 + 缺失/否定」的组合特征（「详细参数以官方发布为准」「据媒体报道」「按 61,379÷463,561 计算」不得命中）；`待核实` 加否定前瞻（`官网/官方`）。改模式表时必须同时补「必须原样保留」的反例用例（AC4）。
+- **落点与依赖方向**：prompt 侧共享契约与清洗器放**基础层** `com.sparkora.service`（与 `LayoutRules` 同范式），`com.sparkora.deep.service` 单向依赖之；**禁止基础层用 FQN 引用 deep 的 Spring bean 静态成员**（形成 `service` ↔ `deep.service` 包级环，并让基础层单测被迫加载 bean 类）。
+
+### 4. Validation & Error Matrix
+- `fact_risks` 非数组 / 畸形 JSON → `log.warn` + `null`（不注入，不阻断生成）。
+- claim 非 textual / 缺失 / 空白 → 跳过该条；全部跳过 → `null`。
+- 清洗后正文为空或只剩标题 → 回退原文 + `log.warn`（不落空正文）。
+- 清洗命中数长期 > 0 → 说明读者视角铁律文案需加强措辞（迭代信号，非误伤信号）。
+
+### 5. Good/Base/Bad Cases
+- Good: brief 76 第 3 条 `suggestion`「此表述必须删除或改为「手册未披露年度目标，完成率无法计算」」永不进 prompt；`claim` 进禁写清单；正文泄漏句即使被模型产出也被清洗器删掉。
+- Base: 无 `fact_risks` 的历史 brief → prompt 与旧行为逐字等价（不注入任何新块）。
+- Bad: 把 `suggestion` 换个说法继续投（「建议改为……」）；解析失败时 `append(label + ":" + 原文)` 兜底；清洗按行/按整段删而不看句界；清洗后直接落空 `content_md`。
+
+### 6. Tests Required
+- `ReaderViewRulesTest`：claim 进块 / suggestion·riskLevel 不进块；畸形·非数组·全无 claim → null；多行 claim 归一后不破坏清单结构；超长截断；`READER_RULES` 黑名单与「禁止在正文中解释」存在。
+- `MetaLeakCleanerTest`：真实泄漏样本零残留 + 同段正常句逐字保留；表格/有序列表/引用块中泄漏只删该行；软换行块只删命中行；正常正文（含数值句、官方归因句、Markdown 标题/列表/表格/图片行/html、多级缩进、引号书名号内句读）零误删；幂等；`cleanForPersist` 致空/只剩标题回退原文。
+- 链路级：`DeepWriterServicePromptTest`（suggestion 不进 prompt、claim 进块、读者视角铁律、铁律 1~3 与块头逐字不变、落库 = 清洗后正文、`verifyNumbers` 收到清洗后文本）、`VersionServiceAsyncTest`（主题分支无「事实风险点」、仿写分支跳过清洗器）。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 祈使句当素材注入 → 模型改写成读者话术泄漏
+appendBriefSection(user, "事实风险", b.getFactRisks(), true);   // 兜底还会按原文再投一次
+
+// 基础层反向依赖 deep 的 bean 静态成员(包级环)
+String forbidden = com.sparkora.deep.service.DeepWriterService.forbiddenClaimsBlock(b.getFactRisks());
+```
+#### Correct
+```java
+// 只投陈述性 claim;不可用就不注入,绝不按原文兜底
+String forbidden = ReaderViewRules.forbiddenClaimsBlock(b.getFactRisks());
+if (forbidden != null) user.append(forbidden);
+
+// 落库前句级清洗(数值回查之前),清洗致空回退原文
+MetaLeakCleaner.CleanResult cleaned = MetaLeakCleaner.cleanForPersist(content);
+content = cleaned.content();
+List<String> unknown = verifyNumbers(content, b.getFactSheet());
+```

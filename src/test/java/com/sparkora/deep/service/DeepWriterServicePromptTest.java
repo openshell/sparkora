@@ -20,6 +20,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -93,7 +95,8 @@ class DeepWriterServicePromptTest {
         assertTrue(prompt.contains("标题甲") && prompt.contains("标题乙"), "标题候选内容应注入");
         assertTrue(prompt.contains("核心观点:") && prompt.contains("观点一"), "核心观点应注入");
         assertTrue(prompt.contains("大纲:") && prompt.contains("章节一"), "大纲应注入");
-        assertTrue(prompt.contains("事实风险:") && prompt.contains("风险X"), "事实风险应注入");
+        // 10-02 R1:事实风险改为「禁止写入正文的断言」块(claim 进,suggestion 不进)
+        assertTrue(prompt.contains(FORBIDDEN_HEADER) && prompt.contains("风险X"), "禁写断言块应注入 claim");
     }
 
     @Test
@@ -105,7 +108,7 @@ class DeepWriterServicePromptTest {
         assertFalse(prompt.contains("标题候选:"), "空字段不得出现标题候选块");
         assertFalse(prompt.contains("核心观点:"), "空字段不得出现核心观点块");
         assertFalse(prompt.contains("大纲:"), "空字段不得出现大纲块");
-        assertFalse(prompt.contains("事实风险:"), "空字段不得出现事实风险块");
+        assertFalse(prompt.contains(FORBIDDEN_HEADER), "空字段不得出现禁写断言块");
         // 事实手册仍在(旧行为保留)
         assertTrue(prompt.contains("事实手册(数值唯一来源):"));
     }
@@ -124,7 +127,7 @@ class DeepWriterServicePromptTest {
         assertFalse(prompt.contains("标题候选:"));
         assertFalse(prompt.contains("核心观点:"));
         assertFalse(prompt.contains("大纲:"));
-        assertFalse(prompt.contains("事实风险:"));
+        assertFalse(prompt.contains(FORBIDDEN_HEADER));
     }
 
     @Test
@@ -495,5 +498,105 @@ class DeepWriterServicePromptTest {
         String prompt = capturedUserPrompt();
 
         assertFalse(prompt.contains("【用户已选定标题"), "空选定标题不得出现注入块");
+    }
+
+    // ==================== 10-02-fix-meta-leak-in-article-body:元话语泄漏三层防线(R1/R2/R3) ====================
+
+    /** 禁写断言块头(与 DeepWriterService.FORBIDDEN_CLAIMS_HEADER 同文)。 */
+    private static final String FORBIDDEN_HEADER = "【禁止写入正文的断言】";
+
+    /** 线上真实样本 brief 76 第 3 条 fact_risks:suggestion 是写给作者的祈使句(泄漏源)。 */
+    private static final String BRIEF76_FACT_RISKS = "[{\"claim\":\"手册未提供比亚迪2026年度销量目标，也无完成进度数据\","
+            + "\"riskLevel\":\"high\","
+            + "\"suggestion\":\"此表述必须删除或改为「手册未披露年度目标，完成率无法计算」\"}]";
+
+    /** AC1:brief 76 真实 suggestion 原文绝不进 prompt,claim 进禁写断言块。 */
+    @Test
+    void 事实风险suggestion祈使句_不进userPrompt() throws Exception {
+        ArticleBriefEntity b = brief();
+        b.setFactRisks(BRIEF76_FACT_RISKS);
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains(FORBIDDEN_HEADER), "应注入禁写断言块");
+        assertTrue(prompt.contains("手册未提供比亚迪2026年度销量目标，也无完成进度数据"), "claim 应作为禁写断言");
+        assertFalse(prompt.contains("此表述必须删除或改为"), "suggestion 祈使句不得进 prompt");
+        assertFalse(prompt.contains("完成率无法计算"), "suggestion 原文不得进 prompt");
+        assertFalse(prompt.contains("suggestion"), "整个 fact_risks JSON 不得再整体注入");
+    }
+
+    /** AC1:畸形/非数组 fact_risks 一律不按原文追加(否则祈使句随畸形数据回流)。 */
+    @Test
+    void factRisks畸形或非数组_不注入禁写块() throws Exception {
+        for (String bad : new String[]{"[不是合法JSON", "{\"claim\":\"风险Y\"}", "[{\"riskLevel\":\"high\"}]", "[]", "  "}) {
+            ArticleBriefEntity b = brief();
+            b.setFactRisks(bad);
+            when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+            org.mockito.Mockito.clearInvocations(aiClient);   // 循环内逐轮独立捕获首次调用
+
+            String prompt = capturedUserPrompt();
+
+            assertFalse(prompt.contains(FORBIDDEN_HEADER), "不可用的 fact_risks 不得注入: " + bad);
+            assertFalse(prompt.contains("风险Y"), "非数组原文不得按原样注入: " + bad);
+            // 写作链路其余部分不受影响(不阻断)
+            assertTrue(prompt.contains("事实手册(数值唯一来源):"), "异常不阻断手册注入: " + bad);
+        }
+    }
+
+    /** AC2:system prompt 含读者视角铁律(内部元话语黑名单 + 禁止解释数据缺失)。 */
+    @Test
+    void systemPrompt含读者视角铁律() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<String> system = ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chat(system.capture(), anyString(), eq(4096));
+        String sys = system.getValue();
+
+        assertTrue(sys.contains("读者视角铁律"), "应含读者视角铁律");
+        assertTrue(sys.contains("你只写给读者看"), "应含读者视角声明");
+        for (String word : new String[]{"手册", "事实手册", "简报", "大纲", "事实风险", "未收录", "未提供",
+                "无法计算", "待核实", "不应作为结论", "知识库未覆盖"}) {
+            assertTrue(sys.contains(word), "黑名单应含内部话术: " + word);
+        }
+        assertTrue(sys.contains("禁止在正文中解释"), "应显式禁止解释数据缺失");
+        // AC7:既有铁律 1~3 与排版铁律逐字不变(R4 不改既有注入文案)
+        assertTrue(sys.contains("1. 正文中出现的所有具体数值(价格/尺寸/续航/百分比等)必须逐字出自下方事实手册,禁止改写/换算/推算。"));
+        assertTrue(sys.contains("2. 手册未覆盖的参数,用定性表述,不得给出具体数值。"));
+        assertTrue(sys.contains("3. 结构清晰,用 Markdown;长度按用户需求。"));
+        assertTrue(sys.contains("关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。"));
+    }
+
+    /** AC6:落库正文 = 清洗后正文(泄漏句消失、正常句保留、字数按清洗后计)。 */
+    @Test
+    void 落库正文为清洗后内容() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(aiClient.chat(anyString(), anyString(), anyInt())).thenReturn(new AiClient.ChatResult(
+                "9月销量46.36万辆，同比33.21%。\n\n合资品牌同期在华销量的具体数据，手册未提供，只能提示一个方向：份额承压仍在继续。",
+                "m", 10));
+
+        ArticleVersionEntity v = capturedVersion();
+
+        assertFalse(v.getContentMd().contains("手册未提供"), "泄漏句必须删除");
+        assertEquals("9月销量46.36万辆，同比33.21%。", v.getContentMd(), "正常句逐字保留、泄漏段落整体消失");
+        assertEquals(v.getContentMd().length(), v.getWordCount(), "字数按清洗后正文计");
+    }
+
+    /** AC6:数值回查基于清洗后正文(已删句不再参与数值比对,不误报 high 风险)。 */
+    @Test
+    void 数值回查基于清洗后正文() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(aiClient.chat(anyString(), anyString(), anyInt())).thenReturn(new AiClient.ChatResult(
+                "9月销量46.36万辆，同比33.21%。\n\n完成率无法计算，也没有行业排名或份额数据。",
+                "m", 10));
+        DeepWriterService spyService = org.mockito.Mockito.spy(service);
+        org.mockito.Mockito.doReturn(List.of()).when(spyService).verifyNumbers(anyString(), anyString());
+
+        spyService.write(PROJECT_ID, BRIEF_ID, "", "深度");
+
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(spyService).verifyNumbers(content.capture(), anyString());
+        assertEquals("9月销量46.36万辆，同比33.21%。", content.getValue(),
+                "verifyNumbers 必须收到清洗后正文(泄漏句已删)");
     }
 }

@@ -320,4 +320,113 @@ class VersionServiceAsyncTest {
         p.setSelectedTitle("  ");
         assertEquals("AI标题", capturedInsertedVersion(p, "AI标题").getTitle());
     }
+
+    // ==================== 10-02-fix-meta-leak-in-article-body:多版本链路防御性对齐(R1/R2/R3) ====================
+
+    /** 禁写断言块头(与 DeepWriterService.FORBIDDEN_CLAIMS_HEADER 同文)。 */
+    private static final String FORBIDDEN_HEADER = "【禁止写入正文的断言】";
+
+    /** 线上真实样本 brief 76 第 3 条 fact_risks:suggestion 是写给作者的祈使句(泄漏源)。 */
+    private static final String BRIEF76_FACT_RISKS = "[{\"claim\":\"手册未提供比亚迪2026年度销量目标，也无完成进度数据\","
+            + "\"riskLevel\":\"high\","
+            + "\"suggestion\":\"此表述必须删除或改为「手册未披露年度目标，完成率无法计算」\"}]";
+
+    /** 捕获主题分支 runGenerate 发出的 chatJson system prompt。 */
+    private String capturedTopicSystem() {
+        service.generate(PROJECT_ID, List.of(1L));
+        org.mockito.ArgumentCaptor<String> system = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chatJson(system.capture(), anyString(), eq(4096));
+        return system.getValue();
+    }
+
+    /** 捕获主题分支 chatJson user prompt(brief 带指定 factRisks)。 */
+    private String capturedTopicUserPrompt(String factRisks) {
+        ArticleBriefEntity b = brief();
+        b.setFactRisks(factRisks);
+        org.mockito.Mockito.clearInvocations(aiClient);   // 循环内逐轮独立捕获
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project("TOPIC", "READY"));
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+        when(styleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(style(1L, "正式")));
+        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(VERSION_JSON, "m", 10));
+        doAnswer(inv -> { ((ArticleVersionEntity) inv.getArgument(0)).setId(601L); return 1; })
+                .when(versionMapper).insert(any(ArticleVersionEntity.class));
+        service.generate(PROJECT_ID, List.of(1L));
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chatJson(anyString(), user.capture(), eq(4096));
+        return user.getValue();
+    }
+
+    /** 捕获落库的版本正文(contentMd 为 AI 产出的原文;genSource 决定清洗分支)。 */
+    private String capturedContentMd(String genSource, String aiContentMd) {
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project(genSource, "READY"));
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(styleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(style(1L, "正式")));
+        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(
+                        "{\"title\":\"标题\",\"contentMd\":\"" + aiContentMd + "\"}", "m", 10));
+        org.mockito.ArgumentCaptor<ArticleVersionEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(ArticleVersionEntity.class);
+        service.generate(PROJECT_ID, List.of(1L));
+        verify(versionMapper).insert(cap.capture());
+        return cap.getValue().getContentMd();
+    }
+
+    /** AC8:主题分支 user prompt 不再出现「事实风险点」与 factRisks 原文(suggestion 祈使句不回流)。 */
+    @Test
+    void 主题prompt_无事实风险点且suggestion不回流() {
+        String user = capturedTopicUserPrompt(BRIEF76_FACT_RISKS);
+
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("事实风险点"), "旧「事实风险点」行必须删除");
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("按建议弱化或标注"), "旧注入话术必须删除");
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("此表述必须删除或改为"), "suggestion 祈使句不得进 prompt");
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("完成率无法计算"), "suggestion 原文不得进 prompt");
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("suggestion"), "factRisks 原文不得整体注入");
+        // claim 进禁写断言块(保留风险防护价值)
+        org.junit.jupiter.api.Assertions.assertTrue(user.contains(FORBIDDEN_HEADER), "应注入禁写断言块");
+        org.junit.jupiter.api.Assertions.assertTrue(user.contains("手册未提供比亚迪2026年度销量目标，也无完成进度数据"));
+    }
+
+    /** AC8:factRisks 为空/不可用 → 不注入禁写断言块(历史 brief 零回归)。 */
+    @Test
+    void 主题prompt_factRisks为空则不注入禁写块() {
+        org.junit.jupiter.api.Assertions.assertFalse(capturedTopicUserPrompt(null).contains(FORBIDDEN_HEADER));
+        org.junit.jupiter.api.Assertions.assertFalse(capturedTopicUserPrompt("[]").contains(FORBIDDEN_HEADER));
+        org.junit.jupiter.api.Assertions.assertFalse(capturedTopicUserPrompt("[不是合法JSON").contains(FORBIDDEN_HEADER));
+    }
+
+    /** AC2:主题分支 system prompt 含读者视角铁律(与深度链路共用同一常量文本)。 */
+    @Test
+    void 主题system_含读者视角铁律() {
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project("TOPIC", "READY"));
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(styleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(style(1L, "正式")));
+        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(VERSION_JSON, "m", 10));
+        doAnswer(inv -> { ((ArticleVersionEntity) inv.getArgument(0)).setId(701L); return 1; })
+                .when(versionMapper).insert(any(ArticleVersionEntity.class));
+
+        String sys = capturedTopicSystem();
+
+        org.junit.jupiter.api.Assertions.assertTrue(sys.contains("读者视角铁律"), "主题分支应含读者视角铁律");
+        org.junit.jupiter.api.Assertions.assertTrue(sys.contains("禁止在正文中解释"), "应显式禁止解释数据缺失");
+    }
+
+    /** R3:主题分支落库前清洗内部元话语(泄漏句消失、正常句保留)。 */
+    @Test
+    void 主题正文落库前清洗元话语() {
+        String md = capturedContentMd("TOPIC",
+                "9月销量46.36万辆，同比33.21%。\\n\\n合资品牌同期在华销量的具体数据，手册未提供，只能提示一个方向：份额承压仍在继续。");
+
+        org.junit.jupiter.api.Assertions.assertFalse(md.contains("手册未提供"), "泄漏句必须删除");
+        org.junit.jupiter.api.Assertions.assertEquals("9月销量46.36万辆，同比33.21%。", md, "正常句逐字保留、泄漏段整体消失");
+    }
+
+    /** R3:仿写分支不接清洗器(正文源自用户原文,二次清洗有误删作者原意风险)。 */
+    @Test
+    void 仿写正文不接清洗器_原样保留() {
+        String md = capturedContentMd("IMITATION", "需要说明的是，该口径手册未披露，只能定性表述。");
+
+        org.junit.jupiter.api.Assertions.assertTrue(md.contains("手册未披露"), "仿写分支必须跳过清洗器");
+    }
 }

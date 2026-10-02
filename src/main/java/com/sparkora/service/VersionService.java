@@ -207,6 +207,8 @@ public class VersionService {
             sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
                     + styleEnforce
                     + layoutRules
+                    // 10-02-fix-meta-leak-in-article-body R2:读者视角铁律(与深度写作共用同一文本常量)
+                    + "\n" + ReaderViewRules.READER_RULES + "\n"
                     + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
                     + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
             user = buildUserPrompt(p, brief, rag);
@@ -220,6 +222,18 @@ public class VersionService {
 
         // 仿写双保险去图(09-09-article-imitation R3):prompt 约束之外,生成后正则二次清洗
         if (imitation) contentMd = stripImages(contentMd);
+
+        // 10-02-fix-meta-leak-in-article-body R3:主题分支落库前清洗内部元话语(句级删除)。
+        // 仿写分支不接:正文源自用户原文,二次清洗有误删作者原意风险(且仿写不注入 fact_risks,无泄漏源)。
+        // cleanForPersist:清洗致空时回退原文(不落空正文);非空校验在上面已做过,不阻断生成。
+        if (!imitation) {
+            MetaLeakCleaner.CleanResult cleaned = MetaLeakCleaner.cleanForPersist(contentMd);
+            contentMd = cleaned.content();
+            if (!cleaned.removed().isEmpty()) {
+                log.warn("多版本正文清洗内部元话语 project={} label={} 删句数={} 原文={}",
+                        p.getId(), label, cleaned.removed().size(), cleaned.removed());
+            }
+        }
 
         ArticleVersionEntity v = new ArticleVersionEntity();
         v.setProjectId(p.getId());
@@ -293,14 +307,20 @@ public class VersionService {
                 - 标题候选：%s
                 - 核心观点：%s
                 - 大纲：%s
-                - 事实风险点（写作时注意表述，按建议弱化或标注）：%s
 
                 请按大纲完整展开成公众号文章正文（Markdown），严格遵循指定风格。
                 """.formatted(
                 nv(p.getTopic()), nv(p.getContentDescription()), nv(p.getAudience()),
                 p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
                 nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
-                nv(b.getOutline()), nv(b.getFactRisks()));
+                nv(b.getOutline()));
+        // 10-02-fix-meta-leak-in-article-body R1:原「- 事实风险点（写作时注意表述，按建议弱化或标注）：%s」整块注入删除——
+        // fact_risks 原文含写给作者的祈使句 suggestion,进正文素材区必被模型复述/改写成读者话术(线上 version 44 实测);
+        // 改为只抽陈述性的 claim 作「禁止写入正文的断言」块(与深度写作共用 ReaderViewRules.forbiddenClaimsBlock)。
+        StringBuilder sb = new StringBuilder(base);
+        String forbidden = ReaderViewRules.forbiddenClaimsBlock(b.getFactRisks());
+        if (forbidden != null) sb.append("\n").append(forbidden);
+        base = sb.toString();
         // S6:简报阶段用户点选的标题,作为本版标题偏好(优先采用,可微调)
         if (p.getSelectedTitle() != null && !p.getSelectedTitle().isBlank()) {
             base += "\n\n【用户已选定标题,请优先采用该标题作为本版标题(可微调措辞,勿偏离原意)】\n" + p.getSelectedTitle();
