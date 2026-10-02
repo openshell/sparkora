@@ -883,3 +883,26 @@ P1-⑦ scope A:body_image_ids 逗号列 → sparkora_article_version_image 关�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 35: 修复输入框聚焦样式与简报标题选择
+<!-- trellis-session: v=2 fp=df3abb31373a2d3f -->
+
+**Date**: 2026-10-02
+**Task**: 修复输入框聚焦样式与简报标题选择
+**Branch**: `main`
+
+### Summary
+
+两个前端 bug 修复:① Element Plus 单行输入框聚焦时左侧孤立描边(d66e41f);② 简报选定标题未生效,发布/预览仍用项目名(83f6243)。均已提交,任务归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d66e41f` | fix(ui): 修复 Element Plus 输入框聚焦样式错位(左侧孤立描边) |
+| `83f6243` | fix(S6): 修复简报选定标题未生效(发布/预览仍用项目名) |
+
+### Status
+
+[OK] **Completed**
