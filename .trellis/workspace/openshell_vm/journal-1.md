@@ -1121,3 +1121,27 @@ embedding 后端改 Spring AI EmbeddingModel（公共 API 不变）；PgVectorSt
 ### Status
 
 [OK] **Completed**
+
+
+## Session 43: C6 ImageModel：文生图接 Spring AI ImageModel，图生图保留自研
+<!-- trellis-session: v=2 fp=5d329576d194a0e4 -->
+
+**Date**: 2026-10-03
+**Task**: C6 ImageModel：文生图接 Spring AI ImageModel，图生图保留自研
+**Branch**: `main`
+
+### Summary
+
+文生图改走 Spring AI ImageModel（双构造+回退自建），edits 保留自研 multipart；新增 8 用例；631 全绿；spec 记录 C6
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d8ceaff` | feat(C6): 文生图接 Spring AI ImageModel，图生图 edits 保留自研 |
+| `1eb3d7b` | docs(spec): 记录 C6 文生图 ImageModel 与图生图 edits 自研约定 |
+| `c008b03` | chore(task): archive 10-02-c6-image-model |
+
+### Status
+
+[OK] **Completed**
