@@ -90,13 +90,11 @@ public class ArticleProjectController {
         CurrentUser cu = SecurityUtil.require();
         ArticleProjectEntity e = new ArticleProjectEntity();
         e.setTopic(req.getTopic());
-        e.setKeywords(req.getKeywords());
         e.setAudience(req.getAudience());
         e.setWordCountTarget(req.getWordCountTarget());
         e.setBrandVoiceProfileId(req.getBrandVoiceProfileId());
-        e.setExtraInfo(req.getExtraInfo());
+        e.setContentDescription(req.getContentDescription());
         e.setSelectedTitle(req.getSelectedTitle());
-        e.setRemark(req.getRemark());
         e.setGenSource(genSource);
         e.setImitationText("IMITATION".equals(genSource) ? req.getImitationText() : null);
         e.setStatus("DRAFT");
@@ -111,7 +109,7 @@ public class ArticleProjectController {
         List<Long> modelIds = req.getCarModelIds();
         if (!"IMITATION".equals(genSource)) {
             if (modelIds == null || modelIds.isEmpty()) {
-                CarModelMatcherService.MatchResult m = matcherService.match(req.getTopic(), req.getKeywords());
+                CarModelMatcherService.MatchResult m = matcherService.match(req.getTopic(), req.getContentDescription());
                 if (m.related()) modelIds = m.modelIds();
             }
             carService.replace(e.getId(), modelIds);
@@ -129,13 +127,11 @@ public class ArticleProjectController {
         UpdateWrapper<ArticleProjectEntity> uw = new UpdateWrapper<>();
         uw.eq("id", id)
                 .set("topic", req.getTopic())
-                .set("keywords", req.getKeywords())
                 .set("audience", req.getAudience())
                 .set("word_count_target", req.getWordCountTarget())
                 .set("brand_voice_profile_id", req.getBrandVoiceProfileId())
-                .set("extra_info", req.getExtraInfo())
+                .set("content_description", req.getContentDescription())
                 .set("selected_title", req.getSelectedTitle())
-                .set("remark", req.getRemark())
                 .set("updated_at", LocalDateTime.now());
         mapper.update(null, uw);
         // S6 多车型:覆盖式写入关联车型

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据、不可逆副作用隔离、多步写入失败顺序"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 V4 迁移是否符合单语句/白名单/三处同步约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对截断重试失败回退 last_brief_error 与错误映射"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 reasoning 透出、提额、检索 query 纯净性（内容描述不进 query）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端 API 层/页面骨架/fixture 字段名一致性"}
+{"file": "docs/spec/brief-generation.md", "reason": "逐条核对 /deep/status planReasoning、字段表、prompt 注入与文档同步"}
+{"file": "docs/spec/project-lifecycle.md", "reason": "逐条核对字段表与接口请求体变更同步"}

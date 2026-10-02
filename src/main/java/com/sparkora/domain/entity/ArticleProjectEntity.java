@@ -19,7 +19,6 @@ public class ArticleProjectEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String topic;
-    private String keywords;
     private String audience;
     private Integer wordCountTarget;
     private Long brandVoiceProfileId;
@@ -28,12 +27,11 @@ public class ArticleProjectEntity {
     private String lastBriefError;     // S1：最近一次生成失败原因（成功后清空）
     private Long currentVersionId;      // S1b：指向选定版本（sparkora_article_version.id）
     private String lastVersionError;    // S1b：最近一次版本生成失败原因（成功后清空）
-    private String remark;
     private String publishMediaId;      // S5:公众号草稿箱 media_id(发布成功后落库)
     private String publishTheme;        // S5/S4:发布所用排版主题
     private LocalDateTime publishedAt;  // S5:发布时间
     private String lastPublishError;    // S5:最近一次发布失败原因(成功后清空)
-    private String extraInfo;           // S6:补充信息(可选;个人见解/独家资讯等,生成时注入 prompt 作为创作素材)
+    private String contentDescription;  // 10-02:内容描述(原 extra_info 改名列;个人见解/独家资讯等,全链路注入:澄清/研究/简报/深度写作/多版本)
     private String selectedTitle;       // S6:简报阶段选定的标题(可选;生成版本时作为标题偏好注入 prompt)
     // ===== 文章仿写(09-09-article-imitation):项目级新模式 =====
     private String genSource;           // 创作来源:TOPIC(默认)/IMITATION

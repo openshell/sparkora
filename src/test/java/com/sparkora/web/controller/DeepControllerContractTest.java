@@ -121,6 +121,34 @@ class DeepControllerContractTest {
                 .andExpect(jsonPath("$.data.webStrategy").value("TAVILY_FIRST"));   // AC-10 增量
     }
 
+    /** 10-02:research_reasoning 非空 → status 增量透出 planReasoning;缺失不出现该字段(旧契约)。 */
+    @Test
+    void status_思考过程_增量透出planReasoning() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setProjectId(3L);
+        b.setGenMode("DEEP");
+        b.setResearchReasoning("推理:先分析销量再结论");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 9L, 0));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.planReasoning").value("推理:先分析销量再结论"));
+
+        // 无 reasoning(历史/非推理模型)→ 字段不出现
+        ArticleBriefEntity b2 = new ArticleBriefEntity();
+        b2.setId(10L);
+        b2.setGenMode("DEEP");
+        when(briefMapper.selectById(10L)).thenReturn(b2);
+        when(researchService.resolveSnapshot(10L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 10L, 0));
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.planReasoning").doesNotExist());
+    }
+
     @Test
     void status_开关关闭_工具健康DISABLED() throws Exception {
         ArticleBriefEntity b = new ArticleBriefEntity();

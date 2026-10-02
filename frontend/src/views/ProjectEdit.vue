@@ -62,12 +62,9 @@
               <span class="sec-index">02</span>
               <div class="sec-title">
                 <div class="sec-name">内容设定</div>
-                <div class="sec-desc">关键词、读者与篇幅，让生成更贴合目标</div>
+                <div class="sec-desc">读者与篇幅，让生成更贴合目标</div>
               </div>
             </div>
-            <el-form-item label="关键词">
-              <el-input v-model="form.keywords" maxlength="500" placeholder="逗号分隔，可选" @keydown.enter="onEnterSubmit" />
-            </el-form-item>
             <el-form-item label="目标读者">
               <el-input v-model="form.audience" maxlength="200" placeholder="可选，如：后端工程师" @keydown.enter="onEnterSubmit" />
             </el-form-item>
@@ -81,19 +78,16 @@
             <div class="sec-head">
               <span class="sec-index">03</span>
               <div class="sec-title">
-                <div class="sec-name">素材与约束</div>
+                <div class="sec-name">内容描述</div>
                 <div class="sec-desc">补充个人见解与独家素材，让内容有据可依</div>
               </div>
             </div>
             <!-- 2026-09-09(dec-dd4ba6e1c6bfb7e7):移除「写作锚点车型」选择入口——创作不与车型绑定,
                  知识库停用期间该字段无生效点;后端关联逻辑保留,存量项目不受影响 -->
-            <el-form-item label="补充信息（可选）">
-              <el-input v-model="form.extraInfo" type="textarea" :rows="4" maxlength="5000" show-word-limit
-                        placeholder="个人见解、独家资讯等，生成简报/正文时会作为创作素材融入，如：我了解到该车型 2026 款将新增 XX 配置…" />
-              <div class="form-tip">填写后，生成简报/正文时会注入这些信息作为创作素材，不会遗漏关键内容。</div>
-            </el-form-item>
-            <el-form-item label="备注">
-              <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="500" placeholder="可选" />
+            <el-form-item label="内容描述（可选）">
+              <el-input v-model="form.contentDescription" type="textarea" :rows="4" maxlength="5000" show-word-limit
+                        placeholder="说明期望的内容方向/背景素材，如：围绕第2000座闪充站落成写一篇行业解读，突出长期战略目标…" />
+              <div class="form-tip">填写后，会在澄清、研究、简报、深度写作、多版本全链路注入，作为创作素材与方向说明，不会遗漏关键内容。</div>
             </el-form-item>
           </section>
         </div>
@@ -119,7 +113,7 @@ const formRef = ref()
 const loading = ref(false)   // 创建并生成
 const saving = ref(false)    // 仅存草稿
 // 创作方式(09-09-article-imitation):TOPIC 主题创作(默认)/IMITATION 文章仿写
-const form = reactive({ genSource: 'TOPIC', topic: '', keywords: '', audience: '', wordCountTarget: 1500, remark: '', extraInfo: '', imitationText: '' })
+const form = reactive({ genSource: 'TOPIC', topic: '', audience: '', wordCountTarget: 1500, contentDescription: '', imitationText: '' })
 const isImitation = computed(() => form.genSource === 'IMITATION')
 // 仿写时 topic 语义为「任务名」,校验文案随模式切换
 const rules = computed(() => ({
@@ -189,9 +183,10 @@ const onSaveAndGenerate = async () => {
         // 发起失败:已跳详情页,状态/lastBriefError 可见,由用户在页面内重试
       }
     } else {
-      // 主题创作:先落 PLANNING 占位(毫秒级)再导航,详情页据 /deep/status 恢复进度态
+      // 主题创作:先落 PLANNING 占位(毫秒级)再导航,详情页据 /deep/status 恢复进度态。
+      // 10-02:startDeep 已无参(后端从项目实体读主题/内容描述/读者/字数),消除 body 与库不一致窗口
       try {
-        await projectApi.startDeep(id, form.topic.trim(), form.extraInfo || '')
+        await projectApi.startDeep(id)
       } catch (e) {
         // 发起失败(如并发冲突):项目已建,详情页据 lastBriefError 展示并允许重试
       }
@@ -203,7 +198,7 @@ const onSaveAndGenerate = async () => {
 }
 
 // ==== 关键表单 Enter 提交(R6)====
-// 只挂在单行输入上(创作主题/关键词/目标读者);textarea 保留换行不绑定。
+// 只挂在单行输入上(创作主题/目标读者);textarea 保留换行不绑定。
 // isComposing / keyCode 229:中文输入法组字过程中的回车是「选词」而非「提交」,
 // 不加这个判断会在拼音上屏瞬间误触发创建(与 StepBrief 的 ClarifyForm 同一口径)。
 const onEnterSubmit = (e) => {

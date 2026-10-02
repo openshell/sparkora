@@ -57,15 +57,18 @@ public class DeepController {
         this.settingService = settingService;
     }
 
-    /** ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。body: {topic?, extraInfo?}。 */
+    /**
+     * ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。
+     *
+     * <p>10-02-brief-reasoning-maxtokens:忽略请求体(主题/内容描述/读者/字数一律从项目读),
+     * 保留 {@code @RequestBody(required=false)} 仅为兼容旧前端仍发 {@code {topic, extraInfo}} 不报 400。
+     */
     @PostMapping("/clarify")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> clarify(@PathVariable Long projectId,
                                           @RequestBody(required = false) Map<String, Object> body) {
         try {
-            String topic = body == null ? null : (String) body.get("topic");
-            String extraInfo = body == null ? null : (String) body.get("extraInfo");
-            ArticleBriefEntity b = clarifyService.start(projectId, topic, extraInfo);
+            ArticleBriefEntity b = clarifyService.start(projectId);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("briefId", b.getId());
             out.put("stage", "PLANNING");
@@ -206,6 +209,8 @@ public class DeepController {
             var snap = researchService.resolveSnapshot(b.getId());
             out.put("webStrategy", snap.strategyLabel());
             out.put("webProviderOrder", snap.strategyRaw());
+            // 10-02 R2:澄清阶段 AI 思考过程(reasoning)增量透出;非推理模型/历史数据为 null 时不出现该字段
+            if (b.getResearchReasoning() != null) out.put("planReasoning", b.getResearchReasoning());
             if (b.getResearchPlan() != null) out.put("researchPlan", b.getResearchPlan());
             if (b.getClarifyQuestions() != null) out.put("questions", b.getClarifyQuestions());
             if (b.getClarifyAnswers() != null) out.put("answers", b.getClarifyAnswers());

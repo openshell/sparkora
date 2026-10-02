@@ -149,9 +149,17 @@ public class BriefService {
                 """;
     }
 
-    /** 深度简报 user prompt：主题 + 锁定需求 + 研究假设 + 事实手册（含来源与置信度）。 */
+    /** 深度简报 user prompt：主题 + 内容描述 + 目标读者 + 目标字数 + 锁定需求 + 研究假设 + 事实手册（含来源与置信度）。 */
     private String buildDeepBriefUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
         StringBuilder user = new StringBuilder("主题:").append(p.getTopic()).append('\n');
+        // 10-02 R4:创建输入注入简报 prompt(非空才加;目标字数缺省口径对齐其它链路 1500)
+        if (p.getContentDescription() != null && !p.getContentDescription().isBlank()) {
+            user.append("内容描述:").append(p.getContentDescription()).append('\n');
+        }
+        if (p.getAudience() != null && !p.getAudience().isBlank()) {
+            user.append("目标读者:").append(p.getAudience()).append('\n');
+        }
+        user.append("目标字数:").append(p.getWordCountTarget() == null ? 1500 : p.getWordCountTarget()).append('\n');
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:").append(b.getClarifyAnswers()).append('\n');
         }

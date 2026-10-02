@@ -172,7 +172,7 @@ class DeepResearchServiceProgressTest {
         CountDownLatch captureDone = new CountDownLatch(1);
         AtomicReference<String> captured = new AtomicReference<>();
         AtomicBoolean captureOnce = new AtomicBoolean(false);
-        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any(), any())).thenAnswer(inv -> {
             String q = inv.getArgument(0);
             allEntered.countDown();
             allEntered.await(2, TimeUnit.SECONDS);
@@ -201,7 +201,7 @@ class DeepResearchServiceProgressTest {
     void 完成即乱序回写_后启动的先完成则先落库() throws Exception {
         Store store = wireStore(plan("q1", "q2"));
         DeepProperties p = props(5000, 2);
-        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any(), any())).thenAnswer(inv -> {
             String q = inv.getArgument(0);
             int idx = idxOf(q);
             // agent1(q1) 慢、agent2(q2) 快 → agent2 先 DONE
@@ -222,7 +222,7 @@ class DeepResearchServiceProgressTest {
     void 并发回写不丢字段_各agent终值完整() throws Exception {
         Store store = wireStore(plan("q1", "q2", "q3", "q4"));
         DeepProperties p = props(5000, 4);
-        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any(), any())).thenAnswer(inv -> {
             String q = inv.getArgument(0);
             int idx = idxOf(q);
             Thread.sleep(50L);   // 四者几乎同时完成,最大化写竞争
@@ -253,7 +253,7 @@ class DeepResearchServiceProgressTest {
         Store store = wireStore(plan("q1", "q2"));
         DeepProperties p = props(250, 2);   // 超时 250ms
         AtomicBoolean cancelled = new AtomicBoolean(false);
-        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any(), any())).thenAnswer(inv -> {
             String q = inv.getArgument(0);
             try {
                 Thread.sleep(idxOf(q) == 0 ? 3000L : 20L);
@@ -281,7 +281,7 @@ class DeepResearchServiceProgressTest {
     void 单agent异常隔离_其余正常完成并落库() throws Exception {
         Store store = wireStore(plan("q1", "q2", "q3"));
         DeepProperties p = props(3000, 3);
-        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any(), any())).thenAnswer(inv -> {
             String q = inv.getArgument(0);
             if (idxOf(q) == 1) throw new IllegalStateException("模拟子代理异常");
             Thread.sleep(20L);
@@ -301,7 +301,7 @@ class DeepResearchServiceProgressTest {
     void 产物结构不变且汇总在全部落定后执行一次() throws Exception {
         Store store = wireStore(plan("q1", "q2"));
         DeepProperties p = props(3000, 2);
-        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(subAgent.research(anyString(), any(), anyInt(), any(), anyString(), any(), any(), any())).thenAnswer(inv -> {
             String q = inv.getArgument(0);
             Thread.sleep(20L);
             return doneNote(q, 0, facts(q));

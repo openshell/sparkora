@@ -37,9 +37,10 @@ export const projectApi = {
   // 简报阶段点选标题(S6);body={title},空串清除
   setSelectedTitle: (id, title) =>
     http.put(`/projects/${id}/selected-title`, { title }),
-  // S9 深度模式:研究计划+反问(clarify 约 10~30s,放宽超时同 generateBrief)
-  startDeep: (id, topic, extraInfo = '') =>
-    http.post(`/projects/${id}/deep/clarify`, { topic, extraInfo }, { timeout: 120000 }),
+  // S9 深度模式:研究计划+反问(clarify 约 10~30s,放宽超时同 generateBrief)。
+  // 10-02:后端忽略请求体,一律从项目实体读取主题/内容描述/读者/字数;传空对象仅为占位。
+  startDeep: (id) =>
+    http.post(`/projects/${id}/deep/clarify`, {}, { timeout: 120000 }),
   // S9 深度模式:锁定反问答案
   submitDeepAnswers: (id, briefId, answers) =>
     http.post(`/projects/${id}/deep/clarify-answer`, { briefId, answers }),

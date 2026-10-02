@@ -256,6 +256,8 @@ public class DeepResearchService {
             String topic = projectId == null ? "" : resolveTopic(projectId);
             // R7:仅已锁定答案进入 WEB query(未锁定/无答案不注入)
             String lockedAnswers = b0 == null ? null : b0.getClarifyAnswers();
+            // 10-02 R4b:内容描述解析一次,同批次全部子代理共用(仅进汇总上下文,不改检索 query)
+            String contentDescription = projectId == null ? "" : resolveContentDescription(projectId);
             log.info("深度研究启动 briefId={} projectId={} strategy={} webAllowed={} anchors={}",
                     briefId, projectId, snapshot.strategyLabel(), snapshot.webAllowed(), anchors);
             // R1/AC-01:启动阶段一次性把全部 agent 置 RUNNING(早于任何 submit,前端首轮轮询即可见
@@ -283,7 +285,7 @@ public class DeepResearchService {
                         qIdx < toolHints.size() ? parseTools(toolHints.get(qIdx)) : List.of("KB"),
                         snapshot.webAllowed());
                 futures.add(pool.submit(() -> subAgent.research(q, tools, webQuotaPerAgent, anchors, topic,
-                        lockedAnswers, snapshot)));
+                        lockedAnswers, contentDescription, snapshot)));
             }
             // R2/AC-02:为每个 agent 提交**独立收集器**——谁的 future 先完成谁先回写,天然乱序,
             // 不再被慢的 future[0] 阻塞后继 agent 的落库(消除集中 PENDING→DONE 瞬变)。
@@ -444,7 +446,7 @@ public class DeepResearchService {
             if (ids != null && !ids.isEmpty()) return ids;
             ArticleProjectEntity p = projectMapper.selectById(projectId);
             if (p == null) return List.of();
-            com.sparkora.car.service.CarModelMatcherService.MatchResult m = matcherService.match(p.getTopic(), p.getKeywords());
+            com.sparkora.car.service.CarModelMatcherService.MatchResult m = matcherService.match(p.getTopic(), p.getContentDescription());
             return m == null || !m.related() ? List.of() : m.modelIds();
         } catch (Exception e) {
             log.warn("锚点车型解析失败,退化无锚点 projectId={}: {}", projectId, e.getMessage());
@@ -457,6 +459,16 @@ public class DeepResearchService {
         try {
             ArticleProjectEntity p = projectMapper.selectById(projectId);
             return p == null || p.getTopic() == null ? "" : p.getTopic();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 10-02 R4b 项目内容描述(仅进子代理 LLM 汇总上下文;空则回退空串,不改检索 query)。 */
+    private String resolveContentDescription(Long projectId) {
+        try {
+            ArticleProjectEntity p = projectMapper.selectById(projectId);
+            return p == null || p.getContentDescription() == null ? "" : p.getContentDescription();
         } catch (Exception e) {
             return "";
         }

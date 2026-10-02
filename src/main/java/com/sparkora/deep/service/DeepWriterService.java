@@ -240,6 +240,13 @@ public class DeepWriterService {
         // 09-27-shared-layout-rules R2:默认值归一委托共享 LayoutRules(输出值不变)。
         int target = com.sparkora.service.LayoutRules.normalizeTarget(p == null ? null : p.getWordCountTarget());
         StringBuilder user = new StringBuilder("目标字数：").append(target).append('\n');
+        // 10-02 R4:创建输入注入写作 prompt(非空才加)
+        if (p != null && p.getAudience() != null && !p.getAudience().isBlank()) {
+            user.append("目标读者:").append(p.getAudience()).append('\n');
+        }
+        if (p != null && p.getContentDescription() != null && !p.getContentDescription().isBlank()) {
+            user.append("内容描述:").append(p.getContentDescription()).append('\n');
+        }
         user.append("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:\n").append(b.getClarifyAnswers()).append('\n');

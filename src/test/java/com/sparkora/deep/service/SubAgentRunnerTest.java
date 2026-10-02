@@ -203,7 +203,7 @@ class SubAgentRunnerTest {
                 .thenReturn(new AiClient.ChatResult(valid, "m", 10));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
 
-        SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null,
+        SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null, null,
                 WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
 
         assertEquals("DONE", note.status(), "截断后提额重试成功应回到 DONE");
@@ -221,7 +221,7 @@ class SubAgentRunnerTest {
                 .thenReturn(new AiClient.ChatResult("仍不是合法JSON", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
 
-        SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null,
+        SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null, null,
                 WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
 
         assertEquals("FALLBACK", note.status(), "两次失败才允许降级");
@@ -244,7 +244,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
-        r.research("该车型的行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("该车型的行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
@@ -268,7 +268,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
-        r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
@@ -293,7 +293,7 @@ class SubAgentRunnerTest {
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
         // 背景题 → extract 被调用一次,且抽取正文回填进 ctx
-        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
         org.mockito.Mockito.verify(router, org.mockito.Mockito.times(1)).extract(anyString(), any());
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
@@ -304,7 +304,7 @@ class SubAgentRunnerTest {
         when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
                 List.of(hit), WebProvider.TAVILY,
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
-        r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
         org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).extract(anyString(), any());
     }
 
@@ -338,7 +338,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 1L, 5);
 
-        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).search(anyString(), anyInt(), any());
         org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).extract(anyString(), any());
@@ -364,7 +364,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
-        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
@@ -395,7 +395,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
-        SubAgentRunner.Note note = r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", snap);
+        SubAgentRunner.Note note = r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         assertEquals("DONE", note.status(), "抽取失败不得影响研究状态");
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
@@ -408,6 +408,56 @@ class SubAgentRunnerTest {
         int c = 0, i = 0;
         while ((i = s.indexOf(sub, i)) >= 0) { c++; i += sub.length(); }
         return c;
+    }
+
+    // ===== 10-02-brief-reasoning-maxtokens R4b/AC9(Q4=A):内容描述只进汇总上下文,不改检索 query =====
+
+    @Test
+    void 内容描述_进汇总上下文_但不进KB与WEB检索query() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        when(router.search(anyString(), anyInt(), any())).thenReturn(new WebSearchOutcome(
+                List.of(new WebResultNormalizer.WebHit("W1", "t", "https://x.com/a", "s", "TAVILY")),
+                WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("销量如何?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]",
+                "围绕第2000座闪充站落成写一篇", snap);
+
+        // 汇总上下文必须注入内容描述(写作意图)
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertTrue(user.getValue().contains("写作意图/内容描述:围绕第2000座闪充站落成写一篇"),
+                "内容描述应进 LLM 汇总上下文");
+
+        // KB 复合 query / WEB query 不得含内容描述(检索语料纯净,Q4=A)
+        org.mockito.ArgumentCaptor<String> kbQuery = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(kb).search(kbQuery.capture(), anyInt(), any());
+        assertFalse(kbQuery.getValue().contains("第2000座"), "KB 复合 query 不得注入内容描述");
+        org.mockito.ArgumentCaptor<String> webQuery = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(router).search(webQuery.capture(), anyInt(), any());
+        assertFalse(webQuery.getValue().contains("第2000座"), "WEB query 不得注入内容描述");
+    }
+
+    @Test
+    void 内容描述为空_ctx不出现写作意图行() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        AiClient ai = mock(AiClient.class);
+        when(ai.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
+
+        r.research("问题", List.of(), 0, List.of(), "主题", null, "  ",
+                WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
+
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        assertFalse(user.getValue().contains("写作意图/内容描述:"), "空内容描述不得出现该行");
     }
 
     // ===== R5/AC-05:webQuery 否定答案过滤(09-27-brief-writing-linkage-fix) =====
@@ -465,7 +515,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
-        r.research("该车型的行业背景与战略目标是什么?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("该车型的行业背景与战略目标是什么?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.Mockito.verify(router, org.mockito.Mockito.times(1))
                 .search(anyString(), anyInt(), any());
@@ -482,7 +532,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
-        r.research("海狮08的价格是多少?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]", snap);
+        r.research("海狮08的价格是多少?", List.of("KB", "WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.Mockito.verify(router, org.mockito.Mockito.never())
                 .search(anyString(), anyInt(), any());
@@ -505,7 +555,7 @@ class SubAgentRunnerTest {
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.parse("TAVILY,SEARXNG"), true, 7L, 5);
 
-        SubAgentRunner.Note note = r.research("问题", List.of("WEB"), 2, List.of(), "主题", "[]", snap);
+        SubAgentRunner.Note note = r.research("问题", List.of("WEB"), 2, List.of(), "主题", "[]", null, snap);
 
         assertEquals("FALLBACK", note.status());
         assertEquals(2, note.webCount(), "降级后仍应上报实际接受的 WEB 结果数");

@@ -206,6 +206,34 @@ class BriefServiceTest {
         assertTrue(prompt.contains("假设B:成本将下降"), "假设B应注入");
     }
 
+    // ==================== 10-02-brief-reasoning-maxtokens R4:创建输入注入简报 prompt ====================
+
+    /** R4:主题 + 内容描述 + 目标读者 + 目标字数 注入简报 user prompt。 */
+    @Test
+    void 创建输入_注入userPrompt() {
+        ArticleProjectEntity p = project();
+        p.setContentDescription("围绕第2000座闪充站落成写一篇");
+        p.setAudience("汽车行业分析师");
+        p.setWordCountTarget(2400);
+
+        String prompt = capturedUserPrompt(p, deepBrief());
+
+        assertTrue(prompt.contains("主题:如何看待比亚迪建成第2000座高速闪充站"), "含主题");
+        assertTrue(prompt.contains("内容描述:围绕第2000座闪充站落成写一篇"), "含内容描述");
+        assertTrue(prompt.contains("目标读者:汽车行业分析师"), "含目标读者");
+        assertTrue(prompt.contains("目标字数:2400"), "含目标字数");
+    }
+
+    /** R4:内容描述/目标读者为空 → 不注入对应行;目标字数 null → 默认 1500。 */
+    @Test
+    void 创建输入_空值不注入_字数默认1500() {
+        String prompt = capturedUserPrompt(project(), deepBrief());
+
+        assertFalse(prompt.contains("内容描述:"), "空内容描述不得出现");
+        assertFalse(prompt.contains("目标读者:"), "空目标读者不得出现");
+        assertTrue(prompt.contains("目标字数:1500"), "null 目标字数应回退 1500");
+    }
+
     /** research_plan 缺失/null/无 hypotheses/畸形 → 不注入且不报错(兼容退化)。 */
     @Test
     void 无研究假设_兼容退化不报错() {

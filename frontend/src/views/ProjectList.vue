@@ -57,11 +57,6 @@
             <a class="topic-link" @click="$router.push(`/projects/${row.id}`)">{{ row.topic }}</a>
           </template>
         </el-table-column>
-        <el-table-column prop="keywords" label="关键词" min-width="160">
-          <template #default="{ row }">
-            <span class="cell-muted">{{ row.keywords || '—' }}</span>
-          </template>
-        </el-table-column>
         <el-table-column prop="createdBy" label="创建人" width="120" />
         <el-table-column prop="status" label="状态" width="120">
           <template #default="{ row }">

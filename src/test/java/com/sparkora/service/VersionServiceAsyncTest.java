@@ -258,6 +258,36 @@ class VersionServiceAsyncTest {
         org.junit.jupiter.api.Assertions.assertTrue(sys.contains("- 单段不超过 5 行,长段拆分。"));
     }
 
+    // ==================== 10-02-brief-reasoning-maxtokens R5:内容描述替换关键词注入 user prompt ====================
+
+    /** 捕获 runGenerate 发出的 chatJson user prompt。 */
+    private String capturedUserPrompt(ArticleProjectEntity p) {
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(styleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(style(1L, "正式")));
+        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(VERSION_JSON, "m", 10));
+        doAnswer(inv -> { ((ArticleVersionEntity) inv.getArgument(0)).setId(501L); return 1; })
+                .when(versionMapper).insert(any(ArticleVersionEntity.class));
+        service.generate(PROJECT_ID, List.of(1L));
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(aiClient).chatJson(anyString(), user.capture(), eq(4096));
+        return user.getValue();
+    }
+
+    /** R5:头部「内容描述：」替换原「关键词：」;删除独立「用户补充信息」块。 */
+    @Test
+    void 版本prompt_头部内容描述替换关键词_无用户补充信息块() {
+        ArticleProjectEntity p = project("TOPIC", "READY");
+        p.setContentDescription("围绕第2000座闪充站落成写一篇");
+
+        String user = capturedUserPrompt(p);
+
+        org.junit.jupiter.api.Assertions.assertTrue(user.contains("内容描述：围绕第2000座闪充站落成写一篇"), "头部应含内容描述");
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("关键词："), "不得再出现关键词行");
+        org.junit.jupiter.api.Assertions.assertFalse(user.contains("用户补充信息"), "独立补充信息块应删除(已并入头部)");
+    }
+
     // ==================== S6:仿写链路版本标题优先级(选定 > AI title > 主题) ====================
 
     /** 捕获插入的版本实体(单风格单版)。 */

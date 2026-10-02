@@ -38,10 +38,10 @@ public class CarModelMatcherService {
     public record MatchResult(boolean related, List<Long> modelIds, String reason) {}
 
     /**
-     * 分析文章主题/关键词,判断是否应关联车型知识库,并选出相关车型。
+     * 分析文章主题/内容描述,判断是否应关联车型知识库,并选出相关车型。
      * @return 不相关或知识库无数据支撑时 related=false、modelIds 为空
      */
-    public MatchResult match(String topic, String keywords) {
+    public MatchResult match(String topic, String contentDescription) {
         List<CarModelEntity> models = carModelService.list();
         if (models.isEmpty()) return new MatchResult(false, List.of(), "知识库暂无车型数据");
 
@@ -67,7 +67,7 @@ public class CarModelMatcherService {
                 """;
 
         String user = "文章主题：" + (topic == null ? "" : topic)
-                + "\n关键词：" + (keywords == null || keywords.isBlank() ? "无" : keywords)
+                + "\n内容描述：" + (contentDescription == null || contentDescription.isBlank() ? "无" : contentDescription)
                 + "\n\n知识库现有车型(名称(销售网络) + id):\n" + catalog;
 
         try {

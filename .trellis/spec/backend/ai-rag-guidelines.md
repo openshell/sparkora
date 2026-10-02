@@ -26,8 +26,9 @@ AiClient.ChatResult chatJson(String systemPrompt, String userPrompt, int maxToke
 AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxTokens)   // 多轮，不强制 JSON
 ```
 - `messages` 每项 `{role, content}`，`role∈{system,user,assistant}`；顺序即对话顺序。
-- `ChatResult{content, model, totalTokens, finishReason}`（09-27-brief-writing-linkage-fix：第 4 分量 `finishReason` 透出 `finish_reason`；**保留 3 参构造器**默认 null——既有 `new ChatResult(content,model,tokens)` 调用方与测试编译不受影响）。
+- `ChatResult{content, model, totalTokens, finishReason, reasoning}`（09-27-brief-writing-linkage-fix：第 4 分量 `finishReason` 透出 `finish_reason`；10-02-brief-reasoning-maxtokens：第 5 分量 `reasoning` 透出推理过程——读 `message.reasoning`，缺省回退 `message.reasoning_content`（不同模型字段名不同，实测 axonhub→`deepseek-v4.1-flash` 用 `reasoning`），落库/透出前按 `REASONING_MAX_CHARS=20000` 截断；**保留 3 参/4 参构造器**默认 null——既有 `new ChatResult(content,model,tokens[,finishReason])` 调用方与测试编译不受影响）
   - **非 JSON 调用的截断判定**：`chat`/`chatMessages`（不强制 JSON）在 `finish_reason=length` 时**不抛异常**（内容为半截），调用方须自判 `"length".equals(cr.finishReason())` 并提额重试（先例 `DeepWriterService.write` 4096→8192）；`chatJson` 仍由 `parseChat` 直接抛截断 `AiException`。
+  - **reasoning 模型的额度陷阱（10-02 实测）**：`AI_MODEL=deepseek-v4-pro-cus` 被 axonhub 路由到 reasoning 模型 `deepseek-v4.1-flash`，先吐大段 `reasoning` 再吐 `content`。`max_tokens` 是**含推理的总预算**——额度不足时推理吃光预算、`content` 为空、`finish_reason=length`（实测 4096 全烧在推理上、`content=""`；同一 prompt 提到 16384 得 `finish_reason=stop`、约 6000 推理 + 2580 正文）。故 reasoning 模型下 JSON 类调用额度须按「推理 + 正文」估算，并一律配「截断/空内容/非法 JSON → 提额一倍重试一次」范式（ClarifyService 8192→16384、BriefService 同构）。
 
 ### 3. Contracts
 - 三方法共用同一 `rest` 实例（`AiProperties.baseUrl/apiKey/timeoutMs`）、`resolveTextModel()`、`parseChat()`。
@@ -46,6 +47,7 @@ AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxToken
 
 ### 6. Tests Required
 - 断言 `chatMessages` 组装的 messages 顺序/角色；AI 返回空 content 抛 `AiException`。
+- **reasoning 透出**（10-02）：`parseChat` 读 `message.reasoning`；缺省回退 `message.reasoning_content`；超 `REASONING_MAX_CHARS` 截断；旧 3/4 参构造器兼容（`AiClientReasoningTest`）。
 
 ### 7. Wrong vs Correct
 #### Wrong

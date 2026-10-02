@@ -190,6 +190,10 @@
         <CitationList :citations="brief.ragCitations" :rag-status="brief.ragStatus" :fact-sheet="brief.factSheet" />
       </section>
 
+      <!-- 10-02:研究计划 + AI 思考过程(澄清阶段 reasoning)。完成后 deepActive 转 false 切到本分支,
+           若此处不渲染,思考过程面板会在简报就绪后消失(用户「事后一次性展示」诉求落空)。 -->
+      <DeepPlanCard v-if="deepPlan" :plan="deepPlan" :reasoning="deepReasoning" />
+
       <!-- 下一步动作(重新研究生成 / 进入多版本生成 / 查看版本)已上移至上下文条 actions,
            逻辑与显隐条件逐字不变;此处不再重复渲染按钮 -->
     </div>
@@ -210,14 +214,14 @@
 
       <!-- 澄清表单(可填 / 已锁定回显) -->
       <template v-else-if="deepStage === 'CLARIFYING' || deepStage === 'CLARIFIED'">
-        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
+        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" :reasoning="deepReasoning" />
         <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
         <ClarifyForm v-else :questions="deepQuestions" :locked="true" :answers="deepAnswers" />
       </template>
 
       <!-- 研究中 / 研究完成:进度面板 + 事实手册 -->
       <template v-else-if="deepStage === 'RESEARCHING' || deepStage === 'RESEARCH_DONE'">
-        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" />
+        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" :reasoning="deepReasoning" />
         <ResearchProgress :brief-id="deepBriefId" @done="onResearchDone" />
         <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
         <!-- 研究完成后的「重新生成简报 / 跳过简报直接生成正文」已上移至上下文条 actions
@@ -359,6 +363,7 @@ const deepPlan = ref(null)
 const deepQuestions = ref([])
 const deepAnswers = ref([])
 const deepFactSheet = ref(null)
+const deepReasoning = ref('')          // 10-02:澄清阶段 AI 思考过程(reasoning),缺失时隐藏面板
 // 文章仿写意图参数 ?gen=imitation(创建页「创建并分析原文」):仅清理 query(仿写交互不变);
 // 分析请求由 ProjectEdit 在创建后直发,详情页以 project.status(GENERATING_BRIEF)为事实源展示进度
 if (route.query.gen === 'imitation') {
@@ -390,6 +395,7 @@ const applyDeepStatus = (d) => {
   deepQuestions.value = d.questions ? (typeof d.questions === 'string' ? JSON.parse(d.questions) : d.questions) : []
   deepAnswers.value = d.answers ? (typeof d.answers === 'string' ? JSON.parse(d.answers) : d.answers) : []
   deepFactSheet.value = d.factSheet || null
+  deepReasoning.value = d.planReasoning || ''   // 10-02:增量字段,旧后端缺失时为空串
 }
 
 /**
@@ -450,10 +456,11 @@ const startDeep = async () => {
   deepQuestions.value = []
   deepAnswers.value = []
   deepFactSheet.value = null
+  deepReasoning.value = ''
   deepStage.value = 'PLANNING'
   try {
-    const res = await http.post(`/projects/${route.params.id}/deep/clarify`,
-      { topic: props.project?.topic || props.project?.name, extraInfo: props.project?.extraInfo || '' })
+    // 10-02:后端忽略请求体,从项目实体读取输入;此处传空对象
+    const res = await projectApi.startDeep(route.params.id)
     if (res.code !== 0) throw new Error(res.msg)
     deepBriefId.value = res.data.briefId
     startPlanningPoll(res.data.briefId)

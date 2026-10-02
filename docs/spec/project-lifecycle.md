@@ -11,7 +11,7 @@
 ### 1.1 页面 `/`（`frontend/src/views/ProjectList.vue`）
 
 - 顶栏：品牌 `Sparkora` + 用户菜单（用户名/角色 + 登出）。
-- 主区：项目卡片或表格（分页），每行含：主题、关键词、创建人、状态、更新时间、操作（进入详情）。
+- 主区：项目卡片或表格（分页），每行含：主题、创建人、状态、更新时间、操作（进入详情）。（10-02 起删除「关键词」列。）
 - 工具栏：**＋ 新建创作任务**按钮（角色 ≥ editor 可见）。
 - 空态：无数据时提示「还没有创作任务，点击右上新建」。
 
@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | id | Long | — | — | 自增主键 |
 | topic | String(200) | ✅ 必填 | ✅ | 主题 |
-| keywords | String(500) | 选填 | ✅ | 逗号分隔 |
+| content_description | TEXT | 选填 | — | **内容描述**（10-02：原 `extra_info`「补充信息」改名列，存量已迁移；全链路注入：澄清/研究/简报/深度写作/多版本） |
 | audience | String(200) | 选填 | — | 目标读者 |
 | word_count_target | Integer | 选填 | — | 目标字数 |
 | brand_voice_profile_id | Long | 选填 | — | 可选品牌语气（S0 先存不启用） |
@@ -32,12 +32,13 @@
 | last_version_error | String(1000) | — | — | S1b：最近一次版本生成失败原因（成功后清空；部分成功时记录失败明细） |
 | created_by | String | — | ✅ | 审计字段 |
 | created_at / updated_at | Datetime | — | ✅ | 审计字段 |
-| remark | String(500) | 选填 | — | 备注 |
 | gen_source | String(20) | ✅（仿写单选） | — | 文章仿写（[imitation.md](imitation.md)）：`TOPIC`(默认)/`IMITATION`；仅仿写时随 create 提交 |
 | imitation_text | TEXT | 仿写必填 | — | 参考原文全文（仅 IMITATION 非空，≤20000 字） |
 | imitation_analysis | TEXT | — | — | 原文分析结果 JSON `{genre,structure,sentenceFeatures}`（展示冗余存储） |
 
 > S5+ 发布/预览相关列（`publish_media_id` / `publish_theme` / `published_at` / `last_publish_error` / `author` / `source_url` / `preview_theme` / `preview_highlight` / `preview_mac_style` / `preview_footnote`）见 [preview.md](preview.md) 与 [publish.md](publish.md)。
+
+> **10-02 字段重构**（`V4__content_description_and_brief_reasoning.sql`）：删除 `keywords`（关键词，无生效点）与 `remark`（备注，仅存储）；`extra_info` 改名 `content_description` 并升级为全链路生效（存量数据随迁移搬到新列）。创建/编辑请求体对应字段由 `keywords`/`remark`/`extraInfo` 变为 `contentDescription`。
 
 ### 1.3 接口契约（§3.3）
 
@@ -69,10 +70,10 @@
 
 ## 2. 新建创作任务 `/projects/new`（§5）
 
-- 表单 = 上面「表单」列字段，字段级校验：`topic` 必填、长度限制。
+- 表单 = 上面「表单」列字段，字段级校验：`topic` 必填、长度限制。10-02 起：删除「关键词」「备注」；原「补充信息」位置改为「内容描述」（`contentDescription`，`@Size(max=5000)`），全链路生效。
 - 操作：保存（DRAFT）或「创建并生成 Brief →」（DRAFT→GENERATING_BRIEF→READY，S0 只落库）。
 - 校验错误逐字段 `el-form` 提示，后端 `@Validated` 兜底。
-- **思考深度（2026-09-09 模式收敛修订，09-09-brief-gen-redesign R2；2026-09-11 clarify 异步化修订，09-11-brief-gen-flow-refactor）**：创建表单**不再含模式单选**——快速模式（FAST）已下线，所有生成必走深度流程。创建成功后**先 `await` 直发 `/deep/clarify`（202 异步语义，毫秒级落 PLANNING 占位行）再跳详情页**，消除「导航早于落库」竞态；跳转**不再携带 `?gen=deep` 路径意图参数**，详情页据 brief 侧 `plan_status=PLANNING` 展示「研究计划生成中」并自轮询 `/deep/status`，完成后自动展开澄清表单。失败写 `project.last_brief_error` 并回可重试引导态。FAST 生成接口 `/generate/brief`、`/generate/versions` 保留路由但返回 `R.fail(410, "生成流程已升级为深度模式...")`（封死不删，存量 FAST 项目产物可读，重新生成走深度）。
+- **思考深度（2026-09-09 模式收敛修订，09-09-brief-gen-redesign R2；2026-09-11 clarify 异步化修订，09-11-brief-gen-flow-refactor）**：创建表单**不再含模式单选**——快速模式（FAST）已下线，所有生成必走深度流程。创建成功后**先 `await` 直发 `/deep/clarify`（202 异步语义，毫秒级落 PLANNING 占位行）再跳详情页**，消除「导航早于落库」竞态；跳转**不再携带 `?gen=deep` 路径意图参数**，详情页据 brief 侧 `plan_status=PLANNING` 展示「研究计划生成中」并自轮询 `/deep/status`，完成后自动展开澄清表单。失败写 `project.last_brief_error` 并回可重试引导态。FAST 生成接口 `/generate/brief`、`/generate/versions` 保留路由但返回 `R.fail(410, "生成流程已升级为深度模式...")`（封死不删，存量 FAST 项目产物可读，重新生成走深度）。**10-02 起** `/deep/clarify` 请求体被后端忽略（`startDeep(id)` 无参），主题/内容描述/目标读者/目标字数一律从项目实体读取。
 - 仿写入口（`genSource=IMITATION`）见 [imitation.md](imitation.md)：`ProjectEdit.vue` 区块 00「创作方式」radio-button。
 
 ---

@@ -10,7 +10,7 @@ export const DATA = {
     {
       id: 1,
       topic: '新能源汽车内容策划',
-      keywords: '新能源,内容策划',
+      contentDescription: '围绕行业趋势写一篇深度解读',
       status: 'VERSIONS_READY',
       currentVersionId: 101,
       updatedAt: '2026-09-30T10:00:00Z',
@@ -19,7 +19,7 @@ export const DATA = {
     {
       id: 2,
       topic: '科技前沿解读',
-      keywords: '科技',
+      contentDescription: '',
       status: 'DRAFT',
       currentVersionId: null,
       updatedAt: '2026-09-30T11:00:00Z',

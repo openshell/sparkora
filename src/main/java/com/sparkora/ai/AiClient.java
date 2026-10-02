@@ -19,13 +19,23 @@ import java.util.Map;
  *
  * 设计要点（来自真机联调）：
  *  - axonhub 把模型名路由到实际模型（如 deepseek-v4-pro-cus → glm-5.2），无需关心。
- *  - 部分 GLM 系模型会先输出 reasoning_content 再输出 content；只取 content。
+ *  - 部分 GLM 系模型会先输出 reasoning_content 再输出 content；content 为业务正文，
+ *    reasoning/reasoning_content 现由 parseChat 一并透出（见下方 10-02 条目）。
  *  - 调用强制 response_format=json_object，要求模型返回纯 JSON，避免解析不稳。
  *  - 失败抛 AiException，由上层决定状态回滚与错误展示。
+ *  - 10-02-brief-reasoning-maxtokens：reasoning 模型（deepseek-v4.1-flash 等）会先输出大段
+ *    reasoning 再输出 content，推理 token 同样计入 max_tokens；parseChat 现将 reasoning
+ *    透出（缺省回退 reasoning_content），供澄清阶段落库展示思考过程。
  */
 @Slf4j
 @Component
 public class AiClient {
+
+    /**
+     * reasoning 落库前截断上限（10-02-brief-reasoning-maxtokens）：reasoning 模型单次推理可达
+     * 上万字，直接落 TEXT 列既撑库又灌爆前端；统一截断到该上限。
+     */
+    public static final int REASONING_MAX_CHARS = 20000;
 
     private final AiProperties props;
     private final RestClient rest;
@@ -50,11 +60,18 @@ public class AiClient {
      *
      * <p>09-27-brief-writing-linkage-fix R4:增 {@code finishReason}(模型给出 stop/length 等;
      * 截断=length)。非 JSON 调用不会抛截断异常,调用方(DeepWriterService)需据此判定重试,
-     * 故统一透出;保留 3 参构造器以兼容既有调用方与测试。
+     * 故统一透出。
+     *
+     * <p>10-02-brief-reasoning-maxtokens:增第 5 分量 {@code reasoning}(推理模型的思考过程;
+     * 非推理模型/缺失为 null,已按 {@link #REASONING_MAX_CHARS} 截断)。保留 3 参/4 参构造器
+     * 以兼容既有调用方与测试(对齐 {@code Citation.docId} 的 record 加字段先例)。
      */
-    public record ChatResult(String content, String model, int totalTokens, String finishReason) {
+    public record ChatResult(String content, String model, int totalTokens, String finishReason, String reasoning) {
         public ChatResult(String content, String model, int totalTokens) {
-            this(content, model, totalTokens, null);
+            this(content, model, totalTokens, null, null);
+        }
+        public ChatResult(String content, String model, int totalTokens, String finishReason) {
+            this(content, model, totalTokens, finishReason, null);
         }
     }
 
@@ -204,7 +221,15 @@ public class AiClient {
             // R4(09-27-brief-writing-linkage-fix):始终透出 finish_reason——非 JSON 调用(如正文写作)
             // 截断时不抛异常,调用方需据此判定是否提额重试
             String finishReason = choices.get(0).path("finish_reason").asText(null);
-            return new ChatResult(content, model, tokens, finishReason);
+            // 10-02-brief-reasoning-maxtokens:透出 reasoning(推理模型思考过程)。不同模型字段名不同,
+            // 实测 axonhub→deepseek-v4.1-flash 用 reasoning,部分 GLM 系用 reasoning_content,依次回退;
+            // 截断上限防超长落库(仅澄清阶段消费,其余调用方忽略)。
+            String reasoning = firstNonBlank(msg.path("reasoning").asText(null),
+                    msg.path("reasoning_content").asText(null));
+            if (reasoning != null && reasoning.length() > REASONING_MAX_CHARS) {
+                reasoning = reasoning.substring(0, REASONING_MAX_CHARS);
+            }
+            return new ChatResult(content, model, tokens, finishReason, reasoning);
         } catch (AiException e) {
             throw e;
         } catch (Exception e) {
@@ -221,5 +246,12 @@ public class AiClient {
     private static String truncate(String s) {
         if (s == null) return "";
         return s.length() > 300 ? s.substring(0, 300) + "…" : s;
+    }
+
+    /** 返回首个非空白字符串(全空返回 null);用于 reasoning/reasoning_content 字段名回退。 */
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) return a;
+        if (b != null && !b.isBlank()) return b;
+        return null;
     }
 }

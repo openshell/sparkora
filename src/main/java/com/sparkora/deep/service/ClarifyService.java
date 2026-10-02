@@ -64,12 +64,15 @@ public class ClarifyService {
 
     /**
      * 启动研究计划生成(同步毫秒级,202 语义):落 PLANNING 占位行后立即返回,后台 self.runAsync 生成。
+     *
+     * <p>10-02-brief-reasoning-maxtokens:签名收敛为仅 projectId——主题/内容描述/目标读者/目标字数
+     * 一律从项目实体读取(不再由请求体传入,消除「body 与库不一致」窗口)。
      * @return 占位 brief(id 供前端轮询 /deep/status 引用)
      */
-    public ArticleBriefEntity start(Long projectId, String topic, String extraInfo) {
+    public ArticleBriefEntity start(Long projectId) {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
-        if (topic == null || topic.isBlank()) throw new IllegalArgumentException("缺少主题");
+        if (p.getTopic() == null || p.getTopic().isBlank()) throw new IllegalArgumentException("缺少主题");
 
         // 清理陈旧占位:进程中途死亡遗留的 PLANNING 行(超过阈值)删除,放行重新触发以自愈
         briefMapper.delete(new QueryWrapper<ArticleBriefEntity>()
@@ -90,23 +93,28 @@ public class ClarifyService {
         }
 
         // 后台异步生成(经自注入代理确保 @Async 生效)
-        self.runAsync(b.getId(), topic, extraInfo);
+        self.runAsync(b.getId(), projectId);
         return b;
     }
 
     /**
      * 异步生成研究计划与澄清问题(由 self 代理调用)。
-     * 成功回写 research_plan/clarify_questions/ai_model/token_usage + plan_status=READY;
+     * 成功回写 research_plan/clarify_questions/research_reasoning/ai_model/token_usage + plan_status=READY;
      * 失败删除占位行(保持「失败无残留」)并写 project.last_brief_error,状态保持 DRAFT。
+     *
+     * <p>10-02:异步体重取项目实体(不复用同步阶段快照),主题/内容描述/读者/字数从库读。
      */
     @Async
-    public void runAsync(Long briefId, String topic, String extraInfo) {
+    public void runAsync(Long briefId, Long projectId) {
         try {
-            PlanResult r = generatePlan(topic, extraInfo);
+            ArticleProjectEntity p = projectMapper.selectById(projectId);
+            if (p == null) throw new IllegalArgumentException("项目不存在");
+            PlanResult r = generatePlan(p);
             ArticleBriefEntity b = briefMapper.selectById(briefId);
             if (b == null) return;   // 占位行已被并发清理(如失败重试),丢弃结果
             b.setResearchPlan(r.researchPlan());
             b.setClarifyQuestions(r.questions());
+            b.setResearchReasoning(r.reasoning());   // 10-02:思考过程落库(与计划同一次 update)
             b.setAiModel(r.model());
             b.setTokenUsage(r.totalTokens());
             b.setPlanStatus("READY");
@@ -123,30 +131,27 @@ public class ClarifyService {
             String reason = e.getMessage();
             if (reason != null && reason.length() > 1000) reason = reason.substring(0, 1000);
             log.warn("研究计划异步生成失败 briefId={}: {}", briefId, reason);
-            // 先取 projectId(删除占位行后 brief 不可再查),再删 PLANNING 占位行(失败无残留,/deep/status 自然回 NONE)
-            Long projectId = null;
+            // 删除 PLANNING 占位行(失败无残留,/deep/status 自然回 NONE)
             try {
                 ArticleBriefEntity b = briefMapper.selectById(briefId);
-                if (b != null) {
-                    projectId = b.getProjectId();
-                    if ("PLANNING".equals(b.getPlanStatus())) briefMapper.deleteById(briefId);
-                }
+                if (b != null && "PLANNING".equals(b.getPlanStatus())) briefMapper.deleteById(briefId);
             } catch (Exception de) {
                 log.warn("清理研究计划占位行失败 briefId={}: {}", briefId, de.getMessage());
             }
-            // 失败原因落项目(单列显式 set,委托状态服务;projectId==null 表示占位行已被并发清理,此时无需写)
+            // 失败原因落项目(单列显式 set,委托状态服务;projectId 为入参始终可用,
+            // 项目被并发删除时条件 update 影响 0 行,天然幂等)
             try {
-                if (projectId != null) {
-                    statusService.writeBriefError(projectId, reason);
-                }
+                statusService.writeBriefError(projectId, reason);
             } catch (Exception pe) {
                 log.warn("写入 lastBriefError 失败 briefId={}: {}", briefId, pe.getMessage());
             }
         }
     }
 
-    /** LLM 生成主体:返回研究计划与澄清问题(不落库),供异步 runAsync 调用。 */
-    private PlanResult generatePlan(String topic, String extraInfo) throws Exception {
+    /** LLM 生成主体:返回研究计划/澄清问题/思考过程(不落库),供异步 runAsync 调用。 */
+    private PlanResult generatePlan(ArticleProjectEntity p) throws Exception {
+        String topic = p.getTopic();
+        String contentDescription = p.getContentDescription();
         // 车库实际车型名录注入:让反问的车型/竞品选项来自真实车库(修复「大唐主题问不到大唐EV」)
         String catalog;
         try {
@@ -185,27 +190,45 @@ public class ClarifyService {
                 - 主题指向某款或某系列车型时,必须至少有一道题让用户确认写作锚点车型:options 覆盖名录中名称含该系列词的全部车型,type=multi
                 - 主题未指向具体车型时,竞品题的 options 也从名录中选(必须含「不对比」兜底项)
                 """.formatted(catalog.isBlank() ? "(车库暂无车型数据,允许自由提问,但不得编造具体车型名)" : catalog);
+        // 10-02 R4:澄清 prompt 注入创建输入(主题 + 内容描述 + 目标读者 + 目标字数,非空才加)
         StringBuilder user = new StringBuilder("主题:").append(topic).append('\n');
-        if (extraInfo != null && !extraInfo.isBlank()) {
-            user.append("用户补充:").append(extraInfo).append('\n');
+        if (contentDescription != null && !contentDescription.isBlank()) {
+            user.append("内容描述:").append(contentDescription).append('\n');
         }
-        AiClient.ChatResult cr = aiClient.chatJson(system, user.toString(), 4096);
-        // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)
-        JsonNode node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
+        if (p.getAudience() != null && !p.getAudience().isBlank()) {
+            user.append("目标读者:").append(p.getAudience()).append('\n');
+        }
+        // 目标字数缺省回退 1500(口径对齐 BriefService/DeepWriterService/VersionService)
+        user.append("目标字数:").append(p.getWordCountTarget() == null ? 1500 : p.getWordCountTarget()).append('\n');
+        // 10-02 R1:reasoning 模型推理 token 也计入 max_tokens,4096 会被推理吃光导致 content 为空/截断。
+        // 首次 8192;任何失败(截断 finish_reason=length / 空内容 / 非法 JSON)提额 16384 重试一次,
+        // 仅两次均失败才抛(范式抄 BriefService.generateFromFactSheet)。
+        AiClient.ChatResult cr;
+        JsonNode node;
+        try {
+            cr = aiClient.chatJson(system, user.toString(), 8192);
+            node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
+        } catch (Exception first) {
+            log.warn("研究计划首次生成失败,提额重试(16384): {}", first.getMessage());
+            cr = aiClient.chatJson(system,
+                    user + "\n注意:上次输出失败(可能被 max_tokens 截断或不是合法 JSON),请只输出一个完整、合法的 JSON 对象,确保字段齐全。",
+                    16384);
+            node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
+        }
         Map<String, Object> plan = new LinkedHashMap<>();
         plan.put("keyQuestions", toArray(node.path("keyQuestions")));
         plan.put("dataNeeds", toArray(node.path("dataNeeds")));
         plan.put("hypotheses", toArray(node.path("hypotheses")));
         plan.put("toolHints", node.path("toolHints"));
         // R2(09-26)确定性兜底:信号词命中且无背景型问题时自动补一条(LLM 判断为主,此处只兜底)
-        ensureBackgroundQuestion(plan, topic, extraInfo);
+        ensureBackgroundQuestion(plan, topic, contentDescription);
         String questions = node.path("questions").toString();
         String normalized = normalizeQuestions(questions);
-        return new PlanResult(json.writeValueAsString(plan), normalized, cr.model(), cr.totalTokens());
+        return new PlanResult(json.writeValueAsString(plan), normalized, cr.model(), cr.totalTokens(), cr.reasoning());
     }
 
-    /** generatePlan 产物(计划 JSON / 归一化问题 JSON / 模型 / token)。 */
-    private record PlanResult(String researchPlan, String questions, String model, int totalTokens) {}
+    /** generatePlan 产物(计划 JSON / 归一化问题 JSON / 模型 / token / 思考过程)。 */
+    private record PlanResult(String researchPlan, String questions, String model, int totalTokens, String reasoning) {}
 
     /** R2 背景/来龙去脉型主题信号词:命中则主题应含至少一条背景型问题。 */
     private static final String[] BACKGROUND_SIGNALS = {
@@ -233,15 +256,15 @@ public class ClarifyService {
     }
 
     /**
-     * R2(09-26)确定性兜底:主题/补充信息命中背景信号词、且现有 keyQuestions 无背景型问题时,
+     * R2(09-26)确定性兜底:主题/内容描述命中背景信号词、且现有 keyQuestions 无背景型问题时,
      * 追加一条背景/来龙去脉型问题,并同步追加对应 toolHints(保证问题与提示 1:1,避免落到 KB-only 默认)。
      *
      * <p>LLM 判断为主(prompt 已授权按主题取舍),此处仅在模型漏掉时兜底;幂等——已含背景题或未命中信号词则原样返回。
      * 结构异常(非数组等)不抛异常,静默降级为不补。
      */
-    static void ensureBackgroundQuestion(Map<String, Object> plan, String topic, String extraInfo) {
+    static void ensureBackgroundQuestion(Map<String, Object> plan, String topic, String contentDescription) {
         if (plan == null) return;
-        String probe = (topic == null ? "" : topic) + " " + (extraInfo == null ? "" : extraInfo);
+        String probe = (topic == null ? "" : topic) + " " + (contentDescription == null ? "" : contentDescription);
         boolean signal = java.util.Arrays.stream(BACKGROUND_SIGNALS).anyMatch(probe::contains);
         if (!signal) return;
         Object kq = plan.get("keyQuestions");

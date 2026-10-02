@@ -22,14 +22,27 @@
         </div>
       </div>
     </el-collapse-item>
+    <!-- 10-02:AI 思考过程(澄清阶段 reasoning);非空才渲染,默认折叠 -->
+    <el-collapse-item v-if="reasoning" name="reasoning">
+      <template #title>
+        <span class="plan-title"><el-icon><MagicStick /></el-icon>AI 思考过程
+          <el-tag size="small" effect="plain" round type="info">推理模型</el-tag>
+        </span>
+      </template>
+      <div class="reasoning-body">{{ reasoning }}</div>
+    </el-collapse-item>
   </el-collapse>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-import { Aim } from '@element-plus/icons-vue'
+import { Aim, MagicStick } from '@element-plus/icons-vue'
 
-const props = defineProps({ plan: { type: Object, required: true } })
+defineProps({
+  plan: { type: Object, required: true },
+  // 10-02:澄清阶段 AI 思考过程(reasoning);缺省/空 → 不渲染折叠项
+  reasoning: { type: String, default: '' }
+})
 const openPanels = ref(['plan'])
 </script>
 
@@ -43,4 +56,15 @@ const openPanels = ref(['plan'])
 .plan-list li { font-size: var(--fs-14); line-height: var(--lh-18); color: var(--ink); }
 .plan-list.plain { list-style: none; padding-left: 0; }
 .tool-row { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-1); }
+
+/* AI 思考过程:保留换行,等宽感弱化,长文本可读 */
+.reasoning-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--fs-13);
+  line-height: var(--lh-18);
+  color: var(--muted);
+  max-height: 360px;
+  overflow-y: auto;
+}
 </style>

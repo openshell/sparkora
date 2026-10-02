@@ -411,6 +411,16 @@ const isInline = computed(() => props.mode === 'preview')
 
 **Prevention**: 凡把组件名写进 `<component :is>`（或作为 prop/变量传递组件）的，一律显式 import 并核对构建后是否真的渲染。
 
+### Common Mistake: 状态机驱动的「过程面板」在完成态被分支吞掉
+
+**Symptom**: 异步生成过程中的辅助信息面板（如澄清阶段「AI 思考过程」）在生成**进行中可见，一旦完成就消失**；而接口/数据仍在（`/deep/status` 返回该字段）。
+
+**Cause**: `StepBrief` 用 `deepActive` 在多分支间切换——进行中走「无简报区」分支（渲染 `DeepPlanCard`），生成完成 `deepActive` 转 false 后切到「简报正文」分支。若只在无简报区分支渲染该面板，完成态就不再渲染（10-02-brief-reasoning-maxtokens 实测：项目完成后思考过程面板消失）。
+
+**Fix**: 「事后一次性展示」类面板在每个相关分支都渲染（本项目：无简报区 + 简报正文分支都放 `DeepPlanCard`）；数据源（`deepReasoning`）由 `syncDeepStatus()` 在挂载时兜底拉取，保证刷新/重进完成态仍可见。
+
+**Prevention**: 新增/迁移「过程/进度/辅助」面板时，逐一核对状态机所有终态分支是否都能渲染；只挂在一个中转态分支上，必然在完成瞬间丢失。
+
 ---
 
 **Language**: All documentation should be written in **English**。本文件按仓库既有习惯使用中文正文说明。

@@ -85,14 +85,14 @@ class ClarifyServiceTest {
     }
 
     @Test
-    void 信号词在extraInfo中也命中() {
+    void 信号词在内容描述中也命中() {
         Map<String, Object> p = plan(new ArrayList<>(List.of("价格是多少")), hints("a"));
 
         ClarifyService.ensureBackgroundQuestion(p, "海狮08EV", "围绕第2000座闪充站落成写一篇");
 
         @SuppressWarnings("unchecked")
         List<String> questions = (List<String>) p.get("keyQuestions");
-        assertEquals(2, questions.size(), "extraInfo 命中信号词同样触发兜底");
+        assertEquals(2, questions.size(), "内容描述 命中信号词同样触发兜底");
     }
 
     @Test

@@ -77,10 +77,12 @@ public class SubAgentRunner {
      * @param anchors      锚点车型 id(项目关联/主题识别;可空)
      * @param topic        项目主题(复合 query 语料;可空)
      * @param lockedAnswers 已锁定的澄清答案(用于构造更具体的 WEB query;未锁定不得进入)
+     * @param contentDescription 项目内容描述(10-02 R4b:仅进入 LLM 汇总上下文,让 AI 理解写作意图;
+     *                            <b>不进入</b> {@link #compositeQuery}/{@link #webQuery},保持检索语料纯净,Q4=A)
      * @param snapshot     本次研究的策略与开关快照(启动时解析一次,同批次共享)
      */
     public Note research(String question, List<String> toolsAllowed, int webQuota, List<Long> anchors, String topic,
-                         String lockedAnswers, WebSearchSnapshot snapshot) {
+                         String lockedAnswers, String contentDescription, WebSearchSnapshot snapshot) {
         List<SearchTool.SearchHit> hits = new ArrayList<>();
         // 1) 本地 KB(锚点加权,受设置门控):复合语料 = 主题(含车型名) + 研究问题
         if (toolsAllowed.contains("KB")) {
@@ -132,7 +134,13 @@ public class SubAgentRunner {
                     本次未启用任何外部资料检索(知识库与外部搜索均被系统设置停用):不得编造事实,全部要点写入 gaps,
                     并在 gaps 中注明「未检索任何外部资料,数据未核实」。
                     """ : "");
-            StringBuilder ctx = new StringBuilder("研究问题:").append(question).append("\n检索结果:\n");
+            // 10-02 R4b/Q4=A:内容描述仅作为「写作意图」注入 LLM 汇总上下文(置于研究问题之前),
+            // 让 AI 理解写作方向;不改 compositeQuery/webQuery(检索语料保持纯净,不引入噪声)。
+            StringBuilder ctx = new StringBuilder();
+            if (contentDescription != null && !contentDescription.isBlank()) {
+                ctx.append("写作意图/内容描述:").append(contentDescription).append('\n');
+            }
+            ctx.append("研究问题:").append(question).append("\n检索结果:\n");
             for (SearchTool.SearchHit h : hits) {
                 ctx.append("- [").append(h.type()).append("] ");
                 if (h.sourceId() != null && !h.sourceId().isBlank()) ctx.append("sourceId=").append(h.sourceId()).append(' ');
@@ -158,9 +166,9 @@ public class SubAgentRunner {
         }
     }
 
-    /** 兼容重载(旧签名,无锁定答案/快照):仅用于既有测试/调用方,行为退化为无 WEB 策略路由。 */
+    /** 兼容重载(旧签名,无锁定答案/快照/内容描述):仅用于既有测试/调用方,行为退化为无 WEB 策略路由。 */
     public Note research(String question, List<String> toolsAllowed, int webQuota, List<Long> anchors, String topic) {
-        return research(question, toolsAllowed, webQuota, anchors, topic, null,
+        return research(question, toolsAllowed, webQuota, anchors, topic, null, null,
                 WebSearchSnapshot.of(com.sparkora.deep.search.WebProviderOrder.defaults(), false, null, 0));
     }
 

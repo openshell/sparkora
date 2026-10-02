@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 文本调用/RAG 检索契约：reasoning 透出、max_tokens 提额范式、内容描述注入检索上下文（Q4=A 不改检索 query）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移约定、JSON 字段 TEXT 列、单列白名单显式 set、不可逆副作用隔离"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义、状态机失败回退惯例（last_brief_error 写入）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层具名导出、页面骨架 usePageHeader、组件 props/emits 约定、PC-only 密度"}
+{"file": "docs/spec/brief-generation.md", "reason": "本任务权威契约：六阶段链路、/deep/clarify 与 /deep/status 契约、prompt 注入点、brief 字段表"}
+{"file": "docs/spec/project-lifecycle.md", "reason": "项目字段级契约（关键词/备注删除、内容描述新增）、新建表单与接口请求体"}
+{"file": "src/main/resources/db/migration/README.md", "reason": "迁移脚本命名/单语句约束/三处同步约定（V4 编写依据）"}

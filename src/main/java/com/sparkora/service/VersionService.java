@@ -285,7 +285,7 @@ public class VersionService {
     private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b, CarRagService.RagResult rag) {
         String base = """
                 主题：%s
-                关键词：%s
+                内容描述：%s
                 目标读者：%s
                 目标字数：%s
 
@@ -297,7 +297,7 @@ public class VersionService {
 
                 请按大纲完整展开成公众号文章正文（Markdown），严格遵循指定风格。
                 """.formatted(
-                nv(p.getTopic()), nv(p.getKeywords()), nv(p.getAudience()),
+                nv(p.getTopic()), nv(p.getContentDescription()), nv(p.getAudience()),
                 p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
                 nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
                 nv(b.getOutline()), nv(b.getFactRisks()));
@@ -305,10 +305,7 @@ public class VersionService {
         if (p.getSelectedTitle() != null && !p.getSelectedTitle().isBlank()) {
             base += "\n\n【用户已选定标题,请优先采用该标题作为本版标题(可微调措辞,勿偏离原意)】\n" + p.getSelectedTitle();
         }
-        // S6:补充信息(用户个人见解/独家资讯等)作为创作素材注入,要求融入正文
-        if (p.getExtraInfo() != null && !p.getExtraInfo().isBlank()) {
-            base += "\n\n【用户补充信息(个人见解/独家资讯等),请在正文中自然融入,不得遗漏关键信息】\n" + p.getExtraInfo();
-        }
+        // 10-02:原独立「用户补充信息」块删除(其内容即内容描述,已并入头部「内容描述：」)
         // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 标注数据风险)
         if (rag.ok()) {
             base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + rag.context();

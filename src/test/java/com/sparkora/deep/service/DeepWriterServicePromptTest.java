@@ -296,6 +296,36 @@ class DeepWriterServicePromptTest {
         assertTrue(prompt.contains("目标字数：1500"), "project 缺失应容错默认档");
     }
 
+    // ==================== 10-02-brief-reasoning-maxtokens R4:目标读者/内容描述注入 ====================
+
+    /** R4:目标读者 + 内容描述非空 → user prompt 注入。 */
+    @Test
+    void 内容描述与目标读者_非空注入() throws Exception {
+        ArticleProjectEntity p = project(3000);
+        p.setAudience("汽车行业分析师");
+        p.setContentDescription("围绕第2000座闪充站落成写一篇");
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+
+        String prompt = capturedUserPrompt();
+        assertTrue(prompt.contains("目标读者:汽车行业分析师"), "目标读者应注入");
+        assertTrue(prompt.contains("内容描述:围绕第2000座闪充站落成写一篇"), "内容描述应注入");
+    }
+
+    /** R4:空目标读者/内容描述 → 不注入对应行(历史项目零回归)。 */
+    @Test
+    void 内容描述与目标读者_空则不出现() throws Exception {
+        ArticleProjectEntity p = project(3000);
+        p.setAudience("  ");
+        p.setContentDescription(null);
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+
+        String prompt = capturedUserPrompt();
+        assertFalse(prompt.contains("目标读者:"), "空目标读者不得出现该行");
+        assertFalse(prompt.contains("内容描述:"), "空内容描述不得出现该行");
+    }
+
     /** AC-02:默认目标字数(1500)→ 中档 3~5 个。 */
     @Test
     void 分节_默认档为中档3to5() throws Exception {
