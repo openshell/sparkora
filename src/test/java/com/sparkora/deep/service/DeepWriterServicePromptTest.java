@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
+import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
 import com.sparkora.mapper.ArticleProjectMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
@@ -385,5 +386,84 @@ class DeepWriterServicePromptTest {
         com.sparkora.service.LayoutRules.SectionSpec s = com.sparkora.service.LayoutRules.sectionSpec(target);
         assertEquals(headings, s.headings(), "目标 " + target + " 的小标题数档");
         assertEquals(paras, s.parasPerSection(), "目标 " + target + " 的每节段数档");
+    }
+
+    // ==================== S6:选定标题生效(选定 > 正文 H1 > 项目主题) ====================
+
+    /** 捕获 write 落库的版本实体。 */
+    private ArticleVersionEntity capturedVersion() throws Exception {
+        service.write(PROJECT_ID, BRIEF_ID, "", "深度");
+        ArgumentCaptor<ArticleVersionEntity> v = ArgumentCaptor.forClass(ArticleVersionEntity.class);
+        verify(versionMapper).insert(v.capture());
+        return v.getValue();
+    }
+
+    private ArticleProjectEntity projectWithSelectedTitle(String selectedTitle) {
+        ArticleProjectEntity p = project(null);
+        p.setSelectedTitle(selectedTitle);
+        return p;
+    }
+
+    /** AC3:selectedTitle 非空 + AI 正文无 H1 → 版本标题采用选定标题。 */
+    @Test
+    void 选定标题非空_无H1_采用选定标题() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithSelectedTitle("选定标题甲"));
+
+        assertEquals("选定标题甲", capturedVersion().getTitle());
+    }
+
+    /** AC3:selectedTitle 非空 + AI 正文含 H1 → 选定标题优先于 H1。 */
+    @Test
+    void 选定标题非空_含H1_仍采用选定标题() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithSelectedTitle("选定标题甲"));
+        when(aiClient.chat(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("# 正文H1标题\n\n正文", "m", 10));
+
+        assertEquals("选定标题甲", capturedVersion().getTitle());
+    }
+
+    /** AC4:selectedTitle 为空 + 正文含 H1 → 回退正文 H1(现状保留)。 */
+    @Test
+    void 选定标题为空_含H1_回退H1() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithSelectedTitle(null));
+        when(aiClient.chat(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult("# 正文H1标题\n\n正文", "m", 10));
+
+        assertEquals("正文H1标题", capturedVersion().getTitle());
+    }
+
+    /** AC4:selectedTitle 为空 + 无 H1 → 回退项目主题(现状保留)。 */
+    @Test
+    void 选定标题为空_无H1_回退主题() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithSelectedTitle("  "));
+
+        assertEquals("主题X", capturedVersion().getTitle());
+    }
+
+    /** AC6:selectedTitle 非空 → prompt 含注入块与标题文本。 */
+    @Test
+    void 选定标题非空_prompt含注入块() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithSelectedTitle("选定标题甲"));
+
+        String prompt = capturedUserPrompt();
+
+        assertTrue(prompt.contains("【用户已选定标题,正文一级标题(#)请采用该标题,勿偏离原意】"), "应含选定标题注入块");
+        assertTrue(prompt.contains("选定标题甲"), "应含选定标题文本");
+    }
+
+    /** AC6:selectedTitle 为空 → prompt 不含注入块(旧行为等价,现有用例不回归)。 */
+    @Test
+    void 选定标题为空_prompt不含注入块() throws Exception {
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(projectWithSelectedTitle(null));
+
+        String prompt = capturedUserPrompt();
+
+        assertFalse(prompt.contains("【用户已选定标题"), "空选定标题不得出现注入块");
     }
 }

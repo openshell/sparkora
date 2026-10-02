@@ -257,4 +257,37 @@ class VersionServiceAsyncTest {
         org.junit.jupiter.api.Assertions.assertTrue(sys.contains("- 关键数据、核心结论用 **加粗** 突出,每节至少一处;"));
         org.junit.jupiter.api.Assertions.assertTrue(sys.contains("- 单段不超过 5 行,长段拆分。"));
     }
+
+    // ==================== S6:仿写链路版本标题优先级(选定 > AI title > 主题) ====================
+
+    /** 捕获插入的版本实体(单风格单版)。 */
+    private ArticleVersionEntity capturedInsertedVersion(ArticleProjectEntity p, String aiTitle) {
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
+        when(styleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(style(1L, "正式")));
+        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+                .thenReturn(new AiClient.ChatResult(
+                        "{\"title\":\"" + aiTitle + "\",\"contentMd\":\"正文\"}", "m", 10));
+        org.mockito.ArgumentCaptor<ArticleVersionEntity> cap =
+                org.mockito.ArgumentCaptor.forClass(ArticleVersionEntity.class);
+        service.generate(PROJECT_ID, List.of(1L));
+        verify(versionMapper).insert(cap.capture());
+        return cap.getValue();
+    }
+
+    /** 选定标题非空 → 版本标题采用选定标题(优先于 AI 产出标题)。 */
+    @Test
+    void 仿写选定标题非空_采用选定标题() {
+        ArticleProjectEntity p = project("IMITATION", "READY");
+        p.setSelectedTitle("选定标题甲");
+        assertEquals("选定标题甲", capturedInsertedVersion(p, "AI标题").getTitle());
+    }
+
+    /** 选定标题为空 → 回退 AI 产出标题(现状保留)。 */
+    @Test
+    void 仿写选定标题为空_回退AI标题() {
+        ArticleProjectEntity p = project("IMITATION", "READY");
+        p.setSelectedTitle("  ");
+        assertEquals("AI标题", capturedInsertedVersion(p, "AI标题").getTitle());
+    }
 }

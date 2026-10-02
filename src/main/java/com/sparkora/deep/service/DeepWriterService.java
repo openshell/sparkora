@@ -248,6 +248,12 @@ public class DeepWriterService {
         // 此前 titleCandidates/coreViewpoints/outline/factRisks 在写作阶段零引用(仅末尾一句空指引)。
         // 历史 brief 字段缺失/为空 → 跳过对应块,prompt 退化为旧行为(不报错不阻断)。
         appendBriefSection(user, "标题候选", b.getTitleCandidates(), true);
+        // S6 选定标题:项目级 selected_title 非空时注入(与 VersionService 既有措辞同源);
+        // 为空的历史项目不追加,prompt 与旧行为逐字等价。
+        if (p != null && p.getSelectedTitle() != null && !p.getSelectedTitle().isBlank()) {
+            user.append("\n【用户已选定标题,正文一级标题(#)请采用该标题,勿偏离原意】\n")
+                .append(p.getSelectedTitle()).append('\n');
+        }
         appendBriefSection(user, "核心观点", b.getCoreViewpoints(), true);
         appendBriefSection(user, "大纲", b.getOutline(), false);
         appendBriefSection(user, "事实风险", b.getFactRisks(), true);
@@ -302,7 +308,7 @@ public class DeepWriterService {
         v.setContentMd(content);
         // 09-10-versions-page-fix:深度链路此前漏填 title/version_label/style_tag/word_count,
         // 与多版本链路(VersionService.generateOne)对齐补齐,消除版本页 undefined/null 与字数统计为空
-        v.setTitle(extractH1(p == null ? null : p.getTopic(), content));
+        v.setTitle(resolveTitle(p == null ? null : p.getSelectedTitle(), content, p == null ? null : p.getTopic()));
         v.setVersionLabel(nextLabel(projectId));
         // style_tag 列 VARCHAR(20),超长截断防御(PG 超长 insert 直接报错会阻断整次生成)
         String tag = styleName == null || styleName.isBlank() ? "深度" : styleName;
@@ -409,6 +415,19 @@ public class DeepWriterService {
             log.warn("简报字段「{}」注入写作 prompt 失败,按原文追加: {}", label, e.getMessage());
             sb.append(label).append(":\n").append(jsonText.trim()).append('\n');
         }
+    }
+
+    /**
+     * S6 版本标题优先级:用户选定标题(裁剪 200) > 正文首个 H1 > 项目主题。
+     * selected_title 非空时确定性采用,保证 version → preview → publish 全链路标题一致;
+     * 为空时行为与旧 extractH1 回退语义完全一致。
+     */
+    private String resolveTitle(String selectedTitle, String contentMd, String topic) {
+        if (selectedTitle != null && !selectedTitle.isBlank()) {
+            String s = selectedTitle.trim();
+            return s.length() > 200 ? s.substring(0, 200) : s;
+        }
+        return extractH1(topic, contentMd);
     }
 
     /**

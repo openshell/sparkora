@@ -224,7 +224,7 @@ public class VersionService {
         ArticleVersionEntity v = new ArticleVersionEntity();
         v.setProjectId(p.getId());
         v.setBriefId(brief.getId());
-        v.setTitle(title.isBlank() ? p.getTopic() : title);
+        v.setTitle(resolveTitle(p, title));
         v.setContentMd(contentMd);
         v.setVersionLabel(label);
         // 09-10-style-library-enhance:风格名手填最长 64 字,版本表 style_tag 列宽仅 VARCHAR(20),超长截断防写库报错阻断生成
@@ -369,6 +369,20 @@ public class VersionService {
             throw new IllegalArgumentException("版本不存在或不属于该项目");
         v.setTitle(title == null || title.isBlank() ? null : title);
         versionMapper.updateById(v);
+    }
+
+    /**
+     * 版本标题优先级(与深度链路 DeepWriterService.resolveTitle 同口径):
+     * 用户选定标题(裁剪 200) > AI 产出标题 > 项目主题。
+     * 仅仿写链路可达(主题创作多版本接口已封死走深度生成)。
+     */
+    private static String resolveTitle(ArticleProjectEntity p, String aiTitle) {
+        String selected = p.getSelectedTitle();
+        if (selected != null && !selected.isBlank()) {
+            String s = selected.trim();
+            return s.length() > 200 ? s.substring(0, 200) : s;
+        }
+        return aiTitle == null || aiTitle.isBlank() ? p.getTopic() : aiTitle;
     }
 
     private static String nv(String s) { return s == null || s.isBlank() ? "未指定" : s; }

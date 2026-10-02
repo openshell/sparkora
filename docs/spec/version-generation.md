@@ -16,7 +16,7 @@
 | id | Long | 自增主键 |
 | project_id | BIGINT | 所属项目 |
 | brief_id | BIGINT | 基于哪个 brief 生成 |
-| title | VARCHAR(200) | 该版本标题（可不同于 brief 候选） |
+| title | VARCHAR(200) | 该版本标题。来源优先级（S6）：项目 `selected_title` 非空 → 该选定标题（trim/截断 200）；否则正文首个 Markdown H1（深度链路）/ AI 产出 `title`（仿写链路）；再否则项目 `topic`。可不同于 brief 候选 |
 | content_md | TEXT | 正文 Markdown |
 | version_label | VARCHAR(10) | `A` / `B` / `C`（`VersionService.LABELS="ABCDEFGHIJ"`，一次最多 10 版） |
 | style_tag | VARCHAR(20) | 风格标记（正式 / 活泼 / 干货 等） |
