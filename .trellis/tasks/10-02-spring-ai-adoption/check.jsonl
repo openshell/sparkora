@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对改造后 AI 调用/RAG/工具契约是否与既有 Scenario 一致，或已同步更新规格"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/不可逆副作用隔离/多步写入失败顺序等质量红线"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移脚本规范、事务隔离、向量模型防护等 C5 验收项"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层契约一致性检查（契约等价基线）"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/prd.md", "reason": "验收标准与范围基线（契约等价、生成质量允许提升）"}

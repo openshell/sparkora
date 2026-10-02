@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移规范/版本走 Boot BOM/不得改已应用脚本——升级后迁移必须仍正常"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "现有 AI 调用契约（AiClient/reasoning/提额），升级后配置须能对齐"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/design.md", "reason": "C0 的门槛/依赖预检表与探针要求"}

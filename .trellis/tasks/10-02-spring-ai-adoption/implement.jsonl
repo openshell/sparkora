@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 调用与三域 RAG 的权威契约：AiClient 三方法/多轮 messages/reasoning 透出与提额范式、RagResult 状态机、开关契约、FactSheet 归并、kind 分类、图片向量域、工具可用性契约——改造必须保持这些契约或显式更新"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 版本化迁移（不得改已应用脚本）、REQUIRES_NEW 事务隔离、@Order 启动补齐、embedding_model 防护、多域候选窗口隔离——C5 向量迁移与 C0 迁移设计的硬约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义/错误映射矩阵/状态机回退惯例——AI 链路失败回退必须沿用现有语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流检查：DTO↔prompt↔DB↔前端契约，改造涉及多层且 JSON 结构变化"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/design.md", "reason": "本任务技术设计：分层/组件映射/子任务 C0-C7/迁移批次/回退"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/implement.md", "reason": "本任务执行计划与验证门/回退点"}
