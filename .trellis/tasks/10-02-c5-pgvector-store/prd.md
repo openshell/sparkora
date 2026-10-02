@@ -9,26 +9,35 @@
 
 - **C0**（Spring AI 2.0 + pgvector store starter）。
 
+## Re-scope 决定（代码勘察后，见 research/c5-vector-store-mismatch.md）
+
+现有检索**已是** raw pgvector（HNSW + `1-(embedding<=>vec)` + 按域候选窗口），且有效性依赖
+**JOIN 活表**（`car_doc.deleted=0`/`kb_doc.enabled=TRUE`/…）。`PgVectorStore` 是 content 与
+embedding 同表的模型，**无法表达 JOIN 活表语义**；全量替换需反规范化正文 + 新增活表同步层，
+无法满足本任务 parity AC，且引入同步一致性风险。故本任务范围为：
+
+- **交付（Scope A）**：embedding 客户端后端改由 Spring AI `EmbeddingModel` 实现（公共 API 不变）；
+  保留 raw pgvector 检索 SQL 与 `CarRagService` 全部逻辑。
+- **推迟（Scope B）**：`PgVectorStore` 表替换 + 反规范化 + 活表同步层，需产品显式决策另立任务。
+
 ## Requirements
 
-- 父 R8。
-- 每域建 store：维度 **1024**、HNSW、COSINE、自定义表名（`vectorTableName`）。
-- **`embedding_model` 防护硬约束**：现有 V3「写入盖名 + 检索过滤」必须在 store 的 metadata 中承载
-  （`embedding_model` 作 metadata + `filterExpression`），**不得回归**，防同维换模型静默混空间。
-- 回填 runner：复用现有 `rebuildAll/rebuildMissing` 范式，**异步**（守护线程）+ `REQUIRES_NEW`
-  事务隔离 + 异常全吞 + `@Order` 固定依赖序。
-- **保留自研**：锚点加权 `ragAnchorBoost`、按域独立配额 `ragKbTopk`/`ragNewsTopk`、候选窗口隔离、
-  置信度/跨源合并（`FactSheetService`/`ClaimSimilarity`）。`VectorStore` 只替换存储+检索层。
-- 图片域独立入口（不并入 `searchTopKUnified`）。
-- **迁移分两次**：先建/回填，后切读路径；旧表/列在达标后由**后续**迁移再删（本任务先不删）。
+- 父 R8（按上「Re-scope」收敛）。
+- `com.sparkora.car.client.EmbeddingClient` 内部改用 Spring AI `EmbeddingModel`（OpenAI 兼容，
+  指向 axonhub）；**公共 API 不变**（`embed`/`embedList`/`modelName`/`toPgVector`），调用点与测试零改动。
+- 保留维度 fail-fast 校验（期望 `AI_EMBEDDING_DIM`，默认 1024）。
+- **保留** `CarDocEmbeddingMapper`/`KbChunkEmbeddingMapper`/`ImageEmbeddingMapper` 检索 SQL 与
+  `CarRagService`（锚点加权/按域配额/候选窗口隔离/置信度合并全部不动）。
+- **不建** `vector_store` 表、**不新增** Flyway 迁移、不引 pgvector store 生命周期。
 
 ## Acceptance Criteria
 
-- [ ] 迁移前后**同 query 集对拍**（命中集/分数/排序）达标（AC-向量迁移）。
-- [ ] 跨 `embedding_model` 的向量不混空间（硬验收，含对账/补齐口径同步）。
-- [ ] 锚点加权/多域配额/候选窗口隔离不回归。
-- [ ] 回填失败不阻断启动（仅 warn），可重跑幂等。
-- [ ] `mvn test` 绿；`flyway_schema_history` 正常。
+- [ ] **对拍**（AC-向量迁移）：检索 SQL 与 `CarRagService` 未改动 → 同 query 集结果与迁移前
+      **逐字一致**（parity 由「未改动」平凡成立）。
+- [ ] `embedding_model` 防护未回归：4 张表写入盖名 + 检索过滤仍在（SQL 未动）。
+- [ ] 锚点加权/多域配额/候选窗口隔离未回归（代码未动 + 既有测试全绿）。
+- [ ] `EmbeddingClient` 后端为 Spring AI `EmbeddingModel`；公共签名不变；调用点零改动。
+- [ ] `mvn test` 绿；Spring 上下文正常启动（`EmbeddingModel` bean 可注入）；无新迁移。
 
 ## Out of Scope
 

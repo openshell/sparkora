@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "向量表结构/迁移/REQUIRES_NEW/@Order/embedding_model 防护/多域候选窗口隔离的权威约定"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域统一检索 RagResult/Citation/配额/锚点加权契约，迁移必须不回归"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/design.md", "reason": "父任务设计 §3.4 向量迁移方案与保留边界"}
+{"file": ".trellis/tasks/10-02-c5-pgvector-store/prd.md", "reason": "本任务需求与验收"}
