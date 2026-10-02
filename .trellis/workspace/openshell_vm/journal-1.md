@@ -1032,3 +1032,37 @@ Boot 3.3.4→4.0.1 + Spring AI 2.0.1 基座;572 用例全绿;探针定档 json_s
 ### Next Steps
 
 - C3 Tool Calling 替换手写 agent（探针：tool calling 支持）
+
+
+## Session 40: C3 检索工具 ToolCallback 能力层
+<!-- trellis-session: v=2 fp=64640066db13a495 -->
+
+**Date**: 2026-10-03
+**Task**: C3 检索工具 ToolCallback 能力层
+**Branch**: `main`
+
+### Summary
+
+把 SearchTool 暴露为 Spring AI ToolCallback 的按需工厂（非全局 bean），保留确定性编排
+
+### Main Changes
+
+- 新增 SearchToolCallbacks 工厂 + 15 单测；WEB 经 WebSearchRouter；可用性门控；异常降级
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4828458` | feat(C3): 检索工具暴露为 Spring AI ToolCallback（按需工厂，非全局 bean） |
+
+### Testing
+
+- [OK] mvn test 619 全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- C4 ChatMemory
