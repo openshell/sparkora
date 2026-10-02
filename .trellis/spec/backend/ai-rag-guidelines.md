@@ -1139,3 +1139,68 @@ ToolCallback[] forTools(List<String> names)   // names ∈ {KB, TAVILY, SEARXNG,
 ToolCallback[] tools = new SearchToolCallbacks(kb, router, anchors, snapshot).forTools(List.of("KB", "WEB"));
 chatClient.prompt().user(q).toolCallbacks(tools).call().content();
 ```
+
+---
+
+## Scenario: 文生图接 Spring AI ImageModel，图生图保留自研（C6）
+
+### 1. Scope / Trigger
+- Trigger: 改动图片生成链路（`AiImageClient`）、文生图/图生图端点、图片模型配置，或 Spring AI 图模型相关装配。
+
+### 2. Signatures
+```java
+// AiImageClient（双构造：注入优先，缺失回退自建）
+@Autowired AiImageClient(AiProperties props, ObjectProvider<ImageModel> imageModel);  // 生产路径
+AiImageClient(AiProperties props);                                                      // 单测/兼容路径（imageModel=null）
+
+GenResult generateText2Image(String prompt, String size);   // 文生图 → Spring AI ImageModel（/v1/images/generations）
+GenResult generateImage2Image(String prompt, String size, List<byte[]> refs, List<String> filenames);
+                                                            // 图生图 → 自研 RestClient（/v1/images/edits，multipart 多参考图）
+record GenResult(String url, String model) {}
+```
+- 配置：`spring.ai.openai.image.options.model: ${AI_IMAGE_MODEL:}`（兜底）；实际模型仍由 per-call
+  `OpenAiImageOptions.builder().model(m).n(1).size(sz)` 按 `props.imageModelList()` 覆盖。
+
+### 3. Contracts
+- **文生图 = Spring AI `ImageModel`**：`imageModel.call(new ImagePrompt(prompt, OpenAiImageOptions...))` →
+  `getResult().getOutput()` 取 `getUrl()`，否则 `getB64Json()`（转 `data:image/png;base64,…`），
+  均无则视该模型失败并轮询下一个。**不再需要旧 `byte[]` hack**——Spring AI 的官方 OpenAI SDK
+  对 `application/octet-stream` 包裹的 JSON 响应可正常解析（旧 `RestClient` String 转换器不能）。
+- **图生图必须保留自研**：Spring AI `OpenAiImageModel` 内部**只调 `/v1/images/generations`**，**不支持**
+  `/v1/images/edits` multipart。故 `generateImage2Image` 走自研 `RestClient` + `postMultipartForJsonText`
+  + `parseFirstUrl`，**逐字不动**。
+- **保留的方法**：`postMultipartForJsonText`、`parseFirstUrl` 因 edits 复用**必须保留**；
+  仅文生图专用的 `postForJsonText` 可删。
+- **回退路径**：`imageModel==null`（单测构造）时惰性自建 `OpenAiImageModel`，baseUrl 经
+  `AiClient.normalizeBaseUrl` 补 `/v1`（与 C1/C5 先例一致）。
+- **契约不变**：多参考图上限 1~4、**顺序契约**（先上传后图库 id，不重排）仅涉及 edits，不动；
+  错误文案逐字不变；`ImageService`/`ImageController` 零改动。
+
+### 4. Validation & Error Matrix
+- 文生图某模型 `ImageResponse` 无 url 且无 b64 → 计为该模型失败原因，轮询下一个；全失败 → `所有图片模型均失败: …`。
+- 图生图参考图空 → `图生图参考图为空`；参考图与文件名数量不匹配 → `图生图参考图与文件名数量不匹配`（均不改）。
+- `AI_IMAGE_MODELS / AI_IMAGE_MODEL 均未配置` → `AiException`（不改）。
+
+### 5. Good/Base/Bad Cases
+- Good: 文生图经 `ImageModel`（url/b64/octet-stream 三路均可），edits 仍走自研 multipart 保序。
+- Base: `imageModel` 未注入（单测 `new AiImageClient(props)`）→ 回退自建仍可生图。
+- Bad: 把 edits 也改走 `ImageModel`（框架不支持该端点）；或删除 edits 复用的 `parseFirstUrl`。
+
+### 6. Tests Required
+- `AiImageClientText2ImageTest`：url 响应、b64_json 响应、`application/octet-stream` 包裹仍成功、
+  多模型轮询（首败次成）、全失败文案含「所有图片模型均失败」、`imageModel` 未注入回退自建、wire 请求 `n`/`size` 透传。
+- `AiImageClientMultiRefTest`（edits 保序 4 用例）必须保持绿、断言不削弱。
+- `ImageServiceMultiRefTest`/`ImageServiceBodyImageTest` 零回归。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 把图生图也改走 ImageModel：框架只支持 /v1/images/generations,edits 端点会失败
+imageModel.call(new ImagePrompt(prompt, opts));   // 图生图路径
+```
+#### Correct
+```java
+// 文生图走框架 ImageModel;图生图保留自研 multipart(保序多参考图)
+GenResult t2i = imageModel().call(new ImagePrompt(prompt, OpenAiImageOptions.builder().model(m).n(1).size(sz).build()));
+GenResult i2i = postMultipartForJsonText("/v1/images/edits", body, model);   // 不变
+```
