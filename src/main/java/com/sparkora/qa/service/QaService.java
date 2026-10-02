@@ -211,19 +211,13 @@ public class QaService {
      * 系统提示:角色定位 + 答案铁律 + 知识上下文(OK 时注入;非 OK 标注降级,让模型回答「知识库未覆盖」)。
      */
     static String buildSystemPrompt(CarRagService.RagResult rag) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("你是 Sparkora 的知识问答助手,基于提供的知识库资料回答用户问题。\n")
-          .append("要求:\n")
-          .append("1. 只依据知识库资料作答,不得编造资料中不存在的数据(价格/参数/日期等);\n")
-          .append("2. 回答末尾标注引用来源(资料中的【车型数据:…】/【通用知识:…】/【官方新闻:…】标注);\n")
-          .append("3. 资料未覆盖时,明确说明「知识库未覆盖」并给出谨慎建议,不得臆造;\n")
-          .append("4. 使用简体中文,条理清晰。\n");
-        if (rag != null && rag.ok() && rag.context() != null && !rag.context().isBlank()) {
-            sb.append("\n【知识库资料】\n").append(rag.context());
-        } else {
-            sb.append("\n【知识库资料】\n").append(degradeNote(rag == null ? null : rag.status()));
-        }
-        return sb.toString();
+        // C1:固定指令外置模板 prompts/qa/answer-system.st;知识上下文(OK 注入资料 / 非 OK 降级说明)
+        // 作为 {{knowledge}} 变量传入,动态块仍由 Java 组装(输出逐字等价旧实现)。
+        String knowledge = (rag != null && rag.ok() && rag.context() != null && !rag.context().isBlank())
+                ? rag.context()
+                : degradeNote(rag == null ? null : rag.status());
+        return com.sparkora.ai.PromptTemplateLoader.render("qa/answer-system.st",
+                java.util.Map.of("knowledge", knowledge));
     }
 
     /** 非 OK 状态的知识库降级说明(让模型显式回答「未覆盖」而非臆造)。 */

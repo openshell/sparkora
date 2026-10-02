@@ -53,18 +53,8 @@ public class CarModelMatcherService {
                     .append("\n");
         }
 
-        String sys = """
-                你是车型知识库关联分析助手。判断一篇文章是否应该关联车型知识库。
-                知识库只包含车型的参数/配置/价格/版本等结构化数据,能支撑「车型对比、配置分析、购车建议」类文章。
-                对资讯、技术原理、销量趋势等知识库无数据支撑的文章,不要关联车型。
-                只输出 JSON 对象,不要任何额外文字:
-                {
-                  "related": true或false,   // 是否应关联车型知识库
-                  "modelIds": [车型id数组],  // related=true 时,从候选车型中选出文章涉及的相关车型 id(可多个);related=false 时为空数组
-                  "reason": "一句话说明判断依据"
-                }
-                所有内容用中文。
-                """;
+        // C1:固定 system 指令外置模板 prompts/car/model-match-system.st
+        String sys = com.sparkora.ai.PromptTemplateLoader.render("car/model-match-system.st", java.util.Map.of());
 
         String user = "文章主题：" + (topic == null ? "" : topic)
                 + "\n内容描述：" + (contentDescription == null || contentDescription.isBlank() ? "无" : contentDescription)

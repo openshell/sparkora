@@ -1,31 +1,41 @@
 package com.sparkora.ai;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.config.AiProperties;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
-import org.springframework.boot.http.client.HttpClientSettings;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
-import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 轻量 AI 客户端：用 RestClient（spring-boot-starter-web 自带，同步阻塞）直调 axonhub
- * OpenAI 兼容的 /v1/chat/completions。
+ * AI 文本客户端（C1 起收敛到 Spring AI {@code ChatClient}）。
  *
- * 设计要点（来自真机联调）：
- *  - axonhub 把模型名路由到实际模型（如 deepseek-v4-pro-cus → glm-5.2），无需关心。
- *  - 部分 GLM 系模型会先输出 reasoning_content 再输出 content；content 为业务正文，
- *    reasoning/reasoning_content 现由 parseChat 一并透出（见下方 10-02 条目）。
+ * <p><b>10-02-c1-chatclient-prompt</b>：把原手写 RestClient 直连 chat completions 端点的
+ * 实现替换为 Spring AI 2.0 {@link ChatClient} 委托；<b>公共 API（三方法 + {@link ChatResult} +
+ * {@link #sanitizeAiJson} + {@link #REASONING_MAX_CHARS}）完全不变</b>，调用点与测试零改动。
+ * 任务级参数：{@code chat}=正文创意高温、{@code chatJson}=结构化低温、{@code chatMessages}=问答中温。
+ *
+ * <p>设计要点（来自真机联调）：
+ *  - axonhub 把模型名路由到实际模型（如 deepseek-v4-pro-cus → deepseek-v4.1-flash），无需关心。
+ *  - 部分 GLM 系模型会先输出 reasoning_content 再输出 content；Spring AI 的
+ *    {@code message.metadata["reasoningContent"]} 已做 {@code reasoning_content}→{@code reasoning} 回退，parseChat 据此透出。
  *  - 调用强制 response_format=json_object，要求模型返回纯 JSON，避免解析不稳。
  *  - 失败抛 AiException，由上层决定状态回滚与错误展示。
- *  - 10-02-brief-reasoning-maxtokens：reasoning 模型（deepseek-v4.1-flash 等）会先输出大段
- *    reasoning 再输出 content，推理 token 同样计入 max_tokens；parseChat 现将 reasoning
- *    透出（缺省回退 reasoning_content），供澄清阶段落库展示思考过程。
  */
 @Slf4j
 @Component
@@ -37,24 +47,41 @@ public class AiClient {
      */
     public static final int REASONING_MAX_CHARS = 20000;
 
-    private final AiProperties props;
-    private final RestClient rest;
-    private final ObjectMapper mapper = new ObjectMapper();
+    /** Spring AI 把推理过程写入 {@code assistantMessage.metadata} 的 key（与 OpenAiChatModel.REASONING_CONTENT 同值）。 */
+    private static final String REASONING_METADATA_KEY = "reasoningContent";
 
-    public AiClient(AiProperties props) {
+    private final AiProperties props;
+    private final TaskChatOptionsFactory optionsFactory;
+    private final ObjectProvider<MeterRegistry> meterRegistry;
+
+    /** Spring AI 自动配置注入的 ChatModel；单测直 new 时为 null，回退到按 AiProperties 自建。 */
+    private final ChatModel chatModel;
+
+    /** 模型名以 .env（AiProperties.model，即 AI_MODEL）为准：单测直 new 无默认模型时提供，注入路径同值。 */
+    private final String modelOverride;
+
+    /** 懒构建的 ChatClient（线程安全双检锁；避免单测未触发调用时构造网络客户端）。 */
+    private volatile ChatClient chatClient;
+
+    /** Spring 注入构造器：复用自动配置的 {@link ChatModel}（spring.ai.openai.* 配置）。 */
+    @Autowired
+    public AiClient(AiProperties props, ChatModel chatModel, TaskChatOptionsFactory optionsFactory,
+                    ObjectProvider<MeterRegistry> meterRegistry) {
         this.props = props;
-        // 读超时/连接超时消费 AI_TIMEOUT_MS(.env),默认 120s;AI 卡死不再无限占用请求线程
-        HttpClientSettings settings = HttpClientSettings.defaults()
-                .withConnectTimeout(Duration.ofSeconds(10))
-                .withReadTimeout(Duration.ofMillis(props.getTimeoutMs()));
-        this.rest = RestClient.builder()
-                .baseUrl(props.getBaseUrl())
-                // 显式 JDK HttpClient:Spring AI starter 传递引入 Reactor Netty 后,detect() 会改选
-                // Reactor(抛 Netty ReadTimeoutException),破坏超时归因;.jdk() 保持升级前引擎语义
-                .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
-                .defaultHeader("Authorization", "Bearer " + props.getApiKey())
-                .defaultHeader("Content-Type", "application/json")
-                .build();
+        this.chatModel = chatModel;
+        this.optionsFactory = optionsFactory;
+        this.meterRegistry = meterRegistry;
+        // 仅当 AiProperties.model 已配置（.env 的 AI_MODEL）时才覆盖自动配置模型，避免空串覆盖
+        this.modelOverride = (props.getModel() == null || props.getModel().isBlank()) ? null : props.getModel();
+    }
+
+    /**
+     * 单测/回退构造器：无自动配置依赖，首次调用时按 {@link AiProperties} 自建 OpenAI 兼容
+     * {@code ChatModel}（base-url 归一化补 {@code /v1}，因 OpenAI SDK 只追加 {@code chat/completions}）。
+     * 保留既有 {@code new AiClient(props)} 用法（测试与匿名子类覆写）。
+     */
+    public AiClient(AiProperties props) {
+        this(props, null, new TaskChatOptionsFactory(props), null);
     }
 
     /**
@@ -113,88 +140,105 @@ public class AiClient {
     }
 
     /**
-     * 调用 chat/completions，要求模型以 JSON 对象回应。
+     * 调用 chat/completions，要求模型以 JSON 对象回应（结构化任务，低温）。
      * @param systemPrompt 系统指令
      * @param userPrompt   用户输入
-     * @param maxTokens    上限（GLM 会先用一部分做 reasoning，需给足）
+     * @param maxTokens    上限（reasoning 模型会先用一部分做 reasoning，需给足）
      * @return ChatResult
      */
     public ChatResult chatJson(String systemPrompt, String userPrompt, int maxTokens) {
-        Map<String, Object> body = Map.of(
-                "model", resolveTextModel(),
-                "messages", List.of(
-                        Map.of("role", "system", "content", systemPrompt),
-                        Map.of("role", "user", "content", userPrompt)),
-                "temperature", props.getTemperature(),
-                "max_tokens", maxTokens,
-                "response_format", Map.of("type", "json_object")
-        );
-        try {
-            String resp = rest.post()
-                    .uri("/v1/chat/completions")
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
-            return parseChat(resp, true);
-        } catch (Exception e) {
-            throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
-        }
+        return call(TaskType.STRUCTURED_EXTRACT, true,
+                List.of(new SystemMessage(systemPrompt), new UserMessage(userPrompt)), maxTokens);
     }
 
     /**
-     * 普通文本 chat(非 JSON 约束;S9 深度写作用)。
+     * 普通文本 chat（非 JSON 约束；正文写作，高温）。
      */
     public ChatResult chat(String systemPrompt, String userPrompt, int maxTokens) {
-        Map<String, Object> body = Map.of(
-                "model", resolveTextModel(),
-                "messages", List.of(
-                        Map.of("role", "system", "content", systemPrompt),
-                        Map.of("role", "user", "content", userPrompt)),
-                "temperature", props.getTemperature(),
-                "max_tokens", maxTokens
-        );
-        try {
-            String resp = rest.post()
-                    .uri("/v1/chat/completions")
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
-            return parseChat(resp);
-        } catch (Exception e) {
-            throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
-        }
+        return call(TaskType.ARTICLE_WRITE, false,
+                List.of(new SystemMessage(systemPrompt), new UserMessage(userPrompt)), maxTokens);
     }
 
     /**
-     * 多轮消息 chat(C4 知识问答,不强制 JSON;S12)。
+     * 多轮消息 chat（知识问答，中温；不强制 JSON）。
      * messages 每项为 {role, content},按顺序原样送模型(system / user / assistant 交替)。
-     * temperature/model 同 {@link #chat};复用同一 RestClient 与 parseChat。
      *
      * @param messages  有序消息列表
      * @param maxTokens 上限
      * @return ChatResult
      */
     public ChatResult chatMessages(List<Map<String, String>> messages, int maxTokens) {
-        Map<String, Object> body = Map.of(
-                "model", resolveTextModel(),
-                "messages", messages,
-                "temperature", props.getTemperature(),
-                "max_tokens", maxTokens
-        );
+        List<Message> converted = new ArrayList<>(messages.size());
+        for (Map<String, String> m : messages) {
+            String role = m.get("role");
+            String content = m.get("content");
+            converted.add(switch (role == null ? "" : role) {
+                case "system" -> new SystemMessage(content);
+                case "assistant" -> new AssistantMessage(content);
+                default -> new UserMessage(content);
+            });
+        }
+        return call(TaskType.QA_CHAT, false, converted, maxTokens);
+    }
+
+    /** 统一调用：任务级 options + ChatClient + parseChat。 */
+    private ChatResult call(TaskType taskType, boolean requireJson, List<Message> messages, int maxTokens) {
         try {
-            String resp = rest.post()
-                    .uri("/v1/chat/completions")
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
-            return parseChat(resp);
+            OpenAiChatOptions.Builder opts = optionsFactory.forTask(taskType);
+            opts.model(modelOverride != null ? modelOverride : resolveTextModel());
+            opts.maxTokens(maxTokens);
+            if (requireJson) TaskChatOptionsFactory.jsonFormat(opts);
+            ChatResponse resp = chatClient().prompt()
+                    .messages(messages)
+                    .options(opts)
+                    .call()
+                    .chatResponse();
+            return parseChat(resp, requireJson);
+        } catch (AiException e) {
+            throw e;
         } catch (Exception e) {
             throw new AiException("AI chat 调用失败: " + e.getMessage(), e);
         }
     }
 
-    private ChatResult parseChat(String resp) {
-        return parseChat(resp, false);
+    /** 懒构建 ChatClient（注入 ChatModel 优先，缺失时按 AiProperties 自建；挂观测 Advisor）。 */
+    private ChatClient chatClient() {
+        ChatClient c = chatClient;
+        if (c == null) {
+            synchronized (this) {
+                c = chatClient;
+                if (c == null) {
+                    ChatModel model = chatModel != null ? chatModel : fallbackChatModel();
+                    ChatClient.Builder builder = ChatClient.builder(model);
+                    if (meterRegistry != null) builder.defaultAdvisors(new AiObservabilityAdvisor(meterRegistry));
+                    c = builder.build();
+                    chatClient = c;
+                }
+            }
+        }
+        return c;
+    }
+
+    /** 单测/回退自建 OpenAI 兼容 ChatModel：base-url 归一化补 {@code /v1}。 */
+    private ChatModel fallbackChatModel() {
+        return OpenAiChatModel.builder()
+                .options(OpenAiChatOptions.builder()
+                        .baseUrl(normalizeBaseUrl(props.getBaseUrl()))
+                        .apiKey(props.getApiKey())
+                        .build())
+                .build();
+    }
+
+    /**
+     * 归一化 OpenAI 兼容 base-url：Spring AI 的 OpenAI SDK 只在 base-url 后追加 {@code chat/completions}，
+     * 不带 {@code /v1}；而既有 {@code AI_BASE_URL}（及 .env）为网关根地址，须补 {@code /v1} 才命中
+     * chat completions 端点（C1 实测：不补则返回网关 HTML → 解析失败）。
+     */
+    static String normalizeBaseUrl(String baseUrl) {
+        if (baseUrl == null || baseUrl.isBlank()) return baseUrl;
+        String b = baseUrl.trim();
+        while (b.endsWith("/")) b = b.substring(0, b.length() - 1);
+        return b.endsWith("/v1") ? b : b + "/v1";
     }
 
     /**
@@ -203,31 +247,32 @@ public class AiClient {
      *  直接给出可操作的错误(增大 max_tokens),避免上层 Jackson 抛
      *  "Unexpected end-of-input" 这类无法定位的解析报错(2026-09-13 ClarifyService 实测)。
      */
-    private ChatResult parseChat(String resp, boolean requireJson) {
+    private ChatResult parseChat(ChatResponse resp, boolean requireJson) {
         try {
-            JsonNode root = mapper.readTree(resp);
-            JsonNode choices = root.path("choices");
-            if (!choices.isArray() || choices.isEmpty()) {
-                throw new AiException("AI 返回无 choices: " + truncate(resp), null);
+            if (resp == null || resp.getResult() == null) {
+                throw new AiException("AI 返回无 choices", null);
             }
-            JsonNode msg = choices.get(0).path("message");
-            String content = msg.path("content").asText("");
-            if (content.isBlank()) {
-                throw new AiException("AI content 为空（可能 reasoning_content 截断，需增大 max_tokens）: " + truncate(resp), null);
+            AssistantMessage msg = resp.getResult().getOutput();
+            String content = msg == null ? "" : msg.getText();
+            if (content == null || content.isBlank()) {
+                throw new AiException("AI content 为空（可能 reasoning 截断，需增大 max_tokens）", null);
             }
-            if (requireJson && "length".equals(choices.get(0).path("finish_reason").asText())) {
+            String finishReason = finishReason(resp);
+            if (requireJson && "length".equals(finishReason)) {
                 throw new AiException("AI 输出被 max_tokens 截断（finish_reason=length），JSON 不完整，请增大 max_tokens: " + truncate(content), null);
             }
-            int tokens = root.path("usage").path("total_tokens").asInt(0);
-            String model = root.path("model").asText("");
+            int tokens = 0;
+            String model = "";
+            if (resp.getMetadata() != null) {
+                Usage usage = resp.getMetadata().getUsage();
+                if (usage != null && usage.getTotalTokens() != null) tokens = usage.getTotalTokens();
+                model = resp.getMetadata().getModel() == null ? "" : resp.getMetadata().getModel();
+            }
             // R4(09-27-brief-writing-linkage-fix):始终透出 finish_reason——非 JSON 调用(如正文写作)
-            // 截断时不抛异常,调用方需据此判定是否提额重试
-            String finishReason = choices.get(0).path("finish_reason").asText(null);
-            // 10-02-brief-reasoning-maxtokens:透出 reasoning(推理模型思考过程)。不同模型字段名不同,
-            // 实测 axonhub→deepseek-v4.1-flash 用 reasoning,部分 GLM 系用 reasoning_content,依次回退;
-            // 截断上限防超长落库(仅澄清阶段消费,其余调用方忽略)。
-            String reasoning = firstNonBlank(msg.path("reasoning").asText(null),
-                    msg.path("reasoning_content").asText(null));
+            // 截断时不抛异常,调用方需据此判定是否提额重试。Spring AI 返回大写 STOP/LENGTH,归一为小写。
+            // 10-02-brief-reasoning-maxtokens:透出 reasoning(推理模型思考过程)。Spring AI 已把
+            // reasoning_content/reasoning 写入 metadata["reasoningContent"](含回退);截断上限防超长落库。
+            String reasoning = reasoning(msg);
             if (reasoning != null && reasoning.length() > REASONING_MAX_CHARS) {
                 reasoning = reasoning.substring(0, REASONING_MAX_CHARS);
             }
@@ -235,8 +280,24 @@ public class AiClient {
         } catch (AiException e) {
             throw e;
         } catch (Exception e) {
-            throw new AiException("解析 AI 返回失败: " + truncate(resp), e);
+            throw new AiException("解析 AI 返回失败: " + truncate(e.getMessage()), e);
         }
+    }
+
+    /** finish_reason 归一小写（Spring AI/OpenAI SDK 返回大写 {@code STOP}/{@code LENGTH}）；无则 null。 */
+    private static String finishReason(ChatResponse resp) {
+        if (resp.getResult() == null || resp.getResult().getMetadata() == null) return null;
+        String fr = resp.getResult().getMetadata().getFinishReason();
+        return fr == null ? null : fr.toLowerCase();
+    }
+
+    /** 从 assistant metadata 取 reasoningContent（Spring AI 已做 reasoning_content→reasoning 回退），空白归 null。 */
+    private static String reasoning(AssistantMessage msg) {
+        if (msg == null || msg.getMetadata() == null) return null;
+        Object r = msg.getMetadata().get(REASONING_METADATA_KEY);
+        if (r == null) return null;
+        String s = r.toString();
+        return s.isBlank() ? null : s;
     }
 
     private String resolveTextModel() {
@@ -248,12 +309,5 @@ public class AiClient {
     private static String truncate(String s) {
         if (s == null) return "";
         return s.length() > 300 ? s.substring(0, 300) + "…" : s;
-    }
-
-    /** 返回首个非空白字符串(全空返回 null);用于 reasoning/reasoning_content 字段名回退。 */
-    private static String firstNonBlank(String a, String b) {
-        if (a != null && !a.isBlank()) return a;
-        if (b != null && !b.isBlank()) return b;
-        return null;
     }
 }

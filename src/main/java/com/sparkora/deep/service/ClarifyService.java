@@ -163,33 +163,10 @@ public class ClarifyService {
             log.warn("车库名录获取失败,反问退化为不注车型名录: {}", e.getMessage());
             catalog = "";
         }
-        String system = """
-                你是汽车内容创作的研究规划专家。根据文章主题,产出研究计划与用户澄清问题。
-                只输出 JSON 对象:
-                {
-                  "keyQuestions": ["需要研究的关键问题(3-7 条,每条具体可查)"],
-                  "dataNeeds": ["需要的数据(如:价格/尺寸/竞品参数)"],
-                  "hypotheses": ["初步假设(可被研究推翻)"],
-                  "toolHints": [{"question": "与 keyQuestions 一一对应", "tools": ["KB","WEB"]}],
-                  "questions": [
-                    {"q": "澄清问题", "type": "input|single|multi", "options": ["single/multi 时的选项"], "required": true}
-                  ]
-                }
-                keyQuestions 规则:
-                - 数量 3~7 条,随主题复杂度伸缩:参数/对比型窄主题取少,事件/战略/政策型宽主题取多。
-                - 维度必须兼顾两类,并按主题取舍:
-                  ① 事实/参数型:价格、尺寸、参数、竞品对比等「点」型可查事实;
-                  ② 背景/来龙去脉型:行业背景、企业战略、长期目标、政策脉络、意义等「面」型背景。
-                - 窄参数主题可无背景题;但事件/发布/宣布/战略/政策/规划/里程碑类主题,**必须**至少包含一条背景/来龙去脉型问题。
-                questions 规则:
-                - 3~5 个,只问影响事实与立场的问题(目标读者/对比竞品/立场倾向/期望篇幅)
-                - 不问语气风格(风格库职责);type=single|multi 必须给 options;读者/篇幅可默认,竞品对比尽量问
-                - 对比竞品类问题(问句含「对比/竞品/比较/竞对」语义)必须 type=multi:对比竞品天然是多选,选项给 2~4 个竞品 + 「不对比」兜底项;type 只能是 multi,禁止 single
-                - 车型知识库名录(唯一真实车型来源,车型/竞品/对比类问题的 options 只能从中选,不得编造名录外的车型):
-                  %s
-                - 主题指向某款或某系列车型时,必须至少有一道题让用户确认写作锚点车型:options 覆盖名录中名称含该系列词的全部车型,type=multi
-                - 主题未指向具体车型时,竞品题的 options 也从名录中选(必须含「不对比」兜底项)
-                """.formatted(catalog.isBlank() ? "(车库暂无车型数据,允许自由提问,但不得编造具体车型名)" : catalog);
+        // C1:固定指令外置模板 prompts/clarify/plan-system.st;动态车库名录作为 {{catalog}} 变量传入
+        String system = com.sparkora.ai.PromptTemplateLoader.render("clarify/plan-system.st",
+                java.util.Map.of("catalog",
+                        catalog.isBlank() ? "(车库暂无车型数据,允许自由提问,但不得编造具体车型名)" : catalog));
         // 10-02 R4:澄清 prompt 注入创建输入(主题 + 内容描述 + 目标读者 + 目标字数,非空才加)
         StringBuilder user = new StringBuilder("主题:").append(topic).append('\n');
         if (contentDescription != null && !contentDescription.isBlank()) {

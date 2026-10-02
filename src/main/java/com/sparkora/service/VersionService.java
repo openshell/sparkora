@@ -178,39 +178,35 @@ public class VersionService {
                                               CarRagService.RagResult rag) throws Exception {
         boolean imitation = "IMITATION".equals(p.getGenSource());
         // 09-10-style-library-enhance:风格强化句(仿写/主题两分支统一,在 toneGuidance 拼接点后一次插入)
-        String styleEnforce = "\n\n以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
+        // C1:固定文案外置模板 prompts/shared/style-enforce.st。模板正文为无前导换行的裸句
+        // (DeepWriterService 直接拼在 "\n"+stylePrompt+"\n" 之后);本链路旧实现带 "\n\n" 前导,
+        // 故此处补回,保持与改造前逐字等价。
+        String styleEnforce = "\n\n"
+                + com.sparkora.ai.PromptTemplateLoader.render("shared/style-enforce.st", Map.of());
         // 2026-09-10:排版铁律(三处正文生成点统一)——此前仅「用 Markdown」靠模型自觉,
         // 部分模型/风格组合会输出整段长文无小标题无加粗,公众号可读性差
         // 09-27-shared-layout-rules R3:分节档位随项目目标字数自适应(与深度写作同档,共享 LayoutRules);
-        // 文案格式仍为三段 bullet 列表,其余两行逐字保留。
+        // 文案格式仍为三段 bullet 列表,其余两行逐字保留。C1:固定文案外置模板 prompts/version/layout-rules.st。
         LayoutRules.SectionSpec sec = LayoutRules.sectionSpec(p.getWordCountTarget());
-        String layoutRules = "\n\n排版铁律(公众号正文可读性,必须遵守):"
-                + "\n- 全文用 " + sec.headings() + " 个「## 小标题」分节,每节 " + sec.parasPerSection() + " 段,禁止整篇无分节;"
-                + "\n- 关键数据、核心结论用 **加粗** 突出,每节至少一处;"
-                + "\n- 单段不超过 5 行,长段拆分。";
+        String layoutRules = com.sparkora.ai.PromptTemplateLoader.render("version/layout-rules.st", Map.of(
+                "headings", sec.headings(), "paras", sec.parasPerSection()));
         String sys;
         String user;
         if (imitation) {
-            // 文章仿写(09-09-article-imitation):风格指令 + 仿写铁律(保留观点组织/禁照搬/去图)
+            // 文章仿写(09-09-article-imitation):风格指令 + 仿写铁律外置模板 prompts/version/imitation-system.st
+            // (C1:固定指令文字块外置,动态风格/排版作为变量传入)
             sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
                     + styleEnforce
-                    + "\n\n你是文章仿写专家。基于【参考原文】以指定风格重新表达,铁律:"
-                    + "\n1. 保留原文的观点组织与信息脉络,但必须用全新的语言重新表达;"
-                    + "\n2. 严禁连续 10 字以上照搬原句;"
-                    + "\n3. 不得保留原文任何图片链接、图注、配图说明,正文不得出现任何图片占位或「配图」字样。"
-                    + "\n4. 保留原文的分节层次:原文有小标题则仿写文对应位置也用「## 小标题」重新拟写,原文加粗处同样用加粗表达。"
-                    + layoutRules
-                    + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
-                    + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
+                    + com.sparkora.ai.PromptTemplateLoader.render("version/imitation-system.st",
+                            Map.of("layoutRules", layoutRules));
             user = buildImitationPrompt(p, brief);
         } else {
+            // 主题分支 system 外置模板 prompts/version/topic-system.st
+            // (C1;10-02-fix-meta-leak-in-article-body R2:读者视角铁律经 {{readerRules}} 变量注入,与深度写作同源)
             sys = (style.getToneGuidance() == null ? "" : style.getToneGuidance())
                     + styleEnforce
-                    + layoutRules
-                    // 10-02-fix-meta-leak-in-article-body R2:读者视角铁律(与深度写作共用同一文本常量)
-                    + "\n" + ReaderViewRules.READER_RULES + "\n"
-                    + "\n\n只输出 JSON 对象：{\"title\":\"本版标题\",\"contentMd\":\"完整 Markdown 正文\"}。"
-                    + "contentMd 内直接写 Markdown，不要包代码块围栏，不要额外说明。所有内容中文。";
+                    + com.sparkora.ai.PromptTemplateLoader.render("version/topic-system.st",
+                            Map.of("layoutRules", layoutRules, "readerRules", ReaderViewRules.READER_RULES));
             user = buildUserPrompt(p, brief, rag);
         }
         AiClient.ChatResult cr = aiClient.chatJson(sys, user, 4096);
@@ -267,23 +263,12 @@ public class VersionService {
      * 不注入车型知识库(仿写跳过 RAG)。
      */
     private String buildImitationPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
-        String base = """
-                目标字数：%s
-
-                原文分析（结构骨架/核心观点,仿写时保留其组织）：
-                - 结构大纲：%s
-                - 核心观点：%s
-
-                请基于下方参考原文完整仿写公众号文章正文（Markdown），严格遵循指定风格。
-                保留原文的观点组织与信息脉络，但用全新语言表达；不得照搬原句；不得出现任何图片。
-
-                【参考原文】
-                %s
-                """.formatted(
-                p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
-                nv(b.getOutline()), nv(b.getCoreViewpoints()),
-                p.getImitationText() == null ? "" : p.getImitationText());
-        return base;
+        // C1:固定文字外置模板 prompts/version/imitation-user.st;动态数据作为变量传入
+        return com.sparkora.ai.PromptTemplateLoader.render("version/imitation-user.st", Map.of(
+                "wordCount", p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
+                "outline", nv(b.getOutline()),
+                "coreViewpoints", nv(b.getCoreViewpoints()),
+                "imitationText", p.getImitationText() == null ? "" : p.getImitationText()));
     }
 
     /** 剔除 Markdown 图片 ![..](..) 与 HTML <img>(含可能残留的图注/占位行)。 */
@@ -297,23 +282,13 @@ public class VersionService {
     }
 
     private String buildUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b, CarRagService.RagResult rag) {
-        String base = """
-                主题：%s
-                内容描述：%s
-                目标读者：%s
-                目标字数：%s
-
-                创作简报（基于此展开，标题可从中候选调整）：
-                - 标题候选：%s
-                - 核心观点：%s
-                - 大纲：%s
-
-                请按大纲完整展开成公众号文章正文（Markdown），严格遵循指定风格。
-                """.formatted(
-                nv(p.getTopic()), nv(p.getContentDescription()), nv(p.getAudience()),
-                p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget(),
-                nv(b.getTitleCandidates()), nv(b.getCoreViewpoints()),
-                nv(b.getOutline()));
+        // C1:固定文字外置模板 prompts/version/topic-user.st;动态数据作为变量传入
+        String base = com.sparkora.ai.PromptTemplateLoader.render("version/topic-user.st", Map.of(
+                "topic", nv(p.getTopic()), "contentDescription", nv(p.getContentDescription()),
+                "audience", nv(p.getAudience()),
+                "wordCount", String.valueOf(p.getWordCountTarget() == null ? "1500" : p.getWordCountTarget()),
+                "titleCandidates", nv(b.getTitleCandidates()), "coreViewpoints", nv(b.getCoreViewpoints()),
+                "outline", nv(b.getOutline())));
         // 10-02-fix-meta-leak-in-article-body R1:原「- 事实风险点（写作时注意表述，按建议弱化或标注）：%s」整块注入删除——
         // fact_risks 原文含写给作者的祈使句 suggestion,进正文素材区必被模型复述/改写成读者话术(线上 version 44 实测);
         // 改为只抽陈述性的 claim 作「禁止写入正文的断言」块(与深度写作共用 ReaderViewRules.forbiddenClaimsBlock)。
@@ -327,17 +302,19 @@ public class VersionService {
         }
         // 10-02:原独立「用户补充信息」块删除(其内容即内容描述,已并入头部「内容描述：」)
         // S6.1 RAG 必查:检索成功且过整体门槛才注入权威数据;失败/低置信降级可见(要求 AI 标注数据风险)
+        // C1:固定提示文案外置模板 prompts/version/rag-*.st;动态 context/coveredText/maxScore 作为变量传入
         if (rag.ok()) {
-            base += "\n\n【车型知识库权威数据,请严格依据这些数据撰写,不得编造;数据缺失时不要臆造】\n" + rag.context();
+            base += com.sparkora.ai.PromptTemplateLoader.render("version/rag-authoritative.st",
+                    Map.of("context", rag.context()));
             if (rag.coveredText() != null && !rag.coveredText().isBlank()) {
-                base += "\n\n【知识库已覆盖参数(仅可引用这些数值,严禁改写/换算/脑补其他数)】" + rag.coveredText();
-                base += "\n【覆盖度约束】上述清单之外的具体参数数值知识库未覆盖,正文中禁止出现具体数值——用定性表述,并在文末提示「详细参数以官方发布为准」。";
+                base += com.sparkora.ai.PromptTemplateLoader.render("version/rag-covered.st",
+                        Map.of("coveredText", rag.coveredText()));
             }
         } else if (rag.status() == CarRagService.RagStatus.FAILED) {
-            base += "\n\n【知识库检索提示】车型知识库本次检索失败,你未能获得权威数据。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
+            base += com.sparkora.ai.PromptTemplateLoader.render("version/rag-failed.st", Map.of());
         } else if (rag.status() == CarRagService.RagStatus.LOW_CONFIDENCE) {
-            base += "\n\n【知识库检索提示】车型知识库有数据但与主题相关性过低(最高相似度 " + String.format("%.2f", rag.maxScore())
-                    + ",低于可信门槛),已全部抛弃,不要参考。涉及车型参数/权益的表述不得给出具体数值,应以定性表述为主并在文末附「参数请以官方发布为准」提示。";
+            base += com.sparkora.ai.PromptTemplateLoader.render("version/rag-low-confidence.st",
+                    Map.of("maxScore", String.format("%.2f", rag.maxScore())));
         }
         // NO_KNOWLEDGE:无车型对象或无命中,与现状一致,不注入不提示
         return base;

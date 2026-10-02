@@ -52,11 +52,8 @@ public final class ReaderViewRules {
      * 那是给模型的约束语而非素材(10-02 R4,既有测试逐字锁定);抑制泄漏靠 R1(不投 suggestion)、
      * R2(本铁律)、R3({@link MetaLeakCleaner} 落库前清洗)三层。
      */
-    public static final String READER_RULES = """
-            读者视角铁律(必须遵守):你只写给读者看,正文里不存在"资料/手册/简报"这些概念。
-            - 禁止出现下列内部话术:手册、事实手册、简报、大纲、事实风险、未收录、未提供、无法计算、待核实、不应作为结论、据手册、知识库未覆盖。
-            - 资料未覆盖的论点直接不写;确需提及就用不带数据来源说明的定性表述一句带过。
-            - 禁止在正文中解释"为什么没有这个数据"或"哪些结论不能下"——这属于创作过程,不面向读者。""";
+    public static final String READER_RULES =
+            com.sparkora.ai.PromptTemplateLoader.load("shared/reader-rules.st");
 
     /** 禁写断言块头(R1:只投 claim,不再投写给作者的 suggestion 祈使句)。 */
     private static final String FORBIDDEN_CLAIMS_HEADER =

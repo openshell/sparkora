@@ -129,24 +129,12 @@ public class BriefService {
         }
     }
 
-    /** 深度简报 system prompt：以事实手册为唯一事实来源，数值/参数必须逐字出自手册。 */
+    /**
+     * 深度简报 system prompt（C1 外置模板 {@code prompts/brief/deep-brief-system.st}）：
+     * 以事实手册为唯一事实来源，数值/参数必须逐字出自手册。
+     */
     private String buildDeepBriefSystemPrompt() {
-        return """
-                你是新媒体内容策划专家。基于「事实手册」和用户已锁定的需求,输出一份结构化创作 Brief。
-                铁律:手册中出现的数值/参数/价格必须逐字引用,不得改写或补充手册外数字;手册未覆盖的表述放入 factRisks。
-                手册条目可能带「snippet」原始证据(检索命中正文),背景/来龙去脉类素材(行业背景、企业战略、长期目标等)应优先从 snippet 证据中提取,再纳入观点与大纲。
-                coreViewpoints 须体现研究前所立「研究假设」是否被事实手册证实或推翻:每条假设都要能在观点中找到明确回应
-                (证实→据实展开;推翻→指出与手册事实不符)。未提供假设时按常规输出,不得编造假设。
-                只输出 JSON 对象，字段如下，不要任何额外文字：
-                {
-                  "titleCandidates": ["3个标题候选"],
-                  "audienceRefine": "细化后的目标读者一句话描述",
-                  "coreViewpoints": ["2-4条核心观点"],
-                  "outline": [{"heading":"章节标题","subPoints":["2-4个要点"]}],
-                  "factRisks": [{"claim":"文中可能提到的事实性表述","riskLevel":"low|medium|high","suggestion":"核实/表述建议"}]
-                }
-                factRisks:从手册的 warnings 与低置信条目派生,至少 1 条。所有内容用中文。
-                """;
+        return com.sparkora.ai.PromptTemplateLoader.render("brief/deep-brief-system.st", java.util.Map.of());
     }
 
     /** 深度简报 user prompt：主题 + 内容描述 + 目标读者 + 目标字数 + 锁定需求 + 研究假设 + 事实手册（含来源与置信度）。 */

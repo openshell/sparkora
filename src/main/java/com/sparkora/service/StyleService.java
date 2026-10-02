@@ -65,16 +65,9 @@ public class StyleService {
         if (sourceText == null || sourceText.isBlank()) throw new IllegalArgumentException("样文不能为空");
         String sample = sourceText.length() > 4000 ? sourceText.substring(0, 4000) : sourceText;
         try {
+            // C1:固定 system 指令外置模板 prompts/style/analyze-system.st;动态样文保留 Java 组装
             AiClient.ChatResult cr = aiClient.chatJson(
-                    """
-                    你是新媒体文风分析专家。阅读下面这篇样文，提炼其写作风格，输出 JSON 对象：
-                    {
-                      "name": "简短风格名(2-6字，若用户给了 name 字段则沿用)",
-                      "description": "一句话描述这种风格的特点(20-40字)",
-                      "toneGuidance": "给正文生成模型的语气与结构指令(中文，2-4句，可直接作为 system prompt 片段，要可操作：语气/句式/结构/用词偏好)"
-                    }
-                    只输出 JSON，不要额外文字。
-                    """,
+                    com.sparkora.ai.PromptTemplateLoader.render("style/analyze-system.st", java.util.Map.of()),
                     "（用户指定的风格名，可空）：" + (name == null ? "" : name) + "\n\n样文：\n" + sample,
                     1024);
             // AI 输出 JSON 容错:剥围栏+转义字符串内裸控制字符(统一走 AiClient.sanitizeAiJson)

@@ -24,7 +24,16 @@ public class AiProperties {
     /** 逗号分隔的图片模型列表，按序轮询（图片模型不稳定）；为空时回退到 imageModel 单个。 */
     private String imageModels;
     private long timeoutMs = 120000;
+    /** 全局兜底温度(C1 前所有链路统一用此值;保留以兼容旧配置与回退)。 */
     private double temperature = 0.7;
+
+    // ==================== C1 任务级参数(design §3.2) ====================
+    /** 结构化抽取类任务温度(Clarify/Brief/子代理/风格/参数清洗/车型匹配);默认 0.2(低温稳定 JSON)。 */
+    private double temperatureStructured = 0.2;
+    /** 正文创意类任务温度(深度写作);默认 0.7。 */
+    private double temperatureProse = 0.7;
+    /** 问答类任务温度;默认 0.5。 */
+    private double temperatureQa = 0.5;
 
     /** 车型知识库 RAG:逐块相似度门槛,低于该值的检索块不注入 prompt(S6.1;默认 0.3,待按真实分数分布校准)。 */
     private double ragMinScore = 0.3;

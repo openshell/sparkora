@@ -121,19 +121,11 @@ public class SubAgentRunner {
         try {
             // 双关(KB/WEB 均被全局设置停用)时明确告知无外部资料,要求 gaps 标注,不臆造
             boolean noExternalSources = toolsAllowed.isEmpty();
-            String system = """
-                    你是研究子代理。基于给定检索结果回答研究问题,产出标准化研究笔记。
-                    只输出 JSON:
-                    {"facts":[{"claim":"事实条目","value":"数值(如无可省略)","source":{"type":"KB|WEB","sourceId":"","url":"","modelName":"","docId":0},"confidence":0.9}],
-                     "gaps":["未能从检索结果回答的部分"]}
-                    规则:
-                    - 数值必须直接来自检索结果原文,禁止推算;KB 来源置信 0.9,单一 WEB 源 0.6;检索不支持的表述不写。
-                    - WEB 来源的 source.type 必须为 "WEB",sourceId 必须逐字引用检索结果中给出的 [W..] 标识,url 必须与所引 sourceId 对应的 URL 一致。
-                    - 严禁编造检索结果中不存在的 URL 或 sourceId;无法引用则把该点写入 gaps。
-                    """ + (noExternalSources ? """
-                    本次未启用任何外部资料检索(知识库与外部搜索均被系统设置停用):不得编造事实,全部要点写入 gaps,
-                    并在 gaps 中注明「未检索任何外部资料,数据未核实」。
-                    """ : "");
+            // C1:固定指令外置模板;双关降级说明经 {{noSourcesRule}} 变量注入(空串=不追加,逐字等价旧分支)
+            String system = com.sparkora.ai.PromptTemplateLoader.render("deep/subagent-system.st",
+                    java.util.Map.of("noSourcesRule", noExternalSources
+                            ? com.sparkora.ai.PromptTemplateLoader.render("deep/subagent-nosources.st", java.util.Map.of())
+                            : ""));
             // 10-02 R4b/Q4=A:内容描述仅作为「写作意图」注入 LLM 汇总上下文(置于研究问题之前),
             // 让 AI 理解写作方向;不改 compositeQuery/webQuery(检索语料保持纯净,不引入噪声)。
             StringBuilder ctx = new StringBuilder();

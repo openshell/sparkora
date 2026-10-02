@@ -1,6 +1,16 @@
 server:
   port: ${SERVER_PORT:8080}
 
+# C1:Actuator 提供 MeterRegistry bean(AI 观测 advisor 需要);仅暴露 health(不对外暴露指标/环境等敏感端点)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
 spring:
   application:
     name: sparkora
@@ -40,8 +50,17 @@ spring:
   # 自定义业务配置仍走 sparkora.ai.*(AiProperties),两者前缀不冲突,C1 起逐步切换调用点。
   ai:
     openai:
-      base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
+      # Spring AI 的 OpenAI SDK 只在 base-url 后追加 chat/completions（不带 /v1），
+      # 故此处须补 /v1 以命中网关的 /v1/chat/completions（C1 实测：不补则返回网关 HTML）。
+      # AI_BASE_URL 约定为网关根地址（不含 /v1）；可用 SPRING_AI_OPENAI_BASE_URL 整体覆盖。
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:${AI_BASE_URL:https://axo.caiqz.cn}/v1}
       api-key: ${AI_API_KEY:}
+      # C1 行为等价:旧手写 RestClient 的读超时消费 AI_TIMEOUT_MS(默认 120s)、且不自动重试。
+      # Spring AI 默认 60s + 3 次重试,会用 60s 掐断长 reasoning/长正文生成并放大失败代价;
+      # 此处按 Spring AI 的 OpenAI 客户端实际取参处(common 层 spring.ai.openai.*)接回
+      # AI_TIMEOUT_MS 并关闭自动重试(重试语义仍由上层「截断/非法 JSON 提额重试一次」承担)。
+      timeout: ${AI_TIMEOUT_MS:120000}ms
+      max-retries: 0
       chat:
         options:
           model: ${AI_MODEL:}
@@ -76,6 +95,10 @@ sparkora:
     image-models: ${AI_IMAGE_MODELS:}   # 逗号分隔，按序轮询（图片模型不稳定）
     timeout-ms: ${AI_TIMEOUT_MS:120000}
     temperature: ${AI_TEMPERATURE:0.7}
+    # C1 任务级温度:结构化抽取低温(求稳定 JSON)/正文创作高温(求表达)/问答中温
+    temperature-structured: ${AI_TEMPERATURE_STRUCTURED:0.2}
+    temperature-prose: ${AI_TEMPERATURE_PROSE:0.7}
+    temperature-qa: ${AI_TEMPERATURE_QA:0.5}
     rag-min-score: ${AI_RAG_MIN_SCORE:0.3}      # S6.1:逐块相似度门槛(低于不注入)
     rag-reject-score: ${AI_RAG_REJECT_SCORE:0.5} # S6.1:整体置信度门槛(最高分低于则全部抛弃)
     rag-kb-topk: ${AI_RAG_KB_TOPK:4}            # S7:通用知识库生成检索注入块数上限(与车型域配额独立)

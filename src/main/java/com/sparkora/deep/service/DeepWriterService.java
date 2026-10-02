@@ -90,8 +90,10 @@ public class DeepWriterService {
     /** 版本标签序列(与 VersionService.LABELS 同口径:A/B/C…按项目内已有版本数续编) */
     private static final String LABELS = "ABCDEFGHIJ";
 
-    /** 09-10-style-library-enhance:风格强化句(与 VersionService.generateOne 同款文案,要求特征充分体现) */
-    private static final String STYLE_ENFORCE = "以上语气、句式、结构与用词特征必须在正文中充分体现,不得只在部分段落贴合。";
+    /** 09-10-style-library-enhance:风格强化句(与 VersionService.generateOne 同款文案,要求特征充分体现)。
+     *  C1:文案外置模板 prompts/shared/style-enforce.st,两链路同源读取。 */
+    private static final String STYLE_ENFORCE =
+            com.sparkora.ai.PromptTemplateLoader.render("shared/style-enforce.st", java.util.Map.of());
 
     /** 批量生成单条风格选择(已解析:prompt/name 直接喂 {@link #write};legacy 路径 name/prompt 可为空)。 */
     public record StyleSpec(String prompt, String name) {}
@@ -229,18 +231,15 @@ public class DeepWriterService {
         boolean hasKind = hasKind(sheet.path("entries"));
         StringBuilder factCtx = buildFactContext(sheet.path("entries"), hasKind);
         // R2(09-27-deep-writing-adaptive-sections):排版铁律「节数行」按目标字数自适应;其余铁律逐字保留。
-        String system = """
-                你是资深汽车内容作者。基于【事实手册】与用户锁定需求撰写文章正文。
-                铁律:
-                1. 正文中出现的所有具体数值(价格/尺寸/续航/百分比等)必须逐字出自下方事实手册,禁止改写/换算/推算。
-                2. 手册未覆盖的参数,用定性表述,不得给出具体数值。
-                3. 结构清晰,用 Markdown;长度按用户需求。
-                """ + (hasKind ? """
-                4. 手册按「参数事实」与「背景素材」分组:参数事实可逐字引用其数值;背景素材仅用于叙事/背景铺陈,
-                   不得据此新增任何数值(背景素材里出现的数字也不得写进正文)。
-                """ : "") + layoutRule(p == null ? null : p.getWordCountTarget()) + """
-                关键数据、核心结论用 **加粗** 突出,每节至少一处;单段不超过 5 行,长段拆分。
-                """ + ReaderViewRules.READER_RULES + "\n";
+        // C1:固定指令文字块外置为模板(prompts/deep/write-system-*.st 与 shared/reader-rules.st),
+        // 动态的 [[layoutRule]] 与 [[hasKind]] 分支仍由 Java 控制,拼接结构逐字不变。
+        String system = com.sparkora.ai.PromptTemplateLoader.render("deep/write-system-base.st", java.util.Map.of())
+                + (hasKind
+                    ? com.sparkora.ai.PromptTemplateLoader.render("deep/write-system-kind.st", java.util.Map.of())
+                    : "")
+                + layoutRule(p == null ? null : p.getWordCountTarget())
+                + com.sparkora.ai.PromptTemplateLoader.render("deep/write-system-layout.st", java.util.Map.of())
+                + com.sparkora.ai.PromptTemplateLoader.render("shared/reader-rules.st", java.util.Map.of()) + "\n";
         // 09-10-style-library-enhance:风格指令从 user prompt 迁入 system prompt(与仿写链路统一注入位置)
         if (stylePrompt != null && !stylePrompt.isBlank()) {
             system = system + "\n文风要求:\n" + stylePrompt + "\n" + STYLE_ENFORCE;

@@ -57,10 +57,16 @@ class AiClientReasoningTest {
         return new AiClient(p);
     }
 
-    /** 构造响应;{@code insideMessage} 为 message 对象内追加字段(如 {@code ,"reasoning":"..."})。 */
+    /**
+     * 构造响应;{@code insideMessage} 为 message 对象内追加字段(如 {@code ,"reasoning":"..."})。
+     *
+     * <p>C1 起经 Spring AI 的 OpenAI SDK 解析,其必填字段(id/index/prompt_tokens/completion_tokens)
+     * 须齐全,否则 SDK 抛 {@code OpenAIInvalidDataException};此处按 SDK 契约补齐(不削弱断言)。
+     */
     private static String resp(String insideMessage) {
-        return "{\"choices\":[{\"message\":{\"content\":\"正文\"" + insideMessage + "},"
-                + "\"finish_reason\":\"stop\"}],\"model\":\"m\",\"usage\":{\"total_tokens\":9}}";
+        return "{\"id\":\"chatcmpl-test\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"正文\""
+                + insideMessage + "},\"finish_reason\":\"stop\"}],\"model\":\"m\","
+                + "\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":6,\"total_tokens\":9}}";
     }
 
     @Test
@@ -90,6 +96,44 @@ class AiClientReasoningTest {
         responseBody = resp(",\"reasoning\":\"" + huge + "\"");
         AiClient.ChatResult cr = client().chatJson("s", "u", 100);
         assertEquals(AiClient.REASONING_MAX_CHARS, cr.reasoning().length(), "reasoning 必须截断到上限");
+    }
+
+    /** C1:Spring AI/OpenAI SDK 返回大写 finish_reason,须归一为小写以维持旧契约(调用方判 "length")。 */
+    @Test
+    void finishReason大写_归一为小写() {
+        responseBody = "{\"id\":\"c\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"半截正文\"},"
+                + "\"finish_reason\":\"length\"}],\"model\":\"m\","
+                + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":9}}";
+        AiClient.ChatResult cr = client().chat("s", "u", 100);
+        assertEquals("length", cr.finishReason(), "非 JSON 调用须透出小写 length 供调用方自判重试");
+    }
+
+    /** chatJson 遇 finish_reason=length 仍须抛截断异常(JSON 半截不可解析)。 */
+    @Test
+    void chatJson截断_抛AiException() {
+        responseBody = "{\"id\":\"c\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"半截\"},"
+                + "\"finish_reason\":\"length\"}],\"model\":\"m\","
+                + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":9}}";
+        org.junit.jupiter.api.Assertions.assertThrows(AiException.class,
+                () -> client().chatJson("s", "u", 100));
+    }
+
+    /** 空 content(reasoning 吃光预算)→ 抛 AiException,不返回半截。 */
+    @Test
+    void 空content_抛AiException() {
+        responseBody = "{\"id\":\"c\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"\"},"
+                + "\"finish_reason\":\"length\"}],\"model\":\"m\","
+                + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":9}}";
+        org.junit.jupiter.api.Assertions.assertThrows(AiException.class,
+                () -> client().chat("s", "u", 100));
+    }
+
+    /** C1:base-url 归一化补 /v1(OpenAI SDK 只追加 chat/completions)。 */
+    @Test
+    void baseUrl归一化_补v1() {
+        assertEquals("https://axo.caiqz.cn/v1", AiClient.normalizeBaseUrl("https://axo.caiqz.cn"));
+        assertEquals("https://axo.caiqz.cn/v1", AiClient.normalizeBaseUrl("https://axo.caiqz.cn/"));
+        assertEquals("https://axo.caiqz.cn/v1", AiClient.normalizeBaseUrl("https://axo.caiqz.cn/v1"));
     }
 
     @Test
