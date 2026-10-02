@@ -1006,3 +1006,69 @@ BriefDto dto = chatClient.prompt().user(p).call()
                 .useProviderStructuredOutput()   // 退化时自动忽略
                 .validateSchema());              // 正确性依赖此步
 ```
+
+---
+
+## Scenario: 结构化输出契约（C2，schema 单一来源 + 响应侧自纠错）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改「AI 返回结构化 JSON」链路（简报、澄清计划、子代理事实…），或改动 `AiClient.structured` / DTO schema / `{{schema}}` 注入。
+- 前置：axonhub 忽略 provider 原生 `json_schema` strict（C0 探针），故正确性依赖响应侧校验。
+
+### 2. Signatures
+```java
+// AiClient（C2 新增；旧 chat/chatJson/chatMessages/ChatResult/sanitizeAiJson 不变）
+record TypedResult<T>(T entity, ChatResult chat) {}
+<T> TypedResult<T> structured(String system, String user, int maxTokens, Class<T> type)
+static <T> String jsonSchema(Class<T> type)   // = new BeanOutputConverter<>(type).getJsonSchema()
+
+// DTO = schema 单一来源（字段说明用 @JsonPropertyDescription 内聚）
+BriefDto / ClarifyPlanDto / SubAgentFactsDto
+```
+
+### 3. Contracts
+- **schema 单一来源 = DTO 类型**：`structured` 用 `StructuredOutputValidationAdvisor.builder().outputType(type)`
+  派生 schema 并校验；prompt 通过 `{{schema}}` 占位注入 `jsonSchema(type)`，**prompt 内不再内联 schema 字面量**。
+- **响应侧自纠错**：校验失败时 advisor 把**具体校验错误**（`JSON validation failed: …`）回填 user prompt 重试；
+  `maxRepeatAttempts=1`（最多 2 次净调用）。`useProviderStructuredOutput()` **不启用**（axonhub 下无效）。
+- **截断与 schema 违规分离（语义）**：`finish_reason=length` 最终由 `parseChat` 抛截断 `AiException` → 服务层提额重试；
+  字段/类型/多余字段由 advisor 同额度自纠错。**实际代价**：advisor 在 `parseChat` 前执行，半截 JSON 也会触发一次
+  同额度自纠错，故截断路径 = 2 次同额度 + 服务层提额，最坏 ≤4 次（正常 1 次，纯 schema 违规 2 次）。
+- **DTO 字段约定**：`json_object` 模式 + `BeanOutputConverter` 用 `tools.jackson`（Jackson 3），
+  业务侧仍 `com.fasterxml`（Jackson 2），二者互不影响；未知字段被忽略（`FAIL_ON_UNKNOWN_PROPERTIES` 关闭）。
+- **`@JsonPropertyDescription` 会进 schema 的 description**；**jakarta.validation（`@Size` 等）不影响 schema**
+  （victools SchemaGenerator 不读它），`required` 来自「所有声明属性默认必填」——勿以为注解约束了 AI 输出。
+- **元数据透传**：`TypedResult.chat()` 提供 model/totalTokens/finishReason/reasoning；自纠错两轮时
+  `totalTokens` 为 `UsageAccumulator` 累加值（略高于单轮）。
+
+### 4. Validation & Error Matrix
+- 缺字段/类型错/多余字段 → advisor 回填错误重试；仍不合规则返回部分实体（**不抛异常**，与旧 `readValue` 一致，不回归）。
+- `finish_reason=length` → `parseChat` 抛截断 `AiException`（服务层提额重试）。
+- 空 content / 无 result → `parseChat` 抛 `AiException`。
+- provider 忽略 `json_schema`（2xx 但结构不符）→ 正常走 advisor，**不视为调用失败**。
+
+### 5. Good/Base/Bad Cases
+- Good: `structured(system, user, 8192, BriefDto.class)`，schema/校验/反序列化同源。
+- Base: 首次合规 → 1 次调用；字段违规 → 2 次（第二次带具体错误）。
+- Bad: 在 prompt 里再手写一份 schema 字面量（双源漂移）；或把「provider 返回 2xx」当作 schema 已遵守。
+
+### 6. Tests Required
+- `AiClientStructuredTest`：缺字段/类型错/多余字段 → 第二次请求含 `JSON validation failed` 并成功；截断 → 抛截断异常且断言
+  **恰好 2 次**同额度调用；`sanitizeAiJson` 围栏/裸控制字符回归；三 DTO schema 可派生。
+- 服务层：`BriefServiceTest`/`ClarifyServicePlanTest`/`SubAgentRunnerTest` 桩改 `structured(...,eq(Dto.class))`，
+  断言自纠错后字段落库、截断提额路径、后处理（背景题兜底等）不变。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// prompt 内联 schema 字面量 + 只靠 response_format=json_object:字段漂移无校验,静默入库
+String system = "输出 JSON:{\"titleCandidates\":[...],...}";
+aiClient.chatJson(system, user, 8192);
+```
+#### Correct
+```java
+// schema 由 DTO 派生注入,响应侧校验+自纠错:字段违规被具体错误纠正
+String system = PromptTemplateLoader.render("brief/deep-brief-system.st",
+        Map.of("schema", AiClient.jsonSchema(BriefDto.class), ...));
+BriefDto dto = aiClient.structured(system, user, 8192, BriefDto.class).entity();
+```
