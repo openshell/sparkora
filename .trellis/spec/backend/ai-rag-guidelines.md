@@ -6,7 +6,9 @@
 
 ## Overview
 
-- AI 文本统一走 `com.sparkora.ai.AiClient`（RestClient 直调 axonhub OpenAI 兼容 `/v1/chat/completions`）。
+- AI 文本统一走 `com.sparkora.ai.AiClient`；**C1 起内部委托 Spring AI 2.0 `ChatClient` + `OpenAiChatModel`**
+  （公共 API 不变，仅实现从手写 RestClient 换为框架调用；base-url 由 `application.yml` 归一化补 `/v1`）。
+  AxonHub 的 OpenAI 兼容端点是 `/v1/chat/completions`。
 - 知识检索统一走 `com.sparkora.car.service.CarRagService`（pgvector 三域统一检索）。
 - 失败抛 `com.sparkora.ai.AiException`，由控制器映射 500（见 error-handling.md）。
 
@@ -31,9 +33,18 @@ AiClient.ChatResult chatMessages(List<Map<String,String>> messages, int maxToken
   - **reasoning 模型的额度陷阱（10-02 实测）**：`AI_MODEL=deepseek-v4-pro-cus` 被 axonhub 路由到 reasoning 模型 `deepseek-v4.1-flash`，先吐大段 `reasoning` 再吐 `content`。`max_tokens` 是**含推理的总预算**——额度不足时推理吃光预算、`content` 为空、`finish_reason=length`（实测 4096 全烧在推理上、`content=""`；同一 prompt 提到 16384 得 `finish_reason=stop`、约 6000 推理 + 2580 正文）。故 reasoning 模型下 JSON 类调用额度须按「推理 + 正文」估算，并一律配「截断/空内容/非法 JSON → 提额一倍重试一次」范式（ClarifyService 8192→16384、BriefService 同构）。
 
 ### 3. Contracts
-- 三方法共用同一 `rest` 实例（`AiProperties.baseUrl/apiKey/timeoutMs`）、`resolveTextModel()`、`parseChat()`。
-- `chatMessages` 不设 `response_format`；`temperature` 同 `chat`。
+- 三方法共用同一懒构建 `ChatClient`（`OpenAiChatModel`；注入路径复用自动配置的 `ChatModel`，单测直 `new` 时按 `AiProperties` 自建）与 `parseChat()`。
+- **任务级温度（C1）**：`chatJson`→结构化低温（`sparkora.ai.temperature-structured`，默认 0.2）、`chat`→正文高温（`temperature-prose`，默认 0.7）、`chatMessages`→问答中温（`temperature-qa`，默认 0.5）；任务类型由调用方法唯一决定（`TaskType`）。`max_tokens` 仍由调用点显式传入。
+- `chatMessages` 不设 `response_format`。
+- **`chatJson` 强制 `response_format=json_object`**（`OpenAiChatOptions.responseFormat(JSON_OBJECT)`），等价旧实现。
+- **base-url 归一化**：Spring AI OpenAI SDK 只追加 `chat/completions`（**不带 `/v1`**），故 `application.yml` 配 `${AI_BASE_URL}/v1`（`AiClient.normalizeBaseUrl` 自建路径同规则补 `/v1`）。`AI_BASE_URL` 语义仍为网关根地址（不含 `/v1`）。
+- **finish_reason 归一**：Spring AI/OpenAI SDK 返回大写（`STOP`/`LENGTH`，来自 `Generation.metadata.finishReason`），`parseChat` 归一为小写后再透出/判定，保持旧契约（调用方判 `"length"`）。
+- **reasoning 透出**：Spring AI 已把 `reasoning_content`→`reasoning` 回退后写入 `assistantMessage.metadata["reasoningContent"]`，`parseChat` 读该 key，超 `REASONING_MAX_CHARS` 截断。
 - `content` 为空（reasoning 截断）→ `parseChat` 抛 `AiException`，**不要返回半截内容**。
+- **Prompt 资产化（C1）**：固定指令外置到 `src/main/resources/prompts/**`（首行 `# version: vN`，Git 管理）；用 `com.sparkora.ai.PromptTemplateLoader`（静态、`{{var}}` 占位、对 JSON 花括号零侵入）加载。动态数据（主题/手册/RAG/风格/排版分档）由 Java 组装后作为变量传入；**生产代码无内联长 prompt 文本块**。
+- **超时/重试必须显式配置（C1 踩坑）**：Spring AI 的 OpenAI 客户端默认 **60s 读超时 + 3 次自动重试**，会掐断长 reasoning/长正文并放大失败代价；旧手写实现是 `AI_TIMEOUT_MS`（默认 120s）且不重试。约定 `application.yml` 配 `spring.ai.openai.timeout: ${AI_TIMEOUT_MS:120000}ms` + `spring.ai.openai.max-retries: 0`（重试语义仍由上层「截断/非法 JSON 提额重试一次」承担）。改 AI 超时只动 `AI_TIMEOUT_MS`。
+- **观测依赖 Actuator（C1）**：`AiObservabilityAdvisor` 经 `ObjectProvider<MeterRegistry>` 取指标注册表；`MeterRegistry` bean 由 `spring-boot-starter-actuator` 提供（仅此依赖；micrometer-core 虽为 Spring AI 传递依赖，但**没有 starter 就没有 bean**，advisor 会退化为「只打日志」）。`application.yml` 仅暴露 `management.endpoints.web.exposure.include: health`（不对外暴露 metrics/env）。
+- **base-url 双重 `/v1` 边界**：`application.yml` 直接拼 `${AI_BASE_URL}/v1`，若使用者把 `AI_BASE_URL` 填成含 `/v1` 的值会得到 `/v1/v1`；覆盖整地址请用 `SPRING_AI_OPENAI_BASE_URL`（自带 `/v1`）。`AiClient.normalizeBaseUrl` 仅用于单测/自建路径，会去重。
 
 ### 4. Validation & Error Matrix
 - messages 为空/null → 上层保证非空（当前未做显式校验；调用方必传 system+user）。

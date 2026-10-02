@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 调用权威契约：AiClient 三方法签名/ChatResult 字段/reasoning 透出/提额范式 + C0 新增 axonhub 能力边界；C1 收敛调用点必须保持这些契约"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/design.md", "reason": "父设计 §2.1 分层/§2.2 组件映射/§3.2 任务级参数/§3.3 提示词资产化/§7 权衡"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误映射与框架串中和约定（AI 失败回退语义不变）"}
