@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 调用/结构化输出/reasoning/截断契约，改造必须保持或显式更新"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线：契约等价、可回滚、禁改生产数据"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/design.md", "reason": "父设计 §3.1 结构化输出契约与 §5 子任务映射"}
+{"file": ".trellis/tasks/archive/2026-10/10-02-c0-upgrade-probe/research/axonhub-capability-probe.md", "reason": "C0 探针：json_schema 退化→正确性必须靠 validateSchema 响应侧自纠错"}

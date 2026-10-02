@@ -25,6 +25,19 @@
 - [ ] 截断路径仍能提额重试成功（独立于 schema 校验）。
 - [ ] `mvn test` 绿；prompt 中无内联 schema 字面量。
 
+## Technical Notes（主会话勘察，细化范围）
+
+- Spring AI 2.0.1 提供 `entity/responseEntity(Class, spec -> spec.validateSchema())`；`responseEntity` 保留
+  `ChatResponse`（model/usage/finishReason/reasoning），可继续满足既有 `ChatResult` 契约。
+- `validateSchema` = 响应侧 schema 校验 + **把具体校验错误回填 prompt 的自纠错重试**；axonhub 忽略
+  `json_schema` strict（C0 探针），故正确性必须依赖此响应侧机制。
+- **迁移三站点**：`BriefService`（BriefDto，唯一有类型 DTO）、`ClarifyService`、`SubAgentRunner`（后两者
+  新建 DTO 以支持 schema 由类型派生的单一来源）。
+- **单来源手段**：`BeanOutputConverter.getFormat()`（prompt 文本）与 `JsonSchemaGenerator.generateForType`。
+- **其余 7 个 `chatJson` 站点**（Style/Imitation/Version/AiParamCleaner/CarModelMatcher）本次不改
+  （无 DTO，属后续增量，不阻塞本任务验收）。
+
 ## Out of Scope
 
 - Tool Calling（C3）、向量迁移（C5）、元话语治理（C7）。
+- 无类型 DTO 的其余 `chatJson` 站点的 schema 派生（后续增量）。
