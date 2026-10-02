@@ -217,6 +217,19 @@ h1, h2, h3 { font-family: var(--font-sans); letter-spacing: -.01em; }
   border-radius: var(--radius-sm);
 }
 
+/* Element Plus 单行输入 inner:焦点可视化交给组件库(.el-input__wrapper.is-focus),
+   全局 --focus-ring 的外扩双层环会误画在 inner(透明、padding:0)的文本起点处,
+   造成「左侧孤立描边/留白」。此处清除 inner 上的 global focus 视觉。
+   注意:不得对 .el-textarea__inner/textarea 生效 —— 组件库的 textarea 焦点描边就画在
+   inner 自身(.el-textarea__inner:focus),本文件后加载会同特异性覆盖它,使多行框失去焦点环。 */
+input:focus-visible,
+select:focus-visible,
+.el-input__inner:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 /* ---------- 应用外壳骨架(AppShell 接管滚动) ---------- */
 .app-shell {
   display: flex;
