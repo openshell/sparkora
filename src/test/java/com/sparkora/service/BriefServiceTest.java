@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
+import com.sparkora.ai.BriefDto;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
@@ -94,6 +95,16 @@ class BriefServiceTest {
         return new AiClient.ChatResult(VALID_BRIEF_JSON, "glm-5.2", 321);
     }
 
+    /** C2:structured 返回 entity + ChatResult;此处按 VALID_BRIEF_JSON 构造 BriefDto。 */
+    private AiClient.TypedResult<BriefDto> typed() {
+        try {
+            BriefDto dto = new ObjectMapper().readValue(VALID_BRIEF_JSON, BriefDto.class);
+            return new AiClient.TypedResult<>(dto, result());
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** 公共桩：项目/简报可查(状态服务 mock 默认无操作即视为抢占/推进成功)。 */
     private void stubHappyPath(ArticleProjectEntity p, ArticleBriefEntity b) {
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(p);
@@ -106,15 +117,15 @@ class BriefServiceTest {
         ArticleProjectEntity p = project();
         ArticleBriefEntity b = deepBrief();
         stubHappyPath(p, b);
-        when(aiClient.chatJson(anyString(), anyString(), eq(8192)))
+        when(aiClient.structured(anyString(), anyString(), eq(8192), eq(BriefDto.class)))
                 .thenThrow(new AiException("AI 输出被 max_tokens 截断（finish_reason=length）", null));
-        when(aiClient.chatJson(anyString(), anyString(), eq(16384))).thenReturn(result());
+        when(aiClient.structured(anyString(), anyString(), eq(16384), eq(BriefDto.class))).thenReturn(typed());
 
         ArticleBriefEntity out = service.generateFromFactSheet(PROJECT_ID, BRIEF_ID);
 
         // 第二次确实用 16384,且恰好调用两次(净调用上限 2 次)
-        verify(aiClient).chatJson(anyString(), anyString(), eq(16384));
-        verify(aiClient, times(2)).chatJson(anyString(), anyString(), anyInt());
+        verify(aiClient).structured(anyString(), anyString(), eq(16384), eq(BriefDto.class));
+        verify(aiClient, times(2)).structured(anyString(), anyString(), anyInt(), eq(BriefDto.class));
 
         // 简报字段落库(同一 DEEP 行)
         ArgumentCaptor<ArticleBriefEntity> briefCaptor = ArgumentCaptor.forClass(ArticleBriefEntity.class);
@@ -140,17 +151,17 @@ class BriefServiceTest {
         ArticleProjectEntity p = project();
         ArticleBriefEntity b = deepBrief();
         stubHappyPath(p, b);
-        when(aiClient.chatJson(anyString(), anyString(), eq(8192)))
+        when(aiClient.structured(anyString(), anyString(), eq(8192), eq(BriefDto.class)))
                 .thenThrow(new AiException("AI 输出被 max_tokens 截断（finish_reason=length）", null));
-        when(aiClient.chatJson(anyString(), anyString(), eq(16384)))
+        when(aiClient.structured(anyString(), anyString(), eq(16384), eq(BriefDto.class)))
                 .thenThrow(new AiException("AI 输出被 max_tokens 截断（finish_reason=length），重试仍失败", null));
 
         assertThrows(AiException.class, () -> service.generateFromFactSheet(PROJECT_ID, BRIEF_ID));
 
         // 恰好两次调用;两次额度分别为 8192 / 16384
-        verify(aiClient).chatJson(anyString(), anyString(), eq(8192));
-        verify(aiClient).chatJson(anyString(), anyString(), eq(16384));
-        verify(aiClient, times(2)).chatJson(anyString(), anyString(), anyInt());
+        verify(aiClient).structured(anyString(), anyString(), eq(8192), eq(BriefDto.class));
+        verify(aiClient).structured(anyString(), anyString(), eq(16384), eq(BriefDto.class));
+        verify(aiClient, times(2)).structured(anyString(), anyString(), anyInt(), eq(BriefDto.class));
 
         // 简报行不动(失败时不写简报字段)
         verify(briefMapper, never()).updateById(any(ArticleBriefEntity.class));
@@ -167,14 +178,14 @@ class BriefServiceTest {
         ArticleProjectEntity p = project();
         ArticleBriefEntity b = deepBrief();
         stubHappyPath(p, b);
-        when(aiClient.chatJson(anyString(), anyString(), eq(8192))).thenReturn(result());
+        when(aiClient.structured(anyString(), anyString(), eq(8192), eq(BriefDto.class))).thenReturn(typed());
 
         ArticleBriefEntity out = service.generateFromFactSheet(PROJECT_ID, BRIEF_ID);
 
         assertEquals(BRIEF_ID, out.getId());
-        verify(aiClient).chatJson(anyString(), anyString(), eq(8192));
-        verify(aiClient, never()).chatJson(anyString(), anyString(), eq(16384));
-        verify(aiClient, times(1)).chatJson(anyString(), anyString(), anyInt());
+        verify(aiClient).structured(anyString(), anyString(), eq(8192), eq(BriefDto.class));
+        verify(aiClient, never()).structured(anyString(), anyString(), eq(16384), eq(BriefDto.class));
+        verify(aiClient, times(1)).structured(anyString(), anyString(), anyInt(), eq(BriefDto.class));
         verify(briefMapper).updateById(any(ArticleBriefEntity.class));
         verify(statusService).advanceReady(eq(PROJECT_ID), eq(BRIEF_ID), anyMap());
     }
@@ -184,10 +195,10 @@ class BriefServiceTest {
     /** 捕获 user prompt(首次成功的 8192 调用;先清历史调用,支持同一测试多次调用)。 */
     private String capturedUserPrompt(ArticleProjectEntity p, ArticleBriefEntity b) {
         stubHappyPath(p, b);
-        when(aiClient.chatJson(anyString(), anyString(), eq(8192))).thenReturn(result());
+        when(aiClient.structured(anyString(), anyString(), eq(8192), eq(BriefDto.class))).thenReturn(typed());
         service.generateFromFactSheet(PROJECT_ID, BRIEF_ID);
         ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
-        verify(aiClient).chatJson(anyString(), user.capture(), eq(8192));
+        verify(aiClient).structured(anyString(), user.capture(), eq(8192), eq(BriefDto.class));
         String captured = user.getValue();
         org.mockito.Mockito.clearInvocations(aiClient);
         return captured;

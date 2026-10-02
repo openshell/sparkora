@@ -121,11 +121,13 @@ public class SubAgentRunner {
         try {
             // 双关(KB/WEB 均被全局设置停用)时明确告知无外部资料,要求 gaps 标注,不臆造
             boolean noExternalSources = toolsAllowed.isEmpty();
-            // C1:固定指令外置模板;双关降级说明经 {{noSourcesRule}} 变量注入(空串=不追加,逐字等价旧分支)
+            // C1:固定指令外置模板;双关降级说明经 {{noSourcesRule}} 变量注入(空串=不追加,逐字等价旧分支)。
+            // C2:{{schema}} 由 SubAgentFactsDto 类型派生(单一来源),prompt 不再内联 JSON schema 字面量。
             String system = com.sparkora.ai.PromptTemplateLoader.render("deep/subagent-system.st",
                     java.util.Map.of("noSourcesRule", noExternalSources
                             ? com.sparkora.ai.PromptTemplateLoader.render("deep/subagent-nosources.st", java.util.Map.of())
-                            : ""));
+                            : "",
+                            "schema", AiClient.jsonSchema(com.sparkora.ai.SubAgentFactsDto.class)));
             // 10-02 R4b/Q4=A:内容描述仅作为「写作意图」注入 LLM 汇总上下文(置于研究问题之前),
             // 让 AI 理解写作方向;不改 compositeQuery/webQuery(检索语料保持纯净,不引入噪声)。
             StringBuilder ctx = new StringBuilder();
@@ -336,32 +338,34 @@ public class SubAgentRunner {
     }
 
     /**
-     * LLM 汇总(R4,09-26):首次 2048;任何失败(截断 finish_reason=length / 空内容 / 非法 JSON)
+     * LLM 汇总(R4,09-26 / C2):首次 2048;任何失败(截断 finish_reason=length / 空内容 / 序列化失败)
      * 均提额至 4096 重试一次,仅重试仍失败才向上抛出(→ research catch → FALLBACK)。
      * 净调用上限仍为 2 次/agent(与原「非法 JSON 重试」同量),仅重试额度提高并覆盖截断场景。
+     *
+     * <p>C2:schema 由 {@link SubAgentFactsDto} 类型单一派生,{@code structured} 内 validateSchema
+     * 自纠错字段/类型/多余字段错误;截断仍由外层提额重试兜底。产出序列化为等价 JSON 字符串,
+     * 供 {@link #validateFacts} 后验校验(字段语义不变)。
      */
     private String chat(String system, String user) throws Exception {
         try {
-            return parseOrThrow(aiClient.chatJson(system, user, 2048), null);
+            return serialize(aiClient.structured(system, user, 2048, com.sparkora.ai.SubAgentFactsDto.class).entity(), null);
         } catch (Exception first) {
             log.warn("子代理汇总首次失败,提额重试(4096): {}", first.getMessage());
-            return parseOrThrow(aiClient.chatJson(system,
-                    user + "\n注意:上次输出失败(可能被截断或不是合法 JSON),请只输出一个完整、合法的 JSON 对象。", 4096),
-                    first);
+            return serialize(aiClient.structured(system,
+                    user + "\n注意:上次输出失败(可能被截断或不是合法 JSON),请只输出一个完整、合法的 JSON 对象。", 4096,
+                    com.sparkora.ai.SubAgentFactsDto.class).entity(), first);
         }
     }
 
     /**
-     * 清洗+解析校验;失败抛 {@code AiException}(携带 cause 供上层定位)。清洗是必需步骤:
-     * 裸控制字符/代码围栏属可修复错误,不应直接触发重试。
+     * DTO 序列化为 JSON 字符串供后续 {@link #validateFacts} 消费;失败抛 {@code AiException}
+     * (携带 cause 供上层定位)。{@code @JsonInclude(NON_NULL)} 保证空字段不出现,与旧解析容错语义等价。
      */
-    private String parseOrThrow(AiClient.ChatResult cr, Exception cause) throws Exception {
-        String clean = AiClient.sanitizeAiJson(cr.content());
+    private String serialize(com.sparkora.ai.SubAgentFactsDto dto, Exception cause) throws Exception {
         try {
-            json.readTree(clean);
-            return clean;
+            return json.writeValueAsString(dto);
         } catch (Exception e) {
-            throw new com.sparkora.ai.AiException("子代理汇总输出非法 JSON: " + e.getMessage(),
+            throw new com.sparkora.ai.AiException("子代理汇总输出序列化失败: " + e.getMessage(),
                     cause == null ? e : cause);
         }
     }

@@ -89,22 +89,27 @@ public class BriefService {
         p.setStatus("GENERATING_BRIEF");
 
         try {
-            // AI 调用（无事务）：以事实手册为主要事实来源 + 用户锁定需求产出结构化简报
+            // AI 调用（无事务）：以事实手册为主要事实来源 + 用户锁定需求产出结构化简报。
+            // C2：schema 由 BriefDto 类型单一派生（structured 内 validateSchema 自纠错）；截断/空内容/类型
+            // 转换失败仍由外层「提额一倍重试一次」兜底（与 schema 自纠错解耦）。
             AiClient.ChatResult cr;
             BriefDto dto;
             try {
                 // R6(09-26):R5 放大事实手册后,brief 66 实测 17 条/10294 字,2048 额度系统性不足,
-                // 首次 8192;失败(截断 finish_reason=length / 空内容 / 非法 JSON)翻倍提额 16384 重试一次。
-                cr = aiClient.chatJson(buildDeepBriefSystemPrompt(), buildDeepBriefUserPrompt(p, b), 8192);
-                dto = json.readValue(AiClient.sanitizeAiJson(cr.content()), BriefDto.class);
+                // 首次 8192;失败(截断 finish_reason=length / 空内容 / 反序列化失败)翻倍提额 16384 重试一次。
+                AiClient.TypedResult<BriefDto> tr =
+                        aiClient.structured(buildDeepBriefSystemPrompt(), buildDeepBriefUserPrompt(p, b), 8192, BriefDto.class);
+                dto = tr.entity();
+                cr = tr.chat();
             } catch (Exception first) {
                 // 重试独立实现(不抽公共 helper、不与已删除的 FAST 路径共用):附纠错说明提示模型只输出完整合法 JSON。
                 log.warn("深度简报首次生成失败,提额重试(16384) project={} brief={}: {}", projectId, briefId, first.getMessage());
-                cr = aiClient.chatJson(buildDeepBriefSystemPrompt(),
+                AiClient.TypedResult<BriefDto> tr = aiClient.structured(buildDeepBriefSystemPrompt(),
                         buildDeepBriefUserPrompt(p, b)
                                 + "\n注意:上次输出失败(可能被 max_tokens 截断或不是合法 JSON),请只输出一个完整、合法的 JSON 对象,确保字段齐全。",
-                        16384);
-                dto = json.readValue(AiClient.sanitizeAiJson(cr.content()), BriefDto.class);
+                        16384, BriefDto.class);
+                dto = tr.entity();
+                cr = tr.chat();
             }
 
             // 落同一条 DEEP brief 行（gen_mode 保持 DEEP，研究产物不覆盖）
@@ -134,7 +139,9 @@ public class BriefService {
      * 以事实手册为唯一事实来源，数值/参数必须逐字出自手册。
      */
     private String buildDeepBriefSystemPrompt() {
-        return com.sparkora.ai.PromptTemplateLoader.render("brief/deep-brief-system.st", java.util.Map.of());
+        // C2:{{schema}} 由 BriefDto 类型派生(单一来源),prompt 不再内联 JSON schema 字面量
+        return com.sparkora.ai.PromptTemplateLoader.render("brief/deep-brief-system.st",
+                java.util.Map.of("schema", AiClient.jsonSchema(BriefDto.class)));
     }
 
     /** 深度简报 user prompt：主题 + 内容描述 + 目标读者 + 目标字数 + 锁定需求 + 研究假设 + 事实手册（含来源与置信度）。 */

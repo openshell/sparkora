@@ -3,6 +3,7 @@ package com.sparkora.deep.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
+import com.sparkora.ai.SubAgentFactsDto;
 import com.sparkora.deep.search.WebProvider;
 import com.sparkora.deep.search.WebProviderOrder;
 import com.sparkora.deep.search.WebResultNormalizer;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +34,12 @@ import static org.mockito.Mockito.when;
 class SubAgentRunnerTest {
 
     private final SubAgentRunner runner = new SubAgentRunner(null, new ObjectMapper(), null, null);
+
+    /** C2:把原始 facts JSON 转成 structured 的 TypedResult(测试桩共用)。 */
+    private static AiClient.TypedResult<SubAgentFactsDto> typed(String raw, String model, int tokens) throws Exception {
+        SubAgentFactsDto dto = new ObjectMapper().readValue(raw, SubAgentFactsDto.class);
+        return new AiClient.TypedResult<>(dto, new AiClient.ChatResult(raw, model, tokens));
+    }
 
     // ===== R7 / AC-06:WEB query 只含主题 + 已锁定答案 =====
 
@@ -198,9 +206,9 @@ class SubAgentRunnerTest {
         AiClient ai = mock(AiClient.class);
         String valid = "{\"facts\":[{\"claim\":\"事实\",\"source\":{\"type\":\"KB\"},\"confidence\":0.9}],\"gaps\":[]}";
         // 首次模拟 finish_reason=length 截断(AiClient 抛 AiException);第二次 4096 成功
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
                 .thenThrow(new AiException("AI 输出被 max_tokens 截断", null))
-                .thenReturn(new AiClient.ChatResult(valid, "m", 10));
+                .thenReturn(typed(valid, "m", 10));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
 
         SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null, null,
@@ -209,16 +217,16 @@ class SubAgentRunnerTest {
         assertEquals("DONE", note.status(), "截断后提额重试成功应回到 DONE");
         assertTrue(note.factsJson().contains("事实"));
         // 第二次必须用 4096 额度
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), anyString(), org.mockito.ArgumentMatchers.eq(4096));
+        org.mockito.Mockito.verify(ai).structured(anyString(), anyString(), org.mockito.ArgumentMatchers.eq(4096), eq(SubAgentFactsDto.class));
     }
 
     @Test
     void chat_两次均失败_落FALLBACK() throws Exception {
         KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
                 .thenThrow(new AiException("截断", null))
-                .thenReturn(new AiClient.ChatResult("仍不是合法JSON", "m", 1));
+                .thenThrow(new AiException("子代理汇总输出仍非法", null));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
 
         SubAgentRunner.Note note = r.research("问题", List.of(), 0, List.of(), "主题", null, null,
@@ -239,15 +247,15 @@ class SubAgentRunnerTest {
                 List.of(hit), WebProvider.TAVILY,
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
         r.research("该车型的行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertTrue(user.getValue().contains("正文片段:"), "背景题应注入正文片段行");
         assertTrue(user.getValue().contains("比亚迪计划2026年底前建成2万座闪充站"), "正文内容应进入 ctx");
     }
@@ -263,15 +271,15 @@ class SubAgentRunnerTest {
                 List.of(hit), WebProvider.TAVILY,
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
         r.research("海狮08的续航是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertFalse(user.getValue().contains("正文片段:"), "参数题不得注入正文");
         assertFalse(user.getValue().contains("正文片段不应被参数题注入"));
     }
@@ -287,8 +295,8 @@ class SubAgentRunnerTest {
         when(router.extract(anyString(), any())).thenReturn(List.of(
                 SearchTool.SearchHit.webContent("TAVILY", "https://x.com/a", "抽取到的正文")));
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
@@ -296,7 +304,7 @@ class SubAgentRunnerTest {
         r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
         org.mockito.Mockito.verify(router, org.mockito.Mockito.times(1)).extract(anyString(), any());
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertTrue(user.getValue().contains("抽取到的正文"), "extract 正文应回填并注入 ctx");
 
         // 参数题 → 不触发 extract
@@ -333,8 +341,8 @@ class SubAgentRunnerTest {
     void WEB关闭_不搜索也不补抓正文() throws Exception {
         WebSearchRouter router = mock(WebSearchRouter.class);
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 1L, 5);
 
@@ -359,15 +367,15 @@ class SubAgentRunnerTest {
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
         when(router.extract(anyString(), any())).thenReturn(List.of());   // 不覆盖命中已带 content
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
         r.research("行业背景与战略目标是什么?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertTrue(user.getValue().contains(longContent), "工具层未截断的正文不得被子代理二次截断（单点化）");
     }
 
@@ -390,8 +398,8 @@ class SubAgentRunnerTest {
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
         when(router.extract(anyString(), any())).thenReturn(List.of());   // 抽取失败/空
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
@@ -399,7 +407,7 @@ class SubAgentRunnerTest {
 
         assertEquals("DONE", note.status(), "抽取失败不得影响研究状态");
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertFalse(user.getValue().contains("正文片段:"), "无正文时应降级回摘要(不注入正文行)");
         assertTrue(user.getValue().contains("摘要"), "摘要仍应在 ctx");
     }
@@ -421,8 +429,8 @@ class SubAgentRunnerTest {
                 WebProvider.TAVILY,
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
@@ -431,7 +439,7 @@ class SubAgentRunnerTest {
 
         // 汇总上下文必须注入内容描述(写作意图)
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertTrue(user.getValue().contains("写作意图/内容描述:围绕第2000座闪充站落成写一篇"),
                 "内容描述应进 LLM 汇总上下文");
 
@@ -448,15 +456,15 @@ class SubAgentRunnerTest {
     void 内容描述为空_ctx不出现写作意图行() throws Exception {
         KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
 
         r.research("问题", List.of(), 0, List.of(), "主题", null, "  ",
                 WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
 
         org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(ai).chatJson(anyString(), user.capture(), anyInt());
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
         assertFalse(user.getValue().contains("写作意图/内容描述:"), "空内容描述不得出现该行");
     }
 
@@ -510,8 +518,8 @@ class SubAgentRunnerTest {
         WebSearchRouter router = mock(WebSearchRouter.class);
         when(router.search(anyString(), anyInt(), any())).thenReturn(oneHitOutcome());
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
@@ -527,8 +535,8 @@ class SubAgentRunnerTest {
         when(kb.search(anyString(), anyInt(), any())).thenReturn(List.of(modelInfoHit()));
         WebSearchRouter router = mock(WebSearchRouter.class);
         AiClient ai = mock(AiClient.class);
-        when(ai.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
 
@@ -550,8 +558,8 @@ class SubAgentRunnerTest {
                 List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 2, 120L, null, true)));
         when(router.search(anyString(), anyInt(), any())).thenReturn(outcome);
         AiClient ai = mock(AiClient.class);
-        // 两次 chatJson 都返回非法 JSON → 走 FALLBACK 原始条目降级
-        when(ai.chatJson(anyString(), anyString(), anyInt())).thenReturn(new AiClient.ChatResult("不是JSON", "m", 1));
+        // 两次 structured 均失败(非法 JSON 在结构化反序列化时抛错) → 走 FALLBACK 原始条目降级
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class))).thenThrow(new AiException("子代理汇总输出非法 JSON", null));
         SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
         WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.parse("TAVILY,SEARXNG"), true, 7L, 5);
 

@@ -20,7 +20,9 @@ class PromptTemplateLoaderTest {
         // 首行 # version: vN 不应出现在渲染结果
         assertFalse(t.startsWith("# version:"), "版本注释必须被剥离");
         assertTrue(t.contains("你是新媒体内容策划专家"), "模板正文应加载");
-        assertTrue(t.contains("titleCandidates"), "JSON 字段应保留(字面花括号不受占位符影响)");
+        // C2:schema 单来源化后模板只留 {{schema}} 占位,不再内联 JSON 字段字面量
+        assertTrue(t.contains("{{schema}}"), "schema 占位符应保留");
+        assertFalse(t.contains("titleCandidates"), "schema 字面量应移出模板(单一来源 = DTO)");
     }
 
     @Test
@@ -53,6 +55,7 @@ class PromptTemplateLoaderTest {
     void 变量值null_视为空串() {
         java.util.Map<String, Object> params = new java.util.HashMap<>();
         params.put("noSourcesRule", null);   // 显式 null 视为空串
+        params.put("schema", "{}");          // C2:{{schema}} 由类型派生后注入
         String rendered = PromptTemplateLoader.render("deep/subagent-system.st", params);
         assertFalse(rendered.contains("{{noSourcesRule}}"), "null 变量应替换为空串");
     }
@@ -60,7 +63,8 @@ class PromptTemplateLoaderTest {
     @Test
     void 双关降级块_作为变量注入() {
         String noSrc = PromptTemplateLoader.render("deep/subagent-nosources.st", Map.of());
-        String sys = PromptTemplateLoader.render("deep/subagent-system.st", Map.of("noSourcesRule", noSrc));
+        String sys = PromptTemplateLoader.render("deep/subagent-system.st",
+                Map.of("noSourcesRule", noSrc, "schema", "{}"));
         assertTrue(sys.contains("本次未启用任何外部资料检索"), "双关时降级说明应注入");
         assertTrue(sys.contains("你是研究子代理"), "主体指令仍在");
     }

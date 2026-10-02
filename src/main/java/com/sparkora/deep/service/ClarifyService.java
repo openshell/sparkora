@@ -163,10 +163,12 @@ public class ClarifyService {
             log.warn("车库名录获取失败,反问退化为不注车型名录: {}", e.getMessage());
             catalog = "";
         }
-        // C1:固定指令外置模板 prompts/clarify/plan-system.st;动态车库名录作为 {{catalog}} 变量传入
+        // C1:固定指令外置模板 prompts/clarify/plan-system.st;动态车库名录作为 {{catalog}} 变量传入。
+        // C2:{{schema}} 由 ClarifyPlanDto 类型派生(单一来源),prompt 不再内联 JSON schema 字面量。
         String system = com.sparkora.ai.PromptTemplateLoader.render("clarify/plan-system.st",
                 java.util.Map.of("catalog",
-                        catalog.isBlank() ? "(车库暂无车型数据,允许自由提问,但不得编造具体车型名)" : catalog));
+                        catalog.isBlank() ? "(车库暂无车型数据,允许自由提问,但不得编造具体车型名)" : catalog,
+                        "schema", AiClient.jsonSchema(com.sparkora.ai.ClarifyPlanDto.class)));
         // 10-02 R4:澄清 prompt 注入创建输入(主题 + 内容描述 + 目标读者 + 目标字数,非空才加)
         StringBuilder user = new StringBuilder("主题:").append(topic).append('\n');
         if (contentDescription != null && !contentDescription.isBlank()) {
@@ -178,28 +180,35 @@ public class ClarifyService {
         // 目标字数缺省回退 1500(口径对齐 BriefService/DeepWriterService/VersionService)
         user.append("目标字数:").append(p.getWordCountTarget() == null ? 1500 : p.getWordCountTarget()).append('\n');
         // 10-02 R1:reasoning 模型推理 token 也计入 max_tokens,4096 会被推理吃光导致 content 为空/截断。
-        // 首次 8192;任何失败(截断 finish_reason=length / 空内容 / 非法 JSON)提额 16384 重试一次,
+        // 首次 8192;任何失败(截断 finish_reason=length / 空内容 / 反序列化失败)提额 16384 重试一次,
         // 仅两次均失败才抛(范式抄 BriefService.generateFromFactSheet)。
+        // C2:schema 由 ClarifyPlanDto 类型单一派生,structured 内 validateSchema 自纠错字段/类型错误。
         AiClient.ChatResult cr;
-        JsonNode node;
+        com.sparkora.ai.ClarifyPlanDto dto;
         try {
-            cr = aiClient.chatJson(system, user.toString(), 8192);
-            node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
+            AiClient.TypedResult<com.sparkora.ai.ClarifyPlanDto> tr =
+                    aiClient.structured(system, user.toString(), 8192, com.sparkora.ai.ClarifyPlanDto.class);
+            dto = tr.entity();
+            cr = tr.chat();
         } catch (Exception first) {
             log.warn("研究计划首次生成失败,提额重试(16384): {}", first.getMessage());
-            cr = aiClient.chatJson(system,
+            AiClient.TypedResult<com.sparkora.ai.ClarifyPlanDto> tr = aiClient.structured(system,
                     user + "\n注意:上次输出失败(可能被 max_tokens 截断或不是合法 JSON),请只输出一个完整、合法的 JSON 对象,确保字段齐全。",
-                    16384);
-            node = json.readTree(AiClient.sanitizeAiJson(cr.content()));
+                    16384, com.sparkora.ai.ClarifyPlanDto.class);
+            dto = tr.entity();
+            cr = tr.chat();
         }
+        // DTO → 旧 plan Map 结构(下游 DeepResearchService 消费 JSON,字段语义不变)。
+        // 后处理 normalizeQuestions/ensureBackgroundQuestion 依赖 JsonNode,故此处重建等价 JSON 树。
         Map<String, Object> plan = new LinkedHashMap<>();
-        plan.put("keyQuestions", toArray(node.path("keyQuestions")));
-        plan.put("dataNeeds", toArray(node.path("dataNeeds")));
-        plan.put("hypotheses", toArray(node.path("hypotheses")));
-        plan.put("toolHints", node.path("toolHints"));
+        // 必须可变:ensureBackgroundQuestion 会向 keyQuestions 追加兜底题(List.of() 不可变会抛)
+        plan.put("keyQuestions", dto.getKeyQuestions() == null ? new ArrayList<>() : new ArrayList<>(dto.getKeyQuestions()));
+        plan.put("dataNeeds", dto.getDataNeeds() == null ? List.of() : dto.getDataNeeds());
+        plan.put("hypotheses", dto.getHypotheses() == null ? List.of() : dto.getHypotheses());
+        plan.put("toolHints", json.valueToTree(dto.getToolHints() == null ? List.of() : dto.getToolHints()));
         // R2(09-26)确定性兜底:信号词命中且无背景型问题时自动补一条(LLM 判断为主,此处只兜底)
         ensureBackgroundQuestion(plan, topic, contentDescription);
-        String questions = node.path("questions").toString();
+        String questions = json.valueToTree(dto.getQuestions() == null ? List.of() : dto.getQuestions()).toString();
         String normalized = normalizeQuestions(questions);
         return new PlanResult(json.writeValueAsString(plan), normalized, cr.model(), cr.totalTokens(), cr.reasoning());
     }
@@ -337,9 +346,4 @@ public class ClarifyService {
         }
     }
 
-    private List<String> toArray(JsonNode arr) {
-        List<String> out = new ArrayList<>();
-        if (arr.isArray()) for (JsonNode n : arr) out.add(n.asText());
-        return out;
-    }
 }

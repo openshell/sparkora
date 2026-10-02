@@ -5,6 +5,7 @@ import com.sparkora.config.AiProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.StructuredOutputValidationAdvisor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -12,6 +13,7 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.ObjectProvider;
@@ -157,6 +159,77 @@ public class AiClient {
     public ChatResult chat(String systemPrompt, String userPrompt, int maxTokens) {
         return call(TaskType.ARTICLE_WRITE, false,
                 List.of(new SystemMessage(systemPrompt), new UserMessage(userPrompt)), maxTokens);
+    }
+
+    /**
+     * 结构化调用结果（C2）：强类型 entity + 原 {@link ChatResult}（model/totalTokens/finishReason/reasoning 透传）。
+     *
+     * <p>保留两分量而非替换 {@link ChatResult}：既有调用方继续用 chat/ChatResult，结构化站点取 entity 同时
+     * 仍能落 aiModel/tokenUsage/reasoning（先例：{@code Citation.docId} 的 record 加字段范式）。
+     */
+    public record TypedResult<T>(T entity, ChatResult chat) {}
+
+    /**
+     * C2 结构化调用：schema 由 DTO 类型单一派生 + 响应侧 schema 校验自纠错（{@link StructuredOutputValidationAdvisor}）。
+     *
+     * <p><b>与 {@link #chatJson} 的差异</b>：chatJson 只强制 {@code response_format=json_object}，字段/类型错误
+     * 只能靠上层「提额重试」盲试；本方法用 DTO 类型生成 JSON Schema，校验失败时把**具体校验错误**回填 user prompt
+     * 再试（默认 {@code maxRepeatAttempts=1}，即最多 2 次净调用）。axonhub 忽略 provider 原生 {@code json_schema}
+     * strict（C0 探针），故正确性只依赖此响应侧校验；{@code useProviderStructuredOutput()} 不启用（会无效）。
+     *
+     * <p><b>截断与 schema 违规分离（语义上）</b>：{@code finish_reason=length} 最终由 {@link #parseChat} 抛截断
+     * {@link AiException} → 交服务层提额重试；字段/类型/多余字段由 advisor 在校验内用**同额度**自纠错。
+     *
+     * <p><b>截断的实际代价（已知）</b>：advisor 在 {@code parseChat} **之前**执行，半截 JSON 在它眼里同样
+     * 是「schema 违规」，故会先补发一次**同额度**请求（注定仍截断），{@code parseChat} 才抛截断异常。
+     * 因此截断路径本方法净调用 = 1 + ({@code maxRepeatAttempts=1}) = **2 次同额度**，叠加服务层 1 次提额
+     * 重试，最坏 ≤4 次；正常与纯 schema 违规路径分别 1 / 2 次。此处保留 1 次自纠错（换取 schema 违规
+     * 真正被修复的收益），不因截断场景的这次空烧降到 0——截断是额度问题，advisor 无法也不应修复它。
+     *
+     * <p>schema 文本（{@link #jsonSchema(Class)}）由调用方注入 prompt 的 {@code {{schema}}} 占位；prompt 中不再
+     * 内联 schema 字面量（单一来源 = DTO 类型）。
+     *
+     * @param system    系统指令（已含 schema 文本）
+     * @param user      用户输入
+     * @param maxTokens 额度（reasoning 模型需覆盖推理 + 正文）
+     * @param type      DTO 类型（schema 来源 + 反序列化目标）
+     * @return entity + ChatResult
+     */
+    public <T> TypedResult<T> structured(String system, String user, int maxTokens, Class<T> type) {
+        try {
+            OpenAiChatOptions.Builder opts = optionsFactory.forTask(TaskType.STRUCTURED_EXTRACT);
+            opts.model(modelOverride != null ? modelOverride : resolveTextModel());
+            opts.maxTokens(maxTokens);
+            TaskChatOptionsFactory.jsonFormat(opts);
+            // 响应侧 schema 校验 + 具体错误回填自纠错；maxRepeatAttempts=1 收敛重试（见方法注释）
+            StructuredOutputValidationAdvisor advisor = StructuredOutputValidationAdvisor.builder()
+                    .outputType(type)
+                    .maxRepeatAttempts(1)
+                    .build();
+            ChatResponse resp = chatClient().prompt()
+                    .system(system)
+                    .user(user)
+                    .options(opts)
+                    .advisors(advisor)
+                    .call()
+                    .chatResponse();
+            // 先复用 parseChat：空内容/截断（length）走既有 AiException 语义，与 schema 违规解耦
+            ChatResult cr = parseChat(resp, true);
+            T entity = new BeanOutputConverter<>(type).convert(sanitizeAiJson(cr.content()));
+            return new TypedResult<>(entity, cr);
+        } catch (AiException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AiException("AI 结构化调用失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 由 DTO 类型派生 JSON Schema 文本（供 prompt {@code {{schema}}} 占位注入）。
+     * 与 {@link #structured} 校验所用 schema 同源（均为 {@code BeanOutputConverter}）。
+     */
+    public static <T> String jsonSchema(Class<T> type) {
+        return new BeanOutputConverter<>(type).getJsonSchema();
     }
 
     /**

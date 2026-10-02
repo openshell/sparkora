@@ -3,6 +3,7 @@ package com.sparkora.deep.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.AiClient;
 import com.sparkora.ai.AiException;
+import com.sparkora.ai.ClarifyPlanDto;
 import com.sparkora.car.service.CarModelService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.domain.entity.ArticleProjectEntity;
@@ -77,18 +78,24 @@ class ClarifyServicePlanTest {
     private static final String PLAN_JSON = "{\"keyQuestions\":[\"销量如何\"],\"dataNeeds\":[],"
             + "\"hypotheses\":[],\"toolHints\":[],\"questions\":[{\"q\":\"读者是谁\",\"type\":\"input\"}]}";
 
+    /** C2:structured 返回 entity + ChatResult;按 PLAN_JSON 构造 ClarifyPlanDto。 */
+    private static AiClient.TypedResult<ClarifyPlanDto> typedPlan() throws Exception {
+        ClarifyPlanDto dto = new ObjectMapper().readValue(PLAN_JSON, ClarifyPlanDto.class);
+        return new AiClient.TypedResult<>(dto, new AiClient.ChatResult(PLAN_JSON, "m", 10, "stop", "思考过程"));
+    }
+
     @Test
     void 澄清prompt注入内容描述_目标读者_目标字数() throws Exception {
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(project());
         when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
-        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult(PLAN_JSON, "m", 10, "stop", "思考过程"));
+        when(aiClient.structured(anyString(), anyString(), anyInt(), eq(ClarifyPlanDto.class)))
+                .thenReturn(typedPlan());
 
         service.runAsync(BRIEF_ID, PROJECT_ID);
 
         ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> sys = ArgumentCaptor.forClass(String.class);
-        verify(aiClient).chatJson(sys.capture(), user.capture(), eq(8192));
+        verify(aiClient).structured(sys.capture(), user.capture(), eq(8192), eq(ClarifyPlanDto.class));
         assertTrue(user.getValue().contains("主题:比亚迪9月销量发布"), "含主题");
         assertTrue(user.getValue().contains("内容描述:围绕第2000座闪充站落成写一篇"), "含内容描述");
         assertTrue(user.getValue().contains("目标读者:汽车行业分析师"), "含目标读者");
@@ -99,14 +106,38 @@ class ClarifyServicePlanTest {
     void 首次截断_提额16384重试成功() throws Exception {
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(project());
         when(briefMapper.selectById(BRIEF_ID)).thenReturn(brief());
-        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
+        when(aiClient.structured(anyString(), anyString(), anyInt(), eq(ClarifyPlanDto.class)))
                 .thenThrow(new AiException("AI 输出被 max_tokens 截断", null))
-                .thenReturn(new AiClient.ChatResult(PLAN_JSON, "m", 10, "stop", "思考过程"));
+                .thenReturn(typedPlan());
 
         service.runAsync(BRIEF_ID, PROJECT_ID);
 
-        verify(aiClient).chatJson(anyString(), anyString(), eq(16384));
+        verify(aiClient).structured(anyString(), anyString(), eq(16384), eq(ClarifyPlanDto.class));
         verify(statusService).writeBriefError(eq(PROJECT_ID), eq(null));   // 成功清空错误
+    }
+
+    /** C2:DTO→plan Map 迁移后,R2 背景题兜底(信号词命中且无背景题)仍生效且不抛(可变列表)。 */
+    @Test
+    void DTO迁移后_背景题兜底仍生效() throws Exception {
+        ArticleBriefEntity b = brief();
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project());
+        when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
+        // 计划无背景型 keyQuestions;主题「发布」命中 BACKGROUND_SIGNALS → 应追加兜底背景题
+        String noBg = "{\"keyQuestions\":[\"销量多少\"],\"dataNeeds\":[],\"hypotheses\":[],"
+                + "\"toolHints\":[{\"question\":\"销量多少\",\"tools\":[\"KB\"]}],"
+                + "\"questions\":[{\"q\":\"读者是谁\",\"type\":\"input\"}]}";
+        when(aiClient.structured(anyString(), anyString(), anyInt(), eq(ClarifyPlanDto.class)))
+                .thenReturn(new AiClient.TypedResult<>(
+                        new ObjectMapper().readValue(noBg, ClarifyPlanDto.class),
+                        new AiClient.ChatResult(noBg, "m", 10, "stop", null)));
+
+        service.runAsync(BRIEF_ID, PROJECT_ID);
+
+        ArgumentCaptor<ArticleBriefEntity> saved = ArgumentCaptor.forClass(ArticleBriefEntity.class);
+        verify(briefMapper).updateById(saved.capture());
+        String plan = saved.getValue().getResearchPlan();
+        assertTrue(plan.contains("行业背景"), "命中信号词应追加背景型兜底题: " + plan);
+        assertEquals("READY", saved.getValue().getPlanStatus());
     }
 
     @Test
@@ -114,8 +145,10 @@ class ClarifyServicePlanTest {
         ArticleBriefEntity b = brief();
         when(projectMapper.selectById(PROJECT_ID)).thenReturn(project());
         when(briefMapper.selectById(BRIEF_ID)).thenReturn(b);
-        when(aiClient.chatJson(anyString(), anyString(), anyInt()))
-                .thenReturn(new AiClient.ChatResult(PLAN_JSON, "m", 10, "stop", "推理:先分析销量再结论"));
+        when(aiClient.structured(anyString(), anyString(), anyInt(), eq(ClarifyPlanDto.class)))
+                .thenReturn(new AiClient.TypedResult<>(
+                        new ObjectMapper().readValue(PLAN_JSON, ClarifyPlanDto.class),
+                        new AiClient.ChatResult(PLAN_JSON, "m", 10, "stop", "推理:先分析销量再结论")));
 
         service.runAsync(BRIEF_ID, PROJECT_ID);
 
