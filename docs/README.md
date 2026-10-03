@@ -11,7 +11,7 @@
 - **后端** `src/` — Spring Boot 3.3.4（Java 21）+ MyBatis-Plus 3.5.7 + Spring Security（JWT，jjwt 0.12.6）+ PostgreSQL。入口 `src/main/java/com/sparkora/SparkoraApplication.java`，包结构 `com.sparkora`，Maven 构建（`pom.xml`）。
 - **前端** `frontend/` — Vue 3 + Vite 5 + Element Plus 2.8 + Pinia + vue-router，`unplugin-auto-import`/`unplugin-vue-components` 自动引入 Element Plus 组件。PC-only 桌面工作台（`AppShell` 左 rail 导航 + 上下文条，最小宽度 1280，低于则 `DesktopGuard` 遮罩提示），不引 Vant 等额外移动端框架。
 - **流程主线（四步）**：简报 → 版本 → 预览（含配图）→ 发布。2026-08-28 取消「校验」步；2026-09-03（S6）配图并入预览、移除 `IMAGES_READY`。
-- **生成主线（唯一）**：快速模式 FAST 已下线（接口保留但恒 410），所有简报生成/正文生成必走**深度模式**（六阶段）。权威契约见 [brief-generation.md](spec/brief-generation.md)。
+- **生成主线（唯一）**：快速模式 FAST 已下线（接口保留但恒 410），所有简报生成/正文生成必走**深度模式认知链路**（2026-10-03 重构：意图澄清多轮对话 → 纯事实研究规划 → 并行研究 → 事实手册 → 写作蓝图人工评审 → 按证据映射写作）。权威契约见 [brief-generation.md](spec/brief-generation.md)。
 
 ```mermaid
 graph LR
@@ -49,7 +49,7 @@ graph LR
 
 ```
 创作项目(ArticleProject)
-  └─ 简报(Brief)                    ← 深度链路六阶段产出（研究计划→澄清→并行研究→事实手册→简报）
+  └─ 简报(Brief)                    ← 深度认知链路产出（意图澄清 TaskBrief→研究规划→并行研究→事实手册→写作蓝图）
        └─ 多版本正文(ArticleVersion) ← 每选一个风格生成一版（label/styleTag/wordCount/ragStatus/factRisks）
             ├─ 配图(ImageAsset)       ← 版本级封面 cover_image_id + 正文插图关联表 sparkora_article_version_image；图库 + AI 生图 + BYD 同步
             ├─ 预览(Preview)          ← wenyan CLI 同核渲染 → HTML（degraded 降级链）
@@ -82,7 +82,7 @@ graph LR
 | 系统约定（`R<T>`/错误矩阵/状态机/角色） | [spec/overview.md](spec/overview.md) | `com.sparkora.common.R`、`web.controller.ApiExceptionHandler` |
 | 登录与会话 | [spec/overview.md](spec/overview.md) | `com.sparkora.security.*`（`SecurityConfig`/`JwtAuthenticationFilter`/`JwtUtil`）、`web.controller.AuthController` / `views/LoginView.vue`、`store/user.js` |
 | 项目生命周期（工作台/新建/详情） | [spec/project-lifecycle.md](spec/project-lifecycle.md) | `web.controller.ArticleProjectController`（CRUD；简报/版本/配图/预览/发布子域已拆至 `ProjectBriefController`/`ProjectVersionController`/`ProjectImageController`/`ProjectPreviewController`/`ProjectPublishController`）、`domain.entity.ArticleProjectEntity` / `views/ProjectList.vue`、`ProjectEdit.vue`、`project/ProjectLayout.vue` |
-| 简报生成（深度模式·核心） | [spec/brief-generation.md](spec/brief-generation.md) | `deep.service.*`（`ClarifyService`/`DeepResearchService`/`FactSheetService`/`SubAgentRunner`）、`deep.tool.*`、`web.controller.DeepController`、`service.BriefService` / `project/StepBrief.vue`、`project/deep/*` |
+| 简报生成（深度模式·认知层·核心） | [spec/brief-generation.md](spec/brief-generation.md) | `deep.service.*`（`ClarifyConversationService`/`ResearchPlannerService`/`BlueprintService`/`DeepResearchService`/`FactSheetService`/`SubAgentRunner`/`DeepWriterService`）、`deep.tool.*`、`deep.search.*`、`web.controller.DeepController`、`service.BriefService` / `project/StepBrief.vue`、`project/deep/*` |
 | 版本生成 | [spec/version-generation.md](spec/version-generation.md) | `service.VersionService`、`deep.service.DeepWriterService` / `project/StepVersions.vue` |
 | 风格库 | [spec/style-library.md](spec/style-library.md) | `web.controller.StyleController`、`service.StyleService`、`domain.entity.StyleProfileEntity` / `views/StyleLibrary.vue` |
 | 配图 | [spec/image.md](spec/image.md) | `web.controller.ImageController`、`service.ImageService`/`ImageTagService`/`ImageEmbeddingService`/`IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`storage.ImageStorage`/`QiniuService` / `views/ImageLibrary.vue`、`components/MarkdownEditor.vue` |
@@ -146,9 +146,9 @@ graph TD
   - 后端：`generate/brief` 仅在 DRAFT/READY、`generate/versions` 仅在 READY/VERSIONS_READY 放行（条件更新 WHERE 白名单；「生成中且陈旧超 10 分钟」分支自愈但同样限定生成中状态）；违反返回 `R.fail(409, "…下游步骤已触发，不支持回退重做")`。
   - 前端：StepBrief「重新生成」仅 READY 可见；StepVersions「再生成其他风格」仅 VERSIONS_READY 可见。
 - **并发防护（S2a 补）**：项目处于 GENERATING_BRIEF/GENERATING_VERSIONS 时再次触发返回 `R.fail(409, "该项目正在生成中…")`，不重复调 AI；生成中状态陈旧（`updated_at` 超 10 分钟，如 JVM 中途死亡）时原子条件更新放行重新生成以自愈。brief 未就绪时触发版本生成返回 `R.fail(400)`。
-- **状态写权收敛（09-27-state-machine-service）**：项目 status / last_brief_error / last_version_error / last_publish_error 的写入全部收敛到 `com.sparkora.service.ProjectStatusService`（抢占/成功推进/失败回退/发布终态/错误列写入清空），BriefService/ImitationService/VersionService/DeepController/PublishService/ClarifyService 均为纯委托。唯二例外：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）、`V1__baseline.sql` 启动回填（存量修复，已固化为 Flyway 基线）。各转换的 WHERE 白名单/SET 列语义不变（单测 `ProjectStatusServiceTest` 逐项断言）。
-- **生成链路异步化（09-27-gen-async）**：三条项目状态驱动的生成链路（`imitation/analyze`、`generate/versions` 仿写、`deep/generate` 深度写作）统一为「同步毫秒级：校验 + `ProjectStatusService.claim*` 置生成中 + `self.run*`（`@Async`，自注入代理触发）+ 返回占位标记」+「后台 `run*`：重取实体 → AI 调用 → `advance*`/`fail*`（异步体顶层 catch 必调 fail 回写，不外抛）」。响应保持 **HTTP 200 + `R.ok(占位标记)`**（不引入 HTTP 202，与 `/deep/clarify` 先例一致）；前端不 await 结果，靠 `store.startPolling`（项目状态翻转）刷新。`/deep/generate` 由「单风格单版、前端串行多次」改为「`styleIds[]` 一次批量」并补 claim（源态 READY/DRAFT/VERSIONS_READY，专用 `claimDeepVersionsGenerating`，与 `claimVersionsGenerating` 源态白名单不同不合并）；`advanceVersionsReadyFromReady` 已随改造移除。`publish`/`qa ask` 载体不同，异步化另立子任务。
-- 深度模式的 `CLARIFYING`/`RESEARCHING`/`PLANNING` 等是 **brief 侧展示态**（`/deep/status`），不改项目状态机。
+- **状态写权收敛（09-27-state-machine-service）**：项目 status / last_brief_error / last_version_error / last_publish_error 的写入全部收敛到 `com.sparkora.service.ProjectStatusService`（抢占/成功推进/失败回退/发布终态/错误列写入清空），BriefService/ImitationService/VersionService/DeepController/PublishService 均为纯委托；认知层 `ClarifyConversationService`/`ResearchPlannerService`/`BlueprintService` 只按显式列写 brief 产物，**完全不触碰项目状态机**。唯二例外：`ArticleProjectController` 创建时 INSERT 初始 DRAFT（非状态机转换）、`V1__baseline.sql` 启动回填（存量修复，已固化为 Flyway 基线）。各转换的 WHERE 白名单/SET 列语义不变（单测 `ProjectStatusServiceTest` 逐项断言）。
+- **生成链路异步化（09-27-gen-async）**：三条项目状态驱动的生成链路（`imitation/analyze`、`generate/versions` 仿写、`deep/generate` 深度写作）统一为「同步毫秒级：校验 + `ProjectStatusService.claim*` 置生成中 + `self.run*`（`@Async`，自注入代理触发）+ 返回占位标记」+「后台 `run*`：重取实体 → AI 调用 → `advance*`/`fail*`（异步体顶层 catch 必调 fail 回写，不外抛）」。响应保持 **HTTP 200 + `R.ok(占位标记)`**（不引入 HTTP 202，与 `/deep/clarify/start` 先例一致）；前端不 await 结果，靠 `store.startPolling`（项目状态翻转）刷新。`/deep/generate` 由「单风格单版、前端串行多次」改为「`styleIds[]` 一次批量」并补 claim（源态 READY/DRAFT/VERSIONS_READY，专用 `claimDeepVersionsGenerating`，与 `claimVersionsGenerating` 源态白名单不同不合并）；`advanceVersionsReadyFromReady` 已随改造移除。`publish`/`qa ask` 载体不同，异步化另立子任务。
+- 深度模式的 `PLANNING`/`ASKING`/`CONVERGED`/`BLUEPRINT_REVIEW`/`RESEARCHING`/`CLARIFYING`/`CLARIFIED` 等是 **brief 侧展示态**（`/deep/status`），不改项目状态机；蓝图评审门以 `blueprint_status` 表达（不新增项目状态位）。
 
 ### 4.3 权限角色
 
