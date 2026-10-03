@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AI 文本合成(单轮/多轮)、结构化输出契约(schema 单一来源/自纠错)、ChatMemory 多轮装配、ToolCallback 能力层——澄清多轮对话与蓝图结构化产物直接落在这些契约上"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "幂等迁移/原子抢占/白名单约定——新增 V10 认知层列、并发部分唯一索引、状态机原子写必须遵循"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义/错误映射/状态机回退惯例——澄清收敛失败、蓝图生成失败回退路径须对齐"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流（TaskBrief/Blueprint 跨 API/Service/DB/前端）变更前必读，防止契约漂移"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用既有 AiClient.structured、ProjectStatusService、LayoutRules 等，避免重复造机制"}
+{"file": "docs/spec/brief-generation.md", "reason": "当前权威简报/深度链路契约——本轮重构需重写其认知层章节，改动前以其为基线"}
+{"file": "docs/article-generation-flow.md", "reason": "端到端流程图与状态机现状——重构后须同步更新，理解既有异步/降级/重试骨架"}

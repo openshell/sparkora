@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/不可逆副作用隔离/多步写入失败顺序——核对认知层重构的写入与回滚"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对 TaskBrief/WritingBlueprint 从 DB 到 API 到前端渲染的全链路字段一致性"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对多轮对话装配、结构化输出与降级/重试是否遵循既有 AI 契约"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对对话式澄清/蓝图评审 UI 是否遵循页面骨架/API 层/状态机渲染等前端约定"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对实现与最新权威契约一致（重构文档已同步）"}

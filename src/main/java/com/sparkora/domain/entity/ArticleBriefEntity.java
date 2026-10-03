@@ -41,6 +41,10 @@ public class ArticleBriefEntity {
     private String factSheet;          // JSON {entries[{key,value,source,confidence}],gaps[],warnings[]}
     private String planStatus;         // 09-11:研究计划异步生成态(DEEP: PLANNING/READY;其余 null)
     private String researchReasoning;  // 10-02:澄清阶段 AI 思考过程(reasoning 模型透出;经 /deep/status 的 planReasoning 展示,非推理模型为 null)
+    // ===== C1 意图澄清对话(10-03-gen-cognitive-redesign;仅 DEEP 链路使用) =====
+    private String clarifySession;    // JSON {status,slots[],turns[],currentQuestion,converged}
+    private String taskBrief;          // JSON 结构化意图契约 {purpose,audience,...,slotMeta[](每槽位 source/confidence)}
+    private String clarifyStatus;      // ASKING/CONVERGED/ABORTED(部分唯一索引 uq_brief_clarify_asking 约束 ASKING)
     private String styleRecommendations; // 文章仿写:风格推荐 JSON [{styleId,name,reason,matchScore}](仅 IMITATION brief 使用)
     private LocalDateTime createdAt;
 }

@@ -1,0 +1,33 @@
+{
+  "id": "gen-cognitive-redesign",
+  "name": "gen-cognitive-redesign",
+  "title": "文章生成认知层重构:澄清意图对话 + 简报写作蓝图",
+  "description": "彻底重构澄清与简报两阶段:澄清拆为正交的意图澄清(多轮自适应/缺口驱动/信息充分性收敛)+研究规划;简报定位改为写作蓝图(thesis/论证结构/evidence map/质量信号),产结构化契约并驱动写作阶段按需取证据,替代整块手册注入。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-10-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-03-clarify-intent-dialogue",
+    "10-03-research-planning-split",
+    "10-03-brief-writing-blueprint",
+    "10-03-writer-evidence-projection",
+    "10-03-cognitive-frontend",
+    "10-03-cognitive-contract-sync"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

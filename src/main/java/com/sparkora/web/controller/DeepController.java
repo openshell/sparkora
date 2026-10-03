@@ -38,6 +38,8 @@ public class DeepController {
     private final com.sparkora.config.DeepProperties deepProps;
     /** 系统检索设置(09-15:toolHealth 反映真实 KB/WEB 运行时门控) */
     private final com.sparkora.service.SettingService settingService;
+    /** C1 意图澄清对话(多轮;与一次性 /deep/clarify 并存,后者由 C2 收敛) */
+    private final com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
 
     public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
@@ -45,7 +47,8 @@ public class DeepController {
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
                           com.sparkora.config.DeepProperties deepProps,
-                          com.sparkora.service.SettingService settingService) {
+                          com.sparkora.service.SettingService settingService,
+                          com.sparkora.deep.service.ClarifyConversationService clarifyConversationService) {
         this.clarifyService = clarifyService;
         this.researchService = researchService;
         this.writerService = writerService;
@@ -55,6 +58,7 @@ public class DeepController {
         this.tavilyTool = tavilyTool;
         this.deepProps = deepProps;
         this.settingService = settingService;
+        this.clarifyConversationService = clarifyConversationService;
     }
 
     /**
@@ -98,6 +102,77 @@ public class DeepController {
             return R.ok(Map.of("briefId", briefId, "locked", locked));
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
+        }
+    }
+
+    // ==================== C1 意图澄清对话(多轮;10-03-gen-cognitive-redesign) ====================
+
+    /** C1 启动多轮澄清会话:同步生成首题并落 ASKING 占位。body 可空。 */
+    @PostMapping("/clarify/start")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> clarifyStart(@PathVariable Long projectId,
+                                               @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            return R.ok(clarifyConversationService.start(projectId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "澄清会话启动失败: " + e.getMessage());
+        }
+    }
+
+    /** C1 回答当前问题并推进一轮。body: {briefId, questionId, answer}。 */
+    @PostMapping("/clarify/answer")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> clarifyAnswerTurn(@PathVariable Long projectId,
+                                                    @RequestBody Map<String, Object> body) {
+        try {
+            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
+            String questionId = body.get("questionId") == null ? null : String.valueOf(body.get("questionId"));
+            String answer = body.get("answer") == null ? null : String.valueOf(body.get("answer"));
+            return R.ok(clarifyConversationService.answer(projectId, briefId, questionId, answer));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "澄清会话推进失败: " + e.getMessage());
+        }
+    }
+
+    /** C1 强制收敛并产出 TaskBrief。body: {briefId}。 */
+    @PostMapping("/clarify/converge")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> clarifyConverge(@PathVariable Long projectId,
+                                                  @RequestBody Map<String, Object> body) {
+        try {
+            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
+            return R.ok(clarifyConversationService.converge(projectId, briefId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "澄清会话收敛失败: " + e.getMessage());
+        }
+    }
+
+    /** C1 中止会话。body: {briefId}。 */
+    @PostMapping("/clarify/abort")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> clarifyAbort(@PathVariable Long projectId,
+                                               @RequestBody Map<String, Object> body) {
+        try {
+            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
+            return R.ok(clarifyConversationService.abort(projectId, briefId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "澄清会话中止失败: " + e.getMessage());
         }
     }
 
@@ -216,6 +291,10 @@ public class DeepController {
             if (b.getClarifyAnswers() != null) out.put("answers", b.getClarifyAnswers());
             if (b.getResearchNotes() != null) out.put("agents", b.getResearchNotes());
             if (b.getFactSheet() != null) out.put("factSheet", b.getFactSheet());
+            // C1:意图澄清会话增量透出(存在才出现,旧契约零回归)
+            if (b.getClarifyStatus() != null) out.put("clarifyStatus", b.getClarifyStatus());
+            if (b.getClarifySession() != null) out.put("clarifySession", b.getClarifySession());
+            if (b.getTaskBrief() != null) out.put("taskBrief", b.getTaskBrief());
             return R.ok(out);
         } catch (Exception e) {
             return R.fail(500, e.getMessage());

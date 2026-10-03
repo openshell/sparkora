@@ -51,6 +51,7 @@ class DeepControllerContractTest {
     @Mock SearxngSearchTool searxngTool;
     @Mock TavilySearchTool tavilyTool;
     @Mock SettingService settingService;
+    @Mock com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
 
     private MockMvc mvc;
     private DeepProperties props;
@@ -60,7 +61,7 @@ class DeepControllerContractTest {
         props = new DeepProperties();
         DeepController controller = new DeepController(clarifyService, researchService, writerService,
                 briefMapper, briefService, searxngTool, tavilyTool,
-                props, settingService);
+                props, settingService, clarifyConversationService);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
@@ -237,5 +238,81 @@ class DeepControllerContractTest {
                         .content("{\"briefId\":9,\"styleIds\":[1]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(500));
+    }
+
+    // ==================== C1 意图澄清对话接口 ====================
+
+    @Test
+    void clarifyStart_成功_返回首题() throws Exception {
+        when(clarifyConversationService.start(3L))
+                .thenReturn(Map.of("briefId", 9L, "stage", "ASKING", "question", Map.of("id", "purpose")));
+
+        mvc.perform(post("/api/projects/3/deep/clarify/start").contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.briefId").value(9))
+                .andExpect(jsonPath("$.data.stage").value("ASKING"));
+    }
+
+    @Test
+    void clarifyStart_并发冲突_409() throws Exception {
+        when(clarifyConversationService.start(3L)).thenThrow(new IllegalStateException("已有进行中的意图澄清会话"));
+
+        mvc.perform(post("/api/projects/3/deep/clarify/start").contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(409));
+    }
+
+    @Test
+    void clarifyAnswer_收敛_返回TaskBrief() throws Exception {
+        when(clarifyConversationService.answer(eq(3L), eq(9L), eq("tone"), eq("专业理性")))
+                .thenReturn(Map.of("briefId", 9L, "converged", true, "taskBrief", Map.of("purpose", "目的")));
+
+        mvc.perform(post("/api/projects/3/deep/clarify/answer").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"questionId\":\"tone\",\"answer\":\"专业理性\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.converged").value(true))
+                .andExpect(jsonPath("$.data.taskBrief.purpose").value("目的"));
+    }
+
+    @Test
+    void clarifyAnswer_状态冲突_409() throws Exception {
+        when(clarifyConversationService.answer(any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("会话状态为「CONVERGED」，无法继续回答"));
+
+        mvc.perform(post("/api/projects/3/deep/clarify/answer").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9,\"questionId\":\"tone\",\"answer\":\"x\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(409));
+    }
+
+    @Test
+    void clarifyConverge_brief不存在_400() throws Exception {
+        when(clarifyConversationService.converge(3L, 9L)).thenThrow(new IllegalArgumentException("brief 不存在"));
+
+        mvc.perform(post("/api/projects/3/deep/clarify/converge").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void status_意图澄清增量字段_透出() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setGenMode("DEEP");
+        b.setClarifyStatus("ASKING");
+        b.setClarifySession("{\"status\":\"ASKING\"}");
+        b.setTaskBrief("{\"purpose\":{}}");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 9L, 0));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.clarifyStatus").value("ASKING"))
+                .andExpect(jsonPath("$.data.clarifySession").exists())
+                .andExpect(jsonPath("$.data.taskBrief").exists());
     }
 }

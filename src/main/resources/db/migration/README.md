@@ -32,6 +32,7 @@
 - `V7__rename_car_doc_to_chunk.sql`（10-03 E4）：`sparkora_car_doc` → `sparkora_car_chunk`（块语义，仅内部命名）；索引 `idx_car_doc_model` → `idx_car_chunk_model`。旧向量表 `sparkora_car_doc_embedding` 不动。
 - `V8__embedding_cache.sql`（10-03 E5）：建内容寻址嵌入缓存 `sparkora_embedding_cache`（`content_hash CHAR(64)` + `embedding_model` + `embedding TEXT`（pgvector 字面量，不做 ANN） + `created_at`，主键 `(content_hash, embedding_model)`）；相同文本同模型复用向量、换模型天然 miss。
 - `V9__drop_legacy_embedding_tables.sql`（10-03 E6）：**物理删除**旧 4 张向量表 `sparkora_{car_doc,kb_chunk,news_doc,image}_embedding`（单一只真源 = `vector_store`）。**不可逆**，仅在 E1–E5 + E6 代码退役全绿后执行。注意 `sparkora_car_doc_embedding` 表名未随 E4 重命名（E4 只改主表），按旧名删除。
-- 后续结构变更一律新增 `V10+` 脚本，不再触碰 V1~V9。
+- `V10__cognitive_layer.sql`（10-03-gen-cognitive-redesign C1）：brief 表新增 `clarify_session TEXT`（多轮澄清会话 JSON）、`task_brief TEXT`（结构化意图契约 JSON）、`clarify_status VARCHAR(20)`（ASKING/CONVERGED/ABORTED）；部分唯一索引 `uq_brief_clarify_asking` 约束同项目至多一条 ASKING 会话。
+- 后续结构变更一律新增 `V11+` 脚本，不再触碰 V1~V10。
 - **JSON 存 TEXT 为有意约定**（P1-⑦ 复核裁定，不转 JSONB），理由见 `.trellis/spec/backend/database-guidelines.md`「JSON 存 TEXT 是有意约定」。
 - **Boot 4 注意**：Flyway 自动配置已从 `spring-boot-autoconfigure` 拆到独立 `spring-boot-flyway` 模块，pom 必须引 `spring-boot-starter-flyway`（+ 显式 `flyway-database-postgresql`），否则迁移**静默不执行**（详见 database-guidelines.md「Boot 4 下只引 flyway-core」）。
