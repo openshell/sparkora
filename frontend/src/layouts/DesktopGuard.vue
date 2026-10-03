@@ -27,8 +27,10 @@
 .guard-title { font-size: var(--fs-22); font-weight: 600; color: var(--ink); margin-bottom: var(--sp-4); }
 .guard-msg { font-size: var(--fs-14); color: var(--muted); line-height: var(--lh-14); }
 
+/* 暂时停用 PC-only 遮罩:允许窄屏/移动端访问,等移动端布局成熟后再恢复。
+   恢复方式:把下方 display 改回 flex、overflow 改回 hidden 即可。 */
 @media (max-width: 1279px) {
-  .desktop-guard { display: flex; }
-  :global(body) { overflow: hidden; }
+  .desktop-guard { display: none; }
+  :global(body) { overflow: auto; }
 }
 </style>
