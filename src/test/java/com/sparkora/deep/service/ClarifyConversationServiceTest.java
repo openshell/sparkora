@@ -171,8 +171,10 @@ class ClarifyConversationServiceTest {
 
         assertFalse((Boolean) out.get("converged"), "必要槽位未齐不得收敛");
         assertNotNull(out.get("question"), "必须给出下一问");
-        JsonNode q = (JsonNode) out.get("question");
-        assertEquals("mustCover", q.path("slotId").asText(), "应继续追问缺失的必要槽位");
+        JsonNode q = null;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> qMap = (Map<String, Object>) out.get("question");
+        assertEquals("mustCover", qMap.get("slotId"), "应继续追问缺失的必要槽位");
         // 收敛装配不应被调用
         verify(aiClient, never()).structured(anyString(), anyString(), anyInt(), eq(TaskBriefDto.class));
     }
@@ -217,19 +219,45 @@ class ClarifyConversationServiceTest {
                 .thenReturn(typedTb(taskBriefDto()));
 
         Map<String, Object> out = service.answer(PROJECT_ID, BRIEF_ID, "tone", "专业理性");
-        JsonNode tb = (JsonNode) out.get("taskBrief");
+        // 服务边界必须把 Jackson 2 树节点转为纯 Java 值(Map/List),否则 Boot 4(Jackson 3)MVC
+        // 会把 JsonNode 当 bean 序列化,吐 {array:false,object:true,...} 元数据(线上实证)。
+        assertFalse(out.get("taskBrief") instanceof JsonNode, "taskBrief 必须是纯 Map/List,不得是 JsonNode");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tb = (Map<String, Object>) out.get("taskBrief");
 
         // 标量槽位 {value,source,confidence}
-        JsonNode purpose = tb.path("purpose");
-        assertTrue(purpose.has("value") && purpose.has("source") && purpose.has("confidence"),
+        @SuppressWarnings("unchecked")
+        Map<String, Object> purpose = (Map<String, Object>) tb.get("purpose");
+        assertTrue(purpose.containsKey("value") && purpose.containsKey("source") && purpose.containsKey("confidence"),
                 "标量槽位必须包 {value,source,confidence}");
-        assertEquals("USER", purpose.path("source").asText());
+        assertEquals("USER", purpose.get("source"));
         // 多值槽位为数组,每项带 source/confidence
-        JsonNode mustCover = tb.path("mustCover");
-        assertTrue(mustCover.isArray() && mustCover.size() > 0);
-        assertTrue(mustCover.get(0).has("source") && mustCover.get(0).has("confidence"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> mustCover = (List<Map<String, Object>>) tb.get("mustCover");
+        assertTrue(mustCover != null && !mustCover.isEmpty());
+        assertTrue(mustCover.get(0).containsKey("source") && mustCover.get(0).containsKey("confidence"));
         // slotMeta 每槽位标 filled/source
-        assertTrue(tb.path("slotMeta").isArray() && tb.path("slotMeta").size() > 0);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> slotMeta = (List<Map<String, Object>>) tb.get("slotMeta");
+        assertTrue(slotMeta != null && !slotMeta.isEmpty());
+    }
+
+    /** start 响应中的 question/session 必须是纯 Java 值(防 Boot 4 Jackson 3 序列化 JsonNode 为 bean 元数据)。 */
+    @Test
+    void start响应_question与session为纯值_非JsonNode() {
+        when(projectMapper.selectById(PROJECT_ID)).thenReturn(project());
+        when(aiClient.structured(anyString(), anyString(), eq(8192), eq(ClarifyNextDto.class)))
+                .thenReturn(typed(nextQuestion("purpose")));
+
+        Map<String, Object> out = service.start(PROJECT_ID);
+
+        assertFalse(out.get("question") instanceof JsonNode, "question 必须是纯 Map,不得是 JsonNode");
+        assertFalse(out.get("session") instanceof JsonNode, "session 必须是纯 Map,不得是 JsonNode");
+        assertTrue(out.get("question") instanceof Map);
+        assertTrue(out.get("session") instanceof Map);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> q = (Map<String, Object>) out.get("question");
+        assertTrue(q.containsKey("id") && q.containsKey("text") && q.containsKey("type"));
     }
 
     // ==================== 2. LLM 失败提额重试 / 降级 ====================
@@ -290,8 +318,12 @@ class ClarifyConversationServiceTest {
         Map<String, Object> out = service.answer(PROJECT_ID, BRIEF_ID, "tone", "专业理性");
 
         assertTrue((Boolean) out.get("converged"), "两次失败仍应基于会话信息兜底收敛");
-        JsonNode tb = (JsonNode) out.get("taskBrief");
-        assertEquals("已有值-purpose", tb.path("purpose").path("value").asText(), "兜底取会话已有值");
+        assertFalse(out.get("taskBrief") instanceof JsonNode, "taskBrief 必须是纯 Map/List");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tbMap = (Map<String, Object>) out.get("taskBrief");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> purposeSlot = (Map<String, Object>) tbMap.get("purpose");
+        assertEquals("已有值-purpose", purposeSlot.get("value"), "兜底取会话已有值");
     }
 
     // ==================== 3. 并发 / 自愈 ====================

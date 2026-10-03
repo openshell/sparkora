@@ -142,8 +142,8 @@ public class ClarifyConversationService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("briefId", b.getId());
         out.put("stage", "ASKING");
-        out.put("question", session.get("currentQuestion"));
-        out.put("session", session);
+        out.put("question", nodeToValue(session.get("currentQuestion")));
+        out.put("session", nodeToValue(session));
         return out;
     }
 
@@ -209,8 +209,8 @@ public class ClarifyConversationService {
             session.set("currentQuestion", JsonNodeFactory.instance.nullNode());
             writeColumns(briefId, session.toString(), taskBrief.toString(), "CONVERGED");
             out.put("converged", true);
-            out.put("taskBrief", taskBrief);
-            out.put("session", session);
+            out.put("taskBrief", nodeToValue(taskBrief));
+            out.put("session", nodeToValue(session));
         } else {
             // 续问：必要槽位未齐时忽略 LLM 的 converged，强制给下一题
             ObjectNode q;
@@ -227,8 +227,8 @@ public class ClarifyConversationService {
             session.set("currentQuestion", q);
             writeColumns(briefId, session.toString(), null, null);
             out.put("converged", false);
-            out.put("question", q);
-            out.put("session", session);
+            out.put("question", nodeToValue(q));
+            out.put("session", nodeToValue(session));
         }
         return out;
     }
@@ -247,7 +247,7 @@ public class ClarifyConversationService {
         if ("CONVERGED".equals(status) && b.getTaskBrief() != null) {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("briefId", briefId);
-            out.put("taskBrief", parseSession(b.getTaskBrief()));
+            out.put("taskBrief", nodeToValue(parseSession(b.getTaskBrief())));
             return out;
         }
         if (!"ASKING".equals(status)) {
@@ -262,7 +262,7 @@ public class ClarifyConversationService {
         writeColumns(briefId, session.toString(), taskBrief.toString(), "CONVERGED");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("briefId", briefId);
-        out.put("taskBrief", taskBrief);
+        out.put("taskBrief", nodeToValue(taskBrief));
         return out;
     }
 
@@ -471,6 +471,19 @@ public class ClarifyConversationService {
     }
 
     // ==================== 会话 JSON 操作（容错，不抛） ====================
+
+    /**
+     * Jackson 2 {@link JsonNode} → 纯 Java 值（Map/List/String/Number/Boolean/null）。
+     *
+     * <p>Boot 4 起 MVC 层使用 Jackson 3(tools.jackson)序列化响应;若把 Jackson 2 的树节点
+     * 直接放进控制器返回的 {@code Map},Jackson 3 不识别该类型,会退化为反射 bean 序列化,
+     * 吐出 {@code {array:false,object:true,...}} 这类元数据而非真实 JSON。故在服务边界
+     * 统一转换为纯值,与既有「String 列/Map 产物」路径一致，避免跨 Jackson 版本类型失配。
+     */
+    Object nodeToValue(JsonNode n) {
+        if (n == null || n.isNull() || n.isMissingNode()) return null;
+        return json.convertValue(n, Object.class);
+    }
 
     /** 解析会话 JSON；畸形/空 → 返回空会话（不抛，保证降级清晰）。 */
     ObjectNode parseSession(String raw) {

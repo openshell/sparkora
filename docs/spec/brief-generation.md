@@ -66,6 +66,8 @@ graph TD
 
 全部 `R<T>` 包装；方法级 `@PreAuthorize`（写接口 ADMIN/EDITOR，`/deep/status` 三角色）；前缀 `/api/projects/{projectId}/deep`。
 
+> **Boot 4 Jackson 版本边界（务必遵守）**：MVC 层响应由 **Jackson 3(tools.jackson)** 序列化（`spring.jackson.*`），业务层注入的 **Jackson 2** `ObjectMapper`（`spring-boot-jackson2`）仅用于内部 JSON 拼装。**控制器返回的 `Map` 里绝不能放 Jackson 2 的 `JsonNode`/`ObjectNode` 树节点**——Jackson 3 不识别该类型会退化为反射 bean 序列化，吐出 `{array:false,object:true,nodeType:...}` 元数据而非真实 JSON。`ClarifyConversationService.start/answer/converge` 的 `question`/`session`/`taskBrief` 因此统一经 `nodeToValue(JsonNode)`（`json.convertValue(n, Object.class)`）转为纯 `Map`/`List` 再返回；`/deep/status` 返回的 `clarifySession`/`taskBrief`/`writingBlueprint` 均为**字符串列**故无此问题。新增返回树节点的接口须照此转换（否则单测以 MockMvc 的 Jackson 也可能同样暴露元数据）。
+
 ### 3.1 接口总表
 
 | 方法 | 路径 | 请求 | 响应 |
