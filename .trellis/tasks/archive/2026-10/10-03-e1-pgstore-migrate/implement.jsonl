@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 版本化迁移、向量表/embedding_model 防护、多域候选窗口隔离、REQUIRES_NEW 事务隔离、@Order 启动补齐——E1 建表/回填/同步层硬约束"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域 RAG 检索契约（RagResult/Citation/四态）、EmbeddingClient 双构造、axonhub 能力边界、C5 EmbeddingModel 先例——检索层改造必读"}
+{"file": ".trellis/tasks/10-03-vector-pgstore-kb/design.md", "reason": "本任务技术设计：单表 store + metadata schema（§3.1）+ 两阶段对拍（§3.2）+ 同步层风险（§5）"}
+{"file": ".trellis/tasks/10-03-e1-pgstore-migrate/prd.md", "reason": "E1 需求与验收（阶段 A 对拍/活表/模型防护/契约等价/回退）"}
+{"file": ".trellis/tasks/10-03-vector-pgstore-kb/prd.md", "reason": "父需求/五项决策/任务映射"}
+{"file": "docs/spec/retrieval.md", "reason": "检索四态/门槛/引用明细/覆盖度契约——迁移不得回归"}

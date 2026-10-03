@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/不可逆副作用隔离/多步写入失败顺序"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移规范、事务隔离、模型防护、候选窗口隔离"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对检索/RAG 契约一致或已同步更新"}
+{"file": ".trellis/tasks/10-03-e1-pgstore-migrate/prd.md", "reason": "E1 阶段 A 对拍与契约等价验收基线"}

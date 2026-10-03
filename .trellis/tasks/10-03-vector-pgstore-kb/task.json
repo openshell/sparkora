@@ -1,0 +1,32 @@
+{
+  "id": "vector-pgstore-kb",
+  "name": "vector-pgstore-kb",
+  "title": "向量层 PgVectorStore 迁移 + 知识库规范化",
+  "description": "全量迁移 4 域向量到 Spring AI PgVectorStore（含 content 反规范化 + metadata 活表同步层 + 同 query 集对拍），随后分阶段修复知识库质量债：命名失真/受控分类/切块重叠/rerank/覆盖度/去重缓存",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-10-03",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-03-e1-pgstore-migrate",
+    "10-03-e2-chunk-overlap",
+    "10-03-e3-kb-normalize",
+    "10-03-e4-rename",
+    "10-03-e5-coverage-dedup"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
