@@ -1190,3 +1190,27 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 46: E1 向量层迁 PgVectorStore 单表(阶段A对拍一致)+Boot4 Flyway回归修复
+<!-- trellis-session: v=2 fp=9526c98c2e08f719 -->
+
+**Date**: 2026-10-03
+**Task**: E1 向量层迁 PgVectorStore 单表(阶段A对拍一致)+Boot4 Flyway回归修复
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4a24f6a` | feat(E1): 向量检索迁移到 Spring AI PgVectorStore 单表（metadata.domain 过滤） |
+| `4443dae` | docs(spec): 记录 E1 PgVectorStore 单表迁移与 Boot4 Flyway 回归修复 |
+| `911dd34` | chore(task): 建立 PgVectorStore 迁移任务树(父 + E1归档 + E2-E5) |
+
+### Status
+
+[OK] **Completed**
