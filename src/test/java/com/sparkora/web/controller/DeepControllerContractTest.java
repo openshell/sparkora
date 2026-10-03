@@ -3,9 +3,9 @@ package com.sparkora.web.controller;
 import com.sparkora.config.DeepProperties;
 import com.sparkora.deep.search.WebProviderOrder;
 import com.sparkora.deep.search.WebSearchSnapshot;
-import com.sparkora.deep.service.ClarifyService;
 import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
+import com.sparkora.deep.service.ResearchPlannerService;
 import com.sparkora.deep.tool.SearxngSearchTool;
 import com.sparkora.deep.tool.TavilySearchTool;
 import com.sparkora.domain.entity.ArticleBriefEntity;
@@ -43,7 +43,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @MockitoSettings(strictness = Strictness.LENIENT)
 class DeepControllerContractTest {
 
-    @Mock ClarifyService clarifyService;
     @Mock DeepResearchService researchService;
     @Mock DeepWriterService writerService;
     @Mock ArticleBriefMapper briefMapper;
@@ -52,6 +51,7 @@ class DeepControllerContractTest {
     @Mock TavilySearchTool tavilyTool;
     @Mock SettingService settingService;
     @Mock com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
+    @Mock ResearchPlannerService researchPlannerService;
 
     private MockMvc mvc;
     private DeepProperties props;
@@ -59,10 +59,50 @@ class DeepControllerContractTest {
     @BeforeEach
     void setUp() {
         props = new DeepProperties();
-        DeepController controller = new DeepController(clarifyService, researchService, writerService,
+        DeepController controller = new DeepController(researchService, writerService,
                 briefMapper, briefService, searxngTool, tavilyTool,
-                props, settingService, clarifyConversationService);
+                props, settingService, clarifyConversationService, researchPlannerService);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
+    }
+
+    // ==================== C2 研究规划接口 ====================
+
+    @Test
+    void plan_成功_委托ResearchPlanner并返回brief() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setProjectId(3L);
+        b.setPlanStatus("READY");
+        b.setResearchPlan("{\"keyQuestions\":[\"价格?\"]}");
+        when(researchPlannerService.plan(3L, 9L)).thenReturn(b);
+
+        mvc.perform(post("/api/projects/3/deep/plan").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.id").value(9))
+                .andExpect(jsonPath("$.data.planStatus").value("READY"));
+    }
+
+    @Test
+    void plan_意图澄清未完成_409() throws Exception {
+        when(researchPlannerService.plan(3L, 9L)).thenThrow(new IllegalStateException("意图澄清尚未完成"));
+
+        mvc.perform(post("/api/projects/3/deep/plan").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(409))
+                .andExpect(jsonPath("$.msg").value("意图澄清尚未完成"));
+    }
+
+    @Test
+    void plan_brief不存在_400() throws Exception {
+        when(researchPlannerService.plan(3L, 9L)).thenThrow(new IllegalArgumentException("brief 不存在"));
+
+        mvc.perform(post("/api/projects/3/deep/plan").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
     }
 
     @Test

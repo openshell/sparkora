@@ -45,7 +45,7 @@ public class FactSheetService {
             JsonNode factsJson = note.path("factsJson").isMissingNode()
                     ? note.path("facts") : json.readTree(note.path("factsJson").asText("{}"));
             // kind 继承「产出该 fact 的研究问题类型」:问题为背景/来龙去脉型 → background,否则 param
-            String kind = ClarifyService.isBackgroundQuestion(note.path("question").asText(""))
+            String kind = ResearchPlannerService.isBackgroundQuestion(note.path("question").asText(""))
                     ? "background" : "param";
             for (JsonNode f : factsJson.path("facts")) {
                 String claim = f.path("claim").asText("").trim();

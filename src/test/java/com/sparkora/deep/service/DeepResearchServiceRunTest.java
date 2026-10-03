@@ -98,14 +98,27 @@ class DeepResearchServiceRunTest {
     }
 
     @Test
-    void 澄清答案未锁定_400语义_不调度() throws Exception {
+    void 澄清未完成_400语义_不调度() throws Exception {
         ArticleBriefEntity b = brief(9L, 3L);
         b.setClarifyAnswers(null);
+        b.setTaskBrief(null);
         when(briefMapper.selectById(9L)).thenReturn(b);
         DeepResearchService svc = service();
-        assertEquals("澄清答案尚未锁定",
+        assertEquals("意图澄清尚未完成",
                 assertThrows(IllegalArgumentException.class, () -> svc.run(3L, 9L)).getMessage());
         verify(self, never()).runAsync(any(), any());
+    }
+
+    /** C2:新流程以 task_brief 表达澄清完成(clarify_answers 为 null)也应放行。 */
+    @Test
+    void taskBrief非空_放行调度() throws Exception {
+        ArticleBriefEntity b = brief(9L, 3L);
+        b.setClarifyAnswers(null);
+        b.setTaskBrief("{\"purpose\":{\"value\":\"介绍\",\"source\":\"USER\"}}");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        DeepResearchService svc = service();
+        svc.run(3L, 9L);
+        verify(self).runAsync(eq(9L), any());
     }
 
     @Test

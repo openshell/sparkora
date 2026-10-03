@@ -90,10 +90,14 @@ public class DeepResearchService {
      *
      * <p>09-25-brief-web-search 前置校验与快照:
      * <ul>
-     *   <li>brief 存在 + 属于路径 projectId + gen_mode=DEEP + 计划就绪 + 澄清答案已锁定,否则明确 4xx;</li>
+     *   <li>brief 存在 + 属于路径 projectId + gen_mode=DEEP + 计划就绪 + 澄清已完成,否则明确 4xx;</li>
      *   <li>解析一次有效策略与开关快照(全局配置层),同批次全部子代理共用,启动后设置变更不影响;</li>
      *   <li>同一 brief 运行互斥:重复 /run 返回 409。</li>
      * </ul>
+     *
+     * <p>C2(10-03-gen-cognitive-redesign):新流程澄清完成以 {@code task_brief} 表达(不再落
+     * {@code clarify_answers});前置放宽为「research_plan 非空 + (task_brief 非空 或 旧 clarify_answers 非空)」,
+     * 兼容历史数据。PLANNING(异步生成中)仍明确拒绝。
      *
      * @return {briefId, agents, started:true}
      */
@@ -110,8 +114,10 @@ public class DeepResearchService {
         if ("PLANNING".equals(b.getPlanStatus())) {
             throw new IllegalStateException("研究计划尚未就绪");
         }
-        if (b.getClarifyAnswers() == null || b.getClarifyAnswers().isBlank()) {
-            throw new IllegalArgumentException("澄清答案尚未锁定");
+        boolean hasTaskBrief = b.getTaskBrief() != null && !b.getTaskBrief().isBlank();
+        boolean hasClarifyAnswers = b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank();
+        if (!hasTaskBrief && !hasClarifyAnswers) {
+            throw new IllegalArgumentException("意图澄清尚未完成");
         }
         JsonNode plan = json.readTree(b.getResearchPlan() == null ? "{}" : b.getResearchPlan());
         List<String> questions = new ArrayList<>();
@@ -177,7 +183,7 @@ public class DeepResearchService {
         int n = Math.min(questions.size(), maxAgents);
         List<Integer> bg = new ArrayList<>();
         for (int i = 0; i < questions.size(); i++) {
-            if (ClarifyService.isBackgroundQuestion(questions.get(i))) bg.add(i);
+            if (ResearchPlannerService.isBackgroundQuestion(questions.get(i))) bg.add(i);
         }
         int remaining = n - bg.size();
         if (remaining <= 0) {
@@ -186,7 +192,7 @@ public class DeepResearchService {
         } else {
             idx.addAll(bg);
             for (int i = 0; i < questions.size() && remaining > 0; i++) {
-                if (!ClarifyService.isBackgroundQuestion(questions.get(i))) {
+                if (!ResearchPlannerService.isBackgroundQuestion(questions.get(i))) {
                     idx.add(i);
                     remaining--;
                 }

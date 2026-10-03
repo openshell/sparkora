@@ -29,12 +29,12 @@ public class ProjectBriefController {
      * 生成 brief（S1：接真实 AI）。同步调用，前端 loading 等待。
      * 状态机 DRAFT→GENERATING_BRIEF→READY；失败回 DRAFT 并写 lastBriefError（可在 project 详情查看）。
      * 2026-09-09 模式收敛(09-09-brief-gen-redesign R2):快速模式入口封死,
-     * 所有生成必走深度流程(POST /api/deep/{id}/clarify);存量 FAST 项目产物可读,重新生成走深度。
+     * 所有生成必走深度流程(POST /api/projects/{id}/deep/clarify/start 发起意图澄清对话);存量 FAST 项目产物可读,重新生成走深度。
      */
     @PostMapping("/generate/brief")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<ArticleBriefEntity> generateBrief(@PathVariable Long projectId) {
-        return R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify)");
+        return R.fail(410, "生成流程已升级为深度模式,请使用深度生成(/deep/clarify/start)");
     }
 
     /**

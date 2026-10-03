@@ -2,9 +2,9 @@ package com.sparkora.web.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sparkora.common.R;
-import com.sparkora.deep.service.ClarifyService;
 import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
+import com.sparkora.deep.service.ResearchPlannerService;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -17,17 +17,19 @@ import java.util.Map;
 
 /**
  * 深度生成模式接口(S9):
- * POST /deep/clarify           ①② 研究计划+澄清问题生成(落 brief,gen_mode=DEEP)
- * POST /deep/clarify-answer    锁定用户答案
- * POST /deep/run               ③④ 并行研究+事实手册(同步阻塞,前端轮询 /deep/status)
- * POST /deep/generate          ⑤⑥ 深度写作+数值回查(批量异步:落版本,前端轮询状态翻转)
- * GET  /deep/status            断点/进度查询(研究计划/逐 agent 状态/手册摘要)
+ * POST /deep/plan              C2 基于 TaskBrief 生成纯事实研究计划
+ * POST /deep/clarify/start    C1 意图澄清对话:启动会话
+ * POST /deep/clarify/answer   C1 意图澄清对话:回答并推进
+ * POST /deep/clarify/converge C1 意图澄清对话:强制收敛
+ * POST /deep/clarify/abort    C1 意图澄清对话:中止
+ * POST /deep/run              ③④ 并行研究+事实手册(异步,前端轮询 /deep/status)
+ * POST /deep/generate         ⑤⑥ 深度写作+数值回查(批量异步:落版本,前端轮询状态翻转)
+ * GET  /deep/status           断点/进度查询(研究计划/逐 agent 状态/手册摘要)
  */
 @RestController
 @RequestMapping("/api/projects/{projectId}/deep")
 public class DeepController {
 
-    private final ClarifyService clarifyService;
     private final DeepResearchService researchService;
     private final DeepWriterService writerService;
     private final ArticleBriefMapper briefMapper;
@@ -38,18 +40,20 @@ public class DeepController {
     private final com.sparkora.config.DeepProperties deepProps;
     /** 系统检索设置(09-15:toolHealth 反映真实 KB/WEB 运行时门控) */
     private final com.sparkora.service.SettingService settingService;
-    /** C1 意图澄清对话(多轮;与一次性 /deep/clarify 并存,后者由 C2 收敛) */
+    /** C1 意图澄清对话(多轮) */
     private final com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
+    /** C2 研究规划(基于 TaskBrief 产出纯事实 research_plan) */
+    private final ResearchPlannerService researchPlannerService;
 
-    public DeepController(ClarifyService clarifyService, DeepResearchService researchService,
+    public DeepController(DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
                           com.sparkora.service.BriefService briefService,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
                           com.sparkora.config.DeepProperties deepProps,
                           com.sparkora.service.SettingService settingService,
-                          com.sparkora.deep.service.ClarifyConversationService clarifyConversationService) {
-        this.clarifyService = clarifyService;
+                          com.sparkora.deep.service.ClarifyConversationService clarifyConversationService,
+                          ResearchPlannerService researchPlannerService) {
         this.researchService = researchService;
         this.writerService = writerService;
         this.briefMapper = briefMapper;
@@ -59,53 +63,26 @@ public class DeepController {
         this.deepProps = deepProps;
         this.settingService = settingService;
         this.clarifyConversationService = clarifyConversationService;
+        this.researchPlannerService = researchPlannerService;
     }
 
-    /**
-     * ①② 研究计划+澄清问题(09-11 异步:落 PLANNING 占位立即返回,前端轮询 /deep/status)。
-     *
-     * <p>10-02-brief-reasoning-maxtokens:忽略请求体(主题/内容描述/读者/字数一律从项目读),
-     * 保留 {@code @RequestBody(required=false)} 仅为兼容旧前端仍发 {@code {topic, extraInfo}} 不报 400。
-     */
-    @PostMapping("/clarify")
+    // ==================== C2 研究规划(基于 TaskBrief;10-03-gen-cognitive-redesign) ====================
+
+    /** C2 基于 TaskBrief 生成纯事实研究计划。body: {briefId}。 */
+    @PostMapping("/plan")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Map<String, Object>> clarify(@PathVariable Long projectId,
-                                          @RequestBody(required = false) Map<String, Object> body) {
+    public R<ArticleBriefEntity> plan(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
         try {
-            ArticleBriefEntity b = clarifyService.start(projectId);
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("briefId", b.getId());
-            out.put("stage", "PLANNING");
-            return R.ok(out);
+            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
+            return R.ok(researchPlannerService.plan(projectId, briefId));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
         } catch (IllegalStateException e) {
-            // 并发/陈旧冲突:同一项目已有 PLANNING 占位(部分唯一索引兜底)
             return R.fail(409, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, "研究计划生成失败: " + e.getMessage());
         }
     }
-
-    /** 锁定澄清答案。body: {briefId, answers: {问题:答案}}。 */
-    @PostMapping("/clarify-answer")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Map<String, Object>> clarifyAnswer(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
-        try {
-            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
-            ArticleBriefEntity b = briefMapper.selectById(briefId);
-            if (b == null || !projectId.equals(b.getProjectId())) return R.fail(404, "brief 不存在");
-            String locked = clarifyService.lockAnswers(b.getClarifyQuestions(),
-                    jsonOf(body.get("answers")));
-            b.setClarifyAnswers(locked);
-            briefMapper.updateById(b);
-            return R.ok(Map.of("briefId", briefId, "locked", locked));
-        } catch (Exception e) {
-            return R.fail(500, e.getMessage());
-        }
-    }
-
-    // ==================== C1 意图澄清对话(多轮;10-03-gen-cognitive-redesign) ====================
 
     /** C1 启动多轮澄清会话:同步生成首题并落 ASKING 占位。body 可空。 */
     @PostMapping("/clarify/start")
@@ -316,11 +293,5 @@ public class DeepController {
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) return "CLARIFIED";
         if (b.getClarifyQuestions() != null && !b.getClarifyQuestions().isBlank()) return "CLARIFYING";
         return "NONE";
-    }
-
-    private String jsonOf(Object o) {
-        if (o == null) return "{}";
-        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); }
-        catch (Exception e) { return "{}"; }
     }
 }

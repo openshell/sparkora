@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * C1 意图澄清「每轮下一步」DTO（10-03-gen-cognitive-redesign）:schema 由本类型单一派生,
- * prompt 不内联 JSON 字面量（对齐 {@link ClarifyPlanDto}）。
+ * prompt 不内联 JSON 字面量（对齐 {@link TaskBriefDto}）。
  *
  * <p>一轮 {@code structured(...)} 调用的产物:要么给出下一问({@code nextQuestion}),
  * 要么判定信息已充分({@code converged=true})。{@code slotUpdates} 是本轮从用户回答中

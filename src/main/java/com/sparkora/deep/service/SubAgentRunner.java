@@ -105,7 +105,7 @@ public class SubAgentRunner {
         // 背景/来龙去脉型问题在车型锚定主题下几乎必然命中该车型 MODEL_INFO(复合 query 带锚点加权),
         // 若据此跳过 WEB,行业战略类背景素材永远拿不到(KB 是车型库,不含此类内容)。故背景题强制放行 WEB。
         // R1/R3(09-27-tavily-extract-kind-hypotheses):背景题额外对 top URL 补抓正文(仅背景题注入)。
-        boolean background = ClarifyService.isBackgroundQuestion(question);
+        boolean background = ResearchPlannerService.isBackgroundQuestion(question);
         boolean kbAuthoritative = !background && kbParamAuthoritative;
         if (toolsAllowed.contains("WEB") && snapshot != null && snapshot.webAllowed() && webQuota > 0 && !kbAuthoritative) {
             appliedWebQuery = webQuery(topic, question, lockedAnswers);

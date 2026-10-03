@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -210,10 +211,10 @@ class AiClientStructuredTest {
         assertTrue(brief.contains("titleCandidates"));
         assertTrue(brief.contains("factRisks"));
 
-        String clarify = AiClient.jsonSchema(ClarifyPlanDto.class);
+        String clarify = AiClient.jsonSchema(ResearchPlanDto.class);
         assertTrue(clarify.contains("keyQuestions"));
         assertTrue(clarify.contains("toolHints"));
-        assertTrue(clarify.contains("questions"));
+        assertFalse(clarify.contains("questions"), "研究规划 schema 不得含意图澄清 questions 字段");
 
         String facts = AiClient.jsonSchema(SubAgentFactsDto.class);
         assertTrue(facts.contains("facts"));
