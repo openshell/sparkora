@@ -427,4 +427,56 @@ class DeepControllerContractTest {
                 .andExpect(jsonPath("$.data.writingBlueprint").doesNotExist())
                 .andExpect(jsonPath("$.data.blueprintStatus").doesNotExist());
     }
+
+    // ==================== C5 认知阶段 stageOf 契约 ====================
+
+    /** 纯澄清进行中:clarify_status=ASKING(无 plan/无 factSheet)→ stage=ASKING。 */
+    @Test
+    void status_stage_澄清进行中_ASKING() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setGenMode("DEEP");
+        b.setClarifyStatus("ASKING");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 9L, 0));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stage").value("ASKING"));
+    }
+
+    /** 澄清已收敛但尚未生成研究计划 → stage=CONVERGED。 */
+    @Test
+    void status_stage_澄清收敛无计划_CONVERGED() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setGenMode("DEEP");
+        b.setClarifyStatus("CONVERGED");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 9L, 0));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stage").value("CONVERGED"));
+    }
+
+    /** 写作蓝图已生成(同时 factSheet 也在)→ stage=BLUEPRINT_REVIEW,须先于 RESEARCH_DONE。 */
+    @Test
+    void status_stage_蓝图已生成_BLUEPRINT_REVIEW() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setGenMode("DEEP");
+        b.setClarifyStatus("CONVERGED");
+        b.setFactSheet("{\"entries\":[]}");
+        b.setWritingBlueprint("{\"thesis\":\"中心论点\"}");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 9L, 0));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.stage").value("BLUEPRINT_REVIEW"));
+    }
 }

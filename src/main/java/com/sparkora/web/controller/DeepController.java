@@ -318,9 +318,24 @@ public class DeepController {
         return lastCallOk ? "OK" : "FAILED";
     }
 
+    /**
+     * 深度流程阶段判定(首个命中即返回)。10-03-gen-cognitive-redesign C5:纳入 C1/C3 新列,
+     * 使「纯澄清」与「蓝图评审」brief 也有明确阶段(旧实现只认 planStatus/factSheet 等,二者返回 NONE)。
+     *
+     * <p>优先级:PLANNING &gt; BLUEPRINT_REVIEW &gt; ASKING &gt; CONVERGED(无计划) &gt;
+     * RESEARCH_DONE &gt; RESEARCHING &gt; CLARIFIED &gt; CLARIFYING &gt; NONE。
+     * BLUEPRINT_REVIEW 必须先于 RESEARCH_DONE:研究完成后 fact_sheet 仍在,蓝图已自动生成时应进评审态。
+     */
     private String stageOf(ArticleBriefEntity b) {
         // 09-11:研究计划异步生成中(clarify 占位行)优先暴露,先于 questions 判定
         if ("PLANNING".equals(b.getPlanStatus())) return "PLANNING";
+        // C3:写作蓝图已生成(自动/手动重试) → 评审门;须先于 RESEARCH_DONE(fact_sheet 同时存在)
+        if (b.getWritingBlueprint() != null && !b.getWritingBlueprint().isBlank()) return "BLUEPRINT_REVIEW";
+        // C1:多轮澄清进行中
+        if ("ASKING".equals(b.getClarifyStatus())) return "ASKING";
+        // C1:澄清已收敛但尚无研究计划 → 待「开始研究」
+        if ("CONVERGED".equals(b.getClarifyStatus())
+                && (b.getResearchPlan() == null || b.getResearchPlan().isBlank())) return "CONVERGED";
         if (b.getFactSheet() != null && !b.getFactSheet().isBlank()) return "RESEARCH_DONE";
         if (b.getResearchNotes() != null && !b.getResearchNotes().isBlank()) return "RESEARCHING";
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) return "CLARIFIED";
