@@ -47,7 +47,7 @@ import java.util.Map;
  *   getGoodsInfoById   → 更新 car_model 基础信息/卖点/图片/权益
  *   getGoodsAttrList   → 生成 car_version(版本+价格)
  *   goodsParams        → 生成 car_param_group + car_param(参数表)
- *   随后 CarDocService 切分向量化(仅 PARAM_GROUP 粒度)
+ *   随后 CarChunkService 切分向量化(仅 PARAM_GROUP 粒度)
  *
  * 事务边界:网络采集(慢)无事务;本地入库用短事务。参照 BriefService 分阶段模式。
  */
@@ -61,7 +61,7 @@ public class CarModelService {
     private final CarParamGroupMapper groupMapper;
     private final CarParamMapper paramMapper;
     private final CarParamCleanMapper cleanMapper;
-    private final CarDocService docService;
+    private final CarChunkService docService;
     private final CarCleanService cleanService;
     private final CarDocEmbeddingMapper embStatsMapper;
     private final ImageAssetMapper imageMapper;
@@ -81,7 +81,7 @@ public class CarModelService {
     public CarModelService(BydCmsClient client, CarModelMapper modelMapper,
                            CarVersionMapper versionMapper, CarParamGroupMapper groupMapper,
                            CarParamMapper paramMapper, CarParamCleanMapper cleanMapper,
-                           CarDocService docService, CarCleanService cleanService,
+                           CarChunkService docService, CarCleanService cleanService,
                            CarDocEmbeddingMapper embStatsMapper,
                            ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json,
                            com.sparkora.service.ImageService imageService,

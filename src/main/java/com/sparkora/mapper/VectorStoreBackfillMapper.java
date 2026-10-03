@@ -21,7 +21,7 @@ public interface VectorStoreBackfillMapper {
             "m.name AS \"name\", e.embedding_model AS \"embeddingModel\", e.embedding::text AS \"vector\", " +
             "d.chunk_text AS \"content\" " +
             "FROM sparkora_car_doc_embedding e " +
-            "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
+            "JOIN sparkora_car_chunk d ON d.id = e.doc_id AND d.deleted = 0 " +
             "JOIN sparkora_car_model m ON m.id = d.model_id " +
             "ORDER BY e.doc_id")
     List<Map<String, Object>> readCar();

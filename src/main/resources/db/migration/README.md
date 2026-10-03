@@ -28,6 +28,7 @@
 - `V4__content_description_and_brief_reasoning.sql`（10-02-brief-reasoning-maxtokens）：项目表 `extra_info` → `content_description`（补列 → UPDATE 搬数 → DROP），删除 `keywords`/`remark`；brief 表加 `research_reasoning TEXT`（澄清阶段 AI 思考过程）。单语句（无 `DO $$` 块）。
 - `V5__pgvector_store.sql`（10-03 E1）：建 Spring AI PgVectorStore 单表 `vector_store`（`id uuid / content text / metadata json / embedding vector(1024)`，HNSW cosine + metadata GIN）；4 域旧向量表保留未删，由 `VectorStoreBackfillRunner` 搬入（可回退）。
 - `V6__kb_normalize.sql`（10-03 E3）：`sparkora_kb_doc` 加 `source`/`effective_from`/`effective_to`（可空，向后兼容）；存量 `domain` 收敛到受控词表（精确匹配否则「通用」）；建标签关联表 `sparkora_kb_doc_tag`（镜像 `sparkora_image_tag`）。
-- 后续结构变更一律新增 `V7+` 脚本，不再触碰 V1~V6。
+- `V7__rename_car_doc_to_chunk.sql`（10-03 E4）：`sparkora_car_doc` → `sparkora_car_chunk`（块语义，仅内部命名）；索引 `idx_car_doc_model` → `idx_car_chunk_model`。旧向量表 `sparkora_car_doc_embedding` 不动。
+- 后续结构变更一律新增 `V8+` 脚本，不再触碰 V1~V7。
 - **JSON 存 TEXT 为有意约定**（P1-⑦ 复核裁定，不转 JSONB），理由见 `.trellis/spec/backend/database-guidelines.md`「JSON 存 TEXT 是有意约定」。
 - **Boot 4 注意**：Flyway 自动配置已从 `spring-boot-autoconfigure` 拆到独立 `spring-boot-flyway` 模块，pom 必须引 `spring-boot-starter-flyway`（+ 显式 `flyway-database-postgresql`），否则迁移**静默不执行**（详见 database-guidelines.md「Boot 4 下只引 flyway-core」）。

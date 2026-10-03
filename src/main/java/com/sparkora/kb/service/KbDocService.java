@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  * 通用汽车知识库文档服务(S7 车型库泛化;10-03 E3 数据模型规范化)。
  *
  * 数据流:create/update → 切块(首行「知识:标题(领域)」)→ 逐块 embedding 入库 + store 元数据。
- * 重建幂等:先清 chunk+embedding(物理删),再重切重嵌(与 CarDocService.rebuildForModel 同款先清后插)。
+ * 重建幂等:先清 chunk+embedding(物理删),再重切重嵌(与 CarChunkService.rebuildForModel 同款先清后插)。
  * embedding 单块失败:warn 跳过 + 计数返回(不静默;块缺失可用 rebuild 补齐)。
  * 切块算法:委托 {@link TextChunker}(09-27 知识域写入侧统一;空正文恒保留标题块)。
  *

@@ -30,7 +30,7 @@ import java.util.UUID;
  * <pre>
  * {
  *   "domain": "CAR"|"KB"|"NEWS"|"IMAGE",
- *   "refId": 123,            // 域内 id：CAR=car_doc.id / KB=kb_chunk.id / NEWS=news_doc.id / IMAGE=image_asset.id
+ *   "refId": 123,            // 域内 id：CAR=car_chunk.id / KB=kb_chunk.id / NEWS=news_doc.id / IMAGE=image_asset.id
  *   "modelId": 45,           // 仅 CAR（锚点加权用）；其余省略
  *   "chunkType": "PARAM_GROUP"|"KB_CHUNK"|"NEWS_BODY"|"IMAGE",
  *   "name": "海狮08EV"|"知识标题"|"新闻标题",

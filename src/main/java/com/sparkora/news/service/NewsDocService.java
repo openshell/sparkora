@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 新闻切块 + 向量化服务(C2,仿 CarDocService / KbDocService)。
+ * 新闻切块 + 向量化服务(C2,仿 CarChunkService / KbDocService)。
  *
  * 流程:先物理清旧块+向量,再切块(首行「新闻：<title>（<publishDate>）」)→ 逐块 embedding 入库。
  * embedding 并发化(固定小线程池)+ 单块失败重试 1 次;失败块 warn 计数,不静默。

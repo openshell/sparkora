@@ -10,13 +10,13 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 文档块实体。对应 sparkora_car_doc。
+ * 车型块实体。对应 sparkora_car_chunk（E4 块语义重命名）。
  * RAG 检索单元;chunk_type: MODEL_INFO / PARAM_GROUP / RIGHTS / FEATURE。
- * 切分粒度:仅 PARAM_GROUP(每参数分组一个文档块)。
+ * 切分粒度:仅 PARAM_GROUP(每参数分组一个块)。
  */
 @Data
-@TableName("sparkora_car_doc")
-public class CarDocEntity {
+@TableName("sparkora_car_chunk")
+public class CarChunkEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long modelId;
@@ -30,7 +30,7 @@ public class CarDocEntity {
     private LocalDateTime updatedAt;
     @TableLogic
     private Integer deleted;
-    /** 非持久化:车型名(构建期填充,写 vector_store metadata.name 用,不落 sparkora_car_doc）。 */
+    /** 非持久化:车型名(构建期填充,写 vector_store metadata.name 用,不落 sparkora_car_chunk）。 */
     @TableField(exist = false)
     private String modelName;
 }

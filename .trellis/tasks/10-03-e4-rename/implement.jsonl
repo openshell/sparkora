@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移命名/不得改已应用脚本/索引切换 DROP+CREATE 新名/表结构三处同步——重命名迁移必读"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "改动范围与验证红线（禁改生产数据/范围最小）"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "改常量/类名必须全局搜引用，避免漏改（本任务是典型跨文件重命名）"}
+{"file": ".trellis/tasks/10-03-e4-rename/prd.md", "reason": "本任务需求/验收/范围（仅 car_doc 块表，不涉 KB/NEWS/IMAGE）"}

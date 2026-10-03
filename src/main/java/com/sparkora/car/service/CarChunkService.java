@@ -5,12 +5,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.EmbeddingBatchRunner;
 import com.sparkora.car.client.EmbeddingClient;
-import com.sparkora.domain.entity.CarDocEntity;
+import com.sparkora.domain.entity.CarChunkEntity;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.CarParamCleanEntity;
 import com.sparkora.domain.entity.CarParamGroupEntity;
 import com.sparkora.mapper.CarDocEmbeddingMapper;
-import com.sparkora.mapper.CarDocMapper;
+import com.sparkora.mapper.CarChunkMapper;
 import com.sparkora.mapper.CarModelMapper;
 import com.sparkora.mapper.CarParamCleanMapper;
 import com.sparkora.mapper.CarParamGroupMapper;
@@ -27,47 +27,47 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 文档块切分 + 向量化服务。
+ * 车型块切分 + 向量化服务。
  *
- * 切分粒度:仅 PARAM_GROUP(每参数分组一个文档块,供 RAG 检索)。
+ * 切分粒度:仅 PARAM_GROUP(每参数分组一个块,供 RAG 检索)。
  * 另含 MODEL_INFO(车型基础信息)与 RIGHTS(购车权益)块,便于概览检索。
  *
- * 流程:先清旧文档块+向量,再按分组生成 chunk_text,逐个调 embedding 入库。
+ * 流程:先清旧块+向量,再按分组生成 chunk_text,逐个调 embedding 入库。
  * 网络 embedding 无事务;本地入库短事务(09-27 统一为 REQUIRES_NEW 自注入范式,见 rebuildForModel)。
  *
  * S6 重构:参数分组块基于清洗后数据(car_param_clean)生成,取值干净、类型化。
  */
 @Slf4j
 @Service
-public class CarDocService {
+public class CarChunkService {
 
     private final CarModelMapper modelMapper;
     private final CarParamGroupMapper groupMapper;
     private final CarParamCleanMapper cleanMapper;
     private final CarVersionMapper versionMapper;
-    private final CarDocMapper docMapper;
+    private final CarChunkMapper chunkMapper;
     private final CarDocEmbeddingMapper embMapper;
     private final EmbeddingClient embeddingClient;
     private final EmbeddingBatchRunner batchRunner;
     private final ObjectMapper json;
-    /** 自注入代理（@Lazy）：让 {@link #persistCarDoc} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
+    /** 自注入代理（@Lazy）：让 {@link #persistCarChunk} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
     @Autowired
     @Lazy
-    private CarDocService self;
+    private CarChunkService self;
     /** 单表 store（10-03 E1）；字段注入可选，单测直接 new 时为 null（同步守卫降级）。 */
     @Autowired(required = false)
     private com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
-    public CarDocService(CarModelMapper modelMapper, CarParamGroupMapper groupMapper,
+    public CarChunkService(CarModelMapper modelMapper, CarParamGroupMapper groupMapper,
                          CarParamCleanMapper cleanMapper, CarVersionMapper versionMapper,
-                         CarDocMapper docMapper, CarDocEmbeddingMapper embMapper,
+                         CarChunkMapper chunkMapper, CarDocEmbeddingMapper embMapper,
                          EmbeddingClient embeddingClient, EmbeddingBatchRunner batchRunner,
                          ObjectMapper json) {
         this.modelMapper = modelMapper;
         this.groupMapper = groupMapper;
         this.cleanMapper = cleanMapper;
         this.versionMapper = versionMapper;
-        this.docMapper = docMapper;
+        this.chunkMapper = chunkMapper;
         this.embMapper = embMapper;
         this.embeddingClient = embeddingClient;
         this.batchRunner = batchRunner;
@@ -80,60 +80,60 @@ public class CarDocService {
         CarModelEntity m = modelMapper.selectById(modelId);
         if (m == null) return;
 
-        List<CarDocEntity> docs = new ArrayList<>();
+        List<CarChunkEntity> chunks = new ArrayList<>();
         // 1) 车型基础信息块
-        docs.add(buildModelInfoDoc(m));
+        chunks.add(buildModelInfoChunk(m));
         // 2) 购车权益块(按条切)
-        docs.addAll(buildRightsDocs(m));
+        chunks.addAll(buildRightsChunks(m));
         // 3) 参数分组块(核心,仅 PARAM_GROUP 粒度)
-        docs.addAll(buildParamGroupDocs(m));
+        chunks.addAll(buildParamGroupChunks(m));
         // 10-03 E1:填充车型名(写 vector_store metadata.name 用)
-        for (CarDocEntity d : docs) d.setModelName(m.getName());
+        for (CarChunkEntity d : chunks) d.setModelName(m.getName());
 
         // S6b:embedding 调用并发化(固定小线程池,不随车型数膨胀)+ 单块失败重试 1 次;
         // 结束输出成功/失败计数,失败块记 sortOrder——消除「静默丢块」与千次串行 HTTP。
         // 09-27:委托 EmbeddingBatchRunner;embed 在事务外,持久化走 REQUIRES_NEW 独立事务。
-        batchRunner.run(docs, CarDocEntity::getChunkText,
-                (doc, vec) -> (self == null ? this : self).persistCarDoc(doc, vec),
+        batchRunner.run(chunks, CarChunkEntity::getChunkText,
+                (chunk, vec) -> (self == null ? this : self).persistCarChunk(chunk, vec),
                 "model=" + modelId, 4, 1);
     }
 
     /** 删除某车型的全部文档块 + 向量。 */
     @Transactional
     public void deleteByModel(Long modelId) {
-        List<CarDocEntity> docs = docMapper.selectList(new QueryWrapper<CarDocEntity>().eq("model_id", modelId));
-        List<Long> docIds = new ArrayList<>();
-        for (CarDocEntity d : docs) {
+        List<CarChunkEntity> chunks = chunkMapper.selectList(new QueryWrapper<CarChunkEntity>().eq("model_id", modelId));
+        List<Long> chunkIds = new ArrayList<>();
+        for (CarChunkEntity d : chunks) {
             embMapper.deleteByDocId(d.getId());
-            if (d.getId() != null) docIds.add(d.getId());
+            if (d.getId() != null) chunkIds.add(d.getId());
         }
-        if (vectorStoreService != null && !docIds.isEmpty()) {
-            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.CAR.name(), docIds);
+        if (vectorStoreService != null && !chunkIds.isEmpty()) {
+            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.CAR.name(), chunkIds);
         }
-        docMapper.delete(new QueryWrapper<CarDocEntity>().eq("model_id", modelId));
+        chunkMapper.delete(new QueryWrapper<CarChunkEntity>().eq("model_id", modelId));
     }
 
     /**
-     * 持久化文档块 + 向量(先插 doc 拿 id,再插 embedding)——独立事务边界(09-27 统一):
-     * embedding 网络调用在事务外,此处 REQUIRES_NEW 保证向量插入失败时 doc 一并回滚(不留孤儿块),
+     * 持久化块 + 向量(先插块行拿 id,再插 embedding)——独立事务边界(09-27 统一):
+     * embedding 网络调用在事务外,此处 REQUIRES_NEW 保证向量插入失败时块行一并回滚(不留孤儿块),
      * 且不加入调用方环境事务。此前的 {@code @Transactional insertDocWithEmbedding} 由线程池 lambda
      * 内 this 调用,代理不生效、注解被忽略。
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void persistCarDoc(CarDocEntity doc, String vec) {
-        doc.setCreatedAt(LocalDateTime.now());
-        doc.setUpdatedAt(LocalDateTime.now());
-        docMapper.insert(doc);
-        embMapper.insert(doc.getId(), doc.getModelId(), vec, embeddingClient.modelName());
+    public void persistCarChunk(CarChunkEntity chunk, String vec) {
+        chunk.setCreatedAt(LocalDateTime.now());
+        chunk.setUpdatedAt(LocalDateTime.now());
+        chunkMapper.insert(chunk);
+        embMapper.insert(chunk.getId(), chunk.getModelId(), vec, embeddingClient.modelName());
         if (vectorStoreService != null) {
-            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.CAR.name(), doc.getId(),
-                    doc.getModelId(), doc.getChunkType(), doc.getModelName(), true,
-                    embeddingClient.modelName(), doc.getChunkText(), vec);
+            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.CAR.name(), chunk.getId(),
+                    chunk.getModelId(), chunk.getChunkType(), chunk.getModelName(), true,
+                    embeddingClient.modelName(), chunk.getChunkText(), vec);
         }
     }
 
     /** 车型基础信息块。 */
-    private CarDocEntity buildModelInfoDoc(CarModelEntity m) {
+    private CarChunkEntity buildModelInfoChunk(CarModelEntity m) {
         StringBuilder sb = new StringBuilder();
         sb.append("车型：").append(nv(m.getName())).append("\n");
         sb.append("销售网络：").append(nv(m.getSalesNetwork())).append("\n");
@@ -147,7 +147,7 @@ public class CarDocService {
                 }
             } catch (Exception ignored) {}
         }
-        CarDocEntity d = new CarDocEntity();
+        CarChunkEntity d = new CarChunkEntity();
         d.setModelId(m.getId());
         d.setChunkType("MODEL_INFO");
         d.setChunkText(sb.toString());
@@ -156,8 +156,8 @@ public class CarDocService {
     }
 
     /** 购车权益块(按条切)。 */
-    private List<CarDocEntity> buildRightsDocs(CarModelEntity m) {
-        List<CarDocEntity> out = new ArrayList<>();
+    private List<CarChunkEntity> buildRightsChunks(CarModelEntity m) {
+        List<CarChunkEntity> out = new ArrayList<>();
         if (m.getCarRights() == null) return out;
         try {
             JsonNode rights = json.readTree(m.getCarRights());
@@ -167,7 +167,7 @@ public class CarDocService {
                 for (JsonNode c : content) {
                     String text = c.asText();
                     if (text.isBlank()) continue;
-                    CarDocEntity d = new CarDocEntity();
+                    CarChunkEntity d = new CarChunkEntity();
                     d.setModelId(m.getId());
                     d.setChunkType("RIGHTS");
                     d.setChunkText("车型：" + nv(m.getName()) + " 购车权益：" + text);
@@ -182,9 +182,9 @@ public class CarDocService {
     /** 参数分组块(核心,仅 PARAM_GROUP 粒度;基于清洗后数据)。
      *  S6b:块文本改用清洗值(「参数名:值+单位」,清洗缺失回退原始值),首行加车型全名——
      *  消除跨动力版本(EV/DM-i)同名车系检索混淆(S6.2 P1 遗留),并让清洗价值传导到检索层。 */
-    private List<CarDocEntity> buildParamGroupDocs(CarModelEntity m) {
+    private List<CarChunkEntity> buildParamGroupChunks(CarModelEntity m) {
         Long modelId = m.getId();
-        List<CarDocEntity> out = new ArrayList<>();
+        List<CarChunkEntity> out = new ArrayList<>();
         List<CarParamGroupEntity> groups = groupMapper.selectList(
                 new QueryWrapper<CarParamGroupEntity>().eq("model_id", modelId).orderByAsc("sort_order"));
         // 取第一个版本的清洗数据(全局展示用)
@@ -216,7 +216,7 @@ public class CarDocService {
                 if (display == null) continue;   // 清洗与原始值均缺失,跳过该行
                 sb.append(c.getParamKey()).append("：").append(display).append("\n");
             }
-            CarDocEntity d = new CarDocEntity();
+            CarChunkEntity d = new CarChunkEntity();
             d.setModelId(modelId);
             d.setGroupId(g.getId());
             d.setChunkType("PARAM_GROUP");

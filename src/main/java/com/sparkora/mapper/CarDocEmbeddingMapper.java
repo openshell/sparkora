@@ -37,7 +37,7 @@ public interface CarDocEmbeddingMapper {
     @Select("SELECT e.doc_id AS \"docId\", d.chunk_text AS \"chunkText\", d.chunk_type AS \"chunkType\", " +
             "1 - (e.embedding <=> #{queryVec}::vector) AS \"score\" " +
             "FROM sparkora_car_doc_embedding e " +
-            "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
+            "JOIN sparkora_car_chunk d ON d.id = e.doc_id AND d.deleted = 0 " +
             "WHERE e.model_id = #{modelId} AND e.embedding_model = #{model} " +
             "ORDER BY e.embedding <=> #{queryVec}::vector " +
             "LIMIT #{limit}")
@@ -53,7 +53,7 @@ public interface CarDocEmbeddingMapper {
      */
     @Select("SELECT d.model_id AS \"modelId\", COUNT(*) AS \"chunkCount\", " +
             "COUNT(e.id) FILTER (WHERE e.embedding_model = #{model}) AS \"embeddedCount\" " +
-            "FROM sparkora_car_doc d " +
+            "FROM sparkora_car_chunk d " +
             "LEFT JOIN sparkora_car_doc_embedding e ON e.doc_id = d.id " +
             "WHERE d.deleted = 0 " +
             "GROUP BY d.model_id")
@@ -62,7 +62,7 @@ public interface CarDocEmbeddingMapper {
     /**
      * 统一检索(S8 去门禁):车型域、KB 域与新闻域(C2)同向量空间检索,按余弦分排序。
      * 返回行:source(CAR/KB/NEWS)/docId/modelId(可空)/chunkType/chunkText/score/modelName(车型名/知识标题/新闻标题)。
-     * 仅含有效块(car_doc.deleted=0;kb_doc.deleted=0 且 enabled;news_doc.deleted=0 且 news.deleted=0)。
+     * 仅含有效块(car_chunk.deleted=0;kb_doc.deleted=0 且 enabled;news_doc.deleted=0 且 news.deleted=0)。
      * NEWS 段 modelId 为 NULL(新闻与车型不关联;锚点加权仅对 CAR 生效)。
      *
      * 候选窗口按域隔离(C2 关键):CAR+KB 合并取 top-#{limit}(与 C2 前**完全一致**,保证既有
@@ -79,7 +79,7 @@ public interface CarDocEmbeddingMapper {
             "       d.chunk_type AS \"chunkType\", d.chunk_text AS \"chunkText\", " +
             "       1 - (e.embedding <=> #{queryVec}::vector) AS \"score\", m.name AS \"modelName\" " +
             "FROM sparkora_car_doc_embedding e " +
-            "JOIN sparkora_car_doc d ON d.id = e.doc_id AND d.deleted = 0 " +
+            "JOIN sparkora_car_chunk d ON d.id = e.doc_id AND d.deleted = 0 " +
             "JOIN sparkora_car_model m ON m.id = d.model_id " +
             "WHERE e.embedding_model = #{model} " +
             "UNION ALL " +

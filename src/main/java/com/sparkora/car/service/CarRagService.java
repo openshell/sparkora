@@ -45,7 +45,7 @@ public class CarRagService {
      * 统一检索命中(S8):TypedHit + 来源域与来源名(车型名/知识标题),供行内来源标注与锚点加权。
      *
      * @param docId 域内文档块 id（09-15 qa-auto-illustrate 补读；语义随 source 变化：
-     *              CAR=sparkora_car_doc.id / KB=sparkora_kb_chunk.id / NEWS=sparkora_news_doc.id；可空）。
+     *              CAR=sparkora_car_chunk.id / KB=sparkora_kb_chunk.id / NEWS=sparkora_news_doc.id；可空）。
      *              供消费方定位来源实体（如 NEWS 反查来源新闻封面图），检索 SQL 本已 SELECT，此前读行时丢弃。
      */
     public record UnifiedHit(String chunkText, String chunkType, double score,
