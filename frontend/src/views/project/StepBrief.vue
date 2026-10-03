@@ -119,7 +119,7 @@
       <el-skeleton :rows="6" animated />
       <p class="gen-tip">
         <el-icon class="spin"><Loading /></el-icon>
-        AI 正在生成创作简报（标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点），通常需要 1~2 分钟，请勿关闭页面…
+        AI 正在生成写作蓝图（基于事实手册与意图契约的论证结构与证据绑定），通常需要 1~2 分钟，请勿关闭页面…
       </p>
     </div>
 
@@ -203,20 +203,31 @@
       <el-alert v-if="project && project.lastBriefError" type="error" :closable="false" show-icon
                 :title="`上次生成失败：${project.lastBriefError}`" class="brief-alert" />
 
-      <!-- 计划生成中:clarify 异步占位态,自轮询 /deep/status 直至 questions 就绪 -->
+      <!-- 计划生成中:plan 为同步调用,此态为过渡反馈(毫秒级) -->
       <div v-if="deepStage === 'PLANNING'" class="generating">
         <el-skeleton :rows="5" animated />
         <p class="gen-tip">
           <el-icon class="spin"><Loading /></el-icon>
-          研究计划生成中（AI 正在拆解研究问题与澄清问题），通常需要 10~30 秒，完成后将自动展开澄清表单…
+          研究计划生成中（AI 正在拆解研究问题与数据需求），通常需要 10~30 秒，完成后将自动开跑多代理研究…
         </p>
       </div>
 
-      <!-- 澄清表单(可填 / 已锁定回显) -->
-      <template v-else-if="deepStage === 'CLARIFYING' || deepStage === 'CLARIFIED'">
+      <!-- 澄清对话:逐轮问答 + 收敛进度 -->
+      <template v-else-if="deepStage === 'ASKING'">
         <DeepPlanCard v-if="deepPlan" :plan="deepPlan" :reasoning="deepReasoning" />
-        <ClarifyForm v-if="deepStage === 'CLARIFYING'" :questions="deepQuestions" @submit="onClarifySubmit" />
-        <ClarifyForm v-else :questions="deepQuestions" :locked="true" :answers="deepAnswers" />
+        <ClarifyDialog :question="deepQuestion" :session="deepSession" :busy="deepBusy"
+                       :reasoning="deepReasoning"
+                       @answer="onClarifyAnswer" @converge="onClarifyConverge" @abort="onClarifyAbort" />
+      </template>
+
+      <!-- 澄清收敛:展示意图契约,待「开始研究」 -->
+      <template v-else-if="deepStage === 'CONVERGED'">
+        <TaskBriefCard :task-brief="deepTaskBrief" />
+        <div class="gen-mode-row">
+          <el-button type="primary" :loading="deepBusy" @click="onStartResearch" size="large">
+            <el-icon class="btn-icon"><DataAnalysis /></el-icon>开始研究 →
+          </el-button>
+        </div>
       </template>
 
       <!-- 研究中 / 研究完成:进度面板 + 事实手册 -->
@@ -224,21 +235,27 @@
         <DeepPlanCard v-if="deepPlan" :plan="deepPlan" :reasoning="deepReasoning" />
         <ResearchProgress :brief-id="deepBriefId" @done="onResearchDone" />
         <FactSheetSummary v-if="deepStage === 'RESEARCH_DONE'" :fact-sheet="deepFactSheet" />
-        <!-- 研究完成后的「重新生成简报 / 跳过简报直接生成正文」已上移至上下文条 actions
-             (见 script syncHeader,条件与 loading 逐字不变);原位置不再渲染按钮 -->
+      </template>
+
+      <!-- 蓝图评审:结构化展示/编辑/确认,确认后解锁写作 -->
+      <template v-else-if="deepStage === 'BLUEPRINT_REVIEW'">
+        <DeepPlanCard v-if="deepPlan" :plan="deepPlan" :reasoning="deepReasoning" />
+        <FactSheetSummary v-if="deepFactSheet" :fact-sheet="deepFactSheet" />
+        <BlueprintReview :blueprint="deepBlueprint" :status="deepBlueprintStatus" :busy="deepBusy"
+                         @confirm="onBlueprintConfirm" @regenerate="onBlueprintRegenerate" @next="onDeepGenerate" />
       </template>
 
       <!-- 引导页(唯一主操作「开始深度研究」;失败原因由上方 alert 展示,点击即重试) -->
       <div v-else class="intro-hero">
         <div class="intro-icon"><el-icon :size="30"><MagicStick /></el-icon></div>
         <div class="intro-title">让 AI 先想清楚，再动笔</div>
-        <p>AI 先生成研究计划并向你反问补充信息，多代理并行研究后产出标题候选 / 受众 / 核心观点 / 大纲 / 事实风险点，确认后进入版本生成。</p>
+        <p>AI 先与你逐轮澄清写作意图，收敛为意图契约后生成研究计划并多代理并行研究；事实手册就绪后自动产出写作蓝图，评审确认后进入版本生成。</p>
         <div class="gen-mode-row">
-          <el-button type="primary" :loading="deepBusy" @click="startDeep" size="large">
+          <el-button type="primary" :loading="deepBusy" @click="startClarify" size="large">
             <el-icon class="btn-icon"><DataAnalysis /></el-icon>{{ project && project.lastBriefError ? '重试生成研究计划' : '开始深度研究' }}
           </el-button>
         </div>
-        <p class="form-tip">生成流程为深度模式：先研究后写作，资料来源按系统设置（内部知识库/外部搜索）启用。</p>
+        <p class="form-tip">生成流程为深度模式：先澄清意图，再研究，最后评审蓝图后写作；资料来源按系统设置（内部知识库/外部搜索）启用。</p>
       </div>
     </div>
     </template>
@@ -254,7 +271,9 @@ import { isGeneratingBrief } from '../../constants/project'
 import { useProjectDetailStore } from '../../store/project-detail'
 import { Loading, MagicStick, CollectionTag, User, Lightning, Tickets, Warning, WarningFilled, Check, DataAnalysis } from '@element-plus/icons-vue'
 import DeepPlanCard from './deep/DeepPlanCard.vue'
-import ClarifyForm from './deep/ClarifyForm.vue'
+import ClarifyDialog from './deep/ClarifyDialog.vue'
+import TaskBriefCard from './deep/TaskBriefCard.vue'
+import BlueprintReview from './deep/BlueprintReview.vue'
 import ResearchProgress from './deep/ResearchProgress.vue'
 import FactSheetSummary from './deep/FactSheetSummary.vue'
 import CitationList from './deep/CitationList.vue'
@@ -355,15 +374,20 @@ const ragTagType = (st) => ({
 // 重试入口:store 层做并发去重,失败信息落在 store.briefError
 const loadBrief = () => store.ensureBrief(route.params.id, { force: true })
 
-// ==================== S9 深度模式(09-11 单一 deepStage 状态机) ====================
+// ==================== S9 深度模式(10-03-gen-cognitive-redesign C5:对话澄清→研究→蓝图评审) ====================
 const deepBusy = ref(false)
 const deepBriefId = ref(null)
-const deepStage = ref('NONE')        // NONE/PLANNING/CLARIFYING/CLARIFIED/RESEARCHING/RESEARCH_DONE
+// NONE/ASKING/CONVERGED/PLANNING/RESEARCHING/RESEARCH_DONE/BLUEPRINT_REVIEW
+const deepStage = ref('NONE')
+const deepSession = ref(null)         // C1 澄清会话 {status,turns,slots,currentQuestion}
+const deepQuestion = ref(null)        // 当前待答问题(收敛后 null)
+const deepTaskBrief = ref(null)       // C1 收敛产出意图契约
 const deepPlan = ref(null)
-const deepQuestions = ref([])
-const deepAnswers = ref([])
 const deepFactSheet = ref(null)
-const deepReasoning = ref('')          // 10-02:澄清阶段 AI 思考过程(reasoning),缺失时隐藏面板
+const deepBlueprint = ref(null)       // C3 写作蓝图
+const deepBlueprintStatus = ref('')   // REVIEWING|CONFIRMED
+const deepBlueprintQuality = ref(null)
+const deepReasoning = ref('')         // 10-02:澄清阶段 AI 思考过程(reasoning),缺失时隐藏面板
 // 文章仿写意图参数 ?gen=imitation(创建页「创建并分析原文」):仅清理 query(仿写交互不变);
 // 分析请求由 ProjectEdit 在创建后直发,详情页以 project.status(GENERATING_BRIEF)为事实源展示进度
 if (route.query.gen === 'imitation') {
@@ -373,55 +397,67 @@ if (route.query.gen === 'imitation') {
 // 记下重启前的 currentBriefId,新简报落库(currentBriefId 变化)后退出重启态
 const restarting = ref(false)
 let restartingFromBriefId = null
-let planningTimer = null             // PLANNING 自轮询定时器
+let blueprintTimer = null             // 蓝图出现竞态的有界轮询
+let blueprintPollStart = 0
+
+// 深拷贝解析辅助:对象/JSON 字符串统一转对象,畸形返回 fallback(永不抛)
+const asObj = (v, fallback = null) => {
+  if (v == null) return fallback
+  if (typeof v === 'string') { try { return JSON.parse(v) } catch { return fallback } }
+  return v
+}
 
 // 深度流程是否活跃(决定「有旧简报」时渲染简报正文还是深度流程):
-// PLANNING/CLARIFYING/CLARIFIED/RESEARCHING 恒活跃;RESEARCH_DONE 仅在没有简报时活跃(等待重试简报);
+// ASKING/CONVERGED/PLANNING/RESEARCHING/BLUEPRINT_REVIEW 恒活跃;RESEARCH_DONE 仅在没有简报时活跃;
 // restarting 期间恒活跃(新简报尚未落库,优先展示重启流程)
 const deepActive = computed(() => {
   if (restarting.value) return true
   const s = deepStage.value
-  if (s === 'PLANNING' || s === 'CLARIFYING' || s === 'CLARIFIED' || s === 'RESEARCHING') return true
+  if (s === 'ASKING' || s === 'CONVERGED' || s === 'PLANNING'
+      || s === 'RESEARCHING' || s === 'BLUEPRINT_REVIEW') return true
   return s === 'RESEARCH_DONE' && !brief.value
 })
 
-const stopPlanningPoll = () => { if (planningTimer) { clearInterval(planningTimer); planningTimer = null } }
+const stopBlueprintPoll = () => { if (blueprintTimer) { clearInterval(blueprintTimer); blueprintTimer = null } }
 
 /** 把 /deep/status 返回写入深度面板状态(断点续跑) */
 const applyDeepStatus = (d) => {
   deepBriefId.value = d.briefId
-  deepStage.value = d.stage || 'NONE'
-  deepPlan.value = d.researchPlan ? (typeof d.researchPlan === 'string' ? JSON.parse(d.researchPlan) : d.researchPlan) : null
-  deepQuestions.value = d.questions ? (typeof d.questions === 'string' ? JSON.parse(d.questions) : d.questions) : []
-  deepAnswers.value = d.answers ? (typeof d.answers === 'string' ? JSON.parse(d.answers) : d.answers) : []
+  deepSession.value = asObj(d.clarifySession, null)
+  deepQuestion.value = deepSession.value?.currentQuestion || null
+  deepTaskBrief.value = asObj(d.taskBrief, null)
+  deepPlan.value = asObj(d.researchPlan, null)
   deepFactSheet.value = d.factSheet || null
-  deepReasoning.value = d.planReasoning || ''   // 10-02:增量字段,旧后端缺失时为空串
+  deepBlueprint.value = asObj(d.writingBlueprint, null)
+  deepBlueprintStatus.value = d.blueprintStatus || ''
+  deepBlueprintQuality.value = asObj(d.blueprintQuality, null)
+  // 推理透出:研究阶段 planReasoning 优先;澄清阶段回退 session.reasoning(C1 逐轮思考)
+  deepReasoning.value = d.planReasoning || deepSession.value?.reasoning || ''
+  // 阶段以扩展后的后端 stage 为准;蓝图为竞态兜底(阶段字段可能滞后一拍)
+  const bs = deepBlueprintStatus.value
+  if (d.stage === 'BLUEPRINT_REVIEW' || bs === 'REVIEWING' || bs === 'CONFIRMED') deepStage.value = 'BLUEPRINT_REVIEW'
+  else if (d.stage === 'ASKING') deepStage.value = 'ASKING'
+  else if (d.stage === 'CONVERGED') deepStage.value = 'CONVERGED'
+  else if (d.stage === 'PLANNING') deepStage.value = 'PLANNING'
+  else if (d.stage === 'RESEARCHING') deepStage.value = 'RESEARCHING'
+  else if (d.stage === 'RESEARCH_DONE') deepStage.value = 'RESEARCH_DONE'
+  else deepStage.value = 'NONE'
 }
 
 /**
- * PLANNING 轮询:每 2.5s 拉 /deep/status,离开 PLANNING 即停并应用;回 NONE 视为失败,回引导态。
- * 必须带本次启动的 briefId 查询:失败时占位行被删除,若不带 briefId 会回退到旧 DEEP 简报,
- * 误判为 CLARIFYING 而永远检测不到失败(旧简报存在时的重启场景)。
+ * 蓝图出现竞态的有界轮询:研究完成后后端自动生成蓝图(异步,状态经 GENERATING_BRIEF→READY)。
+ * 每 2.5s 拉 /deep/status,直到 writingBlueprint 出现(→ BLUEPRINT_REVIEW)或超时(~3min)。
  */
-const startPlanningPoll = (briefId) => {
-  stopPlanningPoll()
-  planningTimer = setInterval(async () => {
+const startBlueprintPoll = () => {
+  stopBlueprintPoll()
+  blueprintPollStart = Date.now()
+  blueprintTimer = setInterval(async () => {
+    if (Date.now() - blueprintPollStart > 3 * 60 * 1000) { stopBlueprintPoll(); return }
     try {
-      const bid = briefId ?? deepBriefId.value
-      const url = bid != null
-        ? `/projects/${route.params.id}/deep/status?briefId=${bid}`
-        : `/projects/${route.params.id}/deep/status`
-      const d = (await http.get(url)).data || {}
-      if (d.stage === 'PLANNING') { applyDeepStatus(d); return }
-      stopPlanningPoll()
-      if (d.genMode === 'DEEP' && d.stage && d.stage !== 'NONE') {
+      const d = (await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)).data || {}
+      if (d.writingBlueprint) {
         applyDeepStatus(d)
-        // 计划已就绪:刷新 project 以清掉成功后已被后端清空的 lastBriefError(避免旧错误横幅残留)
-        await store.ensureProject(route.params.id, { force: true })
-      } else {
-        // 占位行已被删除(计划生成失败):退出重启态回引导态,lastBriefError 由 project 展示
-        restarting.value = false
-        deepStage.value = 'NONE'
+        stopBlueprintPoll()
         await store.ensureProject(route.params.id, { force: true })
       }
     } catch { /* 轮询失败静默,下次再试 */ }
@@ -430,8 +466,8 @@ const startPlanningPoll = (briefId) => {
 
 /**
  * 深度断点状态恢复(仅非仿写项目):project 就位后单次拉 /deep/status,
- * 恢复 PLANNING/CLARIFYING/CLARIFIED/RESEARCHING/RESEARCH_DONE;PLANNING 时续起轮询。
- * 不再依赖 ?gen=deep 路径意图与 6s 有界重查——PLANNING 态由后端持久化,可跨退出重进恢复。
+ * 恢复 ASKING/CONVERGED/PLANNING/RESEARCHING/RESEARCH_DONE/BLUEPRINT_REVIEW。
+ * /deep/plan 已同步,无需 PLANNING 轮询;蓝图竞态由有界轮询兜底。
  */
 const syncDeepStatus = async () => {
   if (isImitation.value) return   // 仿写项目不发深度接口
@@ -439,34 +475,43 @@ const syncDeepStatus = async () => {
     const d = (await http.get(`/projects/${route.params.id}/deep/status`)).data || {}
     if (d.genMode !== 'DEEP' || !d.stage || d.stage === 'NONE') {
       deepStage.value = 'NONE'
-      stopPlanningPoll()
+      stopBlueprintPoll()
       return
     }
     applyDeepStatus(d)
-    if (d.stage === 'PLANNING') startPlanningPoll(d.briefId)
-    else stopPlanningPoll()
+    // 研究进行中/已完成但蓝图尚未出现:启动竞态轮询
+    if ((deepStage.value === 'RESEARCHING' || deepStage.value === 'RESEARCH_DONE') && !deepBlueprint.value) {
+      startBlueprintPoll()
+    } else stopBlueprintPoll()
   } catch { /* 深度接口异常不影响引导页 */ }
 }
 
-/** 唯一主操作:启动深度研究(POST /deep/clarify 毫秒级返回,立即进 PLANNING 进度态并自轮询) */
-const startDeep = async () => {
+/** C1 启动澄清对话(同步 LLM 生成首题,约十秒级) */
+const startClarify = async () => {
+  if (deepBusy.value) return   // 防重入:非幂等(新建 ASKING 会话)
   deepBusy.value = true
-  // 乐观置 PLANNING:立即给出进度反馈(避免重启时旧面板闪烁);失败再按后端真实状态回填
+  // 乐观置 ASKING:立即给出对话态反馈;失败再按后端真实状态回填
   deepPlan.value = null
-  deepQuestions.value = []
-  deepAnswers.value = []
+  deepTaskBrief.value = null
   deepFactSheet.value = null
+  deepBlueprint.value = null
+  deepBlueprintStatus.value = ''
+  deepBlueprintQuality.value = null
   deepReasoning.value = ''
-  deepStage.value = 'PLANNING'
+  deepSession.value = deepSession.value || { turns: [], slots: [] }
+  deepQuestion.value = null
+  deepStage.value = 'ASKING'
+  stopBlueprintPoll()
   try {
-    // 10-02:后端忽略请求体,从项目实体读取输入;此处传空对象
-    const res = await projectApi.startDeep(route.params.id)
+    const res = await projectApi.clarifyStart(route.params.id)
     if (res.code !== 0) throw new Error(res.msg)
     deepBriefId.value = res.data.briefId
-    startPlanningPoll(res.data.briefId)
+    deepSession.value = res.data.session || null
+    deepQuestion.value = res.data.session?.currentQuestion || res.data.question || null
+    deepStage.value = 'ASKING'
   } catch (e) {
-    ElMessage.error(e?.response?.data?.msg || e.message || '研究计划启动失败')
-    // 启动失败(如并发冲突):退出重启态,并按后端真实状态回填(可能已在 PLANNING)
+    ElMessage.error(e?.response?.data?.msg || e.message || '澄清会话启动失败')
+    // 启动失败(如并发冲突/已有会话):退出重启态,按后端真实状态回填
     restarting.value = false
     await syncDeepStatus()
   } finally { deepBusy.value = false }
@@ -490,72 +535,140 @@ watch(() => props.project?.status, (after, before) => {
   if (before === 'GENERATING_BRIEF' && after === 'READY') loadBrief()
 })
 
-// 重新研究生成(2026-09-09 模式收敛):FAST 接口已封死,直接启动深度流程(不再回引导页两步点击)
+// 重新研究生成(10-03 C5):FAST 接口已封死,重启整个认知流程(从澄清对话开始)
 const onRegenerateDeep = () => {
   restarting.value = true
   restartingFromBriefId = props.project?.currentBriefId ?? null
-  startDeep()
+  startClarify()
 }
 // 新简报落库(currentBriefId 指向新 brief)后退出重启态,恢复正常简报展示
 watch(() => props.project?.currentBriefId, (v) => {
   if (restarting.value && v != null && v !== restartingFromBriefId) restarting.value = false
 })
 
-onUnmounted(stopPlanningPoll)
+onUnmounted(stopBlueprintPoll)
 
-const onClarifySubmit = async (answers) => {
+/** C1 回答当前问题并推进一轮;收敛则展示 TaskBrief */
+const onClarifyAnswer = async (answer) => {
+  if (deepBusy.value) return   // 防重入
   deepBusy.value = true
   try {
-    const res = await http.post(`/projects/${route.params.id}/deep/clarify-answer`,
-      { briefId: deepBriefId.value, answers })
+    const res = await projectApi.clarifyAnswer(route.params.id, deepBriefId.value, deepQuestion.value?.id, answer)
     if (res.code !== 0) throw new Error(res.msg)
-    deepAnswers.value = res.data.locked ? JSON.parse(res.data.locked) : []
-    deepStage.value = 'CLARIFIED'
-    // 锁定即开跑研究
-    await onDeepRun()
-  } catch (e) { ElMessage.error(e?.response?.data?.msg || '锁定失败') }
+    deepSession.value = res.data.session || deepSession.value
+    deepReasoning.value = deepSession.value?.reasoning || deepReasoning.value
+    if (res.data.converged) {
+      deepTaskBrief.value = res.data.taskBrief || null
+      deepQuestion.value = null
+      deepStage.value = 'CONVERGED'
+      ElMessage.success('意图已收敛，请确认意图契约后开始研究')
+    } else {
+      deepQuestion.value = res.data.question || res.data.session?.currentQuestion || null
+      deepStage.value = 'ASKING'
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e.message || '回答推进失败')
+    await syncDeepStatus()
+  } finally { deepBusy.value = false }
+}
+
+/** C1 强制收敛 */
+const onClarifyConverge = async () => {
+  if (deepBusy.value) return
+  deepBusy.value = true
+  try {
+    const res = await projectApi.clarifyConverge(route.params.id, deepBriefId.value)
+    if (res.code !== 0) throw new Error(res.msg)
+    deepTaskBrief.value = res.data.taskBrief || null
+    deepQuestion.value = null
+    deepStage.value = 'CONVERGED'
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || e.message || '收敛失败') }
   finally { deepBusy.value = false }
 }
 
-const onDeepRun = async () => {
+/** C1 中止会话:回引导态 */
+const onClarifyAbort = async () => {
+  if (deepBusy.value) return
   deepBusy.value = true
-  deepStage.value = 'RESEARCHING'
   try {
-    // run 为异步启动(202 语义):立即返回,后台逐 agent 执行;进度由 ResearchProgress 2s 轮询展示
-    const res = await http.post(`/projects/${route.params.id}/deep/run`, { briefId: deepBriefId.value })
+    const res = await projectApi.clarifyAbort(route.params.id, deepBriefId.value)
     if (res.code !== 0) throw new Error(res.msg)
-  } catch (e) { deepStage.value = 'CLARIFIED'; ElMessage.error(e?.response?.data?.msg || e.message || '研究启动失败') }
+    deepStage.value = 'NONE'
+    deepSession.value = null
+    deepQuestion.value = null
+    deepTaskBrief.value = null
+    await store.ensureProject(route.params.id, { force: true })
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || e.message || '中止失败') }
   finally { deepBusy.value = false }
 }
 
-// ResearchProgress 全部 agent 完成时触发:拉手册并切到 RESEARCH_DONE
+/**
+ * C2 开始研究:先 plan(同步生成研究计划,置 planStatus=READY)再 run(异步多代理研究)。
+ * 失败回 CONVERGED 待重试。plan 需 task_brief 非空(已在 CONVERGED 保证)。
+ */
+const onStartResearch = async () => {
+  if (deepBusy.value) return
+  deepBusy.value = true
+  deepStage.value = 'PLANNING'
+  try {
+    const planRes = await projectApi.planDeep(route.params.id, deepBriefId.value)
+    if (planRes.code !== 0) throw new Error(planRes.msg)
+    deepPlan.value = asObj(planRes.data?.researchPlan, deepPlan.value)
+    const runRes = await projectApi.runDeep(route.params.id, deepBriefId.value)
+    if (runRes.code !== 0) throw new Error(runRes.msg)
+    deepStage.value = 'RESEARCHING'
+  } catch (e) {
+    deepStage.value = 'CONVERGED'
+    ElMessage.error(e?.response?.data?.msg || e.message || '研究启动失败')
+  } finally { deepBusy.value = false }
+}
+
+// ResearchProgress 全部 agent 完成时触发:拉手册并切到 RESEARCH_DONE,轮询等蓝图出现
 const onResearchDone = async () => {
   // 无论手册拉取是否成功,都先推进状态(避免停在 RESEARCHING 导致进度面板无限轮询)
   deepStage.value = 'RESEARCH_DONE'
   try {
     const st = await http.get(`/projects/${route.params.id}/deep/status?briefId=${deepBriefId.value}`)
     deepFactSheet.value = st.data?.factSheet || null
-    ElMessage.success('研究完成,事实手册已生成;简报正在基于手册自动生成…')
+    ElMessage.success('研究完成,事实手册已生成;写作蓝图正在自动生成…')
   } catch (e) { ElMessage.error(e?.response?.data?.msg || '拉取事实手册失败') }
-  // 自动简报由后端异步触发,项目状态会经 GENERATING_BRIEF→READY,布局层轮询会拉到简报
-  await store.ensureProject(route.params.id, { force: true })
+  // 自动蓝图由后端异步触发(经 GENERATING_BRIEF→READY),启动有界轮询直至 writingBlueprint 出现
+  startBlueprintPoll()
 }
 
-// 深度简报手动重试(自动生成失败时)
-const onDeepBriefRetry = async () => {
+/** C3 人工确认写作蓝图(可带人工编辑后的 JSON),解锁写作 */
+const onBlueprintConfirm = async (editedJson) => {
+  if (deepBusy.value) return
   deepBusy.value = true
   try {
-    const res = await projectApi.generateDeepBrief(route.params.id, deepBriefId.value)
-    if (res.code === 0) ElMessage.success('简报已生成')
-    else ElMessage.error(res.msg || '简报生成失败')
-  } catch (e) { ElMessage.error(e?.response?.data?.msg || '简报生成失败') }
-  finally {
-    deepBusy.value = false
+    const res = await projectApi.confirmBlueprint(route.params.id, deepBriefId.value, editedJson)
+    if (res.code !== 0) throw new Error(res.msg)
+    deepBlueprintStatus.value = 'CONFIRMED'
+    if (res.data?.writingBlueprint) deepBlueprint.value = asObj(res.data.writingBlueprint, deepBlueprint.value)
+    if (res.data?.blueprintQuality) deepBlueprintQuality.value = asObj(res.data.blueprintQuality, deepBlueprintQuality.value)
+    ElMessage.success('写作蓝图已确认，写作已解锁')
     await store.ensureProject(route.params.id, { force: true })
-  }
+  } catch (e) { ElMessage.error(e?.response?.data?.msg || e.message || '蓝图确认失败') }
+  finally { deepBusy.value = false }
+}
+
+/** C3 重新生成写作蓝图(委托 /deep/brief) */
+const onBlueprintRegenerate = async () => {
+  if (deepBusy.value) return   // 防重入:非幂等(重复生成覆盖蓝图)
+  deepBusy.value = true
+  deepStage.value = 'PLANNING'
+  try {
+    const res = await projectApi.generateDeepBrief(route.params.id, deepBriefId.value)
+    if (res.code !== 0) throw new Error(res.msg)
+    await syncDeepStatus()
+  } catch (e) {
+    deepStage.value = 'BLUEPRINT_REVIEW'
+    ElMessage.error(e?.response?.data?.msg || e.message || '蓝图生成失败')
+  } finally { deepBusy.value = false }
 }
 
 const onDeepGenerate = async () => {
+  if (deepBusy.value) return   // 防重入:非幂等(重复触发生成)
   deepBusy.value = true
   try {
     // 09-27-gen-async 异步化:毫秒级返回占位,后台逐风格生成;跳版本页后由布局层轮询状态翻转刷新。
@@ -593,26 +706,41 @@ function syncHeader() {
   const im = isImitation.value
   header.crumbs = [{ label: '项目' }, { label: im ? '原文分析' : '简报' }]
   const acts = []
-  if (canRegenerateBrief.value) {
+  // 认知流程(10-03 C5):按 deepStage 给出阶段唯一主操作
+  const inBlueprintReview = deepActive.value && deepStage.value === 'BLUEPRINT_REVIEW'
+  if (deepActive.value) {
+    if (deepStage.value === 'CONVERGED') {
+      acts.push({ key: 'deep-research', label: '开始研究 →', type: 'primary', loading: deepBusy.value, onClick: onStartResearch })
+    } else if (deepStage.value === 'RESEARCH_DONE') {
+      // 自动蓝图生成失败/未就绪:手动重试(relabel 为「重新生成蓝图」)
+      if (props.project && (props.project.lastBriefError || props.project.status === 'DRAFT')) {
+        acts.push({ key: 'bp-regen', label: '重新生成蓝图', loading: deepBusy.value, onClick: onBlueprintRegenerate })
+      }
+    } else if (inBlueprintReview && deepBlueprintStatus.value === 'CONFIRMED' && !canViewVersions.value) {
+      // 蓝图已确认且版本尚未生成:启动正文生成并跳版本页。
+      // 版本已生成(canViewVersions)时抑制,避免与下方「查看版本」重复渲染两个下一步按钮,
+      // 也避免误触 onDeepGenerate 重复生成(非幂等)。
+      acts.push({ key: 'next', label: '进入多版本生成 →', type: 'primary', loading: deepBusy.value, onClick: onDeepGenerate })
+    }
+  } else if (!im && !brief.value && !generatingBrief.value) {
+    // 无简报引导态:唯一主操作「开始深度研究」
+    acts.push({ key: 'deep-start', label: props.project?.lastBriefError ? '重试生成研究计划' : '开始深度研究', type: 'primary', loading: deepBusy.value, onClick: startClarify })
+  }
+  if (canRegenerateBrief.value && !inBlueprintReview) {
     acts.push(im
-      // 仿写:重新分析(analyzeImitation);主题:重新研究生成(走深度流程)
+      // 仿写:重新分析(analyzeImitation);主题:重新研究生成(重启整个认知流程)
       ? { key: 'regen', label: '重新分析', loading: imitationBusy.value, disabled: generatingBrief.value, onClick: onAnalyze }
       : { key: 'regen', label: '重新研究生成', loading: deepBusy.value, disabled: generatingBrief.value, onClick: onRegenerateDeep })
   }
   // 下一步按状态给出唯一动作:READY 进入版本生成;版本已生成(含已发布)查看版本
-  if (canGoVersions.value) acts.push({ key: 'next', label: '进入多版本生成 →', type: 'primary', onClick: gotoVersions })
+  // (蓝图评审未确认时写作未解锁,抑制通用「进入多版本生成」,避免误触 409)
+  if (canGoVersions.value && !inBlueprintReview) acts.push({ key: 'next', label: '进入多版本生成 →', type: 'primary', onClick: gotoVersions })
   else if (canViewVersions.value) acts.push({ key: 'next', label: '查看版本 →', type: 'primary', onClick: gotoVersions })
-  // 深度流程研究完成态:自动简报已在后台生成;失败可重试,也可跳过简报直接写正文
-  if (deepActive.value && deepStage.value === 'RESEARCH_DONE') {
-    if (props.project && (props.project.lastBriefError || props.project.status === 'DRAFT')) {
-      acts.push({ key: 'deep-retry', label: '重新生成简报', loading: deepBusy.value, onClick: onDeepBriefRetry })
-    }
-    acts.push({ key: 'deep-gen', label: '跳过简报,直接生成正文 →', loading: deepBusy.value, onClick: onDeepGenerate })
-  }
   header.actions = acts
 }
 syncHeader()
 watch([isImitation, canRegenerateBrief, canGoVersions, canViewVersions, deepBusy, imitationBusy, generatingBrief, deepActive, deepStage,
+  deepBlueprintStatus, restarting, () => brief.value,
   () => `${props.project?.lastBriefError || ''}|${props.project?.status || ''}`], syncHeader)
 </script>
 

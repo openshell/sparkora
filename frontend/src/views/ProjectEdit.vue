@@ -158,11 +158,10 @@ const onSave = async () => {
   } finally { saving.value = false }
 }
 
-// 创建并生成:主按钮只负责「创建 + 发起深度研究计划」,立即进详情页;
-// 生成过程由详情页按 project.status 展示(布局层 4s 轮询,简报页以 GENERATING_BRIEF 状态为事实源)。
-// 2026-09-09 模式收敛:唯一生成路径为深度流程(startDeep),快速模式入口已下线。
-// 09-11 clarify 异步化(毫秒级返回):先 await startDeep 再导航,消除「导航早于落库」竞态;
-// 详情页据 brief 侧 PLANNING 态展示「研究计划生成中」并自轮询。
+// 创建并生成:主按钮只负责「创建 + 启动意图澄清会话」,随即进详情页;
+// 10-03 C5:唯一生成路径为深度认知流程(clarifyStart → 澄清对话 → 研究 → 蓝图评审)。
+// clarifyStart 为同步 LLM(生成首题,约十秒级),这里 await 后再导航,消除「导航早于落库」竞态;
+// 详情页据 /deep/status 的 ASKING 态恢复澄清对话。
 // 仿写模式:保持原交互(创建后跳详情页并直接发起「分析原文」,失败也在详情页可见重试)。
 const onSaveAndGenerate = async () => {
   // 同步重入守卫:validate 是异步的,防双击/连按 Enter 并发建两次项目(loading 必须在 validate 前置位)
@@ -183,12 +182,12 @@ const onSaveAndGenerate = async () => {
         // 发起失败:已跳详情页,状态/lastBriefError 可见,由用户在页面内重试
       }
     } else {
-      // 主题创作:先落 PLANNING 占位(毫秒级)再导航,详情页据 /deep/status 恢复进度态。
-      // 10-02:startDeep 已无参(后端从项目实体读主题/内容描述/读者/字数),消除 body 与库不一致窗口
+      // 主题创作:先启动澄清会话(同步生成首题,落 ASKING 占位)再导航,详情页据 /deep/status 恢复对话态。
+      // 10-03 C5:后端 clarify/start 无参(从项目实体读主题/内容描述/读者/字数),消除 body 与库不一致窗口
       try {
-        await projectApi.startDeep(id)
+        await projectApi.clarifyStart(id)
       } catch (e) {
-        // 发起失败(如并发冲突):项目已建,详情页据 lastBriefError 展示并允许重试
+        // 发起失败(如并发冲突):项目已建,详情页据 /deep/status 展示并允许重试
       }
       router.push(`/projects/${id}`)
     }
@@ -200,7 +199,7 @@ const onSaveAndGenerate = async () => {
 // ==== 关键表单 Enter 提交(R6)====
 // 只挂在单行输入上(创作主题/目标读者);textarea 保留换行不绑定。
 // isComposing / keyCode 229:中文输入法组字过程中的回车是「选词」而非「提交」,
-// 不加这个判断会在拼音上屏瞬间误触发创建(与 StepBrief 的 ClarifyForm 同一口径)。
+// 不加这个判断会在拼音上屏瞬间误触发创建(与 StepBrief 的 ClarifyDialog 同一口径)。
 const onEnterSubmit = (e) => {
   if (e.isComposing || e.keyCode === 229) return
   e.preventDefault()

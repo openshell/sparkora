@@ -284,7 +284,7 @@ const onEnter = (e) => {
   // Shift+Enter 换行；Enter 直接发送
   if (e.shiftKey) return
   // isComposing / keyCode 229:中文输入法组字中的回车是「选词」,当发送会把半截拼音发出去
-  // (与 ProjectEdit / StepBrief 的 ClarifyForm 同一口径)
+  // (与 ProjectEdit / StepBrief 的 ClarifyDialog 同一口径)
   if (e.isComposing || e.keyCode === 229) return
   e.preventDefault()
   onSend()

@@ -37,13 +37,27 @@ export const projectApi = {
   // 简报阶段点选标题(S6);body={title},空串清除
   setSelectedTitle: (id, title) =>
     http.put(`/projects/${id}/selected-title`, { title }),
-  // S9 深度模式:研究计划+反问(clarify 约 10~30s,放宽超时同 generateBrief)。
-  // 10-02:后端忽略请求体,一律从项目实体读取主题/内容描述/读者/字数;传空对象仅为占位。
-  startDeep: (id) =>
-    http.post(`/projects/${id}/deep/clarify`, {}, { timeout: 120000 }),
-  // S9 深度模式:锁定反问答案
-  submitDeepAnswers: (id, briefId, answers) =>
-    http.post(`/projects/${id}/deep/clarify-answer`, { briefId, answers }),
+  // C1 意图澄清对话:启动会话(同步 LLM 生成首题,约十秒级,放宽超时)
+  clarifyStart: (id) =>
+    http.post(`/projects/${id}/deep/clarify/start`, {}, { timeout: 120000 }),
+  // C1 回答当前问题并推进一轮(同步 LLM 决定下一问/收敛,放宽超时)
+  clarifyAnswer: (id, briefId, questionId, answer) =>
+    http.post(`/projects/${id}/deep/clarify/answer`, { briefId, questionId, answer }, { timeout: 120000 }),
+  // C1 强制收敛并产出 TaskBrief(必要槽位缺则用默认值兜底)
+  clarifyConverge: (id, briefId) =>
+    http.post(`/projects/${id}/deep/clarify/converge`, { briefId }, { timeout: 120000 }),
+  // C1 中止澄清会话(幂等)
+  clarifyAbort: (id, briefId) =>
+    http.post(`/projects/${id}/deep/clarify/abort`, { briefId }),
+  // C2 基于 TaskBrief 生成纯事实研究计划(同步 LLM,放宽超时);须先澄清收敛
+  planDeep: (id, briefId) =>
+    http.post(`/projects/${id}/deep/plan`, { briefId }, { timeout: 120000 }),
+  // C3 人工确认写作蓝图,解锁写作;writingBlueprint 为人工编辑后的蓝图 JSON,可空
+  confirmBlueprint: (id, briefId, writingBlueprint) => {
+    const body = { briefId }
+    if (writingBlueprint != null) body.writingBlueprint = writingBlueprint
+    return http.post(`/projects/${id}/deep/blueprint/confirm`, body)
+  },
   // S9 深度模式:锁定答案并立即开跑多代理研究(前端轮询 status 展示进度)
   runDeep: (id, briefId) => http.post(`/projects/${id}/deep/run`, { briefId }),
   // S9 深度模式:批量生成深度正文(styleIds[] 一次提交,后端一次 claim + 后台逐风格生成,
