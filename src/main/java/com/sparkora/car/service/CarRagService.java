@@ -1,35 +1,36 @@
 package com.sparkora.car.service;
 
+import com.sparkora.ai.vector.SearchStore;
+import com.sparkora.ai.vector.VectorDomain;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.config.AiProperties;
-import com.sparkora.mapper.CarDocEmbeddingMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * RAG 检索服务。供文章生成(BriefService/VersionService)与内部问答共用。
  *
  * 流程:query → embedding → pgvector 余弦相似度 top-K → 组装知识上下文。
  * 检索结果作为事实约束注入 prompt,衔接 fact_risks 防编造。
+ *
+ * 10-03 E1:存储+相似度检索改走 Spring AI PgVectorStore 单表(经 {@link SearchStore}),
+ * 原 4 段手写 UNION SQL 由「CAR+KB 合并检索一次 + NEWS 独立检索一次 + Java 合并」复现候选
+ * 窗口隔离语义;业务规则(锚点/配额/门槛/四态/子查询/覆盖度)不变。
  */
 @Slf4j
 @Service
 public class CarRagService {
 
-    private final CarDocEmbeddingMapper embMapper;
-    private final com.sparkora.mapper.KbChunkEmbeddingMapper kbEmbMapper;
+    private final SearchStore store;
     private final EmbeddingClient embeddingClient;
     private final AiProperties aiProps;
 
-    public CarRagService(CarDocEmbeddingMapper embMapper,
-                         com.sparkora.mapper.KbChunkEmbeddingMapper kbEmbMapper,
-                         EmbeddingClient embeddingClient, AiProperties aiProps) {
-        this.embMapper = embMapper;
-        this.kbEmbMapper = kbEmbMapper;
+    public CarRagService(SearchStore store, EmbeddingClient embeddingClient, AiProperties aiProps) {
+        this.store = store;
         this.embeddingClient = embeddingClient;
         this.aiProps = aiProps;
     }
@@ -111,13 +112,10 @@ public class CarRagService {
      */
     public List<Hit> retrieve(Long modelId, String query, int topK) {
         if (modelId == null || query == null || query.isBlank()) return List.of();
-        String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = embMapper.searchTopK(modelId, vec, topK, embeddingClient.modelName());
+        List<Document> docs = store.searchByModel(modelId, query, topK, 0, embeddingClient.modelName());
         List<Hit> hits = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
-            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
-            hits.add(new Hit(text, score));
+        for (Document doc : docs) {
+            hits.add(new Hit(text(doc), doc.getScore() == null ? 0 : doc.getScore()));
         }
         return hits;
     }
@@ -127,14 +125,12 @@ public class CarRagService {
      */
     public List<TypedHit> retrieveTyped(Long modelId, String query, int topK) {
         if (modelId == null || query == null || query.isBlank()) return List.of();
-        String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = embMapper.searchTopK(modelId, vec, topK, embeddingClient.modelName());
+        List<Document> docs = store.searchByModel(modelId, query, topK, 0, embeddingClient.modelName());
         List<TypedHit> hits = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
-            String type = row.get("chunkType") == null ? "PARAM_GROUP" : String.valueOf(row.get("chunkType"));
-            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
-            hits.add(new TypedHit(text, type, score));
+        for (Document doc : docs) {
+            String type = metaString(doc, "chunkType");
+            hits.add(new TypedHit(text(doc), type == null ? "PARAM_GROUP" : type,
+                    doc.getScore() == null ? 0 : doc.getScore()));
         }
         return hits;
     }
@@ -377,37 +373,66 @@ public class CarRagService {
      */
     public List<UnifiedHit> retrieveUnified(String query, int limit) {
         if (query == null || query.isBlank() || limit <= 0) return List.of();
-        String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = embMapper.searchTopKUnified(vec, limit, embeddingClient.modelName());
+        String model = embeddingClient.modelName();
         List<UnifiedHit> hits = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
-            String type = row.get("chunkType") == null ? "PARAM_GROUP" : String.valueOf(row.get("chunkType"));
-            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
-            String source = row.get("source") == null ? "CAR" : String.valueOf(row.get("source"));
-            Long modelId = row.get("modelId") == null ? null : ((Number) row.get("modelId")).longValue();
-            String modelName = row.get("modelName") == null ? "" : String.valueOf(row.get("modelName"));
-            Long docId = row.get("docId") == null ? null : ((Number) row.get("docId")).longValue();
-            hits.add(new UnifiedHit(text, type, score, source, modelId, modelName, docId));
+        // ① 车型 + KB:合并候选窗(C2 前语义原样保留)
+        for (Document doc : store.searchDomains(List.of(VectorDomain.CAR.name(), VectorDomain.KB.name()),
+                query, limit, 0, model)) {
+            hits.add(toUnified(doc));
         }
+        // ② 新闻域:独立候选窗,不与 CAR/KB 争抢全局窗口
+        for (Document doc : store.searchDomains(List.of(VectorDomain.NEWS.name()), query, limit, 0, model)) {
+            hits.add(toUnified(doc));
+        }
+        hits.sort((a, b) -> Double.compare(b.score(), a.score()));
         return hits;
     }
 
     /**
-     * 通用域检索(S7):全库 top-K,无车型约束。供 retrieveForGeneration 与 KB 问答使用。
-     * 返回 TypedHit(chunkType 固定 "KB_CHUNK")。
+     * 通用域检索(S7):KB 域 top-K。返回 TypedHit(chunkType 固定 "KB_CHUNK")。
      */
     public List<TypedHit> retrieveKb(String query, int topK) {
         if (query == null || query.isBlank() || topK <= 0) return List.of();
-        String vec = embeddingClient.embed(query);
-        List<Map<String, Object>> rows = kbEmbMapper.searchTopK(vec, topK, embeddingClient.modelName());
+        List<Document> docs = store.searchDomains(List.of(VectorDomain.KB.name()), query, topK, 0,
+                embeddingClient.modelName());
         List<TypedHit> hits = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            String text = row.get("chunkText") == null ? "" : String.valueOf(row.get("chunkText"));
-            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
-            hits.add(new TypedHit(text, "KB_CHUNK", score));
+        for (Document doc : docs) {
+            hits.add(new TypedHit(text(doc), "KB_CHUNK", doc.getScore() == null ? 0 : doc.getScore()));
         }
         return hits;
+    }
+
+    /** Document → UnifiedHit（metadata 域字段 + content + score）。 */
+    private UnifiedHit toUnified(Document doc) {
+        String source = metaString(doc, "domain");
+        if (source == null) source = "CAR";
+        Long modelId = metaLong(doc, "modelId");
+        String modelName = metaString(doc, "name");
+        Long docId = metaLong(doc, "refId");
+        String type = metaString(doc, "chunkType");
+        double score = doc.getScore() == null ? 0 : doc.getScore();
+        return new UnifiedHit(text(doc), type == null ? "PARAM_GROUP" : type, score,
+                source, modelId, modelName == null ? "" : modelName, docId);
+    }
+
+    private static String text(Document doc) {
+        return doc.getText() == null ? "" : doc.getText();
+    }
+
+    private static String metaString(Document doc, String key) {
+        Object v = doc.getMetadata().get(key);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    private static Long metaLong(Document doc, String key) {
+        Object v = doc.getMetadata().get(key);
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        try {
+            return Long.valueOf(String.valueOf(v));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** 查询文本中包含的参数关键词 → 子查询(「参数词 + 车型上下文」由调用方模型名已含于 query 时自动生效)。 */

@@ -72,6 +72,20 @@ spring:
       image:
         options:
           model: ${AI_IMAGE_MODEL:}
+    # 10-03 E1:PgVectorStore 单表(vector_store)。建表由 Flyway V5 管理(initialize-schema=false,
+    # 不用 Spring 自动建表);维度 1024 与 DDL vector(1024) 一致;distance COSINE/index HNSW 对齐旧表。
+    vectorstore:
+      type: pgvector
+      pgvector:
+        table-name: vector_store
+        schema-name: public
+        dimensions: ${AI_EMBEDDING_DIM:1024}
+        initialize-schema: false
+        schema-validation: false
+        id-type: uuid
+        distance-type: cosine-distance
+        index-type: hnsw
+        remove-existing-vector-store-table: false
 
 mybatis-plus:
   configuration:

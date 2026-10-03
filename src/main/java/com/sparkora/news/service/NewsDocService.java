@@ -45,6 +45,9 @@ public class NewsDocService {
     @Autowired
     @Lazy
     private NewsDocService self;
+    /** 单表 store（10-03 E1）；字段注入可选，单测直接 new 时为 null（同步守卫降级）。 */
+    @Autowired(required = false)
+    private com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
     public NewsDocService(NewsMapper newsMapper, NewsDocMapper docMapper,
                           NewsDocEmbeddingMapper embMapper, EmbeddingClient embeddingClient,
@@ -73,6 +76,7 @@ public class NewsDocService {
             d.setSeq(i);
             d.setChunkType(chunkTypeOf(chunks));
             d.setChunkText(chunks.get(i));
+            d.setNewsTitle(n.getTitle());   // 10-03 E1:store metadata.name
             docs.add(d);
         }
         // embedding 并发化(固定小线程池,不随新闻数膨胀)+ 单块失败重试 1 次
@@ -81,11 +85,19 @@ public class NewsDocService {
                 "newsId=" + newsId, 4, 1);
     }
 
-    /** 物理清块与向量(重建/删除共用)。 */
+    /** 物理清块与向量(重建/删除共用)。10-03 E1:同步删除单表 store 行(先读块 id 再删)。 */
     @Transactional
     public void deleteByNews(Long newsId) {
+        java.util.List<NewsDocEntity> docs = docMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<NewsDocEntity>()
+                        .eq("news_id", newsId));
+        java.util.List<Long> docIds = new java.util.ArrayList<>();
+        for (NewsDocEntity d : docs) if (d.getId() != null) docIds.add(d.getId());
         embMapper.deleteByNewsId(newsId);
         docMapper.deleteByNewsId(newsId);
+        if (vectorStoreService != null && !docIds.isEmpty()) {
+            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.NEWS.name(), docIds);
+        }
     }
 
     /**
@@ -98,6 +110,11 @@ public class NewsDocService {
         doc.setUpdatedAt(LocalDateTime.now());
         docMapper.insert(doc);
         embMapper.insert(doc.getId(), doc.getNewsId(), vec, embeddingClient.modelName());
+        if (vectorStoreService != null) {
+            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.NEWS.name(), doc.getId(), null,
+                    doc.getChunkType(), doc.getNewsTitle(), true, embeddingClient.modelName(),
+                    doc.getChunkText(), vec);
+        }
     }
 
     /**

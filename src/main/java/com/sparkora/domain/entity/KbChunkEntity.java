@@ -1,6 +1,7 @@
 package com.sparkora.domain.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -20,4 +21,7 @@ public class KbChunkEntity {
     private Integer seq;           // 同 doc 内块序号
     private String chunkText;
     private LocalDateTime createdAt;
+    /** 非持久化:文档标题(构建期填充,写 vector_store metadata.name 用,不落 sparkora_kb_chunk)。 */
+    @TableField(exist = false)
+    private String docTitle;
 }

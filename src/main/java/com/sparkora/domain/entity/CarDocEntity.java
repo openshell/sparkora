@@ -1,5 +1,6 @@
 package com.sparkora.domain.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
@@ -29,4 +30,7 @@ public class CarDocEntity {
     private LocalDateTime updatedAt;
     @TableLogic
     private Integer deleted;
+    /** 非持久化:车型名(构建期填充,写 vector_store metadata.name 用,不落 sparkora_car_doc）。 */
+    @TableField(exist = false)
+    private String modelName;
 }

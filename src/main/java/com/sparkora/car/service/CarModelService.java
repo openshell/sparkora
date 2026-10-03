@@ -70,6 +70,8 @@ public class CarModelService {
     private final ObjectMapper json;
     /** 09-27:向量对账统计须按当前配置模型过滤(countByModel 只计同模型行)。 */
     private final com.sparkora.car.client.EmbeddingClient embeddingClient;
+    /** 10-03 E1:单表 store 生命周期同步(删除车型按 modelId 兜底物理清)。 */
+    private final com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
     private final java.net.http.HttpClient imageClient = java.net.http.HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -83,7 +85,8 @@ public class CarModelService {
                            CarDocEmbeddingMapper embStatsMapper,
                            ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json,
                            com.sparkora.service.ImageService imageService,
-                           com.sparkora.car.client.EmbeddingClient embeddingClient) {
+                           com.sparkora.car.client.EmbeddingClient embeddingClient,
+                           com.sparkora.ai.vector.VectorStoreService vectorStoreService) {
         this.client = client;
         this.modelMapper = modelMapper;
         this.versionMapper = versionMapper;
@@ -98,6 +101,7 @@ public class CarModelService {
         this.json = json;
         this.imageService = imageService;
         this.embeddingClient = embeddingClient;
+        this.vectorStoreService = vectorStoreService;
     }
 
     /** 车型列表(按 id 倒序)。 */
@@ -240,6 +244,7 @@ public class CarModelService {
         paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", id));
         docService.deleteByModel(id);
         embStatsMapper.deleteByModelId(id);
+        if (vectorStoreService != null) vectorStoreService.deleteByCarModel(id);
     }
 
     /**

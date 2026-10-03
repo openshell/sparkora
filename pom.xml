@@ -112,12 +112,14 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
-        <!-- Flyway 版本化迁移(版本走 spring-boot-starter-parent BOM,不写死) -->
+        <!-- Flyway 版本化迁移(Boot 4 起 auto-config 拆分为独立模块 spring-boot-flyway;
+             仅引 flyway-core 不会触发 Flyway 自动配置 → 迁移不执行。starter 内含 flyway-core,
+             版本走 spring-boot-starter-parent BOM) -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
-        <!-- Flyway 10 起 PostgreSQL 方言拆分为独立模块,缺失会报 Unsupported Database -->
+        <!-- Flyway 10 起 PostgreSQL 方言拆分为独立模块,starter 不带,缺失会报 Unsupported Database -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>

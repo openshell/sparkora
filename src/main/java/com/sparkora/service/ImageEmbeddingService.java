@@ -3,6 +3,7 @@ package com.sparkora.service;
 import com.sparkora.car.client.EmbeddingClient;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sparkora.ai.EmbedStats;
+import com.sparkora.ai.vector.SearchStore;
 import com.sparkora.config.AiProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.domain.dto.ImageSearchHit;
@@ -14,6 +15,7 @@ import com.sparkora.mapper.ImageEmbeddingMapper;
 import com.sparkora.mapper.NewsMapper;
 import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -67,6 +69,15 @@ public class ImageEmbeddingService {
     @Autowired
     @Lazy
     private ImageEmbeddingService self;
+    /**
+     * 单表 store（10-03 E1）。字段注入（可选）以保持既有构造器签名与测试不变；
+     * 单测直接 new 时为 null，检索/同步方法守卫降级。
+     */
+    @Autowired(required = false)
+    private com.sparkora.ai.vector.VectorStoreService vectorStoreService;
+    /** 读路径抽象（字段注入可选；单测直接 new 时经 {@link #setSearchStore} 注入假件）。 */
+    @Autowired(required = false)
+    private com.sparkora.ai.vector.SearchStore searchStore;
 
     public ImageEmbeddingService(ImageEmbeddingMapper embMapper, ImageAssetMapper imageMapper,
                                  EmbeddingClient embeddingClient, ImageTagService tagService,
@@ -120,6 +131,13 @@ public class ImageEmbeddingService {
     private void persistVectorInline(Long imageId, String vec, String text) {
         embMapper.deleteByImageId(imageId);
         embMapper.insert(imageId, vec, text, embeddingClient.modelName());
+        // 10-03 E1:同步单表 store（domain=IMAGE,content=嵌入文本,refId=imageId）
+        if (vectorStoreService != null) {
+            ImageAssetEntity img = imageMapper.selectById(imageId);
+            String name = img == null ? null : img.getFileName();
+            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.IMAGE.name(), imageId, null,
+                    "IMAGE", name, true, embeddingClient.modelName(), text, vec);
+        }
     }
 
     /**
@@ -185,6 +203,9 @@ public class ImageEmbeddingService {
     public void deleteByImageId(Long imageId) {
         if (imageId == null) return;
         int n = embMapper.deleteByImageId(imageId);
+        if (vectorStoreService != null) {
+            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.IMAGE.name(), List.of(imageId));
+        }
         if (n > 0) log.debug("删除图片向量 image={} rows={}", imageId, n);
     }
 
@@ -242,16 +263,21 @@ public class ImageEmbeddingService {
                     : new ArrayList<>(tagIds);
         }
 
-        String queryVec = embeddingClient.embed(query.trim());
-        List<Map<String, Object>> rows = embMapper.searchTopK(queryVec, idWhiteList, threshold, limit,
-                embeddingClient.modelName());
-        if (rows == null || rows.isEmpty()) return List.of();
+        // 10-03 E1:改走单表 store（domain=IMAGE + metadata 过滤）。store 内部嵌入 query（等价旧 embed）。
+        List<Document> docs;
+        if (searchStore != null) {
+            docs = searchStore.searchImages(query.trim(), idWhiteList, threshold, limit,
+                    embeddingClient.modelName());
+        } else {
+            docs = List.of();   // 单测未注入 store 的降级路径（正常生产必注入）
+        }
+        if (docs == null || docs.isEmpty()) return List.of();
 
         // 批查主表回填展示字段（避免 N+1，也避免向量表 JOIN 主表）
         Map<Long, ImageAssetEntity> byId = new LinkedHashMap<>();
         List<Long> ids = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            Long imageId = row.get("imageId") == null ? null : ((Number) row.get("imageId")).longValue();
+        for (Document doc : docs) {
+            Long imageId = metaLong(doc, "refId");
             if (imageId != null) ids.add(imageId);
         }
         if (ids.isEmpty()) return List.of();
@@ -260,14 +286,14 @@ public class ImageEmbeddingService {
         QiniuProperties q = qiniuProps.getIfAvailable();
         List<ImageAssetEntity> images = new ArrayList<>();
         List<ImageSearchHit> hits = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            Long imageId = row.get("imageId") == null ? null : ((Number) row.get("imageId")).longValue();
+        for (Document doc : docs) {
+            Long imageId = metaLong(doc, "refId");
             ImageAssetEntity img = imageId == null ? null : byId.get(imageId);
             if (img == null) continue;   // 图已物理删除但向量残留（极端竞态）：跳过
             ImageService.fillDerived(img, imageStorage, q);
             images.add(img);
-            double score = row.get("score") == null ? 0 : ((Number) row.get("score")).doubleValue();
-            String sourceText = row.get("sourceText") == null ? null : String.valueOf(row.get("sourceText"));
+            double score = doc.getScore() == null ? 0 : doc.getScore();
+            String sourceText = doc.getText() == null ? null : doc.getText();
             hits.add(new ImageSearchHit(img.getId(), score, sourceText, img.getFileName(), img.getSource(),
                     img.getSourceRef(), img.getUrl(), img.getThumbUrl(), List.of()));
         }
@@ -291,5 +317,21 @@ public class ImageEmbeddingService {
     static int normalizeTopK(Integer topK) {
         if (topK == null || topK < 1) return DEFAULT_TOPK;
         return Math.min(topK, MAX_TOPK);
+    }
+
+    /** 测试用：注入读路径 store 假件（生产由 Spring 字段装配）。 */
+    void setSearchStore(com.sparkora.ai.vector.SearchStore store) {
+        this.searchStore = store;
+    }
+
+    private static Long metaLong(Document doc, String key) {
+        Object v = doc.getMetadata().get(key);
+        if (v == null) return null;
+        if (v instanceof Number n) return n.longValue();
+        try {
+            return Long.valueOf(String.valueOf(v));
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

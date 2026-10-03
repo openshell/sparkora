@@ -27,4 +27,7 @@ public class NewsDocEntity {
     private LocalDateTime updatedAt;
     @TableLogic
     private Integer deleted;
+    /** 非持久化:新闻标题(构建期填充,写 vector_store metadata.name 用,不落 sparkora_news_doc)。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String newsTitle;
 }

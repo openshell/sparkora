@@ -1,6 +1,7 @@
 package com.sparkora.service;
 
 import com.sparkora.car.client.EmbeddingClient;
+import com.sparkora.ai.vector.SearchStore;
 import com.sparkora.config.AiProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.domain.dto.ImageSearchHit;
@@ -15,8 +16,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +55,7 @@ class ImageEmbeddingServiceTest {
     @Mock ImageStorage imageStorage;
     @Mock ObjectProvider<QiniuProperties> qiniuProps;
     @Mock ObjectProvider<NewsMapper> newsMapper;
+    @Mock SearchStore searchStore;
 
     AiProperties aiProps;
     ImageEmbeddingService service;
@@ -60,6 +66,17 @@ class ImageEmbeddingServiceTest {
         aiProps.setImageMinScore(0.3);
         service = new ImageEmbeddingService(embMapper, imageMapper, embeddingClient, tagService,
                 imageStorage, aiProps, qiniuProps, newsMapper);
+        service.setSearchStore(searchStore);
+    }
+
+    /** store Document 假件（metadata.refId + content + score）。 */
+    private static Document doc(Long refId, String text, double score) {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("domain", "IMAGE");
+        meta.put("refId", refId);
+        Document.Builder b = Document.builder().id(String.valueOf(refId)).text(text).metadata(meta);
+        b.score(score);
+        return b.build();
     }
 
     // ==================== topK 收敛（纯函数） ====================
@@ -93,44 +110,41 @@ class ImageEmbeddingServiceTest {
 
         assertTrue(hits.isEmpty());
         verify(embeddingClient, never()).embed(anyString());
-        verify(embMapper, never()).searchTopK(anyString(), any(), anyDouble(), anyInt(), any());
+        verify(searchStore, never()).searchImages(anyString(), any(), anyDouble(), anyInt(), any());
     }
 
     @Test
     void 未指定标签_不查标签且不传白名单() {
-        when(embeddingClient.embed("销量海报")).thenReturn("[0.1,0.2]");
-        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt(), any())).thenReturn(List.of());
+        when(searchStore.searchImages(eq("销量海报"), isNull(), eq(0.3), eq(10), any())).thenReturn(List.of());
 
         assertTrue(service.searchImages("销量海报", 10, null, null).isEmpty());
 
         verify(tagService, never()).imageIdsByTag(anyString());
-        verify(embMapper).searchTopK(eq("[0.1,0.2]"), isNull(), eq(0.3), eq(10), any());
+        verify(searchStore).searchImages(eq("销量海报"), isNull(), eq(0.3), eq(10), any());
     }
 
     // ==================== 门槛与 limit 透传 ====================
 
     @Test
     void minScore为null用配置默认_显式值优先() {
-        when(embeddingClient.embed(anyString())).thenReturn("[0]");
-        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt(), any())).thenReturn(List.of());
+        when(searchStore.searchImages(anyString(), isNull(), anyDouble(), anyInt(), any())).thenReturn(List.of());
 
         service.searchImages("海报", 5, null, null);
-        verify(embMapper).searchTopK(eq("[0]"), isNull(), eq(0.3), eq(5), any());   // 配置默认 0.3
+        verify(searchStore).searchImages(eq("海报"), isNull(), eq(0.3), eq(5), any());   // 配置默认 0.3
 
         service.searchImages("海报", 999, 0.99, null);
-        verify(embMapper).searchTopK(eq("[0]"), isNull(), eq(0.99), eq(50), any()); // 显式门槛 + topK 收敛 50
+        verify(searchStore).searchImages(eq("海报"), isNull(), eq(0.99), eq(50), any()); // 显式门槛 + topK 收敛 50
     }
 
     @Test
-    void 标签预过滤_白名单传入SQL且命中集截断() {
+    void 标签预过滤_白名单传入store且命中集截断() {
         when(tagService.imageIdsByTag("主题/销量")).thenReturn(List.of(1L, 2L, 3L));
-        when(embeddingClient.embed(anyString())).thenReturn("[0]");
-        when(embMapper.searchTopK(anyString(), anyList(), anyDouble(), anyInt(), any())).thenReturn(List.of());
+        when(searchStore.searchImages(anyString(), anyList(), anyDouble(), anyInt(), any())).thenReturn(List.of());
 
         service.searchImages("海报", 10, null, List.of("主题/销量"));
 
         ArgumentCaptor<List<Long>> captor = ArgumentCaptor.forClass(List.class);
-        verify(embMapper).searchTopK(eq("[0]"), captor.capture(), eq(0.3), eq(10), any());
+        verify(searchStore).searchImages(eq("海报"), captor.capture(), eq(0.3), eq(10), any());
         assertEquals(List.of(1L, 2L, 3L), captor.getValue());
     }
 
@@ -139,9 +153,8 @@ class ImageEmbeddingServiceTest {
     @Test
     void 命中回填主表字段与标签_url与thumbUrl派生() {
         when(tagService.imageIdsByTag("主题/销量")).thenReturn(List.of(7L));
-        when(embeddingClient.embed("销量海报")).thenReturn("[0.1]");
-        when(embMapper.searchTopK(anyString(), anyList(), anyDouble(), anyInt(), any()))
-                .thenReturn(List.of(Map.of("imageId", 7L, "sourceText", "比亚迪销量创新高 主题/销量", "score", 0.62)));
+        when(searchStore.searchImages(eq("销量海报"), anyList(), anyDouble(), anyInt(), any()))
+                .thenReturn(List.of(doc(7L, "比亚迪销量创新高 主题/销量", 0.62)));
 
         ImageAssetEntity img = new ImageAssetEntity();
         img.setId(7L);
@@ -176,9 +189,8 @@ class ImageEmbeddingServiceTest {
 
     @Test
     void 向量残留但图已删_跳过该命中() {
-        when(embeddingClient.embed(anyString())).thenReturn("[0.1]");
-        when(embMapper.searchTopK(anyString(), isNull(), anyDouble(), anyInt(), any()))
-                .thenReturn(List.of(Map.of("imageId", 404L, "sourceText", "x", "score", 0.9)));
+        when(searchStore.searchImages(anyString(), isNull(), anyDouble(), anyInt(), any()))
+                .thenReturn(List.of(doc(404L, "x", 0.9)));
         when(imageMapper.selectBatchIds(List.of(404L))).thenReturn(List.of());
 
         assertTrue(service.searchImages("海报", 10, null, null).isEmpty());

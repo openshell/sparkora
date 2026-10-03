@@ -49,6 +49,9 @@ public class KbDocService {
     @Autowired
     @Lazy
     private KbDocService self;
+    /** 单表 store（10-03 E1）；字段注入可选，单测直接 new 时为 null（同步守卫降级）。 */
+    @Autowired(required = false)
+    private com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
     public KbDocService(KbDocMapper docMapper, KbChunkMapper chunkMapper,
                         KbChunkEmbeddingMapper embMapper, EmbeddingClient embeddingClient,
@@ -115,6 +118,7 @@ public class KbDocService {
             c.setDocId(docId);
             c.setSeq(i);
             c.setChunkText(chunks.get(i));
+            c.setDocTitle(d.getTitle());   // 10-03 E1:store metadata.name
             entities.add(c);
         }
         return batchRunner.run(entities, KbChunkEntity::getChunkText,
@@ -131,6 +135,10 @@ public class KbDocService {
         c.setCreatedAt(LocalDateTime.now());
         chunkMapper.insert(c);
         embMapper.insert(c.getId(), vec, embeddingClient.modelName());
+        if (vectorStoreService != null) {
+            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.KB.name(), c.getId(), null,
+                    "KB_CHUNK", c.getDocTitle(), true, embeddingClient.modelName(), c.getChunkText(), vec);
+        }
     }
 
     /** 列表(含块数统计)。 */
@@ -165,10 +173,17 @@ public class KbDocService {
         return vo;
     }
 
-    /** 物理清块与向量(重建/删除共用)。 */
+    /** 物理清块与向量(重建/删除共用)。10-03 E1:同步删除单表 store 行(先读块 id 再删)。 */
     private void deleteChunks(Long docId) {
+        List<KbChunkEntity> chunks = chunkMapper.selectList(
+                new QueryWrapper<KbChunkEntity>().eq("doc_id", docId));
+        List<Long> chunkIds = new ArrayList<>();
+        for (KbChunkEntity c : chunks) if (c.getId() != null) chunkIds.add(c.getId());
         embMapper.deleteByDocId(docId);
         docMapper.deleteChunksByDocId(docId);
+        if (vectorStoreService != null && !chunkIds.isEmpty()) {
+            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.KB.name(), chunkIds);
+        }
     }
 
     private void validate(String title, String content) {

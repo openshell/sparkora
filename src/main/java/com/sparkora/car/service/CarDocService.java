@@ -54,6 +54,9 @@ public class CarDocService {
     @Autowired
     @Lazy
     private CarDocService self;
+    /** 单表 store（10-03 E1）；字段注入可选，单测直接 new 时为 null（同步守卫降级）。 */
+    @Autowired(required = false)
+    private com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
     public CarDocService(CarModelMapper modelMapper, CarParamGroupMapper groupMapper,
                          CarParamCleanMapper cleanMapper, CarVersionMapper versionMapper,
@@ -84,6 +87,8 @@ public class CarDocService {
         docs.addAll(buildRightsDocs(m));
         // 3) 参数分组块(核心,仅 PARAM_GROUP 粒度)
         docs.addAll(buildParamGroupDocs(m));
+        // 10-03 E1:填充车型名(写 vector_store metadata.name 用)
+        for (CarDocEntity d : docs) d.setModelName(m.getName());
 
         // S6b:embedding 调用并发化(固定小线程池,不随车型数膨胀)+ 单块失败重试 1 次;
         // 结束输出成功/失败计数,失败块记 sortOrder——消除「静默丢块」与千次串行 HTTP。
@@ -97,8 +102,13 @@ public class CarDocService {
     @Transactional
     public void deleteByModel(Long modelId) {
         List<CarDocEntity> docs = docMapper.selectList(new QueryWrapper<CarDocEntity>().eq("model_id", modelId));
+        List<Long> docIds = new ArrayList<>();
         for (CarDocEntity d : docs) {
             embMapper.deleteByDocId(d.getId());
+            if (d.getId() != null) docIds.add(d.getId());
+        }
+        if (vectorStoreService != null && !docIds.isEmpty()) {
+            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.CAR.name(), docIds);
         }
         docMapper.delete(new QueryWrapper<CarDocEntity>().eq("model_id", modelId));
     }
@@ -115,6 +125,11 @@ public class CarDocService {
         doc.setUpdatedAt(LocalDateTime.now());
         docMapper.insert(doc);
         embMapper.insert(doc.getId(), doc.getModelId(), vec, embeddingClient.modelName());
+        if (vectorStoreService != null) {
+            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.CAR.name(), doc.getId(),
+                    doc.getModelId(), doc.getChunkType(), doc.getModelName(), true,
+                    embeddingClient.modelName(), doc.getChunkText(), vec);
+        }
     }
 
     /** 车型基础信息块。 */
