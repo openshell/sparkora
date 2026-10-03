@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 43
+- **Total Sessions**: 44
 - **Last Active**: 2026-10-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1147 | Active |
+| `journal-1.md` | ~1170 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 44 | 2026-10-03 | C7 正文数值回查归一化(verifyNumbers 复用 ClaimSimilarity 签名) | `5463d47`, `bce9d2b` | `main` |
 | 43 | 2026-10-03 | C6 ImageModel：文生图接 Spring AI ImageModel，图生图保留自研 | `d8ceaff`, `1eb3d7b`, `c008b03` | `main` |
 | 42 | 2026-10-03 | C5 向量层 Spring AI 化（EmbeddingModel + PgVectorStore 推迟） | `804dca0`, `356e4b7`, `74c571ae91469f5ae0916c76a0af22f7a95152df` | `main` |
 | 41 | 2026-10-03 | C4 ChatMemory 装配问答多轮 | `85ccb1d` | `main` |

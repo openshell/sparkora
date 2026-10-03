@@ -1145,3 +1145,26 @@ embedding 后端改 Spring AI EmbeddingModel（公共 API 不变）；PgVectorSt
 ### Status
 
 [OK] **Completed**
+
+
+## Session 44: C7 正文数值回查归一化(verifyNumbers 复用 ClaimSimilarity 签名)
+<!-- trellis-session: v=2 fp=373811386018bd2e -->
+
+**Date**: 2026-10-03
+**Task**: C7 正文数值回查归一化(verifyNumbers 复用 ClaimSimilarity 签名)
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5463d47` | feat(C7): 正文数值回查改数值签名归一化比对,消除 1200/12000 漏报 |
+| `bce9d2b` | docs(spec): 记录 C7 正文数值回查归一化契约 |
+
+### Status
+
+[OK] **Completed**
