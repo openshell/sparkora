@@ -7,6 +7,7 @@ import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.config.AiProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -32,10 +33,24 @@ public class CarRagService {
     private final EmbeddingClient embeddingClient;
     private final AiProperties aiProps;
 
-    public CarRagService(SearchStore store, EmbeddingClient embeddingClient, AiProperties aiProps) {
+    /** A rerank(10-03-a-rerank):可空——关闭态/单测直 new(3 参兼容构造器)时为 null,不调用。 */
+    private final Reranker reranker;
+
+    /** Spring 注入构造器:注入 {@link Reranker}(LlmReranker)。 */
+    @Autowired
+    public CarRagService(SearchStore store, EmbeddingClient embeddingClient, AiProperties aiProps, Reranker reranker) {
         this.store = store;
         this.embeddingClient = embeddingClient;
         this.aiProps = aiProps;
+        this.reranker = reranker;
+    }
+
+    /**
+     * 兼容构造器(无 reranker):既有单测直 new 与关闭态回退用。reranker=null 时检索行为与现状逐条一致
+     * → 零回归。
+     */
+    public CarRagService(SearchStore store, EmbeddingClient embeddingClient, AiProperties aiProps) {
+        this(store, embeddingClient, aiProps, null);
     }
 
     /** 检索结果项。 */
@@ -257,6 +272,29 @@ public class CarRagService {
             anyFailure = true;
             log.warn("生成前统一知识库检索失败 query={}: {}", query, e.getMessage());
         }
+        // A rerank(10-03-a-rerank,design §3.1):候选合并去重后、锚点加权/配额前插入 LLM 重排。
+        // 仅开关开启且注入了 Reranker 时执行;**只改顺序、不改分数**——maxScore/门槛/四态仍基于原分数。
+        // 失败/超时/返回异常已由 Reranker 内部降级为原序,此处再兜一层,绝不阻断生成。
+        boolean reranked = false;
+        if (aiProps.isRagRerankEnabled() && reranker != null && !merged.isEmpty()) {
+            try {
+                List<UnifiedHit> re = reranker.rerank(query, merged, aiProps.getRagRerankTopN());
+                if (re != null && re.size() == merged.size()) {
+                    merged = re;
+                    reranked = true;
+                } else {
+                    log.warn("LLM 重排返回集合与输入不一致,回退原序 expected={} actual={}",
+                            merged.size(), re == null ? 0 : re.size());
+                }
+            } catch (Exception e) {
+                log.warn("LLM 重排异常,回退原序: {}", e.getClass().getSimpleName());
+            }
+        }
+        // 重排顺序映射(启用时):配额选择与最终排序按重排名次,关闭时保持既有「按分数降序」逐字等价。
+        // 说明:锚点加权会重建 UnifiedHit 对象(身份变化),故在 boost 之后按**位置**与 merged 一一对应建映射。
+        final boolean rerankOrder = reranked;
+        final java.util.IdentityHashMap<UnifiedHit, Integer> rerankRank = new java.util.IdentityHashMap<>();
+
         // 锚点加权(S8):CAR 块 modelId∈anchor → 分数 × boost(重排用,不改变相似度门槛判定基数)
         double boost = aiProps.getRagAnchorBoost();
         List<UnifiedHit> boosted = new ArrayList<>();
@@ -269,6 +307,13 @@ public class CarRagService {
                 boosted.add(h);
             }
         }
+        // boost 与 merged 位置一一对应(仅重建对象/改分,不重排),故按位置建重排名次映射。
+        if (rerankOrder) {
+            for (int i = 0; i < boosted.size(); i++) rerankRank.put(boosted.get(i), i);
+        }
+        final java.util.Comparator<UnifiedHit> orderCmp = rerankOrder
+                ? java.util.Comparator.comparingInt(h -> rerankRank.getOrDefault(h, Integer.MAX_VALUE))
+                : (a, b) -> Double.compare(b.score(), a.score());
         int rawHit = 0;
         double maxScore = 0;
         for (UnifiedHit h : boosted) {
@@ -306,9 +351,9 @@ public class CarRagService {
                 coreCandidates.add(h);
             }
         }
-        coreCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
-        softCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
-        newsCandidates.sort((a, b) -> Double.compare(b.score(), a.score()));
+        coreCandidates.sort(orderCmp);
+        softCandidates.sort(orderCmp);
+        newsCandidates.sort(orderCmp);
         // 核心块配额:carTopK 给车型核心块(锚点车型数×topK,至少 topK),KB/新闻独立配额不挤占
         int carQuota = Math.max(topK, topK * Math.max(1, anchors.size()));
         List<UnifiedHit> carSelected = coreCandidates.stream()
@@ -323,7 +368,7 @@ public class CarRagService {
         selected.addAll(softSelected);
         selected.addAll(kbSelected);
         selected.addAll(newsSelected);
-        selected.sort((a, b) -> Double.compare(b.score(), a.score()));
+        selected.sort(orderCmp);
         // 来源构成(C2:三域组合)
         boolean hasCar = selected.stream().anyMatch(h -> "CAR".equals(h.source()));
         boolean hasKb = selected.stream().anyMatch(h -> "KB".equals(h.source()));

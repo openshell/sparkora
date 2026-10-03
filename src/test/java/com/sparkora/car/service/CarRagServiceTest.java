@@ -613,4 +613,95 @@ class CarRagServiceTest {
         assertEquals("CAR", c.source());
         assertEquals("块文本", c.chunkText());
     }
+
+    // ==================== A rerank（10-03-a-rerank） ====================
+
+    /** 记录调用次数的 Reranker 假件；默认 identity（原序）。 */
+    static class RecordingReranker implements Reranker {
+        int calls = 0;
+        List<Integer> lastOrder;
+        RuntimeException error;
+
+        @Override
+        public List<CarRagService.UnifiedHit> rerank(String query, List<CarRagService.UnifiedHit> candidates, int keepTopN) {
+            calls++;
+            if (error != null) throw error;
+            if (lastOrder == null) return candidates;
+            // 按给定下标重排
+            List<CarRagService.UnifiedHit> out = new java.util.ArrayList<>();
+            for (int i : lastOrder) out.add(candidates.get(i));
+            return out;
+        }
+    }
+
+    @Test
+    void A_关闭态_不调用reranker_行为与现状一致() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08", "PARAM_GROUP", "车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9),
+                urow("KB", null, "充电常识", "KB_CHUNK", "知识：充电常识（充电）\n7kW 家充。", 0.7));
+        AiProperties props = new AiProperties();   // ragRerankEnabled 默认 false
+        RecordingReranker reranker = new RecordingReranker();
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props, reranker);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08 充电", 8, List.of(1L));
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertEquals(0, reranker.calls, "关闭态绝不调用 reranker(零回归)");
+        assertTrue(r.context().contains("前电机最大功率"));
+    }
+
+    @Test
+    void A_开启态_调用reranker并按新序注入() {
+        FakeSearchStore store = new FakeSearchStore();
+        // 原分序: b(0.9) 在 a(0.7) 前;重排置 a 在前
+        store.unifiedRows = List.of(
+                urow("CAR", 1L, "车型A", "PARAM_GROUP", "车型：车型A\n参数分组：动力\nAAA：100", 0.7),
+                urow("CAR", 1L, "车型B", "PARAM_GROUP", "车型：车型B\n参数分组：动力\nBBB：200", 0.9));
+        AiProperties props = new AiProperties();
+        props.setRagRerankEnabled(true);
+        RecordingReranker reranker = new RecordingReranker();
+        // merged 经 retrieveUnified 已按分数降序 = [b(0.9), a(0.7)];order [1,0] 把 a 放前
+        reranker.lastOrder = List.of(1, 0);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props, reranker);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力", 8, List.of(1L));
+
+        assertEquals(1, reranker.calls);
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().indexOf("AAA") < r.context().indexOf("BBB"), "重排后 a 应排前");
+    }
+
+    @Test
+    void A_重排不改分数_四态与maxScore基于原分() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("CAR", 1L, "车型A", "PARAM_GROUP", "车型：车型A\n参数分组：动力\nAAA：100", 0.7));
+        AiProperties props = new AiProperties();
+        props.setRagRerankEnabled(true);
+        RecordingReranker reranker = new RecordingReranker();
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props, reranker);
+
+        // 空 anchor,避免锚点加权干扰「分数不被重排改动」的断言
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力", 8, List.of());
+
+        assertEquals(0.7, r.maxScore(), 1e-9, "重排不得改分数,maxScore 仍为原相似度");
+    }
+
+    @Test
+    void A_reranker抛异常_降级原序_不阻断生成() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("CAR", 1L, "车型A", "PARAM_GROUP", "车型：车型A\n参数分组：动力\nAAA：100", 0.9));
+        AiProperties props = new AiProperties();
+        props.setRagRerankEnabled(true);
+        RecordingReranker reranker = new RecordingReranker();
+        reranker.error = new RuntimeException("LLM down");
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props, reranker);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力", 8, List.of(1L));
+
+        assertEquals(CarRagService.RagStatus.OK, r.status(), "重排异常必须降级原序,不阻断生成");
+        assertTrue(r.context().contains("AAA"));
+    }
 }

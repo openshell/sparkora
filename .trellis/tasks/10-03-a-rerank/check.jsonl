@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "质量红线：不可逆副作用隔离/失败顺序"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对检索契约是否回归/已同步"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层契约一致性（RagResult/Citation）"}
+{"file": ".trellis/tasks/10-03-leftover-optimization/prd.md", "reason": "AC 基线（关闭态零回归/A/B 评估/预算）"}

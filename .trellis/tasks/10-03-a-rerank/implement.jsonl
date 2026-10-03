@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域 RAG 检索契约、store metadata、EmbeddingModel、四态/配额/锚点——A 重排插入点的权威约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T>/错误映射/降级惯例——A 失败回退原序不阻断生成"}
+{"file": ".trellis/tasks/10-03-leftover-optimization/design.md", "reason": "父设计：§3.1 A rerank 插入点/Reranker 契约/开关参数/预算"}
+{"file": ".trellis/tasks/10-03-leftover-optimization/prd.md", "reason": "需求/决策 D2 与 AC-A1..A5"}
+{"file": "docs/spec/retrieval.md", "reason": "检索四态/门槛/配额契约——A 关闭态零回归基线"}

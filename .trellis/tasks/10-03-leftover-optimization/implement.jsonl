@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域 RAG 检索契约、EmbeddingModel、store metadata、覆盖度/嵌入缓存——A/C 必读"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移/事务隔离/JSON 约定——C 落库与 A 预算处理参考"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T>/错误映射/降级惯例——A 重排失败降级、C 逐条错误回报"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端约定入口——B 导航/路由/角色门控、C 导入 UI 参考"}
+{"file": ".trellis/tasks/10-03-leftover-optimization/design.md", "reason": "本任务技术设计：A 重排插入点/契约、B IA、C 导入"}
+{"file": "docs/spec/retrieval.md", "reason": "检索四态/门槛/配额契约——A 不得回归"}

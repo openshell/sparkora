@@ -50,6 +50,17 @@ public class AiProperties {
     /** 官方新闻域(NEWS)生成检索:单次注入新闻块数上限(C2;默认 4,与车型/KB 配额独立互不挤占;0=关闭 NEWS 注入)。 */
     private int ragNewsTopk = 4;
 
+    // ==================== A rerank(10-03-a-rerank,design §3.1) ====================
+    /** LLM 重排总开关:false(默认)时 CarRagService 不调用 Reranker,检索行为与现状逐条一致(零回归)。 */
+    private boolean ragRerankEnabled = false;
+    /** 参与 LLM 重排的候选数上限(按原始相似度取前 N):控制 prompt token 与一次调用成本;默认 20。 */
+    private int ragRerankTopN = 20;
+    /**
+     * LLM 重排单次超时预算(ms)。默认 10000(10s)——重排在生成同步链路上,是 best-effort 增强,
+     * 超时即放弃并回退原序;刻意比 {@code AI_TIMEOUT_MS}(120s)更短,避免可选优化拖垮生成时延。
+     */
+    private long ragRerankTimeoutMs = 10000;
+
     /** 图片语义检索相似度门槛（09-15 img-semantic-search）:低于该余弦相似度的图片命中被过滤;默认 0.3（对齐 AI_RAG_MIN_SCORE）。 */
     private double imageMinScore = 0.3;
 

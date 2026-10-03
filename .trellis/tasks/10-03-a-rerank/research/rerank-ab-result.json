@@ -1,0 +1,122 @@
+{
+  "summary": {
+    "cases": 5,
+    "validOrderRate": 1.0,
+    "baselineTop1": 0.0,
+    "rerankTop1": 1.0,
+    "baselineMRR": 0.36666666666666664,
+    "rerankMRR": 1.0
+  },
+  "rows": [
+    {
+      "key": "NEWS_charge",
+      "query": "比亚迪闪充电池的充电倍率是多少",
+      "n": 5,
+      "rawOrder": [
+        2,
+        1,
+        0,
+        3,
+        4
+      ],
+      "appliedOrder": [
+        2,
+        1,
+        0,
+        3,
+        4
+      ],
+      "complete": true,
+      "baselineRank": 3,
+      "rerankRank": 1
+    },
+    {
+      "key": "CAR_param_range",
+      "query": "大唐EV 纯电续航里程是多少",
+      "n": 5,
+      "rawOrder": [
+        2,
+        1,
+        4,
+        3,
+        0
+      ],
+      "appliedOrder": [
+        2,
+        1,
+        4,
+        3,
+        0
+      ],
+      "complete": true,
+      "baselineRank": 3,
+      "rerankRank": 1
+    },
+    {
+      "key": "KB_text",
+      "query": "家用充电桩怎么选择",
+      "n": 5,
+      "rawOrder": [
+        2,
+        4,
+        0,
+        3,
+        1
+      ],
+      "appliedOrder": [
+        2,
+        4,
+        0,
+        3,
+        1
+      ],
+      "complete": true,
+      "baselineRank": 3,
+      "rerankRank": 1
+    },
+    {
+      "key": "MIX_platform",
+      "query": "超级e平台兆瓦闪充的技术参数",
+      "n": 5,
+      "rawOrder": [
+        2,
+        0,
+        1,
+        4,
+        3
+      ],
+      "appliedOrder": [
+        2,
+        0,
+        1,
+        4,
+        3
+      ],
+      "complete": true,
+      "baselineRank": 3,
+      "rerankRank": 1
+    },
+    {
+      "key": "CAR_price",
+      "query": "海豹07EV 价格区间",
+      "n": 5,
+      "rawOrder": [
+        1,
+        0,
+        2,
+        3,
+        4
+      ],
+      "appliedOrder": [
+        1,
+        0,
+        2,
+        3,
+        4
+      ],
+      "complete": true,
+      "baselineRank": 2,
+      "rerankRank": 1
+    }
+  ]
+}
