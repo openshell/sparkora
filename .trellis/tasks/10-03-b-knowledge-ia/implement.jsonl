@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范：API 层走具名导出、页面结构/CSS 变量、状态与懒挂载、大组件拆分落位——B 的组件迁移与路由收敛必读"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层契约：前端 IA 变更不得破坏后端 API 契约与角色模型"}
+{"file": ".trellis/tasks/10-03-b-knowledge-ia/prd.md", "reason": "B 需求/验收（4 tab、撤旧路由、tab 角色门控、后端零改动）"}
+{"file": ".trellis/tasks/10-03-b-knowledge-ia/design.md", "reason": "B 技术设计（组件映射/路由导航/高度链/门控）"}

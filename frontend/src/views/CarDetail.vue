@@ -24,7 +24,7 @@
             <el-button v-if="user.isEditorOrAbove" type="primary" :loading="syncing" @click="onSync">
               <el-icon class="btn-icon"><Refresh /></el-icon>同步
             </el-button>
-            <el-button @click="$router.push('/car')">返回</el-button>
+            <el-button @click="$router.push('/knowledge')">返回</el-button>
           </div>
         </div>
 

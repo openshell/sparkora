@@ -7,7 +7,7 @@
           <h2>车型同步</h2>
         </div>
         <div class="actions">
-          <el-button @click="$router.push('/car')">返回车型库</el-button>
+          <el-button @click="$router.push('/knowledge')">返回知识中心</el-button>
         </div>
       </div>
 

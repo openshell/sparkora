@@ -6,17 +6,16 @@
  * - 集合必须与 router/index.js 的 meta.auth 路由一一对应,AppShell 启动时 dev-only 校验
  */
 import {
-  Files, Picture, Brush, Reading, ChatDotRound, Van, Notebook, Setting
+  Files, Picture, Brush, Reading, Setting
 } from '@element-plus/icons-vue'
 
 export const NAV_MODULES = [
   { name: '项目',     to: '/',          icon: Files,        require: 'loggedIn', matches: ['/projects'] },
   { name: '图库',     to: '/images',    icon: Picture,      require: 'loggedIn' },
   { name: '风格库',   to: '/styles',    icon: Brush,        require: 'editor' },
-  { name: '知识中心', to: '/knowledge', icon: Reading,      require: 'loggedIn' },
-  { name: '知识问答', to: '/qa',        icon: ChatDotRound, require: 'loggedIn' },
-  { name: '车型库',   to: '/car',       icon: Van,          require: 'loggedIn', matches: ['/car'] },
-  { name: '知识库',   to: '/kb',        icon: Notebook,     require: 'loggedIn' }
+  // 知识中心承载车型/知识库/新闻/检索问答四个 tab；/car/sync 与 /car/:id 语义归属知识中心，
+  // 由 matches 前缀覆盖（满足 AppShell dev-only「auth 路由必须被导航覆盖」校验）。
+  { name: '知识中心', to: '/knowledge', icon: Reading,      require: 'loggedIn', matches: ['/car'] }
 ]
 
 export const NAV_SETTINGS = { name: '设置', to: '/settings', icon: Setting, require: 'editor' }

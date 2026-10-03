@@ -1,48 +1,40 @@
 <template>
-  <div>
-    <div class="container">
-      <div class="page-header">
-        <div>
-          <span class="page-kicker">Knowledge Base</span>
-          <h2>知识库</h2>
+  <div class="kb-panel">
+    <div class="panel-toolbar">
+      <el-button v-if="user.isEditorOrAbove" type="primary" @click="openCreate">
+        <el-icon class="btn-icon"><Plus /></el-icon>新建知识
+      </el-button>
+    </div>
+
+    <div v-if="loading" class="loading"><el-skeleton :rows="3" animated /></div>
+
+    <div v-else-if="error" class="state-error">
+      <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
+      <div class="state-title">知识库加载失败</div>
+      <div class="state-msg">{{ error }}</div>
+      <el-button type="primary" plain @click="load">重试</el-button>
+    </div>
+
+    <div v-else-if="!rows.length" class="empty">
+      <el-empty description="知识库为空。点击「新建知识」，录入汽车领域通用知识（如充电桩选择、保养常识），生成时 AI 会检索引用。" />
+    </div>
+
+    <div v-else class="kb-grid">
+      <el-card v-for="d in rows" :key="d.id" shadow="hover" class="kb-card">
+        <div class="d-head">
+          <span class="d-title serif">{{ d.title }}</span>
+          <el-tag size="small" effect="plain">{{ d.domain }}</el-tag>
+          <el-tag v-for="t in (d.tags || [])" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
+          <el-tag v-if="!d.enabled" size="small" type="info" effect="plain">停用</el-tag>
         </div>
-        <div class="actions">
-          <el-button v-if="user.isEditorOrAbove" type="primary" @click="openCreate">
-            <el-icon class="btn-icon"><Plus /></el-icon>新建知识
-          </el-button>
+        <div class="d-meta">已切块 {{ d.chunkCount }} 块 · 更新于 {{ fmtTime(d.updatedAt) }}</div>
+        <div v-if="d.source || effText(d)" class="d-extra">{{ d.source ? '来源：' + d.source : '' }}<span v-if="d.source && effText(d)"> · </span>{{ effText(d) }}</div>
+        <div class="d-actions" v-if="user.isEditorOrAbove">
+          <el-button size="small" text @click="openEdit(d)">编辑</el-button>
+          <el-button size="small" text @click="onRebuild(d)" :loading="rebushing === d.id">重建向量</el-button>
+          <el-button size="small" text type="danger" @click="onDel(d)">删除</el-button>
         </div>
-      </div>
-
-      <div v-if="loading" class="loading"><el-skeleton :rows="3" animated /></div>
-
-      <div v-else-if="error" class="state-error">
-        <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
-        <div class="state-title">知识库加载失败</div>
-        <div class="state-msg">{{ error }}</div>
-        <el-button type="primary" plain @click="load">重试</el-button>
-      </div>
-
-      <div v-else-if="!rows.length" class="empty">
-        <el-empty description="知识库为空。点击右上「新建知识」，录入汽车领域通用知识（如充电桩选择、保养常识），生成时 AI 会检索引用。" />
-      </div>
-
-      <div v-else class="kb-grid">
-        <el-card v-for="d in rows" :key="d.id" shadow="hover" class="kb-card">
-          <div class="d-head">
-            <span class="d-title serif">{{ d.title }}</span>
-            <el-tag size="small" effect="plain">{{ d.domain }}</el-tag>
-            <el-tag v-for="t in (d.tags || [])" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
-            <el-tag v-if="!d.enabled" size="small" type="info" effect="plain">停用</el-tag>
-          </div>
-          <div class="d-meta">已切块 {{ d.chunkCount }} 块 · 更新于 {{ fmtTime(d.updatedAt) }}</div>
-          <div v-if="d.source || effText(d)" class="d-extra">{{ d.source ? '来源：' + d.source : '' }}<span v-if="d.source && effText(d)"> · </span>{{ effText(d) }}</div>
-          <div class="d-actions" v-if="user.isEditorOrAbove">
-            <el-button size="small" text @click="openEdit(d)">编辑</el-button>
-            <el-button size="small" text @click="onRebuild(d)" :loading="rebushing === d.id">重建向量</el-button>
-            <el-button size="small" text type="danger" @click="onDel(d)">删除</el-button>
-          </div>
-        </el-card>
-      </div>
+      </el-card>
     </div>
 
     <!-- 新建/编辑抽屉 -->
@@ -87,8 +79,8 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, WarningFilled } from '@element-plus/icons-vue'
-import { kbApi } from '../api'
-import { useUserStore } from '../store/user'
+import { kbApi } from '../../api'
+import { useUserStore } from '../../store/user'
 
 const user = useUserStore()
 const rows = ref([])
@@ -113,8 +105,8 @@ const load = async () => {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await kbApi.list()
-    rows.value = data.data || []
+    const res = await kbApi.list()
+    rows.value = res.data || []
   } catch (e) {
     error.value = e?.response?.data?.msg || e.message
   } finally {
@@ -124,8 +116,8 @@ const load = async () => {
 
 const loadDomains = async () => {
   try {
-    const { data } = await kbApi.domains()
-    domains.value = data.data || []
+    const res = await kbApi.domains()
+    domains.value = res.data || []
   } catch { /* 词表加载失败不阻断列表；下拉为空时后端仍会校验非法值 */ }
 }
 
@@ -137,8 +129,8 @@ const openCreate = () => {
 
 const openEdit = (d) => {
   editingId.value = d.id
-  kbApi.get(d.id).then(({ data }) => {
-    const doc = data.data || {}
+  kbApi.get(d.id).then((res) => {
+    const doc = res.data || {}
     form.value = {
       title: doc.title, domain: doc.domain, content: doc.content, enabled: doc.enabled !== false,
       source: doc.source || '', tags: doc.tags || [],
@@ -197,8 +189,8 @@ const onDel = (d) => {
 const onRebuild = async (d) => {
   rebushing.value = d.id
   try {
-    const { data } = await kbApi.rebuild(d.id)
-    const st = data.data || {}
+    const res = await kbApi.rebuild(d.id)
+    const st = res.data || {}
     st.failed > 0
       ? ElMessage.warning(`重建完成:成功 ${st.success}/${st.total},失败 ${st.failed}(可重试)`)
       : ElMessage.success(`重建完成:${st.success}/${st.total} 块已向量化`)
@@ -216,8 +208,7 @@ onMounted(() => { load(); loadDomains() })
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-.page-kicker { color: var(--faint); font-size: 12px; letter-spacing: .12em; }
+.panel-toolbar { display: flex; align-items: center; justify-content: flex-end; margin-bottom: 16px; }
 .kb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .d-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .d-title { font-size: 16px; font-weight: 600; }
@@ -229,9 +220,4 @@ onMounted(() => { load(); loadDomains() })
 .state-title { margin: 10px 0 4px; font-weight: 600; }
 .state-msg { color: var(--faint); font-size: 13px; margin-bottom: 14px; }
 .btn-icon { margin-right: 4px; }
-
-@media (max-width: 768px) {
-  .kb-grid { grid-template-columns: 1fr; }
-  .d-actions .el-button { min-height: 44px; } /* 触控目标 ≥44px */
-}
 </style>

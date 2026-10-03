@@ -1,9 +1,15 @@
 import { test, expect } from '../fixtures/index.js';
 import { SMOKE_VIEWPORT } from '../fixtures/matrix.js';
 
+// 知识中心信息架构收敛后,问答并入「知识中心 → 检索问答」tab(顶级 /qa 已移除)
+const gotoQa = async (page) => {
+  await page.goto('/knowledge');
+  await page.getByRole('tab', { name: '检索问答' }).click();
+};
+
 test('qa chat send and IME safety', async ({ page }) => {
   await page.setViewportSize(SMOKE_VIEWPORT);
-  await page.goto('/qa');
+  await gotoQa(page);
   await page.locator('button:has-text("新建会话")').first().click();
   const ta = page.locator('.chat-input textarea');
   await expect(ta).toBeEnabled();
@@ -28,7 +34,7 @@ test('qa chat send and IME safety', async ({ page }) => {
 // R4:会话分栏折叠/展开(useSplitPane + v-show 契约)
 test('qa chat session pane collapses and expands', async ({ page }) => {
   await page.setViewportSize(SMOKE_VIEWPORT);
-  await page.goto('/qa');
+  await gotoQa(page);
   await expect(page.locator('.session-item').first()).toContainText('测试会话');
 
   await page.locator('.side-toggle').click();

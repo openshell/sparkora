@@ -1,6 +1,6 @@
 <template>
-  <!-- 批 2:去掉 .container 窄卡 + 页内页头(标题/新建动作并入上下文条),改为满高主从工作台 -->
-  <div class="page qa-page">
+  <!-- 嵌入知识中心 tab：满高主从工作台，占满 tab 内容区高度（高度链由 .kc-tabs :deep 打通） -->
+  <div class="qa-panel">
     <div ref="layoutRef" class="qa-layout" :class="{ dragging }">
       <!-- 左:会话列表(可折叠 + 可拖拽调宽,记忆 localStorage) -->
       <aside v-show="!sideCollapsed" class="qa-side" :style="{ flex: `0 0 ${sideWidth}px` }">
@@ -56,6 +56,9 @@
           </button>
           <span class="chat-title">{{ currentTitle }}</span>
           <span class="chat-meta">{{ messages.length }} 条消息</span>
+          <el-button type="primary" size="small" @click="onNewSession">
+            <el-icon class="btn-icon"><Plus /></el-icon>新建会话
+          </el-button>
         </div>
 
         <div ref="scrollRef" class="chat-flow">
@@ -136,14 +139,12 @@
 
 <script setup>
 import { ref, computed, nextTick, watch, onMounted } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, WarningFilled, Loading, Promotion, DArrowLeft, DArrowRight } from '@element-plus/icons-vue'
-import CitationList from './project/deep/CitationList.vue'
-import { usePageHeader } from '../composables/usePageHeader'
-import { useSplitPane } from '../composables/useSplitPane'
-import { qaApi } from '../api'
+import CitationList from '../project/deep/CitationList.vue'
+import { useSplitPane } from '../../composables/useSplitPane'
+import { qaApi } from '../../api'
 
 // 助手答案按 Markdown 渲染（html:false 关闭裸 HTML，规避 XSS）；用户消息仍纯文本展示
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
@@ -177,14 +178,6 @@ const { containerRef: layoutRef, dragging, size: sideWidth, onPointerDown, onKey
   useSplitPane({ storageKey: SIDE_KEY, initial: 280, min: SIDE_MIN, max: SIDE_MAX, unit: 'px' })
 const sideCollapsed = ref(localStorage.getItem(COLLAPSE_KEY) === '1')
 watch(sideCollapsed, (v) => localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'))
-
-// ==== 上下文条(外壳 topbar):面包屑 + 主 CTA「新建会话」(取代原页头按钮)====
-const header = usePageHeader()
-if (header) {
-  header.crumbs = [{ label: '知识' }, { label: '问答' }]
-  header.actions = [{ key: 'new', label: '新建会话', type: 'primary', icon: Plus, onClick: () => onNewSession() }]
-}
-onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
 
 /**
  * 答案配图（09-15 qa-auto-illustrate）。后端 image_refs 是 JSON 字符串（TEXT 列，同 citations 惯例），
@@ -333,9 +326,9 @@ onMounted(loadSessions)
 </script>
 
 <style scoped>
-/* 批 2:满高主从工作台 —— 左侧会话列(可折叠/调宽)+ 分隔条 + 右侧对话区,各自内部滚动 */
-.qa-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.qa-layout { display: flex; align-items: stretch; flex: 1; min-height: 420px; }
+/* 嵌入知识中心 tab：自身撑满内容区高度，左会话列(可折叠/调宽)+ 分隔条 + 右侧对话区各自内部滚动 */
+.qa-panel { display: flex; flex-direction: column; height: 100%; min-height: 420px; }
+.qa-layout { display: flex; align-items: stretch; flex: 1; min-height: 0; }
 .qa-layout.dragging { cursor: col-resize; user-select: none; }
 
 /* 会话列表(列头常驻,列表独立滚动) */
@@ -404,6 +397,7 @@ onMounted(loadSessions)
 }
 .chat-title { font-size: var(--fs-13); font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-meta { margin-left: auto; font-size: var(--fs-12); color: var(--faint); white-space: nowrap; }
+.btn-icon { margin-right: 4px; }
 .side-expand {
   display: inline-flex; align-items: center; gap: var(--sp-1); flex: none;
   height: var(--control-h-sm); padding: 0 var(--sp-2);

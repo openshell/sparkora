@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/index.js';
 import { SMOKE_VIEWPORT } from '../fixtures/matrix.js';
 
-const PAGES = ['/', '/images', '/qa', '/projects/1/preview', '/projects/1/publish', '/login'];
+const PAGES = ['/', '/images', '/knowledge', '/projects/1/preview', '/projects/1/publish', '/login'];
 
 // AC5:关键页面无未捕获异常 / console.error 噪声(失败不被噪声掩盖,错误不被噪声带过)
 for (const path of PAGES) {
