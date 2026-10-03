@@ -27,9 +27,13 @@ public interface VectorStoreBackfillMapper {
     List<Map<String, Object>> readCar();
 
     /** KB 域：仅启用且未逻辑删除的文档块（JOIN 文档标题）。chunkType 固定 KB_CHUNK（与活写路径
-     *  {@code KbDocService} 一致，避免回填得到空串、重建后变成 KB_CHUNK 的元数据不一致）。 */
+     *  {@code KbDocService} 一致，避免回填得到空串、重建后变成 KB_CHUNK 的元数据不一致）。
+     * 10-03 E3：回填 source/生效期 + 按生效期计算的 active（避免未来生效行被回填成 active=true）。 */
     @Select("SELECT e.chunk_id AS \"refId\", 'KB_CHUNK' AS \"chunkType\", c.chunk_text AS \"content\", d.title AS \"name\", " +
-            "e.embedding_model AS \"embeddingModel\", e.embedding::text AS \"vector\" " +
+            "e.embedding_model AS \"embeddingModel\", e.embedding::text AS \"vector\", " +
+            "d.source AS \"source\", d.effective_from AS \"effectiveFrom\", d.effective_to AS \"effectiveTo\", " +
+            "(d.enabled AND (d.effective_from IS NULL OR CURRENT_DATE >= d.effective_from) " +
+            " AND (d.effective_to IS NULL OR CURRENT_DATE <= d.effective_to)) AS \"active\" " +
             "FROM sparkora_kb_chunk_embedding e " +
             "JOIN sparkora_kb_chunk c ON c.id = e.chunk_id " +
             "JOIN sparkora_kb_doc d ON d.id = c.doc_id AND d.deleted = 0 AND d.enabled = TRUE " +

@@ -185,6 +185,9 @@ sparkora:
     page-size: ${NEWS_PAGE_SIZE:12}
     sync-enabled: ${NEWS_SYNC_ENABLED:false}
     sync-cron: ${NEWS_SYNC_CRON:0 30 3 * * ?}
+  kb:
+    # 10-03 E3:知识库生效期对账——每日按当前日期重算 KB 向量 active(生效/到期自动翻转)
+    effective-cron: ${KB_EFFECTIVE_CRON:0 5 0 * * ?}
   qiniu:
     enabled: ${QINIU_ENABLED:true}
     access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK

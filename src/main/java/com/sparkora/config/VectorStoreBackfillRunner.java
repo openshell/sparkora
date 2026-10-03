@@ -81,14 +81,34 @@ public class VectorStoreBackfillRunner implements ApplicationRunner {
             String chunkType = image ? "IMAGE" : (asString(r.get("chunkType")) == null ? "" : asString(r.get("chunkType")));
             String name = asString(r.get("name"));
             String content = asString(r.get("content"));
+            // 行可自带 active（KB 生效期，E3）；缺省 true（回填即全量置 active）
+            boolean active = !r.containsKey("active") || Boolean.TRUE.equals(r.get("active"))
+                    || "true".equalsIgnoreCase(asString(r.get("active")));
+            Map<String, Object> extra = extraMeta(domain, r);
             try {
-                store.upsert(domain, refId, modelId, chunkType, name, true, embeddingModel, content, vector);
+                store.upsert(domain, refId, modelId, chunkType, name, active, embeddingModel, content, vector, extra);
                 n++;
             } catch (Exception e) {
                 log.warn("向量 store 回填单行失败(跳过) domain={} refId={}: {}", domain, refId, e.getMessage());
             }
         }
         return n;
+    }
+
+    /** 域扩展 metadata（KB E3：source/生效期 ISO 串）；无则返回 null（与旧 9 参语义一致）。 */
+    private static Map<String, Object> extraMeta(String domain, Map<String, Object> r) {
+        if (!VectorDomain.KB.name().equals(domain)) return null;
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        putIfPresent(m, "source", r.get("source"));
+        putIfPresent(m, "effectiveFrom", r.get("effectiveFrom"));
+        putIfPresent(m, "effectiveTo", r.get("effectiveTo"));
+        return m.isEmpty() ? null : m;
+    }
+
+    private static void putIfPresent(Map<String, Object> m, String key, Object value) {
+        if (value == null) return;
+        String s = String.valueOf(value);
+        if (!s.isBlank()) m.put(key, s);
     }
 
     private static Long asLong(Object o) {

@@ -149,6 +149,23 @@ public class VectorStoreService implements SearchStore {
      */
     public void upsert(String domain, Long refId, Long modelId, String chunkType, String name,
                        boolean active, String embeddingModel, String content, String vector) {
+        upsert(domain, refId, modelId, chunkType, name, active, embeddingModel, content, vector, null);
+    }
+
+    /**
+     * 插入或覆盖一条 store 行（同 id 幂等），并写入**可选扩展 metadata**。
+     *
+     * <p>10-03 E3：KB 域新增 {@code source}/{@code effectiveFrom}/{@code effectiveTo}/{@code tags}
+     * 维度（ISO 日期字符串 / 标签列表），供未来检索过滤。{@code extraMeta} 为 null 或空时行为与
+     * 旧 9 参重载完全一致（CAR/NEWS/IMAGE 域零影响）；值为 null 的键**不写入**（不留空洞键）。
+     * 同 id 冲突时整条 metadata 覆盖，故调用方每次都须传全量扩展键（否则旧键被抹掉属预期）。
+     *
+     * @param vector    pgvector 字面量字符串（如 "[0.1,0.2,...]"）
+     * @param extraMeta 扩展 metadata（可空）；值为 null 的条目跳过
+     */
+    public void upsert(String domain, Long refId, Long modelId, String chunkType, String name,
+                       boolean active, String embeddingModel, String content, String vector,
+                       Map<String, Object> extraMeta) {
         if (domain == null || refId == null || content == null || vector == null) return;
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("domain", domain);
@@ -158,6 +175,11 @@ public class VectorStoreService implements SearchStore {
         meta.put("name", name == null ? "" : name);
         meta.put("active", active);
         meta.put("embeddingModel", embeddingModel);
+        if (extraMeta != null) {
+            for (Map.Entry<String, Object> e : extraMeta.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) meta.put(e.getKey(), e.getValue());
+            }
+        }
         String metadataJson;
         try {
             metadataJson = json.writeValueAsString(meta);

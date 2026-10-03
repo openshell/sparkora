@@ -31,9 +31,11 @@
           <div class="d-head">
             <span class="d-title serif">{{ d.title }}</span>
             <el-tag size="small" effect="plain">{{ d.domain }}</el-tag>
+            <el-tag v-for="t in (d.tags || [])" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
             <el-tag v-if="!d.enabled" size="small" type="info" effect="plain">停用</el-tag>
           </div>
           <div class="d-meta">已切块 {{ d.chunkCount }} 块 · 更新于 {{ fmtTime(d.updatedAt) }}</div>
+          <div v-if="d.source || effText(d)" class="d-extra">{{ d.source ? '来源：' + d.source : '' }}<span v-if="d.source && effText(d)"> · </span>{{ effText(d) }}</div>
           <div class="d-actions" v-if="user.isEditorOrAbove">
             <el-button size="small" text @click="openEdit(d)">编辑</el-button>
             <el-button size="small" text @click="onRebuild(d)" :loading="rebushing === d.id">重建向量</el-button>
@@ -50,7 +52,20 @@
           <el-input v-model="form.title" maxlength="200" placeholder="如：家用充电桩选择要点" />
         </el-form-item>
         <el-form-item label="领域标签" prop="domain">
-          <el-input v-model="form.domain" maxlength="50" placeholder="通用 / 充电 / 保养 / 政策 / 技术科普…留空为「通用」" />
+          <el-select v-model="form.domain" placeholder="留空为「通用」" style="width: 100%" clearable>
+            <el-option v-for="d in domains" :key="d" :label="d" :value="d" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="来源">
+          <el-input v-model="form.source" maxlength="200" placeholder="可选;URL / 出处 / 署名" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-select v-model="form.tags" multiple filterable allow-create default-first-option
+            placeholder="可选;输入后回车新建标签(≤50 字)" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="生效期">
+          <el-date-picker v-model="form.effectiveRange" type="daterange" value-format="YYYY-MM-DD"
+            start-placeholder="生效起" end-placeholder="生效止" style="width: 100%" />
         </el-form-item>
         <el-form-item label="正文" prop="content">
           <el-input v-model="form.content" type="textarea" :rows="14"
@@ -84,7 +99,10 @@ const editingId = ref(null)
 const saving = ref(false)
 const rebushing = ref(null)
 const formRef = ref(null)
-const form = ref({ title: '', domain: '', content: '', enabled: true })
+// 领域受控词表（来自后端 GET /api/kb/domains，与 com.sparkora.kb.KbDomain 同源）
+const domains = ref([])
+const emptyForm = () => ({ title: '', domain: '', source: '', tags: [], effectiveRange: [], content: '', enabled: true })
+const form = ref(emptyForm())
 const rules = {
   title: [{ required: true, message: '标题不能为空', trigger: 'blur' },
           { max: 200, message: '标题不能超过 200 字', trigger: 'blur' }],
@@ -104,9 +122,16 @@ const load = async () => {
   }
 }
 
+const loadDomains = async () => {
+  try {
+    const { data } = await kbApi.domains()
+    domains.value = data.data || []
+  } catch { /* 词表加载失败不阻断列表；下拉为空时后端仍会校验非法值 */ }
+}
+
 const openCreate = () => {
   editingId.value = null
-  form.value = { title: '', domain: '', content: '', enabled: true }
+  form.value = emptyForm()
   editDlg.value = true
 }
 
@@ -114,20 +139,41 @@ const openEdit = (d) => {
   editingId.value = d.id
   kbApi.get(d.id).then(({ data }) => {
     const doc = data.data || {}
-    form.value = { title: doc.title, domain: doc.domain, content: doc.content, enabled: doc.enabled !== false }
+    form.value = {
+      title: doc.title, domain: doc.domain, content: doc.content, enabled: doc.enabled !== false,
+      source: doc.source || '', tags: doc.tags || [],
+      effectiveRange: (doc.effectiveFrom || doc.effectiveTo)
+        ? [doc.effectiveFrom || null, doc.effectiveTo || null] : []
+    }
     editDlg.value = true
   }).catch(e => ElMessage.error(e?.response?.data?.msg || '加载详情失败'))
+}
+
+// 生效期展示：「生效 起 ~ 止」，单边为空用「不限」
+const effText = (d) => {
+  if (!d.effectiveFrom && !d.effectiveTo) return ''
+  return `生效 ${d.effectiveFrom || '不限'} ~ ${d.effectiveTo || '不限'}`
 }
 
 const onSave = async () => {
   try { await formRef.value?.validate() } catch { return }
   saving.value = true
   try {
+    const payload = {
+      title: form.value.title,
+      domain: form.value.domain || null,
+      source: form.value.source || null,
+      tags: form.value.tags || [],
+      effectiveFrom: form.value.effectiveRange?.[0] || null,
+      effectiveTo: form.value.effectiveRange?.[1] || null,
+      content: form.value.content,
+      enabled: form.value.enabled
+    }
     if (editingId.value) {
-      await kbApi.update(editingId.value, form.value)
+      await kbApi.update(editingId.value, payload)
       ElMessage.success('已更新并向量化')
     } else {
-      await kbApi.create(form.value)
+      await kbApi.create(payload)
       ElMessage.success('已创建并向量化')
     }
     editDlg.value = false
@@ -166,7 +212,7 @@ const onRebuild = async (d) => {
 
 const fmtTime = (t) => t ? String(t).replace('T', ' ').slice(0, 16) : '—'
 
-onMounted(load)
+onMounted(() => { load(); loadDomains() })
 </script>
 
 <style scoped>
@@ -176,6 +222,7 @@ onMounted(load)
 .d-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .d-title { font-size: 16px; font-weight: 600; }
 .d-meta { color: var(--faint); font-size: 12px; margin-top: 8px; }
+.d-extra { color: var(--faint); font-size: 12px; margin-top: 4px; }
 .d-actions { margin-top: 12px; display: flex; gap: 4px; }
 .loading, .empty { padding: 48px 0; }
 .state-error { padding: 48px 0; text-align: center; }

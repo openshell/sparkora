@@ -125,6 +125,8 @@ export const newsApi = {
 
 // S7 通用汽车知识库（KbLibrary 换封装用；行为与原先直调 http 完全一致）
 export const kbApi = {
+  // 受控领域词表（10-03 E3）：data 为有序字符串数组，供 domain 下拉
+  domains: () => http.get('/kb/domains'),
   list: () => http.get('/kb/docs'),
   get: (id) => http.get(`/kb/docs/${id}`),
   create: (data) => http.post('/kb/docs', data),

@@ -78,6 +78,40 @@ class VectorStoreServiceTest {
     }
 
     @Test
+    void upsert_扩展metadata_写入生效期来源标签() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());
+        java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
+        extra.put("source", "https://example.com/a");
+        extra.put("effectiveFrom", "2026-10-03");
+        extra.put("effectiveTo", null);              // null 键跳过
+        extra.put("tags", List.of("充电", "安全"));
+        svc.upsert("KB", 3L, null, "KB_CHUNK", "标题", false, "m1", "知识：x", "[0.1]", extra);
+
+        org.mockito.ArgumentCaptor<Object> meta = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(jt).update(anyString(), any(), any(), meta.capture(), any());
+        String json = (String) meta.getValue();
+        assertTrue(json.contains("\"source\":\"https://example.com/a\""), json);
+        assertTrue(json.contains("\"effectiveFrom\":\"2026-10-03\""), json);
+        assertTrue(json.contains("\"tags\":[\"充电\",\"安全\"]"), json);
+        assertTrue(json.contains("\"active\":false"), json);
+        assertTrue(!json.contains("effectiveTo"), "null 扩展键不得写入");
+    }
+
+    @Test
+    void upsert_旧9参重载_行为不变无扩展键() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());
+        svc.upsert("CAR", 7L, 39L, "PARAM_GROUP", "海狮08EV", true, "m1", "车型：x", "[0.1]");
+        org.mockito.ArgumentCaptor<Object> meta = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(jt).update(anyString(), any(), any(), meta.capture(), any());
+        String json = (String) meta.getValue();
+        assertTrue(!json.contains("source"), json);
+        assertTrue(!json.contains("effectiveFrom"), json);
+        assertTrue(!json.contains("tags"), json);
+    }
+
+    @Test
     void setActive_用jdbctemplate直更jsonb() {
         JdbcTemplate jt = mock(JdbcTemplate.class);
         VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());

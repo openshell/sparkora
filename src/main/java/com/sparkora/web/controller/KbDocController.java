@@ -2,6 +2,7 @@ package com.sparkora.web.controller;
 
 import com.sparkora.common.R;
 import com.sparkora.domain.entity.KbDocEntity;
+import com.sparkora.kb.KbDomain;
 import com.sparkora.kb.service.KbDocService;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.web.dto.KbDocSaveDto;
@@ -9,12 +10,14 @@ import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
- * 通用汽车知识库接口(S7 车型库泛化)。
+ * 通用汽车知识库接口(S7 车型库泛化;10-03 E3 数据模型规范化)。
  * - VIEWER 可读;ADMIN/EDITOR 可写(新建/编辑/删除/重建向量)。
  * - 新建/编辑自动切块+向量化;重建幂等(先清后插)。
+ * - domain 受控词表来源 {@code GET /api/kb/domains};source/tags/生效期为 E3 新增维度。
  */
 @RestController
 @RequestMapping("/api/kb")
@@ -26,7 +29,14 @@ public class KbDocController {
         this.service = service;
     }
 
-    /** 知识文档列表(标题/领域/块数/更新时间)。 */
+    /** 受控领域词表(保序,供前端下拉);读三角色。 */
+    @GetMapping("/domains")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<List<String>> domains() {
+        return R.ok(KbDomain.all());
+    }
+
+    /** 知识文档列表(标题/领域/来源/标签/生效期/块数/更新时间)。 */
     @GetMapping("/docs")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
     public R<java.util.List<Map<String, Object>>> list() {
@@ -49,7 +59,8 @@ public class KbDocController {
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> create(@Valid @RequestBody KbDocSaveDto dto) {
         try {
-            KbDocEntity d = service.create(dto.getTitle(), dto.getDomain(), dto.getContent(),
+            KbDocEntity d = service.create(dto.getTitle(), dto.getDomain(), dto.getSource(), dto.getTags(),
+                    dto.getEffectiveFrom(), dto.getEffectiveTo(), dto.getContent(),
                     SecurityUtil.current() == null ? "system" : SecurityUtil.current().getUsername());
             return R.ok(service.get(d.getId()));
         } catch (IllegalArgumentException e) {
@@ -64,7 +75,9 @@ public class KbDocController {
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> update(@PathVariable Long id, @Valid @RequestBody KbDocSaveDto dto) {
         try {
-            KbDocEntity d = service.update(id, dto.getTitle(), dto.getDomain(), dto.getContent(), dto.getEnabled());
+            String operator = SecurityUtil.current() == null ? "system" : SecurityUtil.current().getUsername();
+            KbDocEntity d = service.update(id, dto.getTitle(), dto.getDomain(), dto.getSource(), dto.getTags(),
+                    dto.getEffectiveFrom(), dto.getEffectiveTo(), dto.getContent(), dto.getEnabled(), operator);
             return R.ok(service.get(d.getId()));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
@@ -73,7 +86,7 @@ public class KbDocController {
         }
     }
 
-    /** 删除(逻辑删文档+物理清块)。 */
+    /** 删除(逻辑删文档+物理清块/标签)。 */
     @DeleteMapping("/docs/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Void> delete(@PathVariable Long id) {

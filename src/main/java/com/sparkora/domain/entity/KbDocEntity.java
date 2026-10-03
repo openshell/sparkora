@@ -6,11 +6,15 @@ import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
  * 通用汽车知识文档实体。对应 sparkora_kb_doc(S7 车型库泛化)。
  * 手工录入的知识条目;切块+向量化后供 RAG 检索(通用域,与车型域并行)。
+ *
+ * <p>10-03 E3:domain 收敛为受控词表({@code com.sparkora.kb.KbDomain});新增 source(来源)、
+ * effectiveFrom/effectiveTo(生效期,可空 = 不限)、标签经关联表 sparkora_kb_doc_tag 承载。
  */
 @Data
 @TableName("sparkora_kb_doc")
@@ -18,7 +22,10 @@ public class KbDocEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String title;          // 知识标题
-    private String domain;         // 领域标签: 通用/充电/保养/政策/技术科普…
+    private String domain;         // 受控领域标签(通用/充电/保养/政策/技术科普/安全/驾驶)
+    private String source;         // 来源(可空;URL/出处/署名)
+    private LocalDate effectiveFrom;// 生效起(可空 = 不限)
+    private LocalDate effectiveTo;  // 生效止(可空 = 不限)
     private String content;        // 原始正文
     private Boolean enabled;       // 停用后重建向量跳过(检索层无特判)
     private String createdBy;
