@@ -44,7 +44,7 @@
 [{source:"CAR|KB|NEWS", modelName, chunkType, score, chunkText, docId}]
 ```
 
-- `docId` 为 09-15 qa-auto-illustrate 起的可空域内块 id：`CAR=car_doc.id` / `KB=kb_chunk.id` / `NEWS=news_doc.id`。
+- `docId` 为 09-15 qa-auto-illustrate 起的可空域内块 id：`CAR=car_chunk.id` / `KB=kb_chunk.id` / `NEWS=news_doc.id`。
 - 检索 `OK` 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。**版本链路由 `VersionService` 写入；`brief.rag_citations` 的写入方（FAST 简报 `BriefService.generate`）已于 2026-09-26（R6）删除，深度简报链路不写该列（引用面板改由 `fact_sheet` 派生，见下条）**。
 - 前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 `ragStatus` 显示降级文案（**前端不读 `docId`，纯增量不影响展示**）。
 - **WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 `fact_sheet`，行为不变（**2026-09-09 注：快速模式已下线，本句仅存量语义**）。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
@@ -83,7 +83,7 @@
 - **metadata 契约**：`{domain(CAR|KB|NEWS|IMAGE), refId(域内 id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`；`content` = `chunk_text`（IMAGE 域 = 旧 `source_text`）。
 - **id 确定性**：`UUID.nameUUIDFromBytes(domain+":"+refId)`，供 upsert/delete/setActive 按 id 定位（store 无按 metadata 更新 API）。
 - **读路径**：`CarRagService` 经 `ai.vector.SearchStore`；候选窗按域隔离复现——CAR+KB 合并一次 `similaritySearch` + NEWS 独立一次（`domain in [...] && active && embeddingModel`）+ Java 合并；`similarityThreshold=0`，门槛仍在 Java 侧用 `ragMinScore`/`ragRejectScore` 判定。`ImageEmbeddingService.searchImages` 走 IMAGE 域（可选 `refId ∈ 白名单`）。
-- **活表同步层**：`active` 由写路径 `VectorStoreService.upsert/setActive/deleteByRef` 维护（软删/停用/重建/删父联动）；`CarDocService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService` 的 persist/delete 同步单表。
+- **活表同步层**：`active` 由写路径 `VectorStoreService.upsert/setActive/deleteByRef` 维护（软删/停用/重建/删父联动）；`CarChunkService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService` 的 persist/delete 同步单表。
 - **回填**：`VectorStoreBackfillRunner`（`@Order(50)`，守护线程，幂等差集）从旧表复用已算好的向量（**不重新嵌入**）搬入 store；异常仅 warn 不阻断。
 - **阶段 A 对拍**：`.trellis/tasks/10-03-e1-pgstore-migrate/research/parity-A.md`（7 query 集 × CAR+KB/NEWS/IMAGE，候选集/分数/排序逐条一致）。
 - **契约不变**：`RagResult`/`Citation`/`rag_status`/`rag_citations` 与前端交互零变更。
@@ -94,7 +94,7 @@
 
 | 缺陷（S6.1 现状） | S6.2 修复 |
 |---|---|
-| 「XX参数表及配置表」零信息表头块（仅标题行）得分最高挤占 topK | 切块层：有效参数 <2 的分组不入库（`CarDocService`）；检索层兜底丢弃仅含标题行的参数块 |
+| 「XX参数表及配置表」零信息表头块（仅标题行）得分最高挤占 topK | 切块层：有效参数 <2 的分组不入库（`CarChunkService`）；检索层兜底丢弃仅含标题行的参数块 |
 | 权益块与主题措辞相似挤占配额 | 分层配额 `applyQuota`：PARAM_GROUP/MODEL_INFO 优先，RIGHTS/FEATURE 合计 ≤ 总配额 1/3 |
 | 单查询整句 topic 与参数级子问题不对齐 | 参数级子查询 `deriveSubQueries`：query 含价格/续航/油耗等参数词时逐词派生子查询，主/子查询结果按 `chunkText` 去重合并 |
 | AI 在知识块未覆盖的参数处编造数值 | 覆盖度声明：`RagResult.coveredText` 携带「参数名→值」清单注入 prompt；清单外参数禁止写具体数值，要求定性表述 + `factRisks` 标注 |
@@ -131,7 +131,7 @@
 
 ## 8. 关键实现路径
 
-- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarDocService` 切块/配额/子查询/覆盖度）、`ai.vector.VectorStoreService`（单表 store 读写/同步，10-03 E1）、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。旧表路径 `mapper.CarDocEmbeddingMapper.searchTopKUnified` 保留（未删，可回退），E1 后不再被 `CarRagService` 调用。
+- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarChunkService` 切块/配额/子查询/覆盖度）、`ai.vector.VectorStoreService`（单表 store 读写/同步，10-03 E1）、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。旧表路径 `mapper.CarDocEmbeddingMapper.searchTopKUnified` 保留（未删，可回退），E1 后不再被 `CarRagService` 调用。
 
 ---
 

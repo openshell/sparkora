@@ -76,7 +76,7 @@ QaController ─▶ QaService.ask(sessionId, question, user)
 | 新闻关联图（便宜路径，始终执行） | 答案引用含 `source=NEWS` 且该引用 `docId` 非空 | `Citation.docId`(= `sparkora_news_doc.id`) → `news_id`(内部 BIGINT) → `sparkora_news.id` → `cover_image_id` → `sparkora_image_asset` |
 | 语义检索图（语义路径，仅图片意图） | 问题命中图片意图关键词 | `ImageEmbeddingService.searchImages(cleanQuery, limit, AI_IMAGE_MIN_SCORE, null)` |
 
-- **`Citation` / `UnifiedHit` 加可空 `docId`**（09-15 补读）：`searchTopKUnified` SQL 本已 `SELECT docId`（CAR=`car_doc.id` / KB=`kb_chunk.id` / NEWS=`news_doc.id`），此前读行时丢弃，现补读并透传（**含锚点 boost 重排分支**，漏传会让 id 静默丢失）。`Citation` **保留 5 参兼容构造器**（`docId=null`）；`BriefService.citationsJson`（现由 `VersionService` 复用写入版本引用明细；FAST 简报写入路径已于 2026-09-26（R6）删除）与 `KnowledgeSearchTool`（深度检索）行为不变。
+- **`Citation` / `UnifiedHit` 加可空 `docId`**（09-15 补读）：`searchTopKUnified` SQL 本已 `SELECT docId`（CAR=`car_chunk.id` / KB=`kb_chunk.id` / NEWS=`news_doc.id`），此前读行时丢弃，现补读并透传（**含锚点 boost 重排分支**，漏传会让 id 静默丢失）。`Citation` **保留 5 参兼容构造器**（`docId=null`）；`BriefService.citationsJson`（现由 `VersionService` 复用写入版本引用明细；FAST 简报写入路径已于 2026-09-26（R6）删除）与 `KnowledgeSearchTool`（深度检索）行为不变。
 - **图片意图判定**（`QaImageIntent`，纯静态关键词，不用 LLM）：命中 `看图/看图片/看张图/看照片/图片/海报/照片/配图/给我看/我想看/看一下` 任一即触发语义检索；**非图片意图不调 `searchImages`**（无 embedding 浪费）。
 - **合并去重**：按 `imageId` 去重，**新闻关联图优先**（与答案引用强相关），上限 `QaService.IMAGE_REF_MAX = 3`（常量，不配置化）。
 - **降级（绝不阻断答案）**：`QaImageRefService` 各路径与 `QaService.ask` 调用处均包 try/catch，异常仅 warn；配图解析失败/为空 → `image_refs` 落 **null**，答案照常落库。

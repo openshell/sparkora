@@ -90,7 +90,7 @@ graph LR
 | 排版预览 | [spec/preview.md](spec/preview.md) | `service.PreviewService`/`WenyanThemeCatalog`/`WenyanServerService` / `project/StepPreview.vue` |
 | 公众号发布 | [spec/publish.md](spec/publish.md) | `service.PublishService`/`WenyanServerService`、`wenyan.*` / `project/StepPublish.vue` |
 | 文章仿写 | [spec/imitation.md](spec/imitation.md) | `service.ImitationService`、`service.VersionService`（仿写分支） / `views/ProjectEdit.vue`、`project/StepBrief.vue`、`project/StepVersions.vue` |
-| 知识域 · 车型（CAR） | [spec/knowledge/car.md](spec/knowledge/car.md) | `com.sparkora.car.*`（`CarModelService`/`CarDocService`/`CarSyncJobService`/`CarSyncScheduler`）、`web.controller.CarModelController` / `views/CarLibrary.vue`、`CarDetail.vue`、`CarSync.vue` |
+| 知识域 · 车型（CAR） | [spec/knowledge/car.md](spec/knowledge/car.md) | `com.sparkora.car.*`（`CarModelService`/`CarChunkService`/`CarSyncJobService`/`CarSyncScheduler`）、`web.controller.CarModelController` / `views/CarLibrary.vue`、`CarDetail.vue`、`CarSync.vue` |
 | 知识域 · 通用知识库（KB） | [spec/knowledge/kb.md](spec/knowledge/kb.md) | `com.sparkora.kb.service.KbDocService`、`web.controller.KbDocController` / `views/KbLibrary.vue` |
 | 知识域 · 官方新闻（NEWS） | [spec/knowledge/news.md](spec/knowledge/news.md) | `com.sparkora.news.*`（`client.BydNewsClient`/`service.NewsService`/`service.NewsDocService`/`service.NewsSyncJobService`/`service.NewsSyncScheduler`/`classify.NewsImageClassifier`）、`web.controller.NewsController` / `views/knowledge/NewsKnowledgePanel.vue` |
 | 知识中心浏览页 | [spec/knowledge/center.md](spec/knowledge/center.md) | `frontend/src/router/index.js`（`/knowledge`） / `views/KnowledgeCenter.vue`、`views/knowledge/*` |

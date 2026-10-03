@@ -88,7 +88,7 @@ aiClient.chatWithMemory(sessionId, systemPrompt, question, historyWindow, 2048);
 CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long> anchorModelIds)
 // RagResult{status, context, hitCount, maxScore, coveredText, citations}
 // Citation{source, modelName, chunkType, score, chunkText, docId}; source∈{CAR,KB,NEWS}
-//   docId 可空（09-15 qa-auto-illustrate 补读；CAR=car_doc.id/KB=kb_chunk.id/NEWS=news_doc.id）；
+//   docId 可空（09-15 qa-auto-illustrate 补读；CAR=car_chunk.id/KB=kb_chunk.id/NEWS=news_doc.id）；
 //   保留 5 参兼容构造器（docId=null），既有调用方不受影响；详见本文「问答答案配图」Scenario
 // RagStatus{OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE}
 ```
@@ -779,7 +779,7 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 - **切块唯一实现**：KB/NEWS `chunkContent` 改为薄委托 `TextChunker`；header 由调用方构造（KB「知识：t（d）」/ NEWS「新闻：t（date）」），空正文语义参数化（KB `keepTitleWhenEmpty=true` 恒保留；NEWS `titlePresent && keepTitleWhenEmpty=false`）。**句读集合也按域参数化（KB `。；!?` / NEWS `。；;！!？?`），不得取超集**——两域原集合不同，取超集会改变 KB 切块边界（违反「产出逐块不变」）；`splitSentences` 参数化后仍是全库唯一实现。产出逐块不变由 `KbDocServiceTest`/`NewsDocServiceTest` + `TextChunkerTest`（含 `legacyChunk` 等价性锁）证明。
 - **切块滑动重叠（E2，2026-10-03）**：新增 6 参 `chunk(..., int overlapChars)`；**旧 5 参委托 `overlapChars=0`，逐块等价旧行为（向后兼容）**。仅 **KB/NEWS 服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用**；**CAR（参数分组块）与 IMAGE（`ImageEmbeddingTextBuilder`）不经 `TextChunker`，切块形态不变**。策略：相邻产出块中前块**严格 >overlapChars** 时取尾部片段（≤overlapChars，优先从片段内首个句读符之后对齐）作后块前缀；前缀+本块仍须 ≤`MAX_BODY_LEN`（放不下则不重叠）；**不整块重复、不增块数**。回退：revert E2 + 按旧切块重嵌（旧 4 表保留）。实测见 `docs/spec/retrieval.md §9` 与 `.trellis/tasks/10-03-e2-chunk-overlap/research/parity-B.md`。
 - **并发执行器唯一实现**：`EmbeddingBatchRunner` 泛型化「固定线程池 + 单块重试 + 失败收集 + 计数日志」；**各域失败策略用参数保留**（CAR/NEWS `maxParallel=4,maxRetries=1`；KB `maxParallel=1,maxRetries=0` 串行无重试）。
-- **事务边界统一（关键）**：embed 网络调用在事务外，随后经**自注入 `@Autowired @Lazy self`** 调 `@Transactional(REQUIRES_NEW)` 的持久化方法（`persistCarDoc`/`persistChunk`/`persistNewsDoc`）完成「插块行（拿 id）+ 插向量」原子写入。单测直 new 时 `(self==null?this:self)` 退化直调。
+- **事务边界统一（关键）**：embed 网络调用在事务外，随后经**自注入 `@Autowired @Lazy self`** 调 `@Transactional(REQUIRES_NEW)` 的持久化方法（`persistCarChunk`/`persistChunk`/`persistNewsDoc`）完成「插块行（拿 id）+ 插向量」原子写入。单测直 new 时 `(self==null?this:self)` 退化直调。
   - **反例（被本任务修复）**：`@Transactional protected insertDocWithEmbedding` 由同类线程池 lambda 内 `this` 调用 → 代理不生效、注解被忽略 → 向量插入失败时块行可能已落成孤儿、事务边界不明。
   - 收益同 IMAGE 范式：失败回滚不留孤儿块；`REQUIRES_NEW` 不污染调用方（`NewsService.upsertOne` 为 `@Transactional`）事务。
 - **向量模型名防护**：4 张向量表加 `embedding_model`；写入盖 `modelName()`、检索加 `embedding_model = #{model}`、对账/补齐口径同模型过滤；V3 用 Flyway placeholder 回填存量行 = 实际配置模型。详见 database-guidelines.md「向量模型名防护」。
@@ -787,7 +787,7 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 - **embedding 后端 = Spring AI `EmbeddingModel`（C5）**：`EmbeddingClient` 内部改调 `EmbeddingModel.embed(text)`（OpenAI 兼容，指向 axonhub），**删除**原自研 RestClient/Jackson 调用；公共签名（`embed`/`embedList`/`modelName`/`toPgVector`）不变，8 个生产调用点与既有测试零改动。精度路径由 JSON→`List<Double>` 改为 SDK `float[]`→`double`，但 pgvector `vector` 本就是 float4，**检索结果 parity 不受影响**。
 - **检索存储 = Spring AI `PgVectorStore` 单表（E1，2026-10-03；**推翻 C5 的 Scope B 推迟**）**：C5 曾以「`PgVectorStore` 无法表达 JOIN 活表语义」推迟全量迁移；后续用户拍板**先迁 PgVectorStore**，E1 已落地：
   - 单表 `vector_store(id uuid, content text, metadata json, embedding vector(1024))`（Flyway `V5__pgvector_store.sql`，HNSW `vector_cosine_ops` + metadata GIN；`initializeSchema=false`，**建表由 Flyway 管理，不依赖 Spring 自动建表**）。
-  - `content` = `chunk_text`；`metadata` = `{domain(CAR/KB/NEWS/IMAGE), refId(域内 id：CAR=car_doc.id/KB=kb_chunk.id/NEWS=news_doc.id/IMAGE=image_asset.id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`。**行内 id 经 refId 回填 `Citation.docId`，语义不变**。
+  - `content` = `chunk_text`；`metadata` = `{domain(CAR/KB/NEWS/IMAGE), refId(域内 id：CAR=car_chunk.id/KB=kb_chunk.id/NEWS=news_doc.id/IMAGE=image_asset.id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`。**行内 id 经 refId 回填 `Citation.docId`，语义不变**。
   - **KB 域扩展键（10-03 E3）**：`metadata` 另可含 `source`(可省)、`effectiveFrom`/`effectiveTo`(ISO `yyyy-MM-dd` 串，可省)、`tags`(List<String>，空不写)。经 `VectorStoreService.upsert(..., Map<String,Object> extraMeta)` **可选重载**写入（旧 9 参重载原样保留，CAR/NEWS/IMAGE 零影响；null 值键跳过）。KB 的 `active` = `enabled && 今天∈[from,to]`（`KbDocService.isActive`），由启动/每日 `KbEffectiveWindowReconciler` 按日重算覆盖。检索过滤不变（仍只 `active + embeddingModel`）。
   - **活表语义改由 metadata `active` 承载**（原 JOIN `deleted`/`enabled` 的等价）：软删/停用/重建三路径均须同步 `active`（`VectorStoreService.setActive` 经 native `jsonb_set` 直更，因 Spring AI 无「按 metadata 更新」API）。**漏同步 = 失效块仍被检索**，是最高风险点。
   - **域隔离候选窗口复现**：`searchDomains([CAR,KB])` 一次 + `searchDomains([NEWS])` 一次（对齐旧 UNION 的按域窗口）——`domain in [...]` 的 Spring AI filter 与旧语义等价。
@@ -818,7 +818,7 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 // 线程池 lambda 内 this 调用:@Transactional 代理不生效,失败留孤儿块
 tasks.add(() -> { try { insertDocWithEmbedding(doc); } catch (Exception e) { insertDocWithEmbedding(doc); } ... });
 
-@Transactional protected void insertDocWithEmbedding(CarDocEntity doc) {
+@Transactional protected void insertDocWithEmbedding(CarChunkEntity doc) {
     docMapper.insert(doc);
     embMapper.insert(doc.getId(), doc.getModelId(), embeddingClient.embed(doc.getChunkText()));
 }
@@ -826,11 +826,11 @@ tasks.add(() -> { try { insertDocWithEmbedding(doc); } catch (Exception e) { ins
 #### Correct
 ```java
 // embed 在事务外;持久化经 self 代理走 REQUIRES_NEW
-batchRunner.run(docs, CarDocEntity::getChunkText,
-        (doc, vec) -> (self == null ? this : self).persistCarDoc(doc, vec), "model=" + modelId, 4, 1);
+batchRunner.run(docs, CarChunkEntity::getChunkText,
+        (doc, vec) -> (self == null ? this : self).persistCarChunk(doc, vec), "model=" + modelId, 4, 1);
 
 @Transactional(propagation = Propagation.REQUIRES_NEW)
-public void persistCarDoc(CarDocEntity doc, String vec) {
+public void persistCarChunk(CarChunkEntity doc, String vec) {
     docMapper.insert(doc);                                   // 拿 id
     embMapper.insert(doc.getId(), doc.getModelId(), vec, embeddingClient.modelName());
 }

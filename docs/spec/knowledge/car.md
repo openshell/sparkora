@@ -26,9 +26,9 @@
 
 ## 2. 切块与向量化
 
-- `com.sparkora.car.service.CarDocService`：按车型参数/版本/分组切块（`PARAM_GROUP` / `MODEL_INFO` / `RIGHTS` / `FEATURE` 等 `chunkType`），首行固定 `车型：<全名>`（消除 EV/DM-i 同系跨版本检索混淆，S6b）；块行文本 `参数名：清洗值`。
-- `rebuildForModel`：embedding 并发（固定线程池 ≤4）+ 单块失败重试 1 次；**09-27 起委托 `com.sparkora.ai.EmbeddingBatchRunner`**（embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistCarDoc`——doc 行与向量行同事务，失败回滚不留孤儿块，且不污染调用方事务）。
-- 表：`sparkora_car_model`（主表）、`sparkora_car_doc`（文档块）、`sparkora_car_doc_embedding`（物理向量表，无 `deleted`，HNSW cosine `idx_car_doc_emb_vec`；**09-27 加 `embedding_model VARCHAR(100)` 列**，写入盖当前模型、检索按当前模型过滤）、`sparkora_car_param_clean`（清洗结果）。
+- `com.sparkora.car.service.CarChunkService`：按车型参数/版本/分组切块（`PARAM_GROUP` / `MODEL_INFO` / `RIGHTS` / `FEATURE` 等 `chunkType`），首行固定 `车型：<全名>`（消除 EV/DM-i 同系跨版本检索混淆，S6b）；块行文本 `参数名：清洗值`。
+- `rebuildForModel`：embedding 并发（固定线程池 ≤4）+ 单块失败重试 1 次；**09-27 起委托 `com.sparkora.ai.EmbeddingBatchRunner`**（embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistCarChunk`——doc 行与向量行同事务，失败回滚不留孤儿块，且不污染调用方事务）。
+- 表：`sparkora_car_model`（主表）、`sparkora_car_chunk`（文档块）、`sparkora_car_doc_embedding`（物理向量表，无 `deleted`，HNSW cosine `idx_car_doc_emb_vec`；**09-27 加 `embedding_model VARCHAR(100)` 列**，写入盖当前模型、检索按当前模型过滤）、`sparkora_car_param_clean`（清洗结果）。
 - 切块质量与清洗三态（`RULE`/`AI`/`FALLBACK`）、清洗统计、覆盖度声明见 [retrieval.md §5/§6](../retrieval.md)。
 - 向量模型防护（09-27 P1-⑧）：`EmbeddingClient.embedList` 校验返回维度 == `AI_EMBEDDING_DIM`（默认 1024），不符抛 `AiException`；`car_doc_embedding.embedding_model` 记录写入时模型，`searchTopK`/`searchTopKUnified` 均带 `embedding_model = 当前模型` 过滤，换模型后旧向量自动失效（不静默混空间）；`vector-stats` 的 `embeddedCount` 只计当前模型行（旧模型块判为缺失、可重建补齐）。
 
