@@ -70,16 +70,20 @@ doc 主表 (car_model / kb_doc / news / image_asset)
 
 ## Acceptance Criteria
 
-- [ ] **AC-阶段A对拍**：切块不变前提下，同 query 集（覆盖 CAR/KB/NEWS/IMAGE + 锚点 + 子查询场景）
-      候选集/分数/排序/四态/配额 selected 与旧路径一致（差异有据可查）。
-- [ ] **AC-活表**：软删/停用/重建后，Store 检索立即不含失效块（同步层生效）。
-- [ ] **AC-模型防护**：换 `AI_EMBEDDING_MODEL` 后旧模型块不被检索（metadata filter）。
-- [ ] **AC-阶段B**：切块重叠落地且全库重嵌；检索语义合理、改进可观测（不要求逐条一致）。
-- [ ] **AC-KB 规范化**：`domain` 受控词表生效；新列（source/tags/生效期）写入与检索过滤可用。
-- [ ] **AC-命名**：`sparkora_car_doc`→块语义命名（迁移 + 实体/mapper/引用同步）。
-- [ ] **AC-覆盖度/去重**：`coveredText` 覆盖 CAR/KB/NEWS；内容去重/嵌入缓存对相同 chunk 生效。
-- [ ] **AC-契约等价**：`mvn test` 全绿；前端 `npm run build` 通过；检索 API 结构与语义不变。
-- [ ] **AC-回退**：旧向量表在切读达标前不删；每批可 `git revert`。
+- [x] **AC-阶段A对拍**：切块不变前提下同 query 集候选集/分数/排序/四态/配额逐条一致。→ E1 已证。
+- [x] **AC-活表**：软删/停用/重建后 Store 立即不含失效块。→ E1 已证。
+- [x] **AC-模型防护**：换模型后旧模型块不被检索（metadata filter）。→ E1 已证。
+- [x] **AC-阶段B**：切块重叠落地且全库重嵌；语义合理、改进可观测。→ E2 已证（NEWS 58.5% 重叠）。
+- [x] **AC-KB 规范化**：受控 domain 词表 + source/tags/生效期写入与检索过滤。→ E3 已证。
+- [x] **AC-命名**：`sparkora_car_doc`→`sparkora_car_chunk`（表/实体/mapper/引用/文档）。→ E4 已证。
+- [x] **AC-覆盖度/去重**：`coveredText` 覆盖 CAR/KB/NEWS；嵌入缓存对相同 chunk 生效。→ E5 已证。
+- [x] **AC-契约等价**：`mvn test` **683 全绿**；前端 `npm run build` 通过；检索 API 结构与语义不变。
+- [x] **AC-回退**：旧向量表在切读达标后由 E6 退役；每子任务可 `git revert`。
+- [x] **AC-单一只真源（E6 增量）**：旧 4 表读写全部退役（双写消除），`vectorStats`/reconcile/`rebuildMissing`
+      改走 `vector_store`；V9 DROP 旧表；`vector-stats` 响应结构不变。
+
+> **收尾状态（2026-10-03）**：E1–E6 全部完成、归档、推送。向量层单一只真源 = `vector_store`。
+> 生产 docker 容器需 `docker compose up -d --build` 才带 V6–V9 迁移与全部代码。
 
 ## Out of Scope
 
@@ -98,5 +102,7 @@ doc 主表 (car_model / kb_doc / news / image_asset)
 | **E3** KB 数据模型规范化 | 受控 domain 词表 + source/tags/生效期 + 写入/检索 | E1 |
 | **E4** 命名规范化 | `sparkora_car_doc`→块语义命名（表/实体/mapper/引用/文档） | E1 |
 | **E5** 覆盖度三域统一 + 去重缓存 | `coveredText` 扩域 + content_hash 去重/嵌入缓存 | E1,E2 |
+| **E6** 旧向量表退役（消除双写） | 去旧表读写 + stats/reconcile/差集改 store + DROP 旧 4 表 | E1–E5 |
 
 父任务拥有源需求、任务映射、跨子验收与最终集成复核；子任务各自 `prd.md`/`implement.md` 写明依赖。
+（E6 为集成复核时新增，非原始范围，用于消除 E1 遗留的双写债。）
