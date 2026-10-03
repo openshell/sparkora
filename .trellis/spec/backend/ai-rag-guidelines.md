@@ -1110,7 +1110,15 @@ BriefDto / ClarifyPlanDto / SubAgentFactsDto
   字段/类型/多余字段由 advisor 同额度自纠错。**实际代价**：advisor 在 `parseChat` 前执行，半截 JSON 也会触发一次
   同额度自纠错，故截断路径 = 2 次同额度 + 服务层提额，最坏 ≤4 次（正常 1 次，纯 schema 违规 2 次）。
 - **DTO 字段约定**：`json_object` 模式 + `BeanOutputConverter` 用 `tools.jackson`（Jackson 3），
-  业务侧仍 `com.fasterxml`（Jackson 2），二者互不影响；未知字段被忽略（`FAIL_ON_UNKNOWN_PROPERTIES` 关闭）。
+  业务侧仍 `com.fasterxml`（Jackson 2），未知字段被忽略（`FAIL_ON_UNKNOWN_PROPERTIES` 关闭）。
+  **⚠️ 两个 Jackson 版本在 HTTP 响应序列化边界会互踩**：Boot 4 MVC 用 Jackson 3 序列化 controller 返回值；
+  若业务层把 Jackson 2 的 `JsonNode`/`ObjectNode`/`ArrayNode` **直接 put 进返回的 `Map`/DTO**，Jackson 3 不认识该类型，
+  会退化为反射式 bean 序列化，输出 `{"array":false,"object":true,"nodeType":"OBJECT",...}` 之类的元数据壳，
+  **而非真实 JSON**（AI 产出的 `session`/`taskBrief`/`question` 全部变味）。返回 JSON 树前必须转成纯值：
+  `Object v = objectMapper.convertValue(node, Object.class)`（null/missing → null）后再放入响应；
+  只返回**已序列化的字符串**（如 `/deep/status` 落库列）天然免疫。C1 `ClarifyConversationService` 6 处响应插入
+  即因此加了 `nodeToValue(JsonNode)` 包装（`start/answer/converge` 的 `question`/`session`/`taskBrief`），
+  并有回归用例 `start响应_question与session为纯值_非JsonNode` 锁定。
 - **`@JsonPropertyDescription` 会进 schema 的 description**；**jakarta.validation（`@Size` 等）不影响 schema**
   （victools SchemaGenerator 不读它），`required` 来自「所有声明属性默认必填」——勿以为注解约束了 AI 输出。
 - **元数据透传**：`TypedResult.chat()` 提供 model/totalTokens/finishReason/reasoning；自纠错两轮时
