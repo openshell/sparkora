@@ -1214,3 +1214,27 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 47: E2 切块滑动重叠 + 全库重嵌
+<!-- trellis-session: v=2 fp=e4fafa0973c70b66 -->
+
+**Date**: 2026-10-03
+**Task**: E2 切块滑动重叠 + 全库重嵌
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d50acd3` | feat(E2): 切块滑动重叠 + 全库重嵌（向后兼容 6 参重载） |
+| `7a8aab9` | docs(spec): 记录 E2 切块滑动重叠与阶段 B 重嵌契约 |
+| `10c3566` | chore(task): archive 10-03-e2-chunk-overlap |
+
+### Status
+
+[OK] **Completed**
