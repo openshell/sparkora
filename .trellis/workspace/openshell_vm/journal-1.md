@@ -1260,3 +1260,26 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 49: E4 命名规范化 car_doc→car_chunk 完成
+<!-- trellis-session: v=2 fp=a34c09cdb1e21711 -->
+
+**Date**: 2026-10-03
+**Task**: E4 命名规范化 car_doc→car_chunk 完成
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f819c2` | feat(E4): 命名规范化 sparkora_car_doc → sparkora_car_chunk（块语义） |
+| `2a39e26` | docs(spec): 记录 E4 car_doc→块语义命名规范化契约 |
+
+### Status
+
+[OK] **Completed**
