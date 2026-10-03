@@ -2,6 +2,7 @@ package com.sparkora.web.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sparkora.common.R;
+import com.sparkora.deep.service.BlueprintService;
 import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
 import com.sparkora.deep.service.ResearchPlannerService;
@@ -22,6 +23,7 @@ import java.util.Map;
  * POST /deep/clarify/answer   C1 意图澄清对话:回答并推进
  * POST /deep/clarify/converge C1 意图澄清对话:强制收敛
  * POST /deep/clarify/abort    C1 意图澄清对话:中止
+ * POST /deep/blueprint/confirm C3 写作蓝图人工评审门:确认解锁写作(可传编辑后蓝图)
  * POST /deep/run              ③④ 并行研究+事实手册(异步,前端轮询 /deep/status)
  * POST /deep/generate         ⑤⑥ 深度写作+数值回查(批量异步:落版本,前端轮询状态翻转)
  * GET  /deep/status           断点/进度查询(研究计划/逐 agent 状态/手册摘要)
@@ -44,6 +46,8 @@ public class DeepController {
     private final com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
     /** C2 研究规划(基于 TaskBrief 产出纯事实 research_plan) */
     private final ResearchPlannerService researchPlannerService;
+    /** C3 写作蓝图生成 + 人工评审门 */
+    private final BlueprintService blueprintService;
 
     public DeepController(DeepResearchService researchService,
                           DeepWriterService writerService, ArticleBriefMapper briefMapper,
@@ -53,7 +57,8 @@ public class DeepController {
                           com.sparkora.config.DeepProperties deepProps,
                           com.sparkora.service.SettingService settingService,
                           com.sparkora.deep.service.ClarifyConversationService clarifyConversationService,
-                          ResearchPlannerService researchPlannerService) {
+                          ResearchPlannerService researchPlannerService,
+                          BlueprintService blueprintService) {
         this.researchService = researchService;
         this.writerService = writerService;
         this.briefMapper = briefMapper;
@@ -64,6 +69,7 @@ public class DeepController {
         this.settingService = settingService;
         this.clarifyConversationService = clarifyConversationService;
         this.researchPlannerService = researchPlannerService;
+        this.blueprintService = blueprintService;
     }
 
     // ==================== C2 研究规划(基于 TaskBrief;10-03-gen-cognitive-redesign) ====================
@@ -81,6 +87,29 @@ public class DeepController {
             return R.fail(409, e.getMessage());
         } catch (Exception e) {
             return R.fail(500, "研究计划生成失败: " + e.getMessage());
+        }
+    }
+
+    // ==================== C3 写作蓝图人工评审门(10-03-gen-cognitive-redesign) ====================
+
+    /**
+     * C3 人工确认写作蓝图，置 blueprint_status=CONFIRMED 解锁写作。
+     * body: {briefId, writingBlueprint?}(writingBlueprint 可空;非空为人工编辑后的蓝图 JSON,可调整证据绑定)。
+     */
+    @PostMapping("/blueprint/confirm")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<ArticleBriefEntity> blueprintConfirm(@PathVariable Long projectId, @RequestBody Map<String, Object> body) {
+        try {
+            Long briefId = Long.valueOf(String.valueOf(body.get("briefId")));
+            String writingBlueprint = body.get("writingBlueprint") == null
+                    ? null : String.valueOf(body.get("writingBlueprint"));
+            return R.ok(blueprintService.confirm(projectId, briefId, writingBlueprint));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "写作蓝图确认失败: " + e.getMessage());
         }
     }
 
@@ -272,6 +301,10 @@ public class DeepController {
             if (b.getClarifyStatus() != null) out.put("clarifyStatus", b.getClarifyStatus());
             if (b.getClarifySession() != null) out.put("clarifySession", b.getClarifySession());
             if (b.getTaskBrief() != null) out.put("taskBrief", b.getTaskBrief());
+            // C3:写作蓝图 + 评审门态 + 质量信号增量透出(存在才出现,旧契约零回归)
+            if (b.getWritingBlueprint() != null) out.put("writingBlueprint", b.getWritingBlueprint());
+            if (b.getBlueprintStatus() != null) out.put("blueprintStatus", b.getBlueprintStatus());
+            if (b.getBlueprintQuality() != null) out.put("blueprintQuality", b.getBlueprintQuality());
             return R.ok(out);
         } catch (Exception e) {
             return R.fail(500, e.getMessage());

@@ -45,6 +45,10 @@ public class ArticleBriefEntity {
     private String clarifySession;    // JSON {status,slots[],turns[],currentQuestion,converged}
     private String taskBrief;          // JSON 结构化意图契约 {purpose,audience,...,slotMeta[](每槽位 source/confidence)}
     private String clarifyStatus;      // ASKING/CONVERGED/ABORTED(部分唯一索引 uq_brief_clarify_asking 约束 ASKING)
+    // ===== C3 简报写作蓝图(10-03-gen-cognitive-redesign;仅 DEEP 链路使用) =====
+    private String writingBlueprint;  // JSON 写作蓝图 {thesis,argumentStructure[],evidenceMap[],narrativeArc,constraints[],gaps[],quality}
+    private String blueprintStatus;   // 人工评审门态 REVIEWING/CONFIRMED(CONFIRMED 才解锁写作;重生成覆盖回 REVIEWING)
+    private String blueprintQuality;  // JSON 质量信号 {argumentDensity,evidenceCoverage,gapCount,taskBriefConsistency}
     private String styleRecommendations; // 文章仿写:风格推荐 JSON [{styleId,name,reason,matchScore}](仅 IMITATION brief 使用)
     private LocalDateTime createdAt;
 }

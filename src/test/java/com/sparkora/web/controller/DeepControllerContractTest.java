@@ -3,6 +3,7 @@ package com.sparkora.web.controller;
 import com.sparkora.config.DeepProperties;
 import com.sparkora.deep.search.WebProviderOrder;
 import com.sparkora.deep.search.WebSearchSnapshot;
+import com.sparkora.deep.service.BlueprintService;
 import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
 import com.sparkora.deep.service.ResearchPlannerService;
@@ -52,6 +53,7 @@ class DeepControllerContractTest {
     @Mock SettingService settingService;
     @Mock com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
     @Mock ResearchPlannerService researchPlannerService;
+    @Mock BlueprintService blueprintService;
 
     private MockMvc mvc;
     private DeepProperties props;
@@ -61,7 +63,7 @@ class DeepControllerContractTest {
         props = new DeepProperties();
         DeepController controller = new DeepController(researchService, writerService,
                 briefMapper, briefService, searxngTool, tavilyTool,
-                props, settingService, clarifyConversationService, researchPlannerService);
+                props, settingService, clarifyConversationService, researchPlannerService, blueprintService);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
@@ -354,5 +356,75 @@ class DeepControllerContractTest {
                 .andExpect(jsonPath("$.data.clarifyStatus").value("ASKING"))
                 .andExpect(jsonPath("$.data.clarifySession").exists())
                 .andExpect(jsonPath("$.data.taskBrief").exists());
+    }
+
+    // ==================== C3 写作蓝图人工评审门 ====================
+
+    @Test
+    void blueprintConfirm_成功_置CONFIRMED() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setProjectId(3L);
+        b.setBlueprintStatus("CONFIRMED");
+        when(blueprintService.confirm(eq(3L), eq(9L), any())).thenReturn(b);
+
+        mvc.perform(post("/api/projects/3/deep/blueprint/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.blueprintStatus").value("CONFIRMED"));
+    }
+
+    @Test
+    void blueprintConfirm_无蓝图_409() throws Exception {
+        when(blueprintService.confirm(eq(3L), eq(9L), any()))
+                .thenThrow(new IllegalStateException("写作蓝图尚未生成，无法确认"));
+
+        mvc.perform(post("/api/projects/3/deep/blueprint/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(409));
+    }
+
+    @Test
+    void blueprintConfirm_brief不存在_400() throws Exception {
+        when(blueprintService.confirm(eq(3L), eq(9L), any()))
+                .thenThrow(new IllegalArgumentException("brief 不存在"));
+
+        mvc.perform(post("/api/projects/3/deep/blueprint/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"briefId\":9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void status_写作蓝图增量字段_透出() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setGenMode("DEEP");
+        b.setWritingBlueprint("{\"thesis\":\"中心论点\"}");
+        b.setBlueprintStatus("REVIEWING");
+        b.setBlueprintQuality("{\"argumentDensity\":3}");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 9L, 0));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.writingBlueprint").exists())
+                .andExpect(jsonPath("$.data.blueprintStatus").value("REVIEWING"))
+                .andExpect(jsonPath("$.data.blueprintQuality").exists());
+
+        // 无蓝图（历史/未生成）→ 字段不出现
+        ArticleBriefEntity b2 = new ArticleBriefEntity();
+        b2.setId(10L);
+        b2.setGenMode("DEEP");
+        when(briefMapper.selectById(10L)).thenReturn(b2);
+        when(researchService.resolveSnapshot(10L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 10L, 0));
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.writingBlueprint").doesNotExist())
+                .andExpect(jsonPath("$.data.blueprintStatus").doesNotExist());
     }
 }
