@@ -356,6 +356,22 @@ for (const f of info.files || []) {
 
 ---
 
+### Convention: 知识类入口收敛到「知识中心」（多 tab 单壳；10-03 B）
+
+**What**：除图库外，所有知识类数据（车型/知识库/新闻/检索问答）统一收敛到 `/knowledge` 一个页面的 `el-tabs` 内（`views/KnowledgeCenter.vue` + `views/knowledge/*Panel.vue`），不再并列顶级路由。图库（`/images`）保持独立。
+
+- **路由**：只保留 `/knowledge`（+ 参数化/工具页如 `/car/:id`、`/car/sync`）；删除并列的 `/car`、`/kb`、`/qa` 顶级列表路由（**不重定向**，直接 404 是已接受的取舍）。
+- **`nav.js` 覆盖必须与路由一一对应**：AppShell 的 dev-only 校验要求每个非参数化 `meta.auth` 路由都被 `navKeyFor` 命中。删除某个模块导航项后，其**残留子路由**（如 `/car/:id`、`/car/sync`）会失去覆盖 → 必须让归属模块的 `matches` 兜住（先例：`知识中心` 加 `matches: ['/car']`）。改路由/导航后务必 `npm run dev` 看控制台无「路由未被导航覆盖」告警。
+- **壳层持有高度、面板适配**：满高面板（如问答主从工作台）嵌入 `el-tab-pane` 时，高度链要逐层打通——`.app-shell__body → 页面根(flex:1;min-height:0) → .el-tabs(flex:1) → .el-tabs__content(flex:1;min-height:0) → 激活 .el-tab-pane(height:100%) → 面板(height:100%)`。用 `:deep()` 给 `.el-tabs__content`/激活 pane 撑满；**内容型 pane 设 `overflow-y:auto`、满高型 pane 设 `overflow:hidden`**，避免双重滚动。激活 pane 可由 EP 生成的稳定 DOM id 命中（`id: pane-${paneName}`，EP `tab-pane` 组件固定规则）。
+- **Tab 懒挂载沿用 `v-if`**（见「Tab 面板用 `v-if` 懒挂载」），每个 tab 一个 `loadedTabs` 键，首访加载、切回保状态。
+- **迁移已有独立页为 tab 时**：页头（`page-header`/`usePageHeader` 主操作）下沉为面板内工具栏按钮；`usePageHeader`/`onBeforeRouteLeave` 的页面级注入按 tab 语境移除（tab 无独立路由离开钩子）。
+- **迁移必须逐项核对功能与状态未丢**：把 A 页合并进 B 面板时，逐一比对「统计条/进度面板/筛选/列表动作/轮询及 `onBeforeUnmount` 清理/取消不冒泡」等；**历史遗留的响应拆包 bug 会随搬迁一并带过去**（本任务实测：`KbLibrary` 的 `data.data` 双重拆包沿用自删除前），故迁移时要按「`http.js` 已 `return resp.data`」口径重核每个调用点，见上「Gotcha」。
+- **删路由会打红旁挂 E2E**：`frontend/tests/` 里 `goto('/qa')` 等旧路径 spec 必须随 IA 变更更新到新入口（如 `goto('/knowledge')` + 点「检索问答」tab），并把受影响的视觉基线用 `--update-snapshots` 重录——否则 `npm run test` 会红（门禁含冒烟 + 视觉）。
+
+**Related**: `frontend/src/views/KnowledgeCenter.vue`、`frontend/src/views/knowledge/*`、`frontend/src/constants/nav.js`、`frontend/src/layouts/AppShell.vue`。
+
+---
+
 ## Tests
 
 ### Convention: Playwright 旁挂 `frontend/tests/`，spec 必须从 fixtures 导入（10-01-e2e-testing）
@@ -383,7 +399,7 @@ for (const f of info.files || []) {
 
 ### Don't: 在 `.vue` 里 `import http` 直调接口
 
-见上「API Layer」。历史遗留的 `CarLibrary.vue` `http.post('/car/models/rebuild-all')`（未 import，ReferenceError 隐患）已在 09-12 kb-cleanup 修为 `carApi.rebuildAll()`；新增接口一律先补 `src/api/index.js` 具名导出。
+见上「API Layer」。历史遗留的车型管理页 `http.post('/car/models/rebuild-all')`（未 import，ReferenceError 隐患）已在 09-12 kb-cleanup 修为 `carApi.rebuildAll()`（该页 10-03 B 已并入 `views/knowledge/CarKnowledgePanel.vue`）；新增接口一律先补 `src/api/index.js` 具名导出。
 
 ---
 
