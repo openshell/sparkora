@@ -146,3 +146,24 @@
 - **重叠策略**：相邻产出块（短段落分块 + 超长段句读合并两路）中，前块 >60 字则取「尾部片段」（≤60，优先从片段内首个句读分隔符之后开始对齐句读边界）作后块前缀；前缀+本块仍须 ≤500（放不下则不重叠）；不整块重复、不增块数。
 - **全库重嵌（阶段 B）**：经既有 rebuild 入口重建 4 域（旧 4 表保留、不新增破坏性脚本）——CAR `POST /api/car/models/rebuild-all`、KB `POST /api/kb/docs/{id}/rebuild`、NEWS 逐篇 `POST /api/news/{id}/rebuild`、IMAGE `POST /api/images/embeddings/rebuild`。实测（2026-10-03）：CAR 56/56、KB 3/3、NEWS 168/168、IMAGE 180/180 成功；对账 `embeddedCount == chunkCount`（380/1341/3/180），store 合计 1904 行全部 `active=true` 且 `embeddingModel=Qwen3-Embedding-8B`。
 - **阶段 B 验收**：8 个代表 query（KB/NEWS/CAR/锚点/混合）前后 `ragStatus` 均 `OK`（不恶化）、候选条数与来源分布逐 query 不变、分数分布 Δ≤0.02；NEWS 1173 相邻块对中 58.5% 建立 15–60 字重叠，跨块边界语义补齐、边界 query 分数微升。详见 `.trellis/tasks/10-03-e2-chunk-overlap/research/parity-B.md`。
+
+---
+
+## 10. 覆盖度三域统一 + 嵌入缓存（10-03 E5）
+
+### 覆盖度（coveredText）
+
+- **语义**：`RagResult.coveredText` 由「仅 CAR PARAM_GROUP 参数摘要」扩为 **CAR + KB + NEWS** 的「已覆盖事实」声明（IMAGE 不参与生成注入）。注入模板 `prompts/version/rag-covered.st` 文案**不变**（「仅可引用这些数值，清单外禁止具体数值」）。
+- **CAR（保持）**：`PARAM_GROUP` 块仍走 `extractParamSummary`（`参数名→值`，跳过 有/无/可选装），逐字不变。
+- **KB/NEWS（新增）**：抽取块内**数值事实**，格式 `〔通用知识：<标题>〕<数值,...>；〔官方新闻：<标题>〕<数值,...>`。数值口径复用 `com.sparkora.ai.NumericSignature`（`ClaimSimilarity.numberValues` 上移的中立实现，C7 正文数值回查/claim 归并**同源**）——`1200` 与 `12000` 不误配；无标题降级 `〔通用知识：〕`；无数值块不产出覆盖段。
+- **去重 + 截断**：整体段去重（保序）、总长上限 `COVERED_MAX=400`（沿用既有口径），单段数值上限 12。
+- **CAR-only 回归锁**：仅 CAR 命中时 `extra` 为空，`coveredText` 与改造前**逐字等价**（`CarRagServiceTest.E5_coveredText_CARonly_与改造前逐字等价`）。
+- **实现**：`CarRagService.coverageSegment` / `buildExtraCoverage`（纯静态可单测）；`NumericSignature`（`com.sparkora.ai`）为数值签名单一实现，`com.sparkora.deep.service.ClaimSimilarity.numberValues` 委托之，行为逐字不变。
+
+### 嵌入缓存（写入侧去重）
+
+- **表**：`sparkora_embedding_cache`（Flyway `V8__embedding_cache.sql`），主键 `(content_hash CHAR(64), embedding_model VARCHAR(100))`，`embedding TEXT` 存 pgvector 字面量（缓存不做 ANN，规避 vector 类型映射）。
+- **读**：`EmbeddingClient.embedForIndex(String)` —— sha256(text) 命中 `(hash, 当前模型)` 直接返回缓存字面量（**不网络调用**）；未命中走 `embed(text)` 后 best-effort 写缓存（`INSERT ... ON CONFLICT DO NOTHING`，独立 `REQUIRES_NEW` 事务，失败仅 warn，绝不污染调用方事务）。缓存未注入/哈希失败 → 退化直调 `embed`。
+- **写路径**：`EmbeddingBatchRunner.processOne` 改调 `embedForIndex`（CAR/KB/NEWS 三域文本块经此写入，统一生效）。**查询路径 `embed(String)` 保持无缓存**（查询文本每次不同）。IMAGE 单图嵌入走 `ImageEmbeddingService.embedOne` 直调 `embed`，未接入缓存（图片嵌入文本含逐图字段、重复率可忽略）。
+- **模型切换安全**：键含 `embedding_model`，换模型天然 miss、绝不复用旧模型向量（AC3）。
+- **回退**：删缓存表 + revert；`embedForIndex` 退回直调 `embed`。

@@ -1278,3 +1278,68 @@ Set<String> known = new HashSet<>(ClaimSimilarity.numberValues(sheet.toString())
 String canon = canonicalNumber(raw);
 if (canon == null || !known.contains(canon)) unknown.add(raw);
 ```
+
+---
+
+## Scenario: 覆盖度三域统一 + 嵌入缓存（E5，10-03-e5-coverage-dedup）
+
+### 1. Scope / Trigger
+- Trigger: 改动 `CarRagService` 的 `coveredText` 组装、`NumericSignature` 数值签名、`EmbeddingClient.embedForIndex` 写入路径缓存，或新增内容去重缓存表。
+
+### 2. Signatures
+```java
+// NumericSignature（com.sparkora.ai，纯静态；ClaimSimilarity.numberValues 委托之，行为逐字不变）
+public static List<String> numberValues(String... texts)   // 去千分位/万/亿 → BigDecimal 归一，去重稳定排序
+
+// CarRagService（RagResult.coveredText 语义扩展；字段类型/位置不变）
+static String coverageSegment(String label, String title, String chunkText)  // 〔label：title〕v1,v2（无数值→""）
+static String buildExtraCoverage(List<String> segments)                      // 去重保序 + COVERED_MAX=400 截断
+
+// EmbeddingClient
+public String embed(String text)          // 查询用：**无缓存**（每次网络调用）
+public String embedForIndex(String text)  // 写入用：sha256(text)+(model) 命中→复用；未命中→embed+best-effort 写缓存
+
+// EmbeddingCacheService（@Service；put 为 REQUIRES_NEW 独立事务）
+String get(String contentHash, String embeddingModel)   // 读异常→null（按未命中）
+void put(String contentHash, String embeddingModel, String embedding)  // best-effort，冲突忽略
+```
+
+### 3. Contracts
+- **coveredText 三域**：CAR `PARAM_GROUP` 仍走 `extractParamSummary`（`key→value`）；KB/NEWS 新增数值事实段 `〔通用知识：<标题>〕<v1,v2>` / `〔官方新闻：<标题>〕<...>`，段间 `；`，整体去重保序 + `COVERED_MAX=400` + 单段数值上限 12。
+- **CAR-only 逐字等价（硬回归）**：仅 CAR 命中时 `extra` 为空 → 不追加任何内容，`coveredText` 与改造前**逐字一致**。
+- **数值口径单一来源**：`NumericSignature`（`com.sparkora.ai`）为唯一实现；`ClaimSimilarity.numberValues` 委托；C7 正文数值回查、E5 覆盖度抽取**同源**——`1200` 与 `12000` 不误配。
+- **缓存键 = `(content_hash, embedding_model)`**：换模型天然 miss，绝不复用旧模型向量。
+- **写/查分离**：仅 `embedForIndex`（写路径，经 `EmbeddingBatchRunner` 的 CAR/KB/NEWS）走缓存；`embed()`（查询路径）+ IMAGE `embedOne` 无缓存。
+- **best-effort 隔离**：缓存 `put` 走 `REQUIRES_NEW`（字段注入走代理）；失败仅 warn，绝不污染调用方事务/阻断主流程。缓存未注入或 sha256 失败 → 退化直调 `embed`。
+- **表**：`sparkora_embedding_cache(content_hash CHAR(64), embedding_model VARCHAR(100), embedding TEXT, created_at)`，PK `(content_hash, embedding_model)`；`embedding` 存 pgvector 字面量（不做 ANN）。
+
+### 4. Validation & Error Matrix
+- KB/NEWS 块无数值 → 该块不产出覆盖段（不报错）。
+- 无标题 → `〔通用知识：〕`（保留冒号）。
+- 缓存读异常 → 视为未命中（warn）。
+- 缓存写冲突/异常 → 忽略（warn），主流程照常返回向量。
+- 换模型 → 缓存 miss 重算。
+
+### 5. Good/Base/Bad Cases
+- Good: CAR-only 命中 → `coveredText` 与旧实现逐字相同；KB/NEWS 命中 → 追加带标题的数值段。
+- Base: 缓存未注入（单测直 new）→ `embedForIndex` 等价 `embed`。
+- Bad: 覆盖度抽取另造一套数值正则（与 C7/claim 归并漂移）；或查询路径也套缓存（污染 + 膨胀）；或把缓存写放在调用方事务内（失败 aborted 污染）。
+
+### 6. Tests Required
+- `CarRagServiceTest`：CAR-only 逐字等价（回归锁）；KB/NEWS 段格式；三域并存 CAR 在前；无标题保留冒号；无数值不产出段。
+- `EmbeddingClientCacheTest`：同文本第二次命中不网络调用（计数 stub）；不同文本各自调用并写缓存；换模型 miss；`embed` 无缓存；`sha256` 稳定 64 位十六进制。
+- `ClaimSimilarityTest`：委托后行为逐字不变（既有 14 用例）。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// KB/NEWS 也直接 extractParamSummary（只认「key：value」参数行）→ 知识/新闻块覆盖度永远为空
+if ("KB".equals(h.source())) covered.append(extractParamSummary(h.chunkText()));
+```
+#### Correct
+```java
+// KB/NEWS 抽数值事实（与 C7 同源签名），CAR 保持参数摘要；仅 extra 非空时才追加分隔符
+extraCoverage.add(coverageSegment("通用知识", h.modelName(), h.chunkText()));
+String extra = buildExtraCoverage(extraCoverage);
+if (!extra.isEmpty()) { if (covered.length() > 0) covered.append("；"); covered.append(extra); }
+```
