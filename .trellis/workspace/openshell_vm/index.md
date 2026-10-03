@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 47
+- **Total Sessions**: 48
 - **Last Active**: 2026-10-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1240 | Active |
+| `journal-1.md` | ~1262 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 48 | 2026-10-03 | E3 KB 数据模型规范化：受控 domain + 来源/标签/生效期 | `e1bf616` | `main` |
 | 47 | 2026-10-03 | E2 切块滑动重叠 + 全库重嵌 | `d50acd3`, `7a8aab9`, `10c3566` | `main` |
 | 46 | 2026-10-03 | E1 向量层迁 PgVectorStore 单表(阶段A对拍一致)+Boot4 Flyway回归修复 | `4a24f6a`, `4443dae`, `911dd34` | `main` |
 | 45 | 2026-10-03 | 父任务集成复核：Spring AI 迁移 C0-C7 全部完成并归档 | `79d55ed` | `main` |

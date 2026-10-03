@@ -1238,3 +1238,25 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 48: E3 KB 数据模型规范化：受控 domain + 来源/标签/生效期
+<!-- trellis-session: v=2 fp=27df62726291796c -->
+
+**Date**: 2026-10-03
+**Task**: E3 KB 数据模型规范化：受控 domain + 来源/标签/生效期
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e1bf616` | docs(spec): 记录 E3 KB 数据模型规范化契约（受控 domain + 来源/标签/生效期） |
+
+### Status
+
+[OK] **Completed**
