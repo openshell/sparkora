@@ -1351,3 +1351,25 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 53: A 检索 rerank 重排层：LLM 重排完成并归档
+<!-- trellis-session: v=2 fp=ca60540bcf550322 -->
+
+**Date**: 2026-10-03
+**Task**: A 检索 rerank 重排层：LLM 重排完成并归档
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0471d91` | docs(spec): 记录 A 检索重排契约（LLM rerank，只改序不改分） |
+
+### Status
+
+[OK] **Completed**
