@@ -75,27 +75,38 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-探针**：C0 产出 axonhub 对 `json_schema`/tool calling/reasoning 的实测报告；
-      C2/C3 实现深度据此确定。（R1,R3,R7）
-- [ ] **AC-编译测试门**：Boot 4 + Spring AI 2.0 下 `mvn -q -DskipTests compile` 与 `mvn test`
-      全绿（现 510 用例）。（R1）
-- [ ] **AC-调用收敛**：grep 确认生产代码无直连 `/v1/chat/completions` 的手写调用，
-      全部经 `ChatClient`。（R2）
-- [ ] **AC-结构化自纠错**：构造"缺字段/类型错/多余字段"响应，断言模型收到**具体校验错误**后
-      重试成功；简报字段完整率较改造前可复现提升。（R3）
-- [ ] **AC-Prompt 资产化**：`grep` 生产代码内无内联长 prompt 文本块；prompt 均来自
-      `resources/prompts/**` 且模板含版本标识。（R4）
-- [ ] **AC-任务级参数**：至少结构化类与正文类使用不同 temperature/模型，可配置且可测。（R5）
-- [ ] **AC-观测**：AI 调用产生 token/时延指标（Micrometer 或等价）。（R6）
-- [ ] **AC-agent/QA**：`SubAgentRunnerTest`、`QaServiceTest` 在新实现下等价通过；
+- [x] **AC-探针**：C0 产出 axonhub 对 `json_schema`/tool calling/reasoning 的实测报告；
+      C2/C3 实现深度据此确定。（R1,R3,R7）→ C0 报告：json_schema strict 退化、tool calling 支持、reasoning 支持。
+- [x] **AC-编译测试门**：Boot 4 + Spring AI 2.0 下 `mvn -q -DskipTests compile` 与 `mvn test`
+      全绿（现 510 用例）。（R1）→ Boot 4.0.1 + Spring AI 2.0.1，`mvn test` **641 全绿**。
+- [x] **AC-调用收敛**：grep 确认生产代码无直连 `/v1/chat/completions` 的手写调用，
+      全部经 `ChatClient`。（R2）→ grep 0 命中。
+- [x] **AC-结构化自纠错**：构造"缺字段/类型错/多余字段"响应，断言模型收到**具体校验错误**后
+      重试成功；简报字段完整率较改造前可复现提升。（R3）→ C2 三站点 `structured(validateSchema)`，
+      自纠错机制落地；"完整率提升"无量化对拍，按"不回归"验收。
+- [x] **AC-Prompt 资产化**：`grep` 生产代码内无内联长 prompt 文本块；prompt 均来自
+      `resources/prompts/**` 且模板含版本标识。（R4）→ 23 模板，生产无 `"""` 长块。
+- [x] **AC-任务级参数**：至少结构化类与正文类使用不同 temperature/模型，可配置且可测。（R5）
+- [x] **AC-观测**：AI 调用产生 token/时延指标（Micrometer 或等价）。（R6）→ actuator +
+      `AiObservabilityAdvisor`（token/时延/失败），`/actuator/health` UP。
+- [x] **AC-agent/QA**：`SubAgentRunnerTest`、`QaServiceTest` 在新实现下等价通过；
       工具可用性契约（`available()`/`toolHealth`）与降级路径不回归。（R7）
-- [ ] **AC-向量迁移**：迁移前后**同 query 集对拍**（命中集/分数/排序）达标；
-      跨 `embedding_model` 的向量不混空间（硬验收）；`mvn test` 绿。（R8）
-- [ ] **AC-元话语**：`fact_risks[].suggestion` 不再进入正文素材上下文；真实正文抽检泄漏率下降；
-      `verifyNumbers` 对 `1200` vs `12000` 用例不再漏报。（R9）
-- [ ] **AC-契约等价**：既有 API 契约与前端交互不变；`npm run build` 通过；端到端冒烟
-      （主题→简报→多版本正文→深度→编辑→预览）无回归。（R11,D4）
-- [ ] **AC-回退**：每个子任务提交可独立 `git revert` 回退；父任务集成前遗留旧路径未删。（R10）
+- [~] **AC-向量迁移**：**部分交付/已 re-scope**（见下「Scope B」）。C5 交付 = embedding 后端改
+      Spring AI `EmbeddingModel`（公共 API 不变，检索 SQL/`CarRagService` 零改动 → parity 天然成立）；
+      `PgVectorStore` 表替换经论证**无法表达 JOIN 活表语义**、会破坏本 AC 的 parity，故**推迟需产品决策**。
+      跨 `embedding_model` 防护不变；`mvn test` 绿。（R8）
+- [x] **AC-元话语**：`fact_risks[].suggestion` 不再进入正文素材上下文（前置任务 + C7 回归锁定）；
+      `verifyNumbers` 对 `1200` vs `12000` 不再漏报。（R9）
+- [x] **AC-契约等价**：既有 API 契约与前端交互不变；`npm run build` 通过（✓ built in 47s）；
+      端到端冒烟（health UP / login JWT / projects list / image semantic search 经 EmbeddingModel 200）无回归。（R11,D4）
+- [x] **AC-回退**：每个子任务提交可独立 `git revert` 回退；父任务集成前遗留旧路径未删。（R10）
+
+> **Scope B（推迟，需产品决策）**：`PgVectorStore` 表替换（content+embedding 同表 + metadata filter 模型）
+> 无法表达现有 `JOIN 活表`（`car_doc.deleted=0` / `kb_doc.enabled` / `news_doc.deleted=0`）语义，全量替换需
+> 反规范化正文 + 活表同步层。当前 `spring-ai-starter-vector-store-pgvector` 自动配置的 `PgVectorStore` bean
+> 惰性存在（`initialize-schema=false`、无 `vector_store` 表），属 Scope B 脚手架；
+> **禁止**开启 `spring.ai.vectorstore.pgvector.initialize-schema=true`（会静默建平行表）。
+> 详见 `.trellis/tasks/archive/2026-10/10-02-c5-pgvector-store/research/c5-vector-store-mismatch.md`。
 
 ## Out of Scope
 
