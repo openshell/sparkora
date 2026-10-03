@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/archive/2026-10/10-03-e1-pgstore-migrate/research/parity-A.md", "reason": "E1 阶段A对拍方法学与向量一致性基线，E5 缓存不得破坏向量等价"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移规范、REQUIRES_NEW 事务隔离、content_hash 去重先例（image_asset）"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "检索/RAG 契约、EmbeddingClient 双构造、store metadata、覆盖度 coveredText 与防编造契约"}
+{"file": ".trellis/tasks/10-03-e5-coverage-dedup/implement.md", "reason": "本任务执行计划：coveredText 三域 + embedForIndex 缓存设计"}
+{"file": ".trellis/tasks/10-03-vector-pgstore-kb/design.md", "reason": "父任务技术设计：store 契约与边界"}

@@ -1,14 +1,8 @@
 package com.sparkora.deep.service;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 事实手册近似 claim 归并工具(09-25-fact-claim-merge)。
@@ -39,9 +33,6 @@ final class ClaimSimilarity {
     /** 规范化后短于此长度视为信息不足，相似度直接 0，避免「短串包含长串」式误判。 */
     private static final int MIN_LEN = 4;
 
-    /** 数值 token:纯数字/千分位/小数 + 可选「万/亿」单位(如 2000、239,900、20万、1.5亿)。 */
-    private static final Pattern NUMBER = Pattern.compile("\\d+(?:[.,]\\d+)*\\s*(?:万|亿)?");
-
     private ClaimSimilarity() {
     }
 
@@ -62,7 +53,7 @@ final class ClaimSimilarity {
     }
 
     /**
-     * 抽取文本中的数值签名:归一化(去千分位/空白；万×10000、亿×1e8)后去重、稳定排序。
+     * 抽取文本中的数值签名(10-03 E5：实现上移 {@link com.sparkora.ai.NumericSignature}，行为逐字不变)。
      *
      * <p>用 {@link BigDecimal} 归一比较，使 {@code 200000} 与 {@code 20万} 视为同一数值。
      * 解析失败时回退为原 token 字符串，绝不抛出异常。
@@ -70,43 +61,7 @@ final class ClaimSimilarity {
      * @param texts 待抽取文本(claim 与 value 可一并传入，数值来自两者任一处)
      */
     static List<String> numberValues(String... texts) {
-        Set<String> out = new TreeSet<>(NUMBER_ORDER);
-        if (texts != null) {
-            for (String t : texts) {
-                if (t == null) continue;
-                Matcher m = NUMBER.matcher(t);
-                while (m.find()) {
-                    String v = normalizeNumber(m.group());
-                    if (v != null && !v.isEmpty()) out.add(v);
-                }
-            }
-        }
-        return new ArrayList<>(out);
-    }
-
-    /** 单个数值 token 归一:去空白/千分位，万/亿换算，BigDecimal 规范化;失败回退原 token。 */
-    private static String normalizeNumber(String token) {
-        if (token == null) return null;
-        String t = token.replaceAll("[\\s,]", "");
-        if (t.isEmpty()) return null;
-        String unit = "";
-        if (t.endsWith("万")) {
-            unit = "万";
-            t = t.substring(0, t.length() - 1);
-        } else if (t.endsWith("亿")) {
-            unit = "亿";
-            t = t.substring(0, t.length() - 1);
-        }
-        if (t.isEmpty()) return null;
-        try {
-            BigDecimal bd = new BigDecimal(t);
-            if ("万".equals(unit)) bd = bd.multiply(new BigDecimal("10000"));
-            else if ("亿".equals(unit)) bd = bd.multiply(new BigDecimal("100000000"));
-            return bd.stripTrailingZeros().toPlainString();
-        } catch (NumberFormatException e) {
-            // 解析失败回退原 token(去空白)，保证签名提取永不抛异常
-            return token.trim().replaceAll("\\s+", "");
-        }
+        return com.sparkora.ai.NumericSignature.numberValues(texts);
     }
 
     /**
@@ -196,13 +151,4 @@ final class ClaimSimilarity {
         double score = similarity(c1, c2);
         return score >= (s1.isEmpty() ? TH_TEXT : TH_NUMERIC);
     }
-
-    /** 数值签名排序:优先按数值大小，不可解析时按字符串(保证输出稳定)。 */
-    private static final Comparator<String> NUMBER_ORDER = (x, y) -> {
-        try {
-            return new BigDecimal(x).compareTo(new BigDecimal(y));
-        } catch (NumberFormatException e) {
-            return x.compareTo(y);
-        }
-    };
 }

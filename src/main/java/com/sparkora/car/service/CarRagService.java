@@ -1,5 +1,6 @@
 package com.sparkora.car.service;
 
+import com.sparkora.ai.NumericSignature;
 import com.sparkora.ai.vector.SearchStore;
 import com.sparkora.ai.vector.VectorDomain;
 import com.sparkora.car.client.EmbeddingClient;
@@ -9,7 +10,9 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * RAG 检索服务。供文章生成(BriefService/VersionService)与内部问答共用。
@@ -86,7 +89,8 @@ public class CarRagService {
      * @param context     注入 prompt 的知识上下文文本(抛弃/失败/无命中时为空串)
      * @param hitCount    通过逐块门槛命中的块数(含被整体门槛抛弃的命中数,用于观测)
      * @param maxScore    本轮检索最高相似度(整体门槛判断依据;无命中为 0)
-     * @param coveredText 已覆盖参数摘要(「参数名→值」拼接,逗号分隔;未覆盖场景为空串)
+     * @param coveredText 已覆盖事实摘要（10-03 E5：CAR 参数块「参数名→值」+ KB/NEWS 数值事实；
+     *                    未覆盖场景为空串）
      * @param citations   注入 prompt 的命中块明细(与 context 同源;OK 时非空,其余状态为空列表)
      */
     public record RagResult(RagStatus status, String context, int hitCount, double maxScore,
@@ -331,19 +335,30 @@ public class CarRagService {
         String sourceLine = "知识来源：" + (sourceParts.isEmpty() ? "车型数据" : String.join(" + ", sourceParts));
         StringBuilder sb = new StringBuilder();
         StringBuilder covered = new StringBuilder();
+        // 10-03 E5：KB/NEWS 数值事实（增量收集，仅非 CAR 命中时出现）
+        List<String> extraCoverage = new ArrayList<>();
         sb.append(sourceLine).append("\n---\n");
         for (UnifiedHit h : selected) {
             if ("KB".equals(h.source())) {
                 sb.append("【通用知识：").append(h.modelName() == null ? "" : h.modelName()).append("】")
                   .append(h.chunkText()).append("\n---\n");
+                extraCoverage.add(coverageSegment("通用知识", h.modelName(), h.chunkText()));
             } else if ("NEWS".equals(h.source())) {
                 sb.append("【官方新闻：").append(h.modelName() == null ? "" : h.modelName()).append("】")
                   .append(h.chunkText()).append("\n---\n");
+                extraCoverage.add(coverageSegment("官方新闻", h.modelName(), h.chunkText()));
             } else {
                 sb.append("【车型数据：").append(h.modelName() == null ? "" : h.modelName()).append("】")
                   .append(h.chunkText()).append("\n---\n");
                 covered.append(extractParamSummary(h.chunkText()));
             }
+        }
+        // 10-03 E5 覆盖度三域统一：CAR 保持 extractParamSummary 逐字不变；KB/NEWS 追加数值事实。
+        // 仅 CAR 命中（extra 为空）时 covered 与改造前逐字等价（回归锁）。
+        String extra = buildExtraCoverage(extraCoverage);
+        if (!extra.isEmpty()) {
+            if (covered.length() > 0) covered.append("；");
+            covered.append(extra);
         }
         log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={} news={}) maxScore={}",
                 anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(), newsSelected.size(), maxScore);
@@ -510,5 +525,50 @@ public class CarRagService {
             if (sb.length() > 400) { sb.append("…"); break; }
         }
         return sb.toString();
+    }
+
+    // ==================== 10-03 E5：覆盖度三域统一（coveredText） ====================
+
+    /** 覆盖度清单整体长度上限（沿用既有 ~400 字口径，防灌爆 prompt）。 */
+    private static final int COVERED_MAX = 400;
+
+    /** 单条 KB/NEWS 覆盖段内数值上限（防单块大数字列占满清单）。 */
+    private static final int COVERAGE_SEGMENT_MAX = 12;
+
+    /**
+     * 单块数值事实段：{@code 〔<label>：<标题>〕<数值,...>}。无标题时 {@code 〔<label>：〕}（保留冒号）；
+     * 无数值返回空串（该块不产出覆盖度）。数值口径与 {@link com.sparkora.ai.NumericSignature}
+     * （C7 正文数值回查/claim 归并同源）一致——1200 与 12000 不会互相误配。
+     */
+    static String coverageSegment(String label, String title, String chunkText) {
+        List<String> nums = NumericSignature.numberValues(chunkText);
+        if (nums.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("〔").append(label).append("：");
+        String t = title == null ? "" : title.trim();
+        sb.append(t).append("〕");
+        int n = Math.min(nums.size(), COVERAGE_SEGMENT_MAX);
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(",");
+            sb.append(nums.get(i));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 合并 KB/NEWS 覆盖段：去重（保序）+ 整体长度上限。段间用「；」分隔，与 CAR 段落拼接时
+     * 由调用方补分隔符。仅 CAR 命中时本方法不产生内容（extraCoverage 为空 → 空串）。
+     */
+    static String buildExtraCoverage(List<String> segments) {
+        if (segments == null || segments.isEmpty()) return "";
+        Set<String> seen = new LinkedHashSet<>();
+        StringBuilder out = new StringBuilder();
+        for (String seg : segments) {
+            if (seg == null || seg.isEmpty() || !seen.add(seg)) continue;
+            if (out.length() > 0) out.append("；");
+            out.append(seg);
+            if (out.length() > COVERED_MAX) { out.append("…"); break; }
+        }
+        return out.toString();
     }
 }

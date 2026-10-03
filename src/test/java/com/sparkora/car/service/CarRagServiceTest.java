@@ -372,6 +372,109 @@ class CarRagServiceTest {
         assertTrue(!s2.contains("车漆颜色"), "「可选装」不入摘要");
     }
 
+    // ==================== 10-03 E5：覆盖度三域统一 ====================
+
+    /**
+     * CAR-only 历史行为回归锁：仅 CAR 参数块命中时，coveredText 与改造前
+     * （逐块 extractParamSummary 直接拼接）**逐字等价**。
+     */
+    @Test
+    void E5_coveredText_CARonly_与改造前逐字等价() {
+        FakeSearchStore store = new FakeSearchStore();
+        String carText = "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200\n续航（km）：700";
+        store.unifiedRows = List.of(urow("CAR", 55L, "海狮08EV", "PARAM_GROUP", carText, 0.9));
+        CarRagService svc = newService(store);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08EV", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        // 改造前语义 = 对每个 CAR 选中块调用 extractParamSummary 后直接拼接
+        assertEquals(CarRagService.extractParamSummary(carText), r.coveredText(),
+                "CAR-only 时 coveredText 必须与改造前逐字等价（回归锁）");
+        assertTrue(!r.coveredText().contains("〔"), "CAR-only 不得出现 KB/NEWS 覆盖段");
+    }
+
+    @Test
+    void E5_coveredText_KB数值事实_格式带标题() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("KB", null, "充电功率常识", "KB_CHUNK", "知识：充电功率常识（充电）\n7kW 家充为交流慢充。", 0.8));
+        CarRagService svc = newService(store);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("充电桩怎么选", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertEquals("〔通用知识：充电功率常识〕7", r.coveredText());
+    }
+
+    @Test
+    void E5_coveredText_NEWS数值事实_格式带标题() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("NEWS", null, "官方新闻", "NEWS_BODY",
+                        "新闻：官方新闻（2026-09-01）\n正文", 0.8));
+        CarRagService svc = newService(store);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.coveredText().startsWith("〔官方新闻：官方新闻〕"),
+                () -> "NEWS 数值段: " + r.coveredText());
+    }
+
+    @Test
+    void E5_coveredText_三域并存_CAR在前_KB_NEWS以分号追加() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("CAR", 1L, "海狮08", "PARAM_GROUP", "车型：海狮08\n参数分组：动力\n前电机最大功率（kW）：200", 0.9),
+                urow("KB", null, "充电常识", "KB_CHUNK", "知识：充电常识（充电）\n7kW 家充。", 0.8),
+                urow("NEWS", null, "官方新闻", "NEWS_BODY",
+                        "新闻：官方新闻（2026-09-01）\n续航 700km 正文。", 0.7));
+        CarRagService svc = newService(store);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("海狮08 充电", 8, List.of(1L));
+
+        String cv = r.coveredText();
+        assertTrue(cv.contains("前电机最大功率（kW）→200"), "CAR 参数段保留");
+        assertTrue(cv.contains("〔通用知识：充电常识〕"), "KB 数值段存在");
+        assertTrue(cv.contains("〔官方新闻：官方新闻〕"), "NEWS 数值段存在");
+        assertTrue(cv.indexOf("前电机最大功率") < cv.indexOf("〔通用知识"), "CAR 段在 KB/NEWS 段之前");
+    }
+
+    @Test
+    void E5_coveredText_无标题保留冒号() {
+        String seg = CarRagService.coverageSegment("通用知识", null, "知识：无标题\n参数 700");
+        assertEquals("〔通用知识：〕700", seg);
+    }
+
+    @Test
+    void E5_coveredText_块内无数值_不产出覆盖段() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                urow("KB", null, "定性知识", "KB_CHUNK", "知识：定性知识（通用）\n无任何数字的定性描述。", 0.8));
+        CarRagService svc = newService(store);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertEquals("", r.coveredText(), "无数值块不产出覆盖度");
+    }
+
+    @Test
+    void E5_coverageSegment_数值口径与C7同源_1200与12000不误配() {
+        assertEquals("〔通用知识：X〕1200", CarRagService.coverageSegment("通用知识", "X", "值 1200"));
+        assertEquals("〔通用知识：X〕12000", CarRagService.coverageSegment("通用知识", "X", "值 12000"));
+    }
+
+    @Test
+    void E5_buildExtraCoverage_去重保序_长度上限() {
+        String a = "〔通用知识：A〕1";
+        String b = "〔官方新闻：B〕2";
+        assertEquals(a + "；" + b, CarRagService.buildExtraCoverage(List.of(a, a, b)));
+        assertEquals(a, CarRagService.buildExtraCoverage(List.of("", a, "")));
+        assertEquals("", CarRagService.buildExtraCoverage(List.of()));
+    }
+
     // ==================== C2 新闻域(NEWS) ====================
 
     @Test

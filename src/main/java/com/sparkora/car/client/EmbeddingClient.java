@@ -7,6 +7,8 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,6 +28,13 @@ public class EmbeddingClient {
     private final AiProperties props;
     /** Spring AI 自动配置的向量模型（生产注入）；单测/兼容构造可为 null。 */
     private final EmbeddingModel embeddingModel;
+    /**
+     * 内容寻址缓存（10-03 E5，写路径去重用）。字段注入而非构造注入：保持既有构造器签名
+     * （大量单测直接 {@code new EmbeddingClient(props[, model])}），未注入时 {@link #embedForIndex}
+     * 退化为直调 {@link #embed}（无缓存）。
+     */
+    @Autowired(required = false)
+    private EmbeddingCacheService embeddingCache;
 
     /** 生产装配：注入 Spring AI EmbeddingModel（由 spring-ai-starter-model-openai 自动配置）。 */
     @Autowired
@@ -43,12 +52,68 @@ public class EmbeddingClient {
         this(props, null);
     }
 
+    /** 测试用：注入缓存假件（生产由 Spring 字段装配）。 */
+    void setEmbeddingCache(EmbeddingCacheService cache) {
+        this.embeddingCache = cache;
+    }
+
     /**
      * 对单个文本生成向量，返回 pgvector 字面量字符串（如 "[0.1,0.2,...]"）。
+     *
+     * <p>查询用路径——**保持无缓存**（查询文本每次不同，缓存会污染+膨胀）。
      */
     public String embed(String text) {
         List<Double> vec = embedList(text);
         return toPgVector(vec);
+    }
+
+    /**
+     * 写入索引用（10-03 E5）：内容寻址缓存感知。
+     *
+     * <ol>
+     *   <li>{@code hash = sha256(text)}；</li>
+     *   <li>命中 {@code (hash, 当前模型)} → 直接返回缓存字面量，**不网络调用**；</li>
+     *   <li>未命中 → {@link #embed(String)} 计算；best-effort 写缓存（独立事务 + 冲突忽略，失败仅 warn）；</li>
+     *   <li>缓存未注入（单测/兼容构造）或 hash 计算失败 → 直调 {@link #embed(String)}，行为与改造前一致。</li>
+     * </ol>
+     *
+     * <p>键含 {@code embedding_model}：换模型天然 miss，绝不复用旧模型向量。
+     */
+    public String embedForIndex(String text) {
+        String model = modelName();
+        String hash = sha256(text);
+        if (embeddingCache != null && hash != null && model != null && !model.isBlank()) {
+            String cached = embeddingCache.get(hash, model);
+            if (cached != null && !cached.isBlank()) return cached;
+        }
+        String vec = embed(text);
+        if (embeddingCache != null && hash != null && model != null && !model.isBlank()) {
+            putCacheQuietly(hash, model, vec);
+        }
+        return vec;
+    }
+
+    /** best-effort 写缓存：独立事务（{@link EmbeddingCacheService#put} 为 REQUIRES_NEW），失败仅 warn，绝不影响主流程。 */
+    private void putCacheQuietly(String hash, String model, String vec) {
+        try {
+            embeddingCache.put(hash, model, vec);
+        } catch (Exception e) {
+            log.warn("写入嵌入缓存失败(忽略) model={}: {}", model, e.getMessage());
+        }
+    }
+
+    /** sha256(text) 十六进制小写；异常返回 null（调用方退化为无缓存）。 */
+    static String sha256(String text) {
+        if (text == null) return null;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(text.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** 对单个文本生成向量，返回 double 列表。 */

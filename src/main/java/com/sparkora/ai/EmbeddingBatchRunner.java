@@ -113,7 +113,7 @@ public class EmbeddingBatchRunner {
         int retries = Math.max(0, maxRetries);
         for (int attempt = 0; attempt <= retries; attempt++) {
             try {
-                String vec = embeddingClient.embed(textFn.apply(item));   // 网络调用放在事务外
+                String vec = embeddingClient.embedForIndex(textFn.apply(item));   // 缓存感知；网络调用放在事务外
                 persistFn.accept(item, vec);
                 return true;
             } catch (Exception e) {

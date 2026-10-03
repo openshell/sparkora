@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/不可逆副作用隔离/多步写入失败顺序等质量红线"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移规范、事务隔离、缓存表设计"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 coveredText/防编造契约与 EmbeddingClient 契约未回归"}
+{"file": ".trellis/tasks/10-03-e5-coverage-dedup/implement.md", "reason": "验收对照：三域覆盖/去重/模型安全"}
+{"file": ".trellis/tasks/10-03-e5-coverage-dedup/prd.md", "reason": "验收标准基线"}
