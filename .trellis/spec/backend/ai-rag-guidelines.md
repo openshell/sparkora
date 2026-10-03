@@ -294,7 +294,7 @@ static final double TH_TEXT    = 0.70;                    // 无数值定性：�
 - **类型/置信优先级不变**：同簇同时含 KB 与 WEB → KB 胜出（0.9）+ WEB 进 `alternatives` + 警告「以知识库为准」；否则去重来源 ≥2 → `MULTI` 0.85；纯 KB → 0.9；单一 WEB → 0.4 + 「待核实」。合并只改聚类，不绕过冲突裁决路径。
 - **`MULTI` 必须落进 `sources.type`**：旧实现仅在局部变量赋值、从未写回 JSON，前端 `sources.type==='MULTI'` 分支永不命中——多源交叉须显式改写序列化来源的 `type`。
 - **JSON 主结构向后兼容**：`entries[{key,claim,value,sources,crossCount,confidence}]` 不变；`sourcesList`/`sourceCount` 为增量字段，旧前端不读也不报错。
-- **归并不得破坏数值回查**：代表 fact 的 `key/value/claim` 覆盖全部被并 claim 的数值（数值签名相等保证），`DeepWriterService.verifyNumbers` 以 `sheet.toString()` 为 haystack 仍命中。
+- **归并不得破坏数值回查**：代表 fact 的 `key/value/claim` 覆盖全部被并 claim 的数值（数值签名相等保证）；`DeepWriterService.verifyNumbers` **自 C7 起以同一套数值签名**比对手册（见本文「正文数值回查归一化」Scenario），归并后仍命中。
 
 ### 4. Validation & Error Matrix
 - 数值解析失败 → 回退原 token 字符串比较，绝不抛异常（`normalizeNumber` 内 try/catch）。
@@ -1203,4 +1203,64 @@ imageModel.call(new ImagePrompt(prompt, opts));   // 图生图路径
 // 文生图走框架 ImageModel;图生图保留自研 multipart(保序多参考图)
 GenResult t2i = imageModel().call(new ImagePrompt(prompt, OpenAiImageOptions.builder().model(m).n(1).size(sz).build()));
 GenResult i2i = postMultipartForJsonText("/v1/images/edits", body, model);   // 不变
+```
+
+---
+
+## Scenario: 正文数值回查归一化（C7，10-02-c7-metaleak-numbers）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改 `DeepWriterService.verifyNumbers`（正文数值是否收录于事实手册的回查）、
+  或改动正文数值抽取正则、手册「已收录」判定口径。
+
+### 2. Signatures
+```java
+// DeepWriterService（签名不变；判定实现 C7 变更）
+List<String> verifyNumbers(String content, String factSheetJson) throws Exception
+static String canonicalNumber(String raw)      // 包级纯函数：复用 ClaimSimilarity 归一口径，返回首个数值签名；无数字→null
+```
+
+### 3. Contracts
+- **收录判定 = 数值签名集合比对，不是子串匹配**：`known = ClaimSimilarity.numberValues(sheet.toString())`；
+  正文每个数值 token 求 `canonicalNumber(raw)`（去千分位/空白、`万×10000`/`亿×1e8`、
+  `BigDecimal.stripTrailingZeros`）后 `known.contains(...)`。**复用 `ClaimSimilarity.numberValues`
+  的同一套口径**（单一事实来源，勿新造第二套归一）。
+  - 修复漏报：内容 `1200`、手册仅 `12000` → `1200 ∉ {12000}` → 报 high（旧子串 `contains("1200")` 会命中 `12000` 而漏报）。
+  - 修复误报：`200000` vs `20万`、`33.21%` vs `33.21%`、`239,900` vs `239900` 归一后同签名 → 不报。
+- **抽取正则（C7 对齐 `numberValues` 口径）**：`\d[\d,\.]*\s*(?:万|亿)`（数量级，含**亿**）|
+  `\d{1,3}(?:,\d{3})+(?:\.\d+)?`（千分位整体，**须置于纯数字前**，否则 `239,900` 被拆成 `239`/`900`）|
+  `\d{4,}(?:\.\d+)?`（≥4 位纯数字，上限**放开**防截断）| `\d+\.(?:\d+)?%?` | 带长度单位数值。
+  粗筛 `num.length()<2 || "0".equals(num)` 保留；`num = raw.replaceAll("[ ,万]","")` 仅用于该粗筛。
+- **`unknown` 返回原始 token 形态**（供 `factRisks.claim`「正文数值「X」未收录于事实手册」文案原样引用），按 token 去重。
+- **手册 `null`/`{}`（无手册）→ `known` 空 → 所有数值报 high**（既有语义保持）。
+- **归一解析失败不抛**：`ClaimSimilarity.normalizeNumber` 内部回退原 token。
+
+### 4. Validation & Error Matrix
+- 手册 `null`/`{}` → 正文数值全部 high。
+- 数值解析失败 → 回退原 token，仍可比，不抛。
+- `known` 来自整册 JSON 字符串（含 key/来源 id/confidence 等数字）——**属既有口径**（旧实现同样以
+  `sheet.toString()` 为 haystack）；如需只认 `entries[].claim/value` 须另立任务。
+
+### 5. Good/Base/Bad Cases
+- Good: 内容 `9月销量46.36万辆`、手册含 `46.36万` → 归一 `463600` 同签名 → 不报。
+- Base: 内容含手册已收录的 `第2000座` → `2000` 命中 → 不报。
+- Bad: 用子串 `contains` 判定 → `1200` 被 `12000` 掩盖（漏报）；或抽取漏「亿」/截断 ≥8 位数字 → 同值误报。
+
+### 6. Tests Required
+- `DeepWriterServicePromptTest`：`1200` vs `12000` 不漏报；`万`/`亿`/千分位/小数同值不误报；≥8 位（`12000000`）不误报；
+  `{}`/`null` 手册仍报 high；`canonicalNumber` 与 `ClaimSimilarity.numberValues` 口径一致。
+- `FactSheetServiceTest`：归并后数值回查不回归。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 子串匹配:1200 命中 12000 → 漏报;20万 vs 200000 失配 → 误报
+if (!haystack.contains(raw) && !haystack.contains(num)) unknown.add(raw);
+```
+#### Correct
+```java
+// 同一套数值签名归一化集合比对(与 claim 归并口径一致)
+Set<String> known = new HashSet<>(ClaimSimilarity.numberValues(sheet.toString()));
+String canon = canonicalNumber(raw);
+if (canon == null || !known.contains(canon)) unknown.add(raw);
 ```
