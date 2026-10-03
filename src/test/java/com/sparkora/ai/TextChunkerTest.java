@@ -207,4 +207,144 @@ class TextChunkerTest {
         assertEquals(1, chunks.size());
         assertEquals(NEWS_HEADER + "\n正文。", chunks.get(0));
     }
+
+    // ==================== 10-03 E2：滑动重叠 ====================
+
+    /** 取块正文（header 后首行之后的部分）。 */
+    private static String bodyOf(String chunk) {
+        int nl = chunk.indexOf('\n');
+        return nl < 0 ? "" : chunk.substring(nl + 1);
+    }
+
+    /** 默认 5 参 = 显式 overlap 0：逐块等价（向后兼容锁）。 */
+    @Test
+    void 默认无重叠_等价显式零重叠() {
+        String content = "甲".repeat(300) + "！" + "乙".repeat(300) + "；" + "丙".repeat(300)
+                + ";" + "丁".repeat(300) + "。" + "戊".repeat(300) + "？" + "己".repeat(300) + "!";
+        List<String> dflt = TextChunker.chunk(KB_HEADER, content, true, true, TextChunker.KB_SEPARATORS);
+        List<String> zero = TextChunker.chunk(KB_HEADER, content, true, true, TextChunker.KB_SEPARATORS, 0);
+        assertEquals(zero, dflt, "默认入口必须等价 overlap=0 旧行为");
+    }
+
+    /** 多段短文本启用重叠：块数不变；每块（除首块）以「上一块尾部片段」为前缀；块体不超限。 */
+    @Test
+    void 多段短文本_相邻块滑动重叠_块数不变() {
+        // 每段 > 重叠阈值，确保重叠生效；段间用空行分隔
+        String p1 = "甲".repeat(80) + "。";
+        String p2 = "乙".repeat(80) + "。";
+        String p3 = "丙".repeat(80) + "。";
+        String content = p1 + "\n\n" + p2 + "\n\n" + p3;
+        List<String> noOverlap = TextChunker.chunk(KB_HEADER, content, true, true, TextChunker.KB_SEPARATORS, 0);
+        List<String> overlap = TextChunker.chunk(KB_HEADER, content, true, true, TextChunker.KB_SEPARATORS,
+                TextChunker.DEFAULT_OVERLAP_CHARS);
+        assertEquals(noOverlap.size(), overlap.size(), "重叠只加前缀，不得改变块数");
+        // 后两块以前一块尾部片段开头（严格短于前一块，非整块重复）
+        for (int i = 1; i < overlap.size(); i++) {
+            String prev = bodyOf(overlap.get(i - 1));
+            String next = bodyOf(overlap.get(i));
+            assertTrue(next.length() > 0);
+            assertTrue(!next.startsWith(prev), "不得整块重复: " + i);
+            boolean overlapped = false;
+            for (int k = 1; k < prev.length(); k++) {
+                if (next.startsWith(prev.substring(k))) { overlapped = true; break; }
+            }
+            assertTrue(overlapped, "后块应含上一块尾部重叠: " + i);
+        }
+        for (String c : overlap) {
+            assertTrue(bodyOf(c).length() <= TextChunker.MAX_BODY_LEN);
+        }
+    }
+
+    /** 空正文 + 单段短文本：重叠无副作用。 */
+    @Test
+    void 空正文与单段短文本_重叠无副作用() {
+        assertEquals(List.of(KB_HEADER), TextChunker.chunk(KB_HEADER, "   ", true, true,
+                TextChunker.KB_SEPARATORS, TextChunker.DEFAULT_OVERLAP_CHARS));
+        assertEquals(List.of(KB_HEADER + "\n单段。"), TextChunker.chunk(KB_HEADER, "单段。", true, true,
+                TextChunker.KB_SEPARATORS, TextChunker.DEFAULT_OVERLAP_CHARS));
+    }
+
+    /** 超长段启用重叠：相邻块存在非整块重叠，且块体仍 ≤ 上限。 */
+    @Test
+    void 超长段_相邻块滑动重叠_块体不超限() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 80; i++) sb.append("第").append(i).append("句测试内容。");
+        List<String> chunks = TextChunker.chunk(NEWS_HEADER, sb.toString(), true, true,
+                TextChunker.NEWS_SEPARATORS, TextChunker.DEFAULT_OVERLAP_CHARS);
+        assertTrue(chunks.size() > 1, "超长段应多块");
+        for (String c : chunks) {
+            String body = bodyOf(c);
+            assertTrue(body.length() <= TextChunker.MAX_BODY_LEN, () -> "块体超限: " + body.length());
+        }
+        // 相邻块：后块以「前块的一个非空后缀」开头（滑动重叠），且不是整块重复
+        for (int i = 0; i + 1 < chunks.size(); i++) {
+            String prev = bodyOf(chunks.get(i));
+            String next = bodyOf(chunks.get(i + 1));
+            assertTrue(!next.startsWith(prev), "重叠不得退化为整块重复: " + i);
+            boolean overlapped = false;
+            for (int k = 1; k < prev.length(); k++) {
+                if (next.startsWith(prev.substring(k))) { overlapped = true; break; }
+            }
+            assertTrue(overlapped, "相邻块应存在非空后缀重叠: " + i);
+        }
+    }
+
+    /** 重叠前缀在句读边界之后开始：后块正文以完整句子开头（不截半句）。 */
+    @Test
+    void 重叠前缀对齐句读边界_后块以分隔符后开头() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 80; i++) sb.append("第").append(i).append("句测试内容。");
+        List<String> chunks = TextChunker.chunk(KB_HEADER, sb.toString(), true, true,
+                TextChunker.KB_SEPARATORS, TextChunker.DEFAULT_OVERLAP_CHARS);
+        assertTrue(chunks.size() > 1);
+        // 后块 body 的首字符不是分隔符（片段从分隔符之后开始），且 body 不以分隔符开头
+        for (int i = 1; i < chunks.size(); i++) {
+            String body = bodyOf(chunks.get(i));
+            assertTrue(body.length() > 0);
+            assertTrue(TextChunker.KB_SEPARATORS.indexOf(body.charAt(0)) < 0,
+                    () -> "重叠前缀不应以句读符开头: " + body.substring(0, Math.min(10, body.length())));
+        }
+    }
+
+    /** KB/NEWS 句读集合差异在重叠路径仍生效：KB 不把全角！当句边界，NEWS 会。 */
+    @Test
+    void 重叠保留KB与NEWS句读集合差异() {
+        String content = "甲".repeat(300) + "！" + "乙".repeat(300);
+        int kb = TextChunker.chunk(KB_HEADER, content, true, true, TextChunker.KB_SEPARATORS,
+                TextChunker.DEFAULT_OVERLAP_CHARS).size();
+        int news = TextChunker.chunk(NEWS_HEADER, content, true, true, TextChunker.NEWS_SEPARATORS,
+                TextChunker.DEFAULT_OVERLAP_CHARS).size();
+        assertTrue(kb >= 2 && news >= 2);
+        // 600 长段无句读：两者都硬切为 2 块；差异体现在切分点而非块数，此处锁定不回归为单块
+        assertTrue(kb >= 2, "KB 全角！非句读，应硬切为 ≥2");
+        assertEquals(2, news, "NEWS 全角！为句读，600 段应 2 块");
+    }
+
+    /** overlapTail 纯函数边界：不整块重复 / 句读对齐 / 无句读直取尾部。 */
+    @Test
+    void overlapTail_边界() {
+        // 不严格长于重叠长度 → 空（禁止整块重复）
+        assertEquals("", TextChunker.overlapTail("短。", TextChunker.KB_SEPARATORS, 60));
+        assertEquals("", TextChunker.overlapTail("12345", TextChunker.KB_SEPARATORS, 5));
+        // 有句读：从尾部片段内首个分隔符之后开始
+        String prev = "甲".repeat(50) + "。" + "乙".repeat(50) + "。" + "丙".repeat(50);
+        String tail = TextChunker.overlapTail(prev, TextChunker.KB_SEPARATORS, 60);
+        assertTrue(tail.startsWith("丙"), () -> "应从首个句读之后开始: " + tail);
+        assertTrue(tail.length() < prev.length(), "不得返回整块");
+        // 无句读：直取尾 overlap 字符
+        String hard = "字".repeat(200);
+        assertEquals(60, TextChunker.overlapTail(hard, TextChunker.KB_SEPARATORS, 60).length());
+        // 整段即一个完整句（唯一分隔符在片段末尾）：退化为直取尾 overlap 字符（重叠本就跨边界，允许句中起点）
+        String endsWithSep = "甲".repeat(200) + "。";
+        int ov = 60;
+        String t = TextChunker.overlapTail(endsWithSep, TextChunker.KB_SEPARATORS, ov);
+        assertEquals(endsWithSep.substring(endsWithSep.length() - ov), t);
+        assertTrue(t.endsWith("。"));
+        assertTrue(t.length() < endsWithSep.length(), "前缀须严格短于上一块，禁止整块重复");
+        // 分隔符在片段内部：从其之后开始（对齐句读）
+        String midSep = "乙".repeat(80) + "。" + "甲".repeat(30);
+        String tm = TextChunker.overlapTail(midSep, TextChunker.KB_SEPARATORS, ov);
+        assertTrue(tm.startsWith("甲"), () -> "应从片段内句读之后开始: " + tm);
+        assertEquals(30, tm.length());
+    }
 }

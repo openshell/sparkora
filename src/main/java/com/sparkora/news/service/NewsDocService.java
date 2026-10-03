@@ -133,11 +133,13 @@ public class NewsDocService {
      * 切块(薄委托 {@link TextChunker},09-27 统一实现):
      * 首行固定「新闻:<title>(<publishDate>)」;正文为空时仅标题非空才保留标题块(NEWS 语义);
      * 超长段按句读切分合并至 ≤500。
+     * 10-03 E2:显式启用 {@link TextChunker#DEFAULT_OVERLAP_CHARS} 滑动重叠(减少跨块边界语义切断)。
      */
     static List<String> chunkContent(String title, LocalDateTime publishDate, String content) {
         String header = "新闻：" + (title == null ? "" : title.trim())
                 + "（" + (publishDate == null ? "" : publishDate.toLocalDate().toString()) + "）";
         boolean titlePresent = title != null && !title.isBlank();
-        return TextChunker.chunk(header, content, titlePresent, false, TextChunker.NEWS_SEPARATORS);
+        return TextChunker.chunk(header, content, titlePresent, false, TextChunker.NEWS_SEPARATORS,
+                TextChunker.DEFAULT_OVERLAP_CHARS);
     }
 }

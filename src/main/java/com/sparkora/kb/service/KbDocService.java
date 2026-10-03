@@ -195,9 +195,11 @@ public class KbDocService {
     /**
      * 切块(薄委托 {@link TextChunker},09-27 统一实现):
      * 首行固定「知识:<title>(<domain>)」;空正文恒保留标题块(KB 语义);超长段按句读切分合并。
+     * 10-03 E2:显式启用 {@link TextChunker#DEFAULT_OVERLAP_CHARS} 滑动重叠(减少跨块边界语义切断)。
      */
     static List<String> chunkContent(String title, String domain, String content) {
         String header = "知识：" + (title == null ? "" : title.trim()) + "（" + (domain == null ? "通用" : domain.trim()) + "）";
-        return TextChunker.chunk(header, content, true, true, TextChunker.KB_SEPARATORS);
+        return TextChunker.chunk(header, content, true, true, TextChunker.KB_SEPARATORS,
+                TextChunker.DEFAULT_OVERLAP_CHARS);
     }
 }
