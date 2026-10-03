@@ -132,5 +132,17 @@
 ## 8. 关键实现路径
 
 - 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarDocService` 切块/配额/子查询/覆盖度）、`ai.vector.VectorStoreService`（单表 store 读写/同步，10-03 E1）、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。旧表路径 `mapper.CarDocEmbeddingMapper.searchTopKUnified` 保留（未删，可回退），E1 后不再被 `CarRagService` 调用。
+
+---
+
 - 前端：`views/project/deep/CitationList.vue`（引用面板，CAR/KB/NEWS/WEB/MULTI 分支）、`views/project/StepVersions.vue`（版本卡片「引用 N」/降级提示）。
 - 表：`sparkora_article_brief.rag_status/rag_citations`、`sparkora_article_version.rag_status/rag_citations`。
+
+---
+
+## 9. 切块滑动重叠与阶段 B 重嵌（10-03 E2）
+
+- **重叠能力**：`com.sparkora.ai.TextChunker.chunk(..., int overlapChars)`（6 参重载）；旧 5 参委托 `overlapChars=0`（逐块等价旧行为，向后兼容）。KB/NEWS 服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用；**CAR（参数分组块）与 IMAGE（`ImageEmbeddingTextBuilder`）不走 TextChunker，切块形态不变**。
+- **重叠策略**：相邻产出块（短段落分块 + 超长段句读合并两路）中，前块 >60 字则取「尾部片段」（≤60，优先从片段内首个句读分隔符之后开始对齐句读边界）作后块前缀；前缀+本块仍须 ≤500（放不下则不重叠）；不整块重复、不增块数。
+- **全库重嵌（阶段 B）**：经既有 rebuild 入口重建 4 域（旧 4 表保留、不新增破坏性脚本）——CAR `POST /api/car/models/rebuild-all`、KB `POST /api/kb/docs/{id}/rebuild`、NEWS 逐篇 `POST /api/news/{id}/rebuild`、IMAGE `POST /api/images/embeddings/rebuild`。实测（2026-10-03）：CAR 56/56、KB 3/3、NEWS 168/168、IMAGE 180/180 成功；对账 `embeddedCount == chunkCount`（380/1341/3/180），store 合计 1904 行全部 `active=true` 且 `embeddingModel=Qwen3-Embedding-8B`。
+- **阶段 B 验收**：8 个代表 query（KB/NEWS/CAR/锚点/混合）前后 `ragStatus` 均 `OK`（不恶化）、候选条数与来源分布逐 query 不变、分数分布 Δ≤0.02；NEWS 1173 相邻块对中 58.5% 建立 15–60 字重叠，跨块边界语义补齐、边界 query 分数微升。详见 `.trellis/tasks/10-03-e2-chunk-overlap/research/parity-B.md`。

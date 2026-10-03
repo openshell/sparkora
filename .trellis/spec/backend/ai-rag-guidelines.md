@@ -758,8 +758,11 @@ boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), h.score() * boost,
 ```java
 // com.sparkora.ai（新共享层）
 TextChunker.chunk(String header, String content, boolean titlePresent, boolean keepTitleWhenEmpty, String sentenceSeparators)
-TextChunker.MAX_BODY_LEN = 500;  TextChunker.KB_SEPARATORS = "。；!?";  TextChunker.NEWS_SEPARATORS = "。；;！!？?"
+TextChunker.chunk(..., String sentenceSeparators, int overlapChars)   // E2 6 参重载；旧 5 参委托 overlapChars=0（逐块等价旧行为）
+TextChunker.MAX_BODY_LEN = 500;  TextChunker.DEFAULT_OVERLAP_CHARS = 60
+TextChunker.KB_SEPARATORS = "。；!?";  TextChunker.NEWS_SEPARATORS = "。；;！!？?"
 TextChunker.splitSentences(p, separators)                        // 全库唯一定义；句读集合按域参数化
+TextChunker.overlapTail(prev, separators, overlapChars)          // 包级；取前块尾部 ≤overlapChars 片段（不整块重复）
 record EmbedStats(int total, int success, int failed)            // 全库唯一定义
 EmbeddingBatchRunner.run(List<T> items, Function<T,String> textFn, BiConsumer<T,String> persistFn,
                          String label, int maxParallel, int maxRetries) → EmbedStats
@@ -774,6 +777,7 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 
 ### 3. Contracts
 - **切块唯一实现**：KB/NEWS `chunkContent` 改为薄委托 `TextChunker`；header 由调用方构造（KB「知识：t（d）」/ NEWS「新闻：t（date）」），空正文语义参数化（KB `keepTitleWhenEmpty=true` 恒保留；NEWS `titlePresent && keepTitleWhenEmpty=false`）。**句读集合也按域参数化（KB `。；!?` / NEWS `。；;！!？?`），不得取超集**——两域原集合不同，取超集会改变 KB 切块边界（违反「产出逐块不变」）；`splitSentences` 参数化后仍是全库唯一实现。产出逐块不变由 `KbDocServiceTest`/`NewsDocServiceTest` + `TextChunkerTest`（含 `legacyChunk` 等价性锁）证明。
+- **切块滑动重叠（E2，2026-10-03）**：新增 6 参 `chunk(..., int overlapChars)`；**旧 5 参委托 `overlapChars=0`，逐块等价旧行为（向后兼容）**。仅 **KB/NEWS 服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用**；**CAR（参数分组块）与 IMAGE（`ImageEmbeddingTextBuilder`）不经 `TextChunker`，切块形态不变**。策略：相邻产出块中前块**严格 >overlapChars** 时取尾部片段（≤overlapChars，优先从片段内首个句读符之后对齐）作后块前缀；前缀+本块仍须 ≤`MAX_BODY_LEN`（放不下则不重叠）；**不整块重复、不增块数**。回退：revert E2 + 按旧切块重嵌（旧 4 表保留）。实测见 `docs/spec/retrieval.md §9` 与 `.trellis/tasks/10-03-e2-chunk-overlap/research/parity-B.md`。
 - **并发执行器唯一实现**：`EmbeddingBatchRunner` 泛型化「固定线程池 + 单块重试 + 失败收集 + 计数日志」；**各域失败策略用参数保留**（CAR/NEWS `maxParallel=4,maxRetries=1`；KB `maxParallel=1,maxRetries=0` 串行无重试）。
 - **事务边界统一（关键）**：embed 网络调用在事务外，随后经**自注入 `@Autowired @Lazy self`** 调 `@Transactional(REQUIRES_NEW)` 的持久化方法（`persistCarDoc`/`persistChunk`/`persistNewsDoc`）完成「插块行（拿 id）+ 插向量」原子写入。单测直 new 时 `(self==null?this:self)` 退化直调。
   - **反例（被本任务修复）**：`@Transactional protected insertDocWithEmbedding` 由同类线程池 lambda 内 `this` 调用 → 代理不生效、注解被忽略 → 向量插入失败时块行可能已落成孤儿、事务边界不明。
@@ -805,7 +809,7 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 - Bad: 在 rebuild 里直接 `this.insertDocWithEmbedding()`（`@Transactional` 失效）；或检索 SQL 漏加 `embedding_model` 过滤（换模型后静默混空间）。
 
 ### 6. Tests Required
-- `TextChunkerTest`（KB/NEWS 两语义）；`EmbeddingBatchRunnerTest`（重试成功/两次失败/maxRetries=0/串行保序/空列表）；`EmbeddingClientTest`（维度不符抛 AiException + modelName）；`{Car,Kb,News}DocTransactionTest`（自注入代理持久化 + 无代理退化）；`EmbeddingMapperModelFilterTest`（4 查询含模型过滤、4 insert 带列、对账/补齐口径）；`EmbeddingModelReconcileRunnerTest`（非当前模型仅告警、异常不阻断）。
+- `TextChunkerTest`（KB/NEWS 两语义；E2 增：默认无重叠等价旧实现回归锁、overlapTail 边界、句读对齐、不破 500 上限、不整块重复）；`EmbeddingBatchRunnerTest`（重试成功/两次失败/maxRetries=0/串行保序/空列表）；`EmbeddingClientTest`（维度不符抛 AiException + modelName）；`{Car,Kb,News}DocTransactionTest`（自注入代理持久化 + 无代理退化）；`EmbeddingMapperModelFilterTest`（4 查询含模型过滤、4 insert 带列、对账/补齐口径）；`EmbeddingModelReconcileRunnerTest`（非当前模型仅告警、异常不阻断）。
 
 ### 7. Wrong vs Correct
 #### Wrong

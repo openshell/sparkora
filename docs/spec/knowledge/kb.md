@@ -29,6 +29,7 @@
 `com.sparkora.kb.service.KbDocService` — create/update/delete/list/get/rebuild：
 
 - 切块：**09-27 起薄委托 `com.sparkora.ai.TextChunker.chunk`**（空行分段、单段 ≤500 字符、超长按句读（KB 保持历史集合 `。；!?`）切分合并、段内换行转空格；KB 语义 = 空正文恒保留标题块；句读集合按域参数化，不取 NEWS 超集）。`splitSentences` 全库仅 `TextChunker` 一处定义。
+- **10-03 E2 滑动重叠**：KB 服务层显式传 `TextChunker.DEFAULT_OVERLAP_CHARS`（60）启用相邻块句读重叠（前块 >60 时取其尾部片段作后块前缀，对齐句读边界、不整块重复、不增块数）；旧 5 参 `chunk` 默认无重叠保持向后兼容。KB 现网内容均为 <60 字短段落，重叠按设计不生效（无可取后缀），改造后与旧逐块一致。
 - 重建幂等（先物理清 chunk+embedding 再重嵌）；**串行无重试（KB 失败策略不变）**，委托 `EmbeddingBatchRunner`（`maxParallel=1,maxRetries=0`）；embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistChunk`（chunk 行与向量行同事务）；单块失败 warn+计数（共享 `com.sparkora.ai.EmbedStats` total/success/failed），块缺失用 rebuild 补齐。
 - `enabled=false` 时清块。
 
