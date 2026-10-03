@@ -1307,3 +1307,25 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 51: E6 旧向量表退役（消除双写）+ 10-03 任务树收口
+<!-- trellis-session: v=2 fp=99c5b0e682450e52 -->
+
+**Date**: 2026-10-03
+**Task**: E6 旧向量表退役（消除双写）+ 10-03 任务树收口
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5d1c0d9` | docs(spec): 记录 E6 旧向量表退役与单一只真源契约 |
+
+### Status
+
+[OK] **Completed**
