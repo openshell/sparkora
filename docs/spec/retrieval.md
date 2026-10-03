@@ -51,6 +51,24 @@
 
 ---
 
+## 3.1 检索重排（A rerank，10-03-a-rerank）
+
+- **契约**：`com.sparkora.car.service.Reranker#rerank(query, candidates, keepTopN)` →
+  `List<UnifiedHit>`；实现 `LlmReranker` 用 `AiClient.structured` + `prompts/rag/rerank-system.st`
+  （`RerankOrderDto{order}`，序号 0 起）让模型回吐「相关性降序」。
+- **插入点**：`CarRagService.retrieveForGeneration` 候选合并去重后、锚点加权/配额**之前**。
+  **只改顺序、不改分数**——`maxScore`/`minScore`/`rejectScore` 与四态判定基于原分，重排不改变四态与候选集。
+- **参与集**：按原始分数降序的前 `AI_RAG_RERANK_TOPN` 个送入模型（单条文本截断 300 字），其余原序追加。
+- **后验校验**：越界/重复下标丢弃、缺项按原序补尾，保证返回集合与输入元素一一对应（仅顺序变）。
+- **best-effort 降级**：开关关闭 / order 空或全非法 / 超时 / 调用异常 → **原序返回 + warn，绝不抛出、绝不阻断生成**
+  （超时在独立虚拟线程按 `AI_RAG_RERANK_TIMEOUT_MS` 兜底）。
+- **配额/排序衔接**：重排后配额选择与最终排序按重排名次（`rerankRank` 位置映射，boost 重建对象后按位置对应）；
+  关闭时回退既有「按分数降序」，与改造前逐字等价（零回归）。
+- **评估**：`.trellis/tasks/10-03-a-rerank/research/rerank-ab.md`（代表 query MRR 0.37→1.00、top-1 0%→100%，
+  harness `rerank_ab_probe.py`）。
+
+---
+
 ## 4. 检索门槛（粗调值，**待按真实 query 分数分布校准**；`REJECT` 须 ≥ `MIN`）
 
 | `.env` 变量 | 默认 | 代码用途 |
@@ -61,6 +79,9 @@
 | `AI_RAG_KB_ENABLED` | `true` | 通用知识库总开关，false 时统一检索排除 KB 块（见 [knowledge/kb.md](knowledge/kb.md)） |
 | `AI_RAG_ANCHOR_BOOST` | `1.15` | 统一检索锚点车型块分数加权系数（见 [knowledge/kb.md](knowledge/kb.md)） |
 | `AI_RAG_NEWS_TOPK` | `4` | 新闻域生成注入块数上限（`0` 关闭 NEWS 注入；不受 KB 开关控制；见 [knowledge/news.md](knowledge/news.md)） |
+| `AI_RAG_RERANK_ENABLED` | `false` | **A rerank（10-03-a-rerank）**：LLM 重排总开关；关闭时检索行为与现状逐条一致（零回归） |
+| `AI_RAG_RERANK_TOPN` | `20` | 参与 LLM 重排的候选数上限（按原始相似度取前 N，其余原序追加） |
+| `AI_RAG_RERANK_TIMEOUT_MS` | `10000` | 单次重排超时预算（ms，超时回退原序；比 `AI_TIMEOUT_MS` 短） |
 | `AI_IMAGE_MIN_SCORE` | `0.3` | 图片语义检索门槛（独立入口；见 [image.md](image.md)） |
 | `AI_EMBEDDING_DIM` | `1024` | 向量维度校验：`EmbeddingClient.embedList` 返回长度不符即抛 `AiException`（09-27；见下节） |
 

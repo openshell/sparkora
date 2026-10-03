@@ -127,6 +127,60 @@ prompt += rag.ok() ? rag.context() : degradeNote(rag.status());
 
 ---
 
+## Scenario: 检索重排（A rerank，10-03-a-rerank）
+
+### 1. Scope / Trigger
+- Trigger: 新增/修改检索重排（`Reranker`/`LlmReranker`）、rerank 开关，或改动 `CarRagService.retrieveForGeneration` 候选合并后的阶段顺序。
+
+### 2. Signatures
+```java
+// 新接口（独立可测）
+List<CarRagService.UnifiedHit> Reranker.rerank(String query,
+        List<CarRagService.UnifiedHit> candidates, int keepTopN)
+// 实现 LlmReranker：AiClient.structured + prompts/rag/rerank-system.st + RerankOrderDto{List<Integer> order}
+// 纯静态（可单测）：LlmReranker.topIndices(candidates, n) / LlmReranker.applyOrder(head, tail, order)
+```
+
+### 3. Contracts
+- **插入点**：`CarRagService.retrieveForGeneration` 候选合并去重后、锚点加权/配额**之前**。
+- **只改顺序、不改分数**：`maxScore`/`minScore`/`rejectScore` 与四态（`OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE`）
+  判定基于原分，重排不改变四态与候选集；配额分层语义不变，仅各桶内部按重排名次取块。
+- **参与集**：按原始分数降序前 `ragRerankTopN` 个（下标定位，文本重复也不丢不重），单条文本截断 300 字；
+  其余原序追加。NEWS 无独立窗口，统一走全局 top-N。
+- **后验校验**：越界/重复下标丢弃、缺项按原序补尾 → 返回集合与输入元素一一对应（仅顺序变）。
+- **best-effort 降级**：order 空/全非法 / 超时 / 调用异常 / 开关关闭 → **原序返回 + warn，绝不抛出、绝不阻断生成**；
+  超时在独立虚拟线程按 `ragRerankTimeoutMs`（默认 10s，短于 `AI_TIMEOUT_MS`）兜底。
+- **位置映射**：锚点 boost 会重建 `UnifiedHit`，故重排名次在 boost 后按**位置**建映射（`IdentityHashMap`），
+  关闭时回退既有「按分数降序」逐字等价。
+
+### 4. Validation & Error Matrix
+- 开关 false / 未注入 Reranker / 候选 ≤1 → 不调用；关闭态结果与现状逐条一致（零回归）。
+- order 含越界/重复 → 丢弃；缺项 → 补尾；空/全非法 → 原序。
+- 超时/异常 → 原序 + warn（warn 只记异常类型，不回传异常原文/密钥）。
+
+### 5. Good/Base/Bad Cases
+- Good: 开启且模型返回合法 order → 相关块上提，MRR/top-1 提升（report 5/5 例）。
+- Base: 关闭态（默认）/ 模型返回空 order → 原序，行为不变。
+- Bad: 重排**改写 score** 参与门槛判定（会改变四态）；或重排后仍按原分排序（重排失效）；或调用失败抛出阻断生成。
+
+### 6. Tests Required
+- `LlmRerankerTest`：正常重排；order 越界/重复/缺项集合不变仅顺序变；空 order/异常/超时回退原序；候选 ≤1 不调模型；`topIndices`。
+- `CarRagServiceTest`：关闭态不调用 reranker（零回归）；开启态按新序注入；重排不改 `maxScore`；reranker 抛异常降级原序不阻断。
+
+### 7. Wrong vs Correct
+#### Wrong
+```java
+// 重排后仍按原分排序 → 重排白做；或把重排分数写回去 → 四态被改
+selected.sort((a,b) -> Double.compare(b.score(), a.score()));
+```
+#### Correct
+```java
+// 重排后按重排名次排序（关闭时回退按分数），分数本身不动
+selected.sort(orderCmp);   // orderCmp = rerankRank 或 score 降序
+```
+
+---
+
 ## Scenario: 开关契约（浏览/问答 vs 生成注入）
 
 - `sparkora_setting.kb_enabled`（`SettingService.kbEnabled`）**只控制创作生成时是否注入知识库**。
