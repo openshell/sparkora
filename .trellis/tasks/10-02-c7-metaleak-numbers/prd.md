@@ -25,6 +25,18 @@
 - [ ] `verifyNumbers` 对 `1200` vs `12000` 用例不再漏报；单位/千分位等价不误报。
 - [ ] `mvn test` 绿。
 
+## Technical Notes（勘察，决定实际范围）
+
+- **AC1/AC2 已由前置任务 `10-02-fix-meta-leak-in-article-body` 落地**：
+  - `DeepWriterService.buildUserPrompt` 已用 `ReaderViewRules.forbiddenClaimsBlock(...)`（只抽陈述性
+    `claim`、丢弃祈使句 `suggestion`）替代旧「事实风险:」整块注入；`DeepWriterServicePromptTest`
+    有逐字断言（`suggestion` 原文不得进 prompt、整个 `fact_risks` JSON 不得整体注入）。
+  - `MetaLeakCleaner.cleanForPersist` 已是落库前最后防线（清洗致空回退原文），有 `MetaLeakCleanerTest`。
+  - → 本任务对 AC1/AC2 以「验证 + 回归锁定」确认，不重复改。
+- **AC3 未完成 = 本任务唯一代码交付**：`DeepWriterService.verifyNumbers`（:496-512）仍是子串
+  `contains` 匹配，`1200`⊂`12000` 漏报；`20万` vs `200000`、`33.21` vs `33.21%` 误报。
+  实现改为复用同包 `ClaimSimilarity.numberValues(String...)` 的数值签名做归一化集合比对。
+
 ## Out of Scope
 
-- FactSheet 归并算法本身、禁词表内容策略。
+- FactSheet 归并算法本身、`ClaimSimilarity` 的相似度/阈值、禁词表内容策略、`MetaLeakCleaner` 正则内容。

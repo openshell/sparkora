@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-02-c7-metaleak-numbers/prd.md", "reason": "C7 需求与验收（AC1/AC2 已由前置任务落地、AC3 verifyNumbers 归一为本任务交付）"}
+{"file": ".trellis/tasks/10-02-c7-metaleak-numbers/implement.md", "reason": "C7 执行计划：verifyNumbers 复用 ClaimSimilarity.numberValues 的归一化比对"}
+{"file": ".trellis/tasks/10-02-spring-ai-adoption/design.md", "reason": "父任务 design §3.5 元话语根因治理与 verifyNumbers 归一的目标口径"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "既有 AI/RAG 契约：fact_risks/forbiddenClaimsBlock、ClaimSimilarity 数值签名先例、DeepWriter 数值回查约束"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "确认本任务无 schema 变更、不改迁移脚本"}

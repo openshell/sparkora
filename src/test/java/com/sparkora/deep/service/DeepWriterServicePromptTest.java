@@ -599,4 +599,128 @@ class DeepWriterServicePromptTest {
         assertEquals("9月销量46.36万辆，同比33.21%。", content.getValue(),
                 "verifyNumbers 必须收到清洗后正文(泄漏句已删)");
     }
+
+    // ==================== C7(10-02-c7-metaleak-numbers):verifyNumbers 数值归一化比对 ====================
+
+    /** C7 漏报修复:内容 1200、手册仅 12000 → 不再被子串命中,报 high。 */
+    @Test
+    void verifyNumbers_1200与12000不再漏报() throws Exception {
+        List<String> unknown = service.verifyNumbers(
+                "该工厂年产能为1200辆。",
+                "{\"entries\":[{\"key\":\"年产能\",\"value\":\"12000\"}]}");
+
+        assertTrue(unknown.contains("1200"), "1200 不在手册 {12000} 中,应报未收录");
+    }
+
+    /** C7 误报修复:内容 200000、手册 20万 → 归一后同值,不报。 */
+    @Test
+    void verifyNumbers_万与千分位等价不误报() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "起售价200000元。",
+                "{\"entries\":[{\"key\":\"起售价\",\"value\":\"20万\"}]}").isEmpty(),
+                "200000 与 20万 归一后等价,不得误报");
+        assertTrue(service.verifyNumbers(
+                "同比33.21%。",
+                "{\"entries\":[{\"key\":\"同比\",\"value\":\"33.21%\"}]}").isEmpty(),
+                "33.21% 与 33.21 归一后等价,不得误报");
+    }
+
+    /** C7 误报修复:内容 239900、手册 239,900(千分位)→ 归一后同值,不报(旧子串失配会误报)。 */
+    @Test
+    void verifyNumbers_千分位等价不误报() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "售价239900元。",
+                "{\"entries\":[{\"key\":\"售价\",\"value\":\"239,900\"}]}").isEmpty(),
+                "239900 与 239,900 归一后等价,不得误报");
+        // 内容侧写千分位:抽取正则须整体命中 239,900,不得拆成 239/900 两个 token
+        assertTrue(service.verifyNumbers(
+                "售价 239,900 元。",
+                "{\"entries\":[{\"key\":\"售价\",\"value\":\"239900\"}]}").isEmpty(),
+                "内容 239,900 与手册 239900 归一后等价,不得误报");
+        assertTrue(service.verifyNumbers(
+                "销量 1,200,000 辆。",
+                "{\"entries\":[{\"key\":\"销量\",\"value\":\"1200000\"}]}").isEmpty(),
+                "内容 1,200,000 与手册 1200000 归一后等价,不得误报");
+    }
+
+    /** C7 正常通过:内容 2000、手册「第2000座」→ 收录,不报。 */
+    @Test
+    void verifyNumbers_收录值正常通过() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "第2000座闪充站落成。",
+                "{\"entries\":[{\"key\":\"里程碑\",\"value\":\"第2000座\"}]}").isEmpty(),
+                "手册含 2000,应通过");
+    }
+
+    /** C7 边界:手册为 {}/null(无手册)→ 所有数值仍报 high(与既有语义一致)。 */
+    @Test
+    void verifyNumbers_无手册时数值仍报high() throws Exception {
+        assertTrue(service.verifyNumbers("续航达到700km。", "{}").contains("700km"),
+                "空手册 { } 时数值应报未收录");
+        assertTrue(service.verifyNumbers("续航达到700km。", null).contains("700km"),
+                "null 手册时数值应报未收录");
+    }
+
+    /** C7:canonicalNumber 复用 ClaimSimilarity 归一口径(万/千分位/小数)。 */
+    @Test
+    void canonicalNumber_归一口径与ClaimSimilarity一致() {
+        assertEquals("200000", DeepWriterService.canonicalNumber("20万"));
+        assertEquals("200000", DeepWriterService.canonicalNumber("200,000"));
+        assertEquals("33.21", DeepWriterService.canonicalNumber("33.21%"));
+        assertEquals("700", DeepWriterService.canonicalNumber("700km"));
+        assertEquals("150000000", DeepWriterService.canonicalNumber("1.5亿"));
+    }
+
+    /**
+     * C7 回归:内容「N亿」必须与手册同值(亿换算)不误报——此前抽取正则只含「万」不含「亿」,
+     * 命中截成小数部分(1.5亿→1.5),与 numberValues 的亿换算签名对不上而误报。
+     */
+    @Test
+    void verifyNumbers_亿与手册同值不误报() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "项目投资1.5亿元。",
+                "{\"entries\":[{\"key\":\"投资\",\"value\":\"1.5亿\"}]}").isEmpty(),
+                "1.5亿 与手册 1.5亿 归一后等价,不得误报");
+        assertTrue(service.verifyNumbers(
+                "营收100亿元。",
+                "{\"entries\":[{\"key\":\"营收\",\"value\":\"10000000000\"}]}").isEmpty(),
+                "100亿 与手册 10000000000 归一后等价,不得误报");
+    }
+
+    /** C7 漏报:内容「N亿」与手册不同量级 → 仍须报(确认亿参与比对而非被截断成小数)。 */
+    @Test
+    void verifyNumbers_亿与手册不同值仍报() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "营收200亿元。",
+                "{\"entries\":[{\"key\":\"营收\",\"value\":\"100亿\"}]}").contains("200亿"),
+                "200亿 不在手册 {100亿} 中,应报未收录");
+    }
+
+    /**
+     * C7 回归:≥8 位纯数字必须与手册同值不误报——此前抽取正则上限 {@code \d{4,7}} 把
+     * {@code 12000000} 只截成 {@code 1200000}(前 7 位),归一后与手册对不上而误报。
+     */
+    @Test
+    void verifyNumbers_八位以上数值与手册同值不误报() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "销量12000000辆。",
+                "{\"entries\":[{\"key\":\"销量\",\"value\":\"12000000\"}]}").isEmpty(),
+                "8 位数值与手册同值,不得因抽取截断而误报");
+        assertTrue(service.verifyNumbers(
+                "产能100000000台。",
+                "{\"entries\":[{\"key\":\"产能\",\"value\":\"100000000\"}]}").isEmpty(),
+                "9 位数值与手册同值,不得因抽取截断而误报");
+    }
+
+    /**
+     * C7 漏报:内容大数、手册「N万」等价写法 → 不再因抽取截断而漏判(旧子串会误命中同前缀而漏,
+     * 新归一口径必须命中正确签名)。
+     */
+    @Test
+    void verifyNumbers_大数与万等价不误报() throws Exception {
+        assertTrue(service.verifyNumbers(
+                "建成12000000座。",
+                "{\"entries\":[{\"key\":\"数量\",\"value\":\"1200万\"}]}").isEmpty(),
+                "12000000 与 1200万 归一后等价,不得误报");
+    }
 }

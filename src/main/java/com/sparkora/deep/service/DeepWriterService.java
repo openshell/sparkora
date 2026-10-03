@@ -25,9 +25,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -492,22 +494,49 @@ public class DeepWriterService {
         return idx < LABELS.length() ? String.valueOf(LABELS.charAt(idx)) : "A";
     }
 
-    /** 抽取正文数值并比对手册(收录=出现在手册文本任一处:值/claim/sources 串)。 */
+    /**
+     * 抽取正文数值并比对手册。C7(10-02-c7-metaleak-numbers):收录判定由「子串 contains」
+     * 改为「数值签名归一化集合比对」——复用 {@link ClaimSimilarity#numberValues} 的同一套归一口径
+     * (去千分位/空白、万×10000/亿×1e8、{@link java.math.BigDecimal#stripTrailingZeros()})。
+     *
+     * <p>修复两类偏差:
+     * <ul>
+     *   <li>漏报:内容 {@code 1200}、手册仅 {@code 12000} → 旧子串 {@code contains("1200")} 命中
+     *       {@code "12000"} 而漏报;归一后 {@code 1200 ∉ {12000}} → 报 high;</li>
+     *   <li>误报:内容 {@code 200000}、手册 {@code 20万}(或内容 {@code 33.21%}、手册 {@code 33.21%})
+     *       → 旧子串失配而误报;归一后两侧同签名 → 不报。</li>
+     * </ul>
+     *
+     * <p>手册为 null/{@code {}}(无手册)→ {@code known} 为空 → 所有数值报 high(与既有语义一致);
+     * 归一解析失败由 {@link ClaimSimilarity#numberValues} 内部回退原 token、绝不抛出。
+     * unknown 保留原始 token 形态,供 {@code factRisks.claim} 文案原样引用。
+     */
     List<String> verifyNumbers(String content, String factSheetJson) throws Exception {
         JsonNode sheet = json.readTree(factSheetJson == null ? "{}" : factSheetJson);
-        String haystack = sheet.toString();
+        // 手册全文数值签名集合(与 claim 归并链路同一套归一口径)
+        Set<String> known = new HashSet<>(ClaimSimilarity.numberValues(sheet.toString()));
         List<String> unknown = new ArrayList<>();
-        // 数值形态:纯数字/千分位/小数/「N万」(中文数字万前缀),排除年份与孤立 0-9 单字符
-        var m = java.util.regex.Pattern.compile("\\d[\\d,\\.]*\\s*万|\\d{4,7}(?:,\\d{3})*(?:\\.\\d+)?|\\d+\\.(?:\\d+)?%?|\\d+(?:\\.\\d+)?\\s*(?:km|kWh|kW|mm|L/100km|s)").matcher(content);
+        // 数值形态:C7 与 numberValues 口径对齐——
+        //  1) 「N万/N亿」(含小数,数量级单位);2) 千分位整数「1,200,000」;3) ≥4 位纯数字(上限放开防截断);
+        //  4) 小数/百分比;5) 带长度单位的数值;排除年份与孤立 0-9 单字符。
+        // 注:千分位须在纯数字前匹配,否则 239,900 会被拆成 239/900 两个 token 漏判。
+        var m = java.util.regex.Pattern.compile("\\d[\\d,\\.]*\\s*(?:万|亿)|\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d{4,}(?:\\.\\d+)?|\\d+\\.(?:\\d+)?%?|\\d+(?:\\.\\d+)?\\s*(?:km|kWh|kW|mm|L/100km|s)").matcher(content);
         while (m.find()) {
-            String num = m.group().replaceAll("[ ,万]", "");
-            if (num.length() < 2 || "0".equals(num)) continue;
-            // 去掉千分位后比对;手册 haystack 含原始值即可通过
             String raw = m.group().trim();
-            if (!haystack.contains(raw) && !haystack.contains(num)) {
-                if (!unknown.contains(m.group().trim())) unknown.add(m.group().trim());
+            String num = raw.replaceAll("[ ,万]", "");
+            if (num.length() < 2 || "0".equals(num)) continue;
+            // C7:归一化签名比对(替代旧 haystack.contains 子串匹配,消除 1200⊂12000 漏报)
+            String canon = canonicalNumber(raw);
+            if (canon == null || !known.contains(canon)) {
+                if (!unknown.contains(raw)) unknown.add(raw);
             }
         }
         return unknown;
+    }
+
+    /** 复用 {@link ClaimSimilarity} 归一口径:返回该 token 的首个数值签名;无数字→null。 */
+    static String canonicalNumber(String raw) {
+        List<String> v = ClaimSimilarity.numberValues(raw);
+        return v.isEmpty() ? null : v.get(0);
     }
 }
