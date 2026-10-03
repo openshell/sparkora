@@ -23,7 +23,8 @@
     "10-03-e2-chunk-overlap",
     "10-03-e3-kb-normalize",
     "10-03-e4-rename",
-    "10-03-e5-coverage-dedup"
+    "10-03-e5-coverage-dedup",
+    "10-03-e6-decommission-old-tables"
   ],
   "parent": null,
   "relatedFiles": [],

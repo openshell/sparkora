@@ -206,7 +206,7 @@ public class CarRagService {
      */
     /**
      * 生成前必查入口(S8 统一检索):
-     * 车型域与 KB 域**同向量空间全库检索**(searchTopKUnified),「项目关联车型」降为锚点加权——
+     * 车型域与 KB 域**同向量空间全库检索**(单表 store,10-03 E1/E6),「项目关联车型」降为锚点加权——
      * 数据可达性不再依赖用户手动关联(文章18误伤:海狮08数据在库,未关联即查不到)。
      *
      * 检索策略(S6.2 资产全部保留):
@@ -236,9 +236,9 @@ public class CarRagService {
                 : anchorModelIds.stream().filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
         List<UnifiedHit> merged = new ArrayList<>();
         boolean anyFailure = false;
-        // C2:新闻域块数远大于车型/KB(167 篇≈1300+ 块)。候选窗口由 searchTopKUnified 按域隔离
-        // (CAR+KB 合并窗口 / NEWS 独立窗口),故此处过采样沿用 C2 前口径 max(topK*4,32) 即可——
-        // 保持 CAR/KB 候选集与行为不变,NEWS 不挤占(详见 CarDocEmbeddingMapper.searchTopKUnified 注释)。
+        // C2:新闻域块数远大于车型/KB(167 篇≈1300+ 块)。候选窗口按域隔离
+        // (CAR+KB 合并窗口 / NEWS 独立窗口,经 searchDomains 两次调用复现),故此处过采样沿用
+        // C2 前口径 max(topK*4,32) 即可——保持 CAR/KB 候选集与行为不变,NEWS 不挤占。
         int oversample = Math.max(topK * 4, 32);
         try {
             // 主查询(统一全库;按域隔离候选窗口,配额/加权后再截)

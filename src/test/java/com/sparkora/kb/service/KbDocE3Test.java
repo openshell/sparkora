@@ -7,7 +7,6 @@ import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.config.AiProperties;
 import com.sparkora.domain.entity.KbChunkEntity;
 import com.sparkora.domain.entity.KbDocEntity;
-import com.sparkora.mapper.KbChunkEmbeddingMapper;
 import com.sparkora.mapper.KbChunkMapper;
 import com.sparkora.mapper.KbDocMapper;
 import org.junit.jupiter.api.Test;
@@ -60,8 +59,8 @@ class KbDocE3Test {
     }
 
     private static KbDocService service(KbDocMapper docMapper, KbChunkMapper chunkMapper,
-                                        KbChunkEmbeddingMapper embMapper, EmbeddingClient client) {
-        return new KbDocService(docMapper, chunkMapper, embMapper, client,
+                                        EmbeddingClient client) {
+        return new KbDocService(docMapper, chunkMapper, client,
                 new EmbeddingBatchRunner(client), new ObjectMapper());
     }
 
@@ -89,10 +88,9 @@ class KbDocE3Test {
     void rebuild_写store元数据含生效期来源标签_并按生效期计算active() {
         KbDocMapper docMapper = mock(KbDocMapper.class);
         KbChunkMapper chunkMapper = mock(KbChunkMapper.class);
-        KbChunkEmbeddingMapper embMapper = mock(KbChunkEmbeddingMapper.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         VectorStoreService store = mock(VectorStoreService.class);
-        KbDocService service = service(docMapper, chunkMapper, embMapper, client);
+        KbDocService service = service(docMapper, chunkMapper, client);
         setField(service, "vectorStoreService", store);
 
         KbDocEntity d = new KbDocEntity();
@@ -127,11 +125,10 @@ class KbDocE3Test {
     void rebuild_启用期命中_active为true且标签透传() {
         KbDocMapper docMapper = mock(KbDocMapper.class);
         KbChunkMapper chunkMapper = mock(KbChunkMapper.class);
-        KbChunkEmbeddingMapper embMapper = mock(KbChunkEmbeddingMapper.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         VectorStoreService store = mock(VectorStoreService.class);
         com.sparkora.mapper.KbDocTagMapper tagMapper = mock(com.sparkora.mapper.KbDocTagMapper.class);
-        KbDocService service = service(docMapper, chunkMapper, embMapper, client);
+        KbDocService service = service(docMapper, chunkMapper, client);
         setField(service, "vectorStoreService", store);
         setField(service, "tagMapper", tagMapper);
 
@@ -158,10 +155,9 @@ class KbDocE3Test {
     void replaceTags_全量覆盖_空列表清空() {
         KbDocMapper docMapper = mock(KbDocMapper.class);
         KbChunkMapper chunkMapper = mock(KbChunkMapper.class);
-        KbChunkEmbeddingMapper embMapper = mock(KbChunkEmbeddingMapper.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         com.sparkora.mapper.KbDocTagMapper tagMapper = mock(com.sparkora.mapper.KbDocTagMapper.class);
-        KbDocService service = service(docMapper, chunkMapper, embMapper, client);
+        KbDocService service = service(docMapper, chunkMapper, client);
         setField(service, "tagMapper", tagMapper);
 
         service.replaceTags(3L, List.of("a", "b", "a"), "alice");
@@ -176,10 +172,9 @@ class KbDocE3Test {
     void rebuild_停用_不写store并零向量化() {
         KbDocMapper docMapper = mock(KbDocMapper.class);
         KbChunkMapper chunkMapper = mock(KbChunkMapper.class);
-        KbChunkEmbeddingMapper embMapper = mock(KbChunkEmbeddingMapper.class);
         FakeEmbeddingClient client = mock(FakeEmbeddingClient.class);
         VectorStoreService store = mock(VectorStoreService.class);
-        KbDocService service = service(docMapper, chunkMapper, embMapper, client);
+        KbDocService service = service(docMapper, chunkMapper, client);
         setField(service, "vectorStoreService", store);
 
         KbDocEntity d = new KbDocEntity();

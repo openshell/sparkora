@@ -6,7 +6,6 @@ import com.sparkora.ai.TextChunker;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.domain.entity.NewsDocEntity;
 import com.sparkora.domain.entity.NewsEntity;
-import com.sparkora.mapper.NewsDocEmbeddingMapper;
 import com.sparkora.mapper.NewsDocMapper;
 import com.sparkora.mapper.NewsMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -36,10 +35,9 @@ import java.util.List;
 @Service
 public class NewsDocService {
 
-    private final NewsMapper newsMapper;
-    private final NewsDocMapper docMapper;
-    private final NewsDocEmbeddingMapper embMapper;
-    private final EmbeddingClient embeddingClient;
+    private final NewsMapper            newsMapper;
+    private final NewsDocMapper         docMapper;
+    private final EmbeddingClient       embeddingClient;
     private final EmbeddingBatchRunner batchRunner;
     /** 自注入代理（@Lazy）：让 {@link #persistNewsDoc} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
     @Autowired
@@ -50,11 +48,10 @@ public class NewsDocService {
     private com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
     public NewsDocService(NewsMapper newsMapper, NewsDocMapper docMapper,
-                          NewsDocEmbeddingMapper embMapper, EmbeddingClient embeddingClient,
+                          EmbeddingClient embeddingClient,
                           EmbeddingBatchRunner batchRunner) {
         this.newsMapper = newsMapper;
         this.docMapper = docMapper;
-        this.embMapper = embMapper;
         this.embeddingClient = embeddingClient;
         this.batchRunner = batchRunner;
     }
@@ -93,7 +90,6 @@ public class NewsDocService {
                         .eq("news_id", newsId));
         java.util.List<Long> docIds = new java.util.ArrayList<>();
         for (NewsDocEntity d : docs) if (d.getId() != null) docIds.add(d.getId());
-        embMapper.deleteByNewsId(newsId);
         docMapper.deleteByNewsId(newsId);
         if (vectorStoreService != null && !docIds.isEmpty()) {
             vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.NEWS.name(), docIds);
@@ -109,7 +105,7 @@ public class NewsDocService {
         doc.setCreatedAt(LocalDateTime.now());
         doc.setUpdatedAt(LocalDateTime.now());
         docMapper.insert(doc);
-        embMapper.insert(doc.getId(), doc.getNewsId(), vec, embeddingClient.modelName());
+        // 10-03 E6:旧向量表已退役,只写单表 store
         if (vectorStoreService != null) {
             vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.NEWS.name(), doc.getId(), null,
                     doc.getChunkType(), doc.getNewsTitle(), true, embeddingClient.modelName(),

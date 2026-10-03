@@ -11,7 +11,6 @@ import com.sparkora.domain.entity.KbChunkEntity;
 import com.sparkora.domain.entity.KbDocEntity;
 import com.sparkora.domain.entity.KbDocTagEntity;
 import com.sparkora.kb.KbDomain;
-import com.sparkora.mapper.KbChunkEmbeddingMapper;
 import com.sparkora.mapper.KbChunkMapper;
 import com.sparkora.mapper.KbDocMapper;
 import com.sparkora.mapper.KbDocTagMapper;
@@ -52,7 +51,6 @@ public class KbDocService {
 
     private final KbDocMapper docMapper;
     private final KbChunkMapper chunkMapper;
-    private final KbChunkEmbeddingMapper embMapper;
     private final EmbeddingClient embeddingClient;
     private final EmbeddingBatchRunner batchRunner;
     private final ObjectMapper json;
@@ -68,11 +66,10 @@ public class KbDocService {
     private KbDocTagMapper tagMapper;
 
     public KbDocService(KbDocMapper docMapper, KbChunkMapper chunkMapper,
-                        KbChunkEmbeddingMapper embMapper, EmbeddingClient embeddingClient,
+                        EmbeddingClient embeddingClient,
                         EmbeddingBatchRunner batchRunner, ObjectMapper json) {
         this.docMapper = docMapper;
         this.chunkMapper = chunkMapper;
-        this.embMapper = embMapper;
         this.embeddingClient = embeddingClient;
         this.batchRunner = batchRunner;
         this.json = json;
@@ -199,7 +196,7 @@ public class KbDocService {
     public void persistChunk(KbChunkEntity c, String vec) {
         c.setCreatedAt(LocalDateTime.now());
         chunkMapper.insert(c);
-        embMapper.insert(c.getId(), vec, embeddingClient.modelName());
+        // 10-03 E6:旧向量表已退役,只写单表 store
         if (vectorStoreService != null) {
             vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.KB.name(), c.getId(), null,
                     "KB_CHUNK", c.getDocTitle(),
@@ -261,7 +258,6 @@ public class KbDocService {
                 new QueryWrapper<KbChunkEntity>().eq("doc_id", docId));
         List<Long> chunkIds = new ArrayList<>();
         for (KbChunkEntity c : chunks) if (c.getId() != null) chunkIds.add(c.getId());
-        embMapper.deleteByDocId(docId);
         docMapper.deleteChunksByDocId(docId);
         if (vectorStoreService != null && !chunkIds.isEmpty()) {
             vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.KB.name(), chunkIds);

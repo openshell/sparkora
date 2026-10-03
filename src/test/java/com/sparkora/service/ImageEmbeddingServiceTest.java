@@ -2,12 +2,12 @@ package com.sparkora.service;
 
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.ai.vector.SearchStore;
+import com.sparkora.ai.vector.VectorStoreService;
 import com.sparkora.config.AiProperties;
 import com.sparkora.config.QiniuProperties;
 import com.sparkora.domain.dto.ImageSearchHit;
 import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.mapper.ImageAssetMapper;
-import com.sparkora.mapper.ImageEmbeddingMapper;
 import com.sparkora.mapper.NewsMapper;
 import com.sparkora.storage.ImageStorage;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,7 +48,6 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ImageEmbeddingServiceTest {
 
-    @Mock ImageEmbeddingMapper embMapper;
     @Mock ImageAssetMapper imageMapper;
     @Mock EmbeddingClient embeddingClient;
     @Mock ImageTagService tagService;
@@ -56,6 +55,7 @@ class ImageEmbeddingServiceTest {
     @Mock ObjectProvider<QiniuProperties> qiniuProps;
     @Mock ObjectProvider<NewsMapper> newsMapper;
     @Mock SearchStore searchStore;
+    @Mock VectorStoreService vectorStoreService;
 
     AiProperties aiProps;
     ImageEmbeddingService service;
@@ -64,9 +64,19 @@ class ImageEmbeddingServiceTest {
     void setUp() {
         aiProps = new AiProperties();
         aiProps.setImageMinScore(0.3);
-        service = new ImageEmbeddingService(embMapper, imageMapper, embeddingClient, tagService,
+        service = new ImageEmbeddingService(imageMapper, embeddingClient, tagService,
                 imageStorage, aiProps, qiniuProps, newsMapper);
         service.setSearchStore(searchStore);
+    }
+
+    private void setStore(VectorStoreService store) {
+        try {
+            java.lang.reflect.Field f = ImageEmbeddingService.class.getDeclaredField("vectorStoreService");
+            f.setAccessible(true);
+            f.set(service, store);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** store Document 假件（metadata.refId + content + score）。 */
@@ -213,7 +223,8 @@ class ImageEmbeddingServiceTest {
     }
 
     @Test
-    void embedOne_先删后插_幂等顺序() {
+    void embedOne_写store向量_幂等upsert() {
+        setStore(vectorStoreService);
         ImageAssetEntity img = new ImageAssetEntity();
         img.setId(9L);
         img.setSource("upload");
@@ -223,23 +234,24 @@ class ImageEmbeddingServiceTest {
 
         service.embedOne(img);
 
-        var inOrder = org.mockito.Mockito.inOrder(embMapper);
-        inOrder.verify(embMapper).deleteByImageId(9L);
-        inOrder.verify(embMapper).insert(9L, "[0.5]", "出海签约 主题/合作签约", null);
+        // 10-03 E6：只写单表 store（domain=IMAGE, refId=imageId, content=嵌入文本）
+        verify(vectorStoreService).upsert(eq("IMAGE"), eq(9L), isNull(), eq("IMAGE"), isNull(),
+                eq(true), any(), eq("出海签约 主题/合作签约"), eq("[0.5]"));
     }
 
     @Test
-    void persistVector_先删后插_可独立事务边界调用() {
+    void persistVector_可独立事务边界调用_写store() {
+        setStore(vectorStoreService);
         service.persistVector(9L, "[0.5]", "文本");
 
-        var inOrder = org.mockito.Mockito.inOrder(embMapper);
-        inOrder.verify(embMapper).deleteByImageId(9L);
-        inOrder.verify(embMapper).insert(9L, "[0.5]", "文本", null);
+        verify(vectorStoreService).upsert(eq("IMAGE"), eq(9L), isNull(), eq("IMAGE"), isNull(),
+                eq(true), any(), eq("文本"), eq("[0.5]"));
     }
 
     /** self 未注入（直接 new 的单测场景）时退化为直写，不得 NPE。 */
     @Test
     void embedOne_无代理时退化为直写不NPE() {
+        setStore(vectorStoreService);
         ImageAssetEntity img = new ImageAssetEntity();
         img.setId(9L);
         img.setSource("upload");
@@ -249,8 +261,8 @@ class ImageEmbeddingServiceTest {
 
         service.embedOne(img);   // self == null（未反射注入）
 
-        verify(embMapper).deleteByImageId(9L);
-        verify(embMapper).insert(9L, "[0.5]", "a", null);
+        verify(vectorStoreService).upsert(eq("IMAGE"), eq(9L), isNull(), eq("IMAGE"), isNull(),
+                eq(true), any(), eq("a"), eq("[0.5]"));
     }
 
     /**
@@ -260,6 +272,7 @@ class ImageEmbeddingServiceTest {
      */
     @Test
     void embedOne_经自注入代理走独立事务路径() {
+        setStore(vectorStoreService);
         ImageEmbeddingService spySelf = org.mockito.Mockito.spy(service);
         setSelf(service, spySelf);
 
@@ -274,8 +287,8 @@ class ImageEmbeddingServiceTest {
 
         // 经代理（独立事务边界）——直写由代理内的真实实现完成
         verify(spySelf).persistVector(9L, "[0.5]", "a");
-        verify(embMapper).deleteByImageId(9L);
-        verify(embMapper).insert(9L, "[0.5]", "a", null);
+        verify(vectorStoreService).upsert(eq("IMAGE"), eq(9L), isNull(), eq("IMAGE"), isNull(),
+                eq(true), any(), eq("a"), eq("[0.5]"));
     }
 
     /** 反射注入 self（生产由 Spring @Autowired @Lazy 装配；单测无容器）。 */
@@ -312,7 +325,9 @@ class ImageEmbeddingServiceTest {
 
     @Test
     void rebuildMissing_无缺失时零副作用() {
-        when(embMapper.findImageIdsWithoutEmbedding(any())).thenReturn(List.of());
+        setStore(vectorStoreService);
+        when(vectorStoreService.refIdsByDomain(eq("IMAGE"), any())).thenReturn(java.util.Set.of());
+        when(imageMapper.selectList(any())).thenReturn(List.of());
 
         com.sparkora.ai.EmbedStats st = service.rebuildMissing();
 
@@ -323,11 +338,33 @@ class ImageEmbeddingServiceTest {
     }
 
     @Test
-    void deleteByImageId_物理清向量() {
-        when(embMapper.deleteByImageId(3L)).thenReturn(1);
+    void rebuildMissing_有缺失时补嵌() {
+        setStore(vectorStoreService);
+        when(vectorStoreService.refIdsByDomain(eq("IMAGE"), any()))
+                .thenReturn(java.util.Set.of(1L));   // 已有 1，缺 2
+        ImageAssetEntity a = new ImageAssetEntity();
+        a.setId(1L);
+        ImageAssetEntity b = new ImageAssetEntity();
+        b.setId(2L);
+        when(imageMapper.selectList(any())).thenReturn(List.of(a, b));
+        when(imageMapper.selectBatchIds(List.of(2L))).thenReturn(List.of(b));
+        when(tagService.tagNamesOf(2L)).thenReturn(List.of());
+        when(embeddingClient.embed(anyString())).thenReturn("[0]");
+
+        com.sparkora.ai.EmbedStats st = service.rebuildMissing();
+
+        assertEquals(1, st.total());
+        assertEquals(1, st.success());
+        verify(imageMapper).selectBatchIds(List.of(2L));
+    }
+
+    @Test
+    void deleteByImageId_物理清store向量() {
+        setStore(vectorStoreService);
+        when(vectorStoreService.deleteByRef(eq("IMAGE"), any())).thenReturn(1);
         service.deleteByImageId(3L);
         service.deleteByImageId(null);   // 无副作用
-        verify(embMapper).deleteByImageId(3L);
+        verify(vectorStoreService).deleteByRef("IMAGE", List.of(3L));
     }
 
     @Test

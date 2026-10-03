@@ -94,7 +94,7 @@ public class VectorStoreService implements SearchStore {
     }
 
     /**
-     * 单车型 CAR 域检索（对齐旧 {@code CarDocEmbeddingMapper.searchTopK}：{@code model_id} 过滤）。
+     * 单车型 CAR 域检索（{@code modelId} 过滤；语义对齐 E6 前旧表 {@code searchTopK}）。
      * 过滤：{@code domain == CAR && modelId == modelId && active && embeddingModel}。
      */
     @Override
@@ -237,16 +237,77 @@ public class VectorStoreService implements SearchStore {
         return n;
     }
 
-    /** 当前 store 中已存在行 id 集（回填差集用）。异常仅 warn 返回空集。 */
-    public java.util.Set<String> existingIds() {
+    // ==================== 统计 / 差集（E6：旧 4 表退役后改查 store） ====================
+
+    /**
+     * 按 {@code domain + embeddingModel} 聚合行数（{@code EmbeddingModelReconcileRunner} 对账用）。
+     * 返回行：{@code domain / model / cnt}；异常仅 warn 返回空表。
+     */
+    public List<Map<String, Object>> embeddingModelStats() {
+        JdbcTemplate jt = nativeClient();
+        if (jt == null) return List.of();
+        try {
+            return jt.queryForList(
+                    "SELECT (metadata->>'domain') AS \"domain\", (metadata->>'embeddingModel') AS \"model\", "
+                            + "COUNT(*) AS \"cnt\" FROM vector_store GROUP BY 1, 2");
+        } catch (Exception e) {
+            log.warn("读取 store 模型聚合失败(按空表处理): {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * 各 CAR 车型「有当前模型向量」的**未逻辑删除块**数（{@code vectorStats} 对账用；不拉向量本体）。
+     * JOIN `sparkora_car_chunk ... deleted = 0`，与原 `countByModel` 的 LEFT JOIN 活表语义一致——
+     * store 中残留的已删块向量不计入 embeddedCount。返回行：{@code modelId / embeddedCount}。异常仅 warn 返回空表。
+     */
+    public List<Map<String, Object>> countCarEmbeddedByModel(String embeddingModel) {
+        JdbcTemplate jt = nativeClient();
+        if (jt == null) return List.of();
+        try {
+            return jt.queryForList(
+                    "SELECT (v.metadata->>'modelId')::bigint AS \"modelId\", COUNT(*) AS \"embeddedCount\" "
+                            + "FROM vector_store v "
+                            + "JOIN sparkora_car_chunk c ON c.id = (v.metadata->>'refId')::bigint AND c.deleted = 0 "
+                            + "WHERE (v.metadata->>'domain') = ? AND (v.metadata->>'embeddingModel') = ? GROUP BY 1",
+                    VectorDomain.CAR.name(), embeddingModel);
+        } catch (Exception e) {
+            log.warn("读取 store 车型向量对账失败(按空表处理): {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * 指定域内「已有当前模型向量」的 refId 集（差集补齐用，如图片 {@code rebuildMissing}）。
+     * 异常仅 warn 返回空集。
+     */
+    public java.util.Set<Long> refIdsByDomain(String domain, String embeddingModel) {
         JdbcTemplate jt = nativeClient();
         if (jt == null) return java.util.Set.of();
         try {
-            List<String> ids = jt.queryForList("SELECT id::text FROM vector_store", String.class);
-            return new java.util.HashSet<>(ids);
+            List<Map<String, Object>> rows = jt.queryForList(
+                    "SELECT DISTINCT (metadata->>'refId') AS \"refId\" FROM vector_store "
+                            + "WHERE (metadata->>'domain') = ? AND (metadata->>'embeddingModel') = ?",
+                    domain, embeddingModel);
+            java.util.Set<Long> out = new java.util.HashSet<>();
+            for (Map<String, Object> r : rows) {
+                Long id = asLong(r.get("refId"));
+                if (id != null) out.add(id);
+            }
+            return out;
         } catch (Exception e) {
-            log.warn("读取 store 已有 id 集失败(按空集处理): {}", e.getMessage());
+            log.warn("读取 store 域 refId 集失败(按空集处理) domain={}: {}", domain, e.getMessage());
             return java.util.Set.of();
+        }
+    }
+
+    private static Long asLong(Object o) {
+        if (o == null) return null;
+        if (o instanceof Number n) return n.longValue();
+        try {
+            return Long.valueOf(String.valueOf(o));
+        } catch (Exception e) {
+            return null;
         }
     }
 

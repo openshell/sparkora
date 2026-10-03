@@ -2,11 +2,11 @@ package com.sparkora.car.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.sparkora.ai.EmbeddingBatchRunner;
+import com.sparkora.ai.vector.VectorStoreService;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.config.AiProperties;
 import com.sparkora.domain.entity.CarChunkEntity;
 import com.sparkora.domain.entity.CarModelEntity;
-import com.sparkora.mapper.CarDocEmbeddingMapper;
 import com.sparkora.mapper.CarChunkMapper;
 import com.sparkora.mapper.CarModelMapper;
 import com.sparkora.mapper.CarParamCleanMapper;
@@ -19,9 +19,10 @@ import java.lang.reflect.Field;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -30,11 +31,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * CAR 写入事务边界单测（09-27 R3/AC6）。
+ * CAR 写入事务边界单测（09-27 R3/AC6；10-03 E6 旧表退役）。
  *
  * 断言：rebuildForModel 的持久化经自注入代理（self）走独立事务方法 {@code persistCarChunk}；
  * 修复此前 {@code @Transactional insertDocWithEmbedding} 由线程池 lambda 内 this 直调、代理不生效的问题。
- * doc 插入与向量插入同在 {@code persistCarChunk} 内（先 doc 后向量），失败则一并回滚。
+ * chunk 插入与向量写入（单表 store）同在 {@code persistCarChunk} 内，不再写旧表。
  */
 class CarChunkTransactionTest {
 
@@ -53,12 +54,22 @@ class CarChunkTransactionTest {
         }
     }
 
+    private static void setStore(CarChunkService target, VectorStoreService store) {
+        try {
+            Field f = CarChunkService.class.getDeclaredField("vectorStoreService");
+            f.setAccessible(true);
+            f.set(target, store);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private CarChunkService newService(CarModelMapper modelMapper, CarParamGroupMapper groupMapper,
                                      CarVersionMapper versionMapper, CarParamCleanMapper cleanMapper,
-                                     CarChunkMapper docMapper, CarDocEmbeddingMapper embMapper,
+                                     CarChunkMapper docMapper,
                                      EmbeddingClient client) {
         return new CarChunkService(modelMapper, groupMapper, cleanMapper, versionMapper,
-                docMapper, embMapper, client, new EmbeddingBatchRunner(client), new ObjectMapper());
+                docMapper, client, new EmbeddingBatchRunner(client), new ObjectMapper());
     }
 
     @Test
@@ -68,10 +79,9 @@ class CarChunkTransactionTest {
         CarVersionMapper versionMapper = mock(CarVersionMapper.class);
         CarParamCleanMapper cleanMapper = mock(CarParamCleanMapper.class);
         CarChunkMapper docMapper = mock(CarChunkMapper.class);
-        CarDocEmbeddingMapper embMapper = mock(CarDocEmbeddingMapper.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         CarChunkService service = newService(modelMapper, groupMapper, versionMapper, cleanMapper,
-                docMapper, embMapper, client);
+                docMapper, client);
         CarChunkService spySelf = spy(service);
         setSelf(service, spySelf);
 
@@ -90,16 +100,17 @@ class CarChunkTransactionTest {
     }
 
     @Test
-    void persistCarChunk_先插doc后插向量() {
+    void persistCarChunk_先插doc后写store向量() {
         CarModelMapper modelMapper = mock(CarModelMapper.class);
         CarParamGroupMapper groupMapper = mock(CarParamGroupMapper.class);
         CarVersionMapper versionMapper = mock(CarVersionMapper.class);
         CarParamCleanMapper cleanMapper = mock(CarParamCleanMapper.class);
         CarChunkMapper docMapper = mock(CarChunkMapper.class);
-        CarDocEmbeddingMapper embMapper = mock(CarDocEmbeddingMapper.class);
+        VectorStoreService store = mock(VectorStoreService.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         CarChunkService service = newService(modelMapper, groupMapper, versionMapper, cleanMapper,
-                docMapper, embMapper, client);
+                docMapper, client);
+        setStore(service, store);
 
         CarChunkEntity doc = new CarChunkEntity();
         doc.setModelId(39L);
@@ -110,9 +121,10 @@ class CarChunkTransactionTest {
 
         service.persistCarChunk(doc, "[0.1,0.2]");
 
-        var inOrder = inOrder(docMapper, embMapper);
+        var inOrder = inOrder(docMapper, store);
         inOrder.verify(docMapper).insert(doc);
-        inOrder.verify(embMapper).insert(eq(777L), eq(39L), eq("[0.1,0.2]"), any());
+        inOrder.verify(store).upsert(eq("CAR"), eq(777L), eq(39L), eq("MODEL_INFO"),
+                any(), anyBoolean(), any(), anyString(), eq("[0.1,0.2]"));
     }
 
     @Test
@@ -122,10 +134,11 @@ class CarChunkTransactionTest {
         CarVersionMapper versionMapper = mock(CarVersionMapper.class);
         CarParamCleanMapper cleanMapper = mock(CarParamCleanMapper.class);
         CarChunkMapper docMapper = mock(CarChunkMapper.class);
-        CarDocEmbeddingMapper embMapper = mock(CarDocEmbeddingMapper.class);
+        VectorStoreService store = mock(VectorStoreService.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         CarChunkService service = newService(modelMapper, groupMapper, versionMapper, cleanMapper,
-                docMapper, embMapper, client);
+                docMapper, client);
+        setStore(service, store);
 
         CarModelEntity m = new CarModelEntity();
         m.setId(39L);
@@ -137,6 +150,8 @@ class CarChunkTransactionTest {
         service.rebuildForModel(39L);   // self == null
 
         verify(docMapper).insert(any(CarChunkEntity.class));
-        verify(embMapper).insert(any(), anyLong(), anyString(), any());
+        // 未回填 id → refId 为 null（降级直写场景）；modelId 来自实体
+        verify(store).upsert(eq("CAR"), isNull(), eq(39L), any(), any(), anyBoolean(),
+                any(), anyString(), any());
     }
 }

@@ -11,7 +11,6 @@ import com.sparkora.domain.entity.ImageAssetEntity;
 import com.sparkora.domain.entity.NewsEntity;
 import com.sparkora.image.embed.ImageEmbeddingTextBuilder;
 import com.sparkora.mapper.ImageAssetMapper;
-import com.sparkora.mapper.ImageEmbeddingMapper;
 import com.sparkora.mapper.NewsMapper;
 import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
@@ -55,7 +54,6 @@ public class ImageEmbeddingService {
     /** 标签预过滤候选集截断保底（与 ImageService.list 的 tag 筛选口径一致）。 */
     static final int MAX_TAG_CANDIDATES = 500;
 
-    private final ImageEmbeddingMapper embMapper;
     private final ImageAssetMapper imageMapper;
     private final EmbeddingClient embeddingClient;
     private final ImageTagService tagService;
@@ -79,12 +77,11 @@ public class ImageEmbeddingService {
     @Autowired(required = false)
     private com.sparkora.ai.vector.SearchStore searchStore;
 
-    public ImageEmbeddingService(ImageEmbeddingMapper embMapper, ImageAssetMapper imageMapper,
+    public ImageEmbeddingService(ImageAssetMapper imageMapper,
                                  EmbeddingClient embeddingClient, ImageTagService tagService,
                                  ImageStorage imageStorage, AiProperties aiProps,
                                  ObjectProvider<QiniuProperties> qiniuProps,
                                  ObjectProvider<NewsMapper> newsMapper) {
-        this.embMapper = embMapper;
         this.imageMapper = imageMapper;
         this.embeddingClient = embeddingClient;
         this.tagService = tagService;
@@ -129,9 +126,8 @@ public class ImageEmbeddingService {
     }
 
     private void persistVectorInline(Long imageId, String vec, String text) {
-        embMapper.deleteByImageId(imageId);
-        embMapper.insert(imageId, vec, text, embeddingClient.modelName());
-        // 10-03 E1:同步单表 store（domain=IMAGE,content=嵌入文本,refId=imageId）
+        // 10-03 E6:旧向量表已退役,只写单表 store
+        // （domain=IMAGE,content=嵌入文本,refId=imageId；同 id upsert 天然幂等,无需先删）
         if (vectorStoreService != null) {
             ImageAssetEntity img = imageMapper.selectById(imageId);
             String name = img == null ? null : img.getFileName();
@@ -167,14 +163,36 @@ public class ImageEmbeddingService {
         return rebuild(all);
     }
 
-    /** 仅补缺失：只处理无向量的图（LEFT JOIN 差集），启动 runner 用；重跑无缺失即零副作用。 */
+    /**
+     * 仅补缺失：只处理无**当前模型**向量的图（图库 id 全集 − store 中已有 refId 差集），启动 runner 用；
+     * 重跑无缺失即零副作用。10-03 E6：差集改查单表 store（{@code domain=IMAGE} + 当前模型），
+     * 语义与原旧表 LEFT JOIN 差集一致。
+     */
     public EmbedStats rebuildMissing() {
-        List<Long> missing = embMapper.findImageIdsWithoutEmbedding(embeddingClient.modelName());
+        List<Long> missing = findImageIdsWithoutEmbedding(embeddingClient.modelName());
         if (missing == null || missing.isEmpty()) return new EmbedStats(0, 0, 0);
-        List<ImageAssetEntity> imgs = imageMapper.selectBatchIds(missing);
+        List<ImageAssetEntity> imgs = new ArrayList<>(imageMapper.selectBatchIds(missing));
         // selectBatchIds 不保证顺序（且为 IN 查询），按 id 升序处理便于日志对照
         imgs.sort(java.util.Comparator.comparing(ImageAssetEntity::getId));
         return rebuild(imgs);
+    }
+
+    /**
+     * 无**当前模型**向量的图片 id 集（rebuildMissing 差集）：图库 id 全集 − store(domain=IMAGE, 当前模型)
+     * 已有 refId 集。10-03 E6：原实现查旧向量表 LEFT JOIN 差集，现改查单表 store。
+     * store 未注入（单测直接 new）时视为无缺失（返回空表）。
+     */
+    private List<Long> findImageIdsWithoutEmbedding(String model) {
+        if (vectorStoreService == null) return List.of();
+        java.util.Set<Long> embedded =
+                vectorStoreService.refIdsByDomain(com.sparkora.ai.vector.VectorDomain.IMAGE.name(), model);
+        List<ImageAssetEntity> all = imageMapper.selectList(
+                new QueryWrapper<ImageAssetEntity>().orderByAsc("id"));
+        List<Long> missing = new ArrayList<>();
+        for (ImageAssetEntity img : all) {
+            if (img.getId() != null && !embedded.contains(img.getId())) missing.add(img.getId());
+        }
+        return missing;
     }
 
     /** 逐图重建的公共实现：单图失败 warn 跳过，不阻断整体。 */
@@ -199,14 +217,14 @@ public class ImageEmbeddingService {
         return new EmbedStats(list.size(), ok, fail);
     }
 
-    /** 删图联动（ImageService.delete 调用）：物理清该图向量（关系行生命周期 = 图片生命周期）。 */
+    /** 删图联动（ImageService.delete 调用）：物理清该图 store 向量（行生命周期 = 图片生命周期）。 */
     public void deleteByImageId(Long imageId) {
         if (imageId == null) return;
-        int n = embMapper.deleteByImageId(imageId);
         if (vectorStoreService != null) {
-            vectorStoreService.deleteByRef(com.sparkora.ai.vector.VectorDomain.IMAGE.name(), List.of(imageId));
+            int n = vectorStoreService.deleteByRef(
+                    com.sparkora.ai.vector.VectorDomain.IMAGE.name(), List.of(imageId));
+            if (n > 0) log.debug("删除图片向量 image={} rows={}", imageId, n);
         }
-        if (n > 0) log.debug("删除图片向量 image={} rows={}", imageId, n);
     }
 
     /**

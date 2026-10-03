@@ -9,14 +9,15 @@ import com.sparkora.car.dto.GoodsInfoDto;
 import com.sparkora.car.dto.GoodsParamsDto;
 import com.sparkora.car.dto.CarModelDetailDto;
 import com.sparkora.car.dto.CleanStats;
+import com.sparkora.domain.entity.CarChunkEntity;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.CarParamCleanEntity;
 import com.sparkora.domain.entity.CarParamEntity;
 import com.sparkora.domain.entity.CarParamGroupEntity;
 import com.sparkora.domain.entity.CarVersionEntity;
 import com.sparkora.domain.entity.ImageAssetEntity;
+import com.sparkora.mapper.CarChunkMapper;
 import com.sparkora.mapper.CarModelMapper;
-import com.sparkora.mapper.CarDocEmbeddingMapper;
 import com.sparkora.mapper.CarParamCleanMapper;
 import com.sparkora.mapper.CarParamGroupMapper;
 import com.sparkora.mapper.CarParamMapper;
@@ -63,7 +64,7 @@ public class CarModelService {
     private final CarParamCleanMapper cleanMapper;
     private final CarChunkService docService;
     private final CarCleanService cleanService;
-    private final CarDocEmbeddingMapper embStatsMapper;
+    private final CarChunkMapper chunkMapper;
     private final ImageAssetMapper imageMapper;
     private final com.sparkora.service.ImageService imageService;
     private final ImageStorage imageStorage;
@@ -82,7 +83,7 @@ public class CarModelService {
                            CarVersionMapper versionMapper, CarParamGroupMapper groupMapper,
                            CarParamMapper paramMapper, CarParamCleanMapper cleanMapper,
                            CarChunkService docService, CarCleanService cleanService,
-                           CarDocEmbeddingMapper embStatsMapper,
+                           CarChunkMapper chunkMapper,
                            ImageAssetMapper imageMapper, ImageStorage imageStorage, ObjectMapper json,
                            com.sparkora.service.ImageService imageService,
                            com.sparkora.car.client.EmbeddingClient embeddingClient,
@@ -95,7 +96,7 @@ public class CarModelService {
         this.cleanMapper = cleanMapper;
         this.docService = docService;
         this.cleanService = cleanService;
-        this.embStatsMapper = embStatsMapper;
+        this.chunkMapper = chunkMapper;
         this.imageMapper = imageMapper;
         this.imageStorage = imageStorage;
         this.json = json;
@@ -243,7 +244,7 @@ public class CarModelService {
         groupMapper.delete(new QueryWrapper<CarParamGroupEntity>().eq("model_id", id));
         paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", id));
         docService.deleteByModel(id);
-        embStatsMapper.deleteByModelId(id);
+        // 10-03 E6:旧向量表已退役,仅按 modelId 兜底物理清 store（含历史逻辑删除块残留）
         if (vectorStoreService != null) vectorStoreService.deleteByCarModel(id);
     }
 
@@ -286,14 +287,30 @@ public class CarModelService {
         List<CarModelEntity> models = modelMapper.selectList(null);
         Map<Long, String> nameById = new java.util.LinkedHashMap<>();
         for (CarModelEntity m : models) nameById.put(m.getId(), m.getName());
-        // 每车型「块数 vs 有向量块数」一次 SQL(embStatsMapper 按注解 SQL 统计,不拉向量本体)
+        // 10-03 E6:旧表退役,对账改查单表 store:
+        //  - chunkCount:未逻辑删除块数(主表权威)
+        //  - embeddedCount:store(domain=CAR + 当前模型)按 modelId 聚合的块数
+        Map<Long, Long> chunkByModel = new java.util.LinkedHashMap<>();
+        for (CarChunkEntity c : chunkMapper.selectList(null)) {
+            if (c.getModelId() != null) chunkByModel.merge(c.getModelId(), 1L, Long::sum);
+        }
+        // store(domain=CAR + 当前模型)按 modelId 的有向量块数
+        Map<Long, Long> embeddedByModel = new java.util.LinkedHashMap<>();
+        List<Map<String, Object>> rows = vectorStoreService == null
+                ? List.of() : vectorStoreService.countCarEmbeddedByModel(embeddingClient.modelName());
+        for (Map<String, Object> row : rows) {
+            if (row.get("modelId") == null) continue;
+            embeddedByModel.put(((Number) row.get("modelId")).longValue(),
+                    ((Number) row.get("embeddedCount")).longValue());
+        }
+        // 以块表为权威遍历每个车型：块数 − store 当前模型块数 = 缺失；store 未覆盖的车型缺失 = 全部块数
         int chunkCount = 0, embedded = 0;
         List<Map<String, Object>> missingTopN = new ArrayList<>();
-        for (Map<String, Object> row : embStatsMapper.countByModel(embeddingClient.modelName())) {
-            long modelId = ((Number) row.get("modelId")).longValue();
-            long total = ((Number) row.get("chunkCount")).longValue();
-            long emb = ((Number) row.get("embeddedCount")).longValue();
-            long missing = total - emb;
+        for (Map.Entry<Long, Long> e : chunkByModel.entrySet()) {
+            long modelId = e.getKey();
+            long total = e.getValue();
+            long emb = embeddedByModel.getOrDefault(modelId, 0L);
+            long missing = Math.max(0, total - emb);
             chunkCount += (int) total;
             embedded += (int) emb;
             if (missing > 0) {

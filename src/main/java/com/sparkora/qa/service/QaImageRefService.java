@@ -39,7 +39,7 @@ import java.util.Map;
  *       {@code QaService} 调用处亦再包一层 try/catch。配图是附加展示，答案可用性优先。</li>
  *   <li><b>只读</b>：只做 select（news_doc / news / image_asset）与图片向量检索，
  *       不写任何用户内容（不插入正文、不改答案文本）；无批准流程（区别于子C）。</li>
- *   <li><b>不改检索语义</b>：不触碰 {@code searchTopKUnified} SQL 与配额，只消费其 citations。</li>
+ *   <li><b>不改检索语义</b>：不触碰统一检索（单表 store）与配额，只消费其 citations。</li>
  * </ul>
  */
 @Slf4j

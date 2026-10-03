@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移（不得改已应用脚本）、REQUIRES_NEW、@Order、向量模型防护——E6 DROP 迁移与 stats/reconcile 改造依据"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "检索/store 契约与 E1-E5 新增 Scenario——退役旧表必须保持这些契约"}
+{"file": ".trellis/tasks/10-03-vector-pgstore-kb/design.md", "reason": "父任务设计：单表 store 为唯一真源；旧表退役属收尾"}
+{"file": ".trellis/tasks/10-03-e6-decommission-old-tables/prd.md", "reason": "E6 需求/验收/回退"}

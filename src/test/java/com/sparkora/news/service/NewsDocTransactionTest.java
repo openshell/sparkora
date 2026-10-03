@@ -1,11 +1,11 @@
 package com.sparkora.news.service;
 
 import com.sparkora.ai.EmbeddingBatchRunner;
+import com.sparkora.ai.vector.VectorStoreService;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.config.AiProperties;
 import com.sparkora.domain.entity.NewsDocEntity;
 import com.sparkora.domain.entity.NewsEntity;
-import com.sparkora.mapper.NewsDocEmbeddingMapper;
 import com.sparkora.mapper.NewsDocMapper;
 import com.sparkora.mapper.NewsMapper;
 import org.junit.jupiter.api.Test;
@@ -14,7 +14,6 @@ import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -26,10 +25,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * NEWS 写入事务边界单测（09-27 R3/AC6）。
+ * NEWS 写入事务边界单测（09-27 R3/AC6；10-03 E6 旧表退役）。
  *
  * 断言：embed 在事务外、持久化经自注入代理（self）走独立事务方法 {@code persistNewsDoc}；
- * 修复此前 {@code @Transactional insertDocWithEmbedding} 同类直调失效（线程池 lambda 内 this 调用绕过代理）。
+ * 向量只写单表 store（不再写旧表）；修复此前 {@code @Transactional insertDocWithEmbedding} 同类直调失效。
  */
 class NewsDocTransactionTest {
 
@@ -56,14 +55,23 @@ class NewsDocTransactionTest {
         }
     }
 
+    private static void setStore(NewsDocService target, VectorStoreService store) {
+        try {
+            Field f = NewsDocService.class.getDeclaredField("vectorStoreService");
+            f.setAccessible(true);
+            f.set(target, store);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     @Test
     void rebuild_经自注入代理走独立事务持久化() {
         NewsMapper newsMapper = mock(NewsMapper.class);
         NewsDocMapper docMapper = mock(NewsDocMapper.class);
-        NewsDocEmbeddingMapper embMapper = mock(NewsDocEmbeddingMapper.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
         EmbeddingBatchRunner runner = new EmbeddingBatchRunner(client);
-        NewsDocService service = new NewsDocService(newsMapper, docMapper, embMapper, client, runner);
+        NewsDocService service = new NewsDocService(newsMapper, docMapper, client, runner);
         NewsDocService spySelf = spy(service);
         setSelf(service, spySelf);
 
@@ -81,37 +89,41 @@ class NewsDocTransactionTest {
     }
 
     @Test
-    void persistNewsDoc_先插doc后插向量_带当前模型名() {
+    void persistNewsDoc_先插doc后写store向量() {
         NewsMapper newsMapper = mock(NewsMapper.class);
         NewsDocMapper docMapper = mock(NewsDocMapper.class);
-        NewsDocEmbeddingMapper embMapper = mock(NewsDocEmbeddingMapper.class);
+        VectorStoreService store = mock(VectorStoreService.class);
         FakeEmbeddingClient client = new FakeEmbeddingClient();
-        NewsDocService service = new NewsDocService(newsMapper, docMapper, embMapper, client,
+        NewsDocService service = new NewsDocService(newsMapper, docMapper, client,
                 new EmbeddingBatchRunner(client));
+        setStore(service, store);
 
         NewsDocEntity doc = new NewsDocEntity();
         doc.setNewsId(9L);
         doc.setSeq(0);
         doc.setChunkText("新闻：标题\n正文。");
+        doc.setNewsTitle("标题");
         // 模拟 MyBatis-Plus 回填自增 id
         doAnswer(inv -> { ((NewsDocEntity) inv.getArgument(0)).setId(123L); return 1; })
                 .when(docMapper).insert(any(NewsDocEntity.class));
 
         service.persistNewsDoc(doc, "[0.1,0.2]");
 
-        var inOrder = inOrder(docMapper, embMapper);
+        var inOrder = inOrder(docMapper, store);
         inOrder.verify(docMapper).insert(doc);
-        inOrder.verify(embMapper).insert(eq(123L), eq(9L), eq("[0.1,0.2]"), anyString());
+        inOrder.verify(store).upsert(eq("NEWS"), eq(123L), eq(null), eq(null),
+                eq("标题"), eq(true), eq("test-embed"), anyString(), eq("[0.1,0.2]"));
     }
 
     @Test
     void rebuild_无正文无标题_不调embedding不持久化() {
         NewsMapper newsMapper = mock(NewsMapper.class);
         NewsDocMapper docMapper = mock(NewsDocMapper.class);
-        NewsDocEmbeddingMapper embMapper = mock(NewsDocEmbeddingMapper.class);
+        VectorStoreService store = mock(VectorStoreService.class);
         FakeEmbeddingClient client = mock(FakeEmbeddingClient.class);
         EmbeddingBatchRunner runner = new EmbeddingBatchRunner(client);
-        NewsDocService service = new NewsDocService(newsMapper, docMapper, embMapper, client, runner);
+        NewsDocService service = new NewsDocService(newsMapper, docMapper, client, runner);
+        setStore(service, store);
 
         NewsEntity n = new NewsEntity();
         n.setId(9L);
@@ -122,6 +134,7 @@ class NewsDocTransactionTest {
         service.rebuildForNews(9L);
 
         verify(client, never()).embed(anyString());
-        verify(embMapper, never()).insert(anyLong(), anyLong(), anyString(), anyString());
+        verify(store, never()).upsert(anyString(), any(), any(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyString(), anyString());
     }
 }

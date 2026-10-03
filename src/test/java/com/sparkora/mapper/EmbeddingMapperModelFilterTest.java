@@ -1,84 +1,102 @@
 package com.sparkora.mapper;
 
-import org.apache.ibatis.annotations.Select;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.ai.vector.VectorStoreService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.lang.reflect.Method;
+import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
- * 向量 mapper SQL 契约单测（09-27 R5/AC9）。
+ * 向量层模型过滤契约单测（09-27 R5/AC9；10-03 E6 旧表退役后改验单表 store）。
  *
- * 纯反射读取注解 SQL，断言 4 条检索查询均含 {@code embedding_model} 过滤
- * （换模型后旧模型行不再参与检索，不静默混空间），以及写入/对账口径的模型参数。
+ * <p>旧 4 表退役后，模型过滤不再由各 mapper 的注解 SQL 承载，而收敛到 {@link VectorStoreService}：
+ * <ul>
+ *   <li>检索过滤表达式固定带 {@code embeddingModel == 当前模型}（换模型后旧行不参与检索）；</li>
+ *   <li>store 统计/差集 SQL 带 {@code metadata->>'embeddingModel'} 条件。</li>
+ * </ul>
  * 不需要连库。
  */
 class EmbeddingMapperModelFilterTest {
 
-    private static String selectSql(Class<?> mapper, String method, Class<?>... params) throws Exception {
-        Method m = mapper.getMethod(method, params);
-        Select s = m.getAnnotation(Select.class);
-        return String.join(" ", s.value());
+    @SuppressWarnings("unchecked")
+    private static VectorStore mockStore(JdbcTemplate jt) {
+        VectorStore vs = mock(VectorStore.class);
+        when(vs.getNativeClient()).thenReturn(Optional.of(jt));
+        when(vs.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
+        return vs;
     }
 
     @Test
-    void car检索_按模型过滤() throws Exception {
-        String sql = selectSql(CarDocEmbeddingMapper.class, "searchTopK",
-                Long.class, String.class, int.class, String.class);
-        assertTrue(sql.contains("e.embedding_model = #{model}"), sql);
+    void 检索过滤表达式_带embeddingModel与active与domain() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        VectorStore vs = mockStore(jt);
+        VectorStoreService svc = new VectorStoreService(vs, new ObjectMapper());
+
+        svc.searchDomains(List.of("CAR", "KB"), "q", 32, 0, "current-embed");
+
+        ArgumentCaptor<SearchRequest> req = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(vs).similaritySearch(req.capture());
+        assertTrue(req.getValue().hasFilterExpression(), "必须带 domain/active/embeddingModel 过滤");
+        String filter = req.getValue().getFilterExpression().toString();
+        assertTrue(filter.contains("embeddingModel"), filter);
+        assertTrue(filter.contains("active"), filter);
+        assertTrue(filter.contains("domain"), filter);
     }
 
     @Test
-    void 统一检索三段_均按模型过滤() throws Exception {
-        String sql = selectSql(CarDocEmbeddingMapper.class, "searchTopKUnified",
-                String.class, int.class, String.class);
-        // 三段（CAR/KB/NEWS）各一个过滤条件
-        int count = sql.split("embedding_model = #\\{model\\}", -1).length - 1;
-        assertTrue(count == 3, "统一检索 CAR/KB/NEWS 三段均须过滤,实际 " + count + ": " + sql);
+    void 车型对账SQL_按domain与embeddingModel聚合() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(jt.queryForList(anyString(), anyString(), anyString())).thenReturn(List.of());
+        VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());
+
+        svc.countCarEmbeddedByModel("current-embed");
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jt).queryForList(sql.capture(), anyString(), anyString());
+        assertTrue(sql.getValue().contains("metadata->>'embeddingModel'"), sql.getValue());
+        assertTrue(sql.getValue().contains("metadata->>'domain'"), sql.getValue());
+        assertTrue(sql.getValue().contains("metadata->>'modelId'"), sql.getValue());
     }
 
     @Test
-    void kb检索_按模型过滤() throws Exception {
-        String sql = selectSql(KbChunkEmbeddingMapper.class, "searchTopK",
-                String.class, int.class, String.class);
-        assertTrue(sql.contains("e.embedding_model = #{model}"), sql);
+    void 图片补缺失差集SQL_按domain与embeddingModel过滤() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(jt.queryForList(anyString(), anyString(), anyString())).thenReturn(List.of());
+        VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());
+
+        svc.refIdsByDomain("IMAGE", "current-embed");
+
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jt).queryForList(sql.capture(), anyString(), anyString());
+        assertTrue(sql.getValue().contains("metadata->>'domain'"), sql.getValue());
+        assertTrue(sql.getValue().contains("metadata->>'embeddingModel'"), sql.getValue());
+        assertTrue(sql.getValue().contains("metadata->>'refId'"), sql.getValue());
     }
 
     @Test
-    void 图片检索_按模型过滤() throws Exception {
-        String sql = selectSql(ImageEmbeddingMapper.class, "searchTopK",
-                String.class, java.util.List.class, double.class, int.class, String.class);
-        assertTrue(sql.contains("e.embedding_model = #{model}"), sql);
-    }
+    void 模型聚合SQL_按domain与embeddingModel分组() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        when(jt.queryForList(anyString())).thenReturn(List.of());
+        VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());
 
-    @Test
-    void 车型对账_embeddedCount只计当前模型() throws Exception {
-        String sql = selectSql(CarDocEmbeddingMapper.class, "countByModel", String.class);
-        assertTrue(sql.contains("FILTER (WHERE e.embedding_model = #{model})"), sql);
-    }
+        svc.embeddingModelStats();
 
-    @Test
-    void 图片补缺失_JOIN按模型过滤() throws Exception {
-        String sql = selectSql(ImageEmbeddingMapper.class, "findImageIdsWithoutEmbedding", String.class);
-        assertTrue(sql.contains("e.embedding_model = #{model}"), sql);
-    }
-
-    @Test
-    void 四个写入_insert_均带embedding_model列() throws Exception {
-        String car = selectSqlInsert(CarDocEmbeddingMapper.class, "insert", Long.class, Long.class, String.class, String.class);
-        String kb = selectSqlInsert(KbChunkEmbeddingMapper.class, "insert", Long.class, String.class, String.class);
-        String news = selectSqlInsert(NewsDocEmbeddingMapper.class, "insert", Long.class, Long.class, String.class, String.class);
-        String img = selectSqlInsert(ImageEmbeddingMapper.class, "insert", Long.class, String.class, String.class, String.class);
-        assertTrue(car.contains("embedding_model"), car);
-        assertTrue(kb.contains("embedding_model"), kb);
-        assertTrue(news.contains("embedding_model"), news);
-        assertTrue(img.contains("embedding_model"), img);
-    }
-
-    private static String selectSqlInsert(Class<?> mapper, String method, Class<?>... params) throws Exception {
-        Method m = mapper.getMethod(method, params);
-        org.apache.ibatis.annotations.Insert ins = m.getAnnotation(org.apache.ibatis.annotations.Insert.class);
-        return String.join(" ", ins.value());
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        verify(jt).queryForList(sql.capture());
+        assertTrue(sql.getValue().contains("metadata->>'embeddingModel'"), sql.getValue());
+        assertTrue(sql.getValue().contains("metadata->>'domain'"), sql.getValue());
+        assertTrue(sql.getValue().contains("GROUP BY"), sql.getValue());
     }
 }

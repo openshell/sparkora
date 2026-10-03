@@ -24,7 +24,7 @@ public interface SearchStore {
     List<Document> searchDomains(Collection<String> domains, String query, int topK,
                                  double similarityThreshold, String embeddingModel);
 
-    /** 单车型 CAR 域检索（对齐旧 {@code CarDocEmbeddingMapper.searchTopK} 语义：model_id 过滤）。 */
+    /** 单车型 CAR 域检索（{@code modelId} 过滤；语义对齐 E6 前旧表 {@code searchTopK}）。 */
     List<Document> searchByModel(Long modelId, String query, int topK,
                                  double similarityThreshold, String embeddingModel);
 

@@ -9,7 +9,6 @@ import com.sparkora.domain.entity.CarChunkEntity;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.CarParamCleanEntity;
 import com.sparkora.domain.entity.CarParamGroupEntity;
-import com.sparkora.mapper.CarDocEmbeddingMapper;
 import com.sparkora.mapper.CarChunkMapper;
 import com.sparkora.mapper.CarModelMapper;
 import com.sparkora.mapper.CarParamCleanMapper;
@@ -46,7 +45,6 @@ public class CarChunkService {
     private final CarParamCleanMapper cleanMapper;
     private final CarVersionMapper versionMapper;
     private final CarChunkMapper chunkMapper;
-    private final CarDocEmbeddingMapper embMapper;
     private final EmbeddingClient embeddingClient;
     private final EmbeddingBatchRunner batchRunner;
     private final ObjectMapper json;
@@ -60,7 +58,7 @@ public class CarChunkService {
 
     public CarChunkService(CarModelMapper modelMapper, CarParamGroupMapper groupMapper,
                          CarParamCleanMapper cleanMapper, CarVersionMapper versionMapper,
-                         CarChunkMapper chunkMapper, CarDocEmbeddingMapper embMapper,
+                         CarChunkMapper chunkMapper,
                          EmbeddingClient embeddingClient, EmbeddingBatchRunner batchRunner,
                          ObjectMapper json) {
         this.modelMapper = modelMapper;
@@ -68,7 +66,6 @@ public class CarChunkService {
         this.cleanMapper = cleanMapper;
         this.versionMapper = versionMapper;
         this.chunkMapper = chunkMapper;
-        this.embMapper = embMapper;
         this.embeddingClient = embeddingClient;
         this.batchRunner = batchRunner;
         this.json = json;
@@ -104,7 +101,6 @@ public class CarChunkService {
         List<CarChunkEntity> chunks = chunkMapper.selectList(new QueryWrapper<CarChunkEntity>().eq("model_id", modelId));
         List<Long> chunkIds = new ArrayList<>();
         for (CarChunkEntity d : chunks) {
-            embMapper.deleteByDocId(d.getId());
             if (d.getId() != null) chunkIds.add(d.getId());
         }
         if (vectorStoreService != null && !chunkIds.isEmpty()) {
@@ -124,7 +120,7 @@ public class CarChunkService {
         chunk.setCreatedAt(LocalDateTime.now());
         chunk.setUpdatedAt(LocalDateTime.now());
         chunkMapper.insert(chunk);
-        embMapper.insert(chunk.getId(), chunk.getModelId(), vec, embeddingClient.modelName());
+        // 10-03 E6:旧向量表已退役,只写单表 store
         if (vectorStoreService != null) {
             vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.CAR.name(), chunk.getId(),
                     chunk.getModelId(), chunk.getChunkType(), chunk.getModelName(), true,
