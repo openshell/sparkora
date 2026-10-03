@@ -780,8 +780,17 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
   - 收益同 IMAGE 范式：失败回滚不留孤儿块；`REQUIRES_NEW` 不污染调用方（`NewsService.upsertOne` 为 `@Transactional`）事务。
 - **向量模型名防护**：4 张向量表加 `embedding_model`；写入盖 `modelName()`、检索加 `embedding_model = #{model}`、对账/补齐口径同模型过滤；V3 用 Flyway placeholder 回填存量行 = 实际配置模型。详见 database-guidelines.md「向量模型名防护」。
 - **维度 fail-fast**：`embedList` 返回长度 ≠ `embeddingDim` 抛 `AiException`（含实际/期望与模型名）。
-- **embedding 后端 = Spring AI `EmbeddingModel`（C5）**：`EmbeddingClient` 内部改调 `EmbeddingModel.embed(text)`（OpenAI 兼容，指向 axonhub），**删除**原自研 RestClient/Jackson 调用；公共签名（`embed`/`embedList`/`modelName`/`toPgVector`）不变，8 个生产调用点与既有测试零改动。精度路径由 JSON→`List<Double>` 改为 SDK `float[]`→`double`，但 pgvector `vector` 本就是 float4，**检索结果 parity 不受影响**。**不建** `vector_store` 表、**不新增** Flyway 迁移、**不引** `PgVectorStore` 生命周期。~~「4 表全迁 `PgVectorStore`」~~（C5 勘察推翻：`PgVectorStore` 是 content 与 embedding 同表 + metadata filter 模型，无法表达现有检索依赖的 **JOIN 活表语义**（`car_doc.deleted=0`/`kb_doc.enabled=TRUE`/`news_doc.deleted=0`）；全量替换需反规范化正文 + 活表同步层，违背 C5 自身 parity AC → 推迟为 Scope B，见 `.trellis/tasks/archive/2026-10/10-02-c5-pgvector-store/research/c5-vector-store-mismatch.md`）。
-  - **注意**：C0 引入的 `spring-ai-starter-vector-store-pgvector` 会在运行期惰性装配一个 `PgVectorStore` bean（`initialize-schema` 默认 false → 不建表、无副作用）；**不得**开启 `spring.ai.vectorstore.pgvector.initialize-schema=true`（会在 Flyway 之外建并行 `vector_store` 表，违反迁移约定）。
+- **embedding 后端 = Spring AI `EmbeddingModel`（C5）**：`EmbeddingClient` 内部改调 `EmbeddingModel.embed(text)`（OpenAI 兼容，指向 axonhub），**删除**原自研 RestClient/Jackson 调用；公共签名（`embed`/`embedList`/`modelName`/`toPgVector`）不变，8 个生产调用点与既有测试零改动。精度路径由 JSON→`List<Double>` 改为 SDK `float[]`→`double`，但 pgvector `vector` 本就是 float4，**检索结果 parity 不受影响**。
+- **检索存储 = Spring AI `PgVectorStore` 单表（E1，2026-10-03；**推翻 C5 的 Scope B 推迟**）**：C5 曾以「`PgVectorStore` 无法表达 JOIN 活表语义」推迟全量迁移；后续用户拍板**先迁 PgVectorStore**，E1 已落地：
+  - 单表 `vector_store(id uuid, content text, metadata json, embedding vector(1024))`（Flyway `V5__pgvector_store.sql`，HNSW `vector_cosine_ops` + metadata GIN；`initializeSchema=false`，**建表由 Flyway 管理，不依赖 Spring 自动建表**）。
+  - `content` = `chunk_text`；`metadata` = `{domain(CAR/KB/NEWS/IMAGE), refId(域内 id：CAR=car_doc.id/KB=kb_chunk.id/NEWS=news_doc.id/IMAGE=image_asset.id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`。**行内 id 经 refId 回填 `Citation.docId`，语义不变**。
+  - **活表语义改由 metadata `active` 承载**（原 JOIN `deleted`/`enabled` 的等价）：软删/停用/重建三路径均须同步 `active`（`VectorStoreService.setActive` 经 native `jsonb_set` 直更，因 Spring AI 无「按 metadata 更新」API）。**漏同步 = 失效块仍被检索**，是最高风险点。
+  - **域隔离候选窗口复现**：`searchDomains([CAR,KB])` 一次 + `searchDomains([NEWS])` 一次（对齐旧 UNION 的按域窗口）——`domain in [...]` 的 Spring AI filter 与旧语义等价。
+  - **读取用 `similaritySearch`**（内部嵌入 query）；**写入/回填复用已算向量**（`VectorStoreService.upsert` 经 JdbcTemplate 直写 `embedding::text`，**不再嵌入**）；确定性 id `UUID.nameUUIDFromBytes(domain+":"+refId)`。
+  - **`embedding_model` 防护等价为 metadata `embeddingModel` 过滤**。
+  - 旧 4 张 embedding 表**保留未删**（回退用），`CarRagService` 业务规则（锚点/配额/门槛/四态/子查询/覆盖度）语义不变。
+  - 详见 `docs/spec/retrieval.md §4.2` 与 `.trellis/tasks/10-03-e1-pgstore-migrate/research/parity-A.md`（阶段 A 逐条对拍）。
+  - **注意**：`spring.ai.vectorstore.pgvector.initialize-schema` 保持 **false**——**不得**开启（会在 Flyway 之外重复建表）；建表/变更一律走 `db/migration/V<n>__*.sql`。
 - **NEWS 手动重建端点**：`POST /api/news/{id}/rebuild`（ADMIN/EDITOR）→ `NewsDocService.rebuildForNews` 返回 `EmbedStats`。不做跨域一键重嵌编排。
 
 ### 4. Validation & Error Matrix

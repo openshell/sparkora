@@ -75,6 +75,19 @@
 - **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）逐表 `GROUP BY embedding_model`，存在非当前模型的行时 WARN（列出模型名+条数，提示重嵌），异常仅 warn 不阻断启动。
 - **重嵌入口**：CAR `POST /api/car/models/rebuild-all`、KB `POST /api/kb/docs/{id}/rebuild`、NEWS `POST /api/news/{id}/rebuild`（09-27 新增）、IMAGE `POST /api/images/embeddings/rebuild`；跨域一键重嵌编排 out of scope。
 
+## 4.2 向量检索层（10-03 E1：Spring AI PgVectorStore 单表，阶段 A）
+
+> 迁移子任务 E1（`.trellis/tasks/10-03-e1-pgstore-migrate`）。旧 4 表保留、未删（可回退）。
+
+- **拓扑**：单张 `vector_store`（Flyway `V5__pgvector_store.sql`；`id uuid / content text / metadata json / embedding vector(1024)`；HNSW cosine + metadata GIN）。`initialize-schema=false`（由 Flyway 建表）；维度/距离/索引由 `spring.ai.vectorstore.pgvector.*` 约定（1024 / cosine / hnsw）。
+- **metadata 契约**：`{domain(CAR|KB|NEWS|IMAGE), refId(域内 id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`；`content` = `chunk_text`（IMAGE 域 = 旧 `source_text`）。
+- **id 确定性**：`UUID.nameUUIDFromBytes(domain+":"+refId)`，供 upsert/delete/setActive 按 id 定位（store 无按 metadata 更新 API）。
+- **读路径**：`CarRagService` 经 `ai.vector.SearchStore`；候选窗按域隔离复现——CAR+KB 合并一次 `similaritySearch` + NEWS 独立一次（`domain in [...] && active && embeddingModel`）+ Java 合并；`similarityThreshold=0`，门槛仍在 Java 侧用 `ragMinScore`/`ragRejectScore` 判定。`ImageEmbeddingService.searchImages` 走 IMAGE 域（可选 `refId ∈ 白名单`）。
+- **活表同步层**：`active` 由写路径 `VectorStoreService.upsert/setActive/deleteByRef` 维护（软删/停用/重建/删父联动）；`CarDocService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService` 的 persist/delete 同步单表。
+- **回填**：`VectorStoreBackfillRunner`（`@Order(50)`，守护线程，幂等差集）从旧表复用已算好的向量（**不重新嵌入**）搬入 store；异常仅 warn 不阻断。
+- **阶段 A 对拍**：`.trellis/tasks/10-03-e1-pgstore-migrate/research/parity-A.md`（7 query 集 × CAR+KB/NEWS/IMAGE，候选集/分数/排序逐条一致）。
+- **契约不变**：`RagResult`/`Citation`/`rag_status`/`rag_citations` 与前端交互零变更。
+
 ---
 
 ## 5. 检索策略升级（S6.2，2026-09-03；修复海狮08 文章价格/续航错误暴露的检索精度缺陷）
@@ -118,6 +131,6 @@
 
 ## 8. 关键实现路径
 
-- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarDocService` 切块/配额/子查询/覆盖度）、`mapper.CarDocEmbeddingMapper.searchTopKUnified`、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。
+- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarDocService` 切块/配额/子查询/覆盖度）、`ai.vector.VectorStoreService`（单表 store 读写/同步，10-03 E1）、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。旧表路径 `mapper.CarDocEmbeddingMapper.searchTopKUnified` 保留（未删，可回退），E1 后不再被 `CarRagService` 调用。
 - 前端：`views/project/deep/CitationList.vue`（引用面板，CAR/KB/NEWS/WEB/MULTI 分支）、`views/project/StepVersions.vue`（版本卡片「引用 N」/降级提示）。
 - 表：`sparkora_article_brief.rag_status/rag_citations`、`sparkora_article_version.rag_status/rag_citations`。

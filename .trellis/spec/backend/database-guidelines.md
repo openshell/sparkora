@@ -370,6 +370,16 @@ ALTER TABLE sparkora_article_version DROP COLUMN IF EXISTS body_image_ids;
 
 **Prevention**: 新增迁移脚本注释开头标明阶段号；提交前自检「脚本未被改动」与「依赖成对」。
 
+### Common Mistake: Boot 4 下只引 `flyway-core` → 迁移静默不执行（10-03 E1 实测）
+
+**Symptom**: 新增迁移脚本后启动**无任何 Flyway 日志**、`flyway_schema_history` 不新增行、目标表未建，但应用照常启动（**静默**，最危险）。
+
+**Cause**: Boot 4 起自动配置按技术拆分模块：Flyway auto-config（`org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration`）从 `spring-boot-autoconfigure` 移入独立 `spring-boot-flyway`（starter = `spring-boot-starter-flyway`）。只把 `flyway-core` / `flyway-database-postgresql` 放进依赖时，**Flyway 自动配置类不在 classpath**，`spring.flyway.*` 全部被忽略（连 `Unsupported Database` 都不会报——因为根本没跑）。本仓 10-03 Boot 4 升级（`e625709`）后即处于该状态，直到 E1 发现。
+
+**Fix**: pom 改引 `org.springframework.boot:spring-boot-starter-flyway`（内含 `spring-boot-flyway`+`flyway-core`），**并显式另加 `org.flywaydb:flyway-database-postgresql`**（starter 不带方言模块，缺失会退化为 `Unsupported Database`）。版本走 Boot BOM。
+
+**Prevention**: 升级 Boot 大版本后，凡「新增迁移未生效」先查启动日志有无 `Database: jdbc:postgresql.../Migrating schema`；无则核对自动配置模块是否随 Boot 拆分而缺失（Boot 4 拆出的模块还包括 `spring-boot-flyway`/`spring-boot-jdbc` 等，starter 是唯一稳妥入口）。
+
 ### Common Mistake: Flyway 版本落后于 PostgreSQL 主版本（仅告警，非阻断）
 
 **Symptom**: 启动日志出现 `Flyway upgrade recommended: PostgreSQL <x> is newer than this version of Flyway`。

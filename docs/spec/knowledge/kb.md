@@ -53,7 +53,7 @@
 
 | 项 | 行为 |
 |---|---|
-| 统一检索 | `searchTopKUnified(queryVec, limit, model)`：车型域与 KB 域（及 NEWS 域）**UNION ALL 同向量空间全库检索**，按余弦分排序；返回行带 `source(CAR/KB/NEWS)`/`modelId`/`chunkType`/`modelName`。「项目关联车型」**不再是检索门禁**——未关联车型也全库检索（修复文章18 类误伤：数据在库却因未关联查不到）。**09-27 起三段各带 `embedding_model = 当前模型` 过滤**（换模型后旧向量不再参与检索） |
+| 统一检索 | `searchTopKUnified(queryVec, limit, model)`：车型域与 KB 域（及 NEWS 域）**UNION ALL 同向量空间全库检索**，按余弦分排序；返回行带 `source(CAR/KB/NEWS)`/`modelId`/`chunkType`/`modelName`。「项目关联车型」**不再是检索门禁**——未关联车型也全库检索（修复文章18 类误伤：数据在库却因未关联查不到）。**09-27 起三段各带 `embedding_model = 当前模型` 过滤**（换模型后旧向量不再参与检索）。**10-03 E1 起运行时读路径改走 Spring AI PgVectorStore 单表**（`ai.vector.SearchStore`，CAR+KB 合并窗 + NEWS 独立窗复现），本行描述的旧 UNION SQL 保留未删、仅作回退；字段/状态契约不变（详见 [../retrieval.md §4.2](../retrieval.md)） |
 | 锚点加权 | 项目关联车型降为**写作锚点**：CAR 块 `modelId ∈ anchor` → `score × AI_RAG_ANCHOR_BOOST`（默认 1.15，上限 1.0 截断）重排；~~前端项目编辑页改「写作锚点车型」文案~~（**2026-09-09：创建页车型选择入口已移除**——创作不与车型绑定，知识库停用期间该字段无生效点；后端关联逻辑与锚点加权保留，存量项目不受影响；新项目无 anchor 即全库无加权） |
 | 配额 | 核心块（`PARAM_GROUP`/`MODEL_INFO`）优先、`RIGHTS`/`FEATURE` ≤1/3、`KB_CHUNK` 独立配额 `AI_RAG_KB_TOPK`；`AI_RAG_KB_ENABLED=false` 时 KB 块在配额层排除（等价 S6 行为，检索仍跑） |
 | 来源标注 | 行内前缀「【车型数据：名称】」/「【通用知识：标题】」/「【官方新闻：标题】」；首行「知识来源：…」按命中构成生成 |

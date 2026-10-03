@@ -26,5 +26,7 @@
 - `V2__article_version_image.sql`（P1-⑦）：`body_image_ids` 逗号列规范化为 `sparkora_article_version_image` 关联表（建表 + 回填 + DROP 旧列，单迁移内完成）。
 - `V3__embedding_model.sql`（P1-⑧）：4 张向量表加 `embedding_model VARCHAR(100)`，回填存量行 = 实际配置模型（Flyway placeholder `${embeddingModel}` ← `spring.flyway.placeholders.embeddingModel` ← `AI_EMBEDDING_MODEL`）；写入盖名、检索按当前模型过滤（换模型后旧行自动失效，不静默混空间）。
 - `V4__content_description_and_brief_reasoning.sql`（10-02-brief-reasoning-maxtokens）：项目表 `extra_info` → `content_description`（补列 → UPDATE 搬数 → DROP），删除 `keywords`/`remark`；brief 表加 `research_reasoning TEXT`（澄清阶段 AI 思考过程）。单语句（无 `DO $$` 块）。
-- 后续结构变更一律新增 `V5+` 脚本，不再触碰 V1/V2/V3/V4。
+- `V5__pgvector_store.sql`（10-03 E1）：建 Spring AI PgVectorStore 单表 `vector_store`（`id uuid / content text / metadata json / embedding vector(1024)`，HNSW cosine + metadata GIN）；4 域旧向量表保留未删，由 `VectorStoreBackfillRunner` 搬入（可回退）。
+- 后续结构变更一律新增 `V6+` 脚本，不再触碰 V1~V5。
 - **JSON 存 TEXT 为有意约定**（P1-⑦ 复核裁定，不转 JSONB），理由见 `.trellis/spec/backend/database-guidelines.md`「JSON 存 TEXT 是有意约定」。
+- **Boot 4 注意**：Flyway 自动配置已从 `spring-boot-autoconfigure` 拆到独立 `spring-boot-flyway` 模块，pom 必须引 `spring-boot-starter-flyway`（+ 显式 `flyway-database-postgresql`），否则迁移**静默不执行**（详见 database-guidelines.md「Boot 4 下只引 flyway-core」）。
