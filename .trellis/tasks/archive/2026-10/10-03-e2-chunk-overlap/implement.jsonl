@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移/向量重嵌/REQUIRES_NEW/@Order 等硬约束——重嵌与对账必读"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域 RAG 检索契约 + E1 PgVectorStore 单表迁移后的检索/meta 契约——切块变更影响向量与 store"}
+{"file": ".trellis/tasks/10-03-vector-pgstore-kb/design.md", "reason": "父任务设计：两阶段对拍（本任务=阶段 B）、切块重叠定位"}
+{"file": ".trellis/tasks/10-03-vector-pgstore-kb/prd.md", "reason": "父需求/验收/决策（D3 切块重叠纳入、D4 阶段 B）"}
+{"file": "docs/spec/knowledge/kb.md", "reason": "KB 域切块契约（TextChunker 委托、句读集合差异、块首行）——不得破坏"}

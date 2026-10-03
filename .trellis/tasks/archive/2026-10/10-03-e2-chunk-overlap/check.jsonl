@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证禁改生产数据/不可逆副作用隔离/多步写入失败顺序等质量红线"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对重嵌对账口径、事务隔离、迁移规范"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对检索/RAG 契约在切块变更后不回归"}
+{"file": ".trellis/tasks/10-03-e2-chunk-overlap/prd.md", "reason": "本任务验收标准"}
