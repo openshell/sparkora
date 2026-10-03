@@ -257,9 +257,11 @@ CREATE INDEX IF NOT EXISTS idx_kb_chunk_emb_vec_hnsw ON sparkora_kb_chunk_embedd
 
 - 向量索引统一 HNSW `vector_cosine_ops`（车型域 `idx_car_doc_emb_vec`、KB 域 `idx_kb_chunk_emb_vec_hnsw`）。
 
-### 向量模型名防护：加列 + placeholder 回填（推翻 V1「不存模型名」）
+### 向量模型名防护：加列 + placeholder 回填（推翻 V1「不存模型名」；E6 已迁 metadata）
 
-4 张向量表（`sparkora_{car_doc,kb_chunk,news_doc,image}_embedding`）**同向量空间**（同 embedding 模型/维度）；V1 曾决策「不存模型名/维度列」，**09-27 P1-⑧ 推翻**——同维换模型是真实风险且完全不可检测。做法：
+> **10-03 E6 后**：4 张向量表已物理删除（V9），模型名防护等价为单表 store `metadata.embeddingModel`。本节保留为历史先例与「回填值须随实际配置走」范式，现行实现见下方「旧向量表退役」。
+
+原做法（V3，4 张向量表同向量空间；V1 曾决策「不存模型名/维度列」，**09-27 P1-⑧ 推翻**）：
 
 ```sql
 -- V3__embedding_model.sql：加列（可空，避免极端数据迁移失败）；回填 = 实际部署配置模型
@@ -269,27 +271,36 @@ UPDATE sparkora_car_doc_embedding SET embedding_model = '${embeddingModel}' WHER
 ```
 
 - **回填用 Flyway placeholder** `${embeddingModel}`（`application.yml` 的 `spring.flyway.placeholders.embeddingModel: ${AI_EMBEDDING_MODEL:Qwen3-Embedding-8B}`），**不得硬编码默认值**——否则会把既有部署库错标为默认模型。这是「回填值须随实际配置走」的通用范式。
-- **写入盖名 + 检索过滤成对**：4 个 insert mapper 增 `embeddingModel` 参数（写路径传 `EmbeddingClient.modelName()`）；4 条检索 SQL 加 `AND e.embedding_model = #{model}`。列可空 + `=` 比较：NULL 行天然不匹配（安全方向——宁可漏检旧行，不混空间）。
-- **对账/补齐口径同步**：判定「已向量化」的统计（`countByModel.embeddedCount`、`findImageIdsWithoutEmbedding` 的 LEFT JOIN 条件）必须加同模型过滤，否则「只有旧模型向量」会被误判为已就绪、`rebuildMissing` 永不修复。
-- **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）逐表 `GROUP BY embedding_model`，非当前模型行 WARN；异常仅 warn 不阻断启动。
+- **写入盖名 + 检索过滤成对**：写路径传 `EmbeddingClient.modelName()`，检索/统计加同模型过滤。列可空 + `=` 比较：NULL 行天然不匹配（安全方向——宁可漏检旧行，不混空间）。
+- **对账/补齐口径同步**：判定「已向量化」的统计必须加同模型过滤，否则「只有旧模型向量」会被误判为已就绪、补齐永不修复。
+- **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）非当前模型行 WARN；异常仅 warn 不阻断启动。
+
+### 旧向量表退役（10-03 E6）：单一只真源 + DROP 放最后
+
+E1 引入单表 `vector_store` 后，旧 4 表仍被双写/双读。E6 收口：
+
+- **写路径只写 store**：`CarChunkService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService` 移除 `*EmbeddingMapper.insert/delete`，只保留 `VectorStoreService.upsert`/`deleteByRef`。**store 写入必须完整保留**（删旧表写不能顺手删错）。
+- **读路径改 store**：`vectorStats` 的 `embeddedCount` → `VectorStoreService.countCarEmbeddedByModel`（`metadata->>'domain'='CAR' AND metadata->>'embeddingModel'=当前模型` 按 `modelId` 聚合）；`EmbeddingModelReconcileRunner` → `embeddingModelStats`（`GROUP BY metadata.domain/embeddingModel`）；`ImageEmbeddingService.rebuildMissing` 差集 → 图库 id 全集 − `refIdsByDomain("IMAGE", 当前模型)`。SQL 一律用 `metadata->>'key'` 取 json 文本，数值列配 `::bigint` 转换。
+- **删除件**：6 个旧 mapper（`CarDocEmbeddingMapper`/`KbChunkEmbeddingMapper`/`NewsDocEmbeddingMapper`/`ImageEmbeddingMapper`/`EmbeddingModelStatsMapper`/`VectorStoreBackfillMapper`）+ `VectorStoreBackfillRunner`。
+- **DROP 迁移放最后**：`V9__drop_legacy_embedding_tables.sql` 逐表 `DROP TABLE IF EXISTS`（无 `DO $$`）。`sparkora_car_doc_embedding` 表名**未随 E4 重命名**（E4 只改主表 `sparkora_car_doc`→`sparkora_car_chunk`），按旧名删。**仅当代码退役 + `mvn test` 全绿 + 对拍通过**才执行；不可逆，回退 = 由 store 重建或 `git revert`。
+- 约定：**破坏性 `DROP TABLE` 只用于退役类迁移**（普通结构变更仍不得 DROP 表），且必须作为任务最后一步；`IF EXISTS` 兜底、`V<max+1>`、不改已应用脚本三条不变。
 
 ### 逻辑删除实体 + 物理向量表：级联清理
 
-`*_embedding` 表（`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding`）**无 `deleted` 列**，是物理表。删除带 `@TableLogic` 的实体时：
+> **10-03 E6 后**：旧物理向量表已删；store 无 `@TableLogic`，删除统一按 `id = docId(domain,refId)` 物理删（`deleteByRef`）或按 `metadata->>'modelId'` 兜底（`deleteByCarModel`）。本节保留历史先例。
 
-- 逻辑删除的 doc 通过检索 SQL 的 `JOIN ... AND d.deleted = 0` 过滤，不会命中。
-- 但**物理行会残留**：`docMapper.selectList(eq model_id)` 受 `@TableLogic` 过滤，只能删到 `deleted=0` 的 doc，历史已逻辑删除的 doc 的 embedding 漏清。故删除实体时需**按外键一条 SQL 兜底物理清**（09-11 先例 `CarDocEmbeddingMapper.deleteByModelId`）：
+`*_embedding` 表（`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding`）**无 `deleted` 列**，是物理表。删除带 `@TableLogic` 的实体时逻辑删除的 doc 检索侧会过滤，但物理行会残留，故删除实体时需按外键兜底物理清（09-11 先例）：
 
 ```java
 @Delete("DELETE FROM sparkora_car_doc_embedding WHERE model_id = #{modelId}")
 int deleteByModelId(@Param("modelId") Long modelId);
 ```
 
-- 外键列（如 `model_id`/`news_id`）直接 `WHERE` 即可，无需 JOIN 逻辑删除表。
+- store 等价：`deleteByCarModel(modelId)` 按 `metadata->>'modelId'` 物理清（含历史逻辑删除块残留），不再依赖 `@TableLogic`。
 
 ### 多域统一检索：候选窗口必须按域隔离
 
-统一检索（`sparkora_car_doc_embedding` + `sparkora_kb_chunk_embedding` + `sparkora_news_doc_embedding` 同向量空间）**不能用一个全局 `LIMIT` 包住所有 UNION 段**（09-11 先例 C2：新闻 1339 块 vs 车型 380 块，语义邻近时新闻占满窗口，实测 BYD 类 query 的 CAR 候选从 32 掉到 0，下游「各域独立配额」拿到空候选直接失效）。
+统一检索（原 `sparkora_{car_doc,kb_chunk,news_doc}_embedding` 同向量空间；**E6 后为单表 `vector_store`，候选窗口隔离在 Java 侧用「CAR+KB 一次 + NEWS 一次」两次 `searchDomains` 复现**）**不能用一个全局 `LIMIT` 包住所有段**（09-11 先例 C2：新闻 1339 块 vs 车型 380 块，语义邻近时新闻占满窗口，实测 BYD 类 query 的 CAR 候选从 32 掉到 0，下游「各域独立配额」拿到空候选直接失效）。
 
 正确做法：**每个来源域各自子查询取 top-#{limit}，外层仅合并排序、不再截断**：
 
@@ -303,7 +314,7 @@ SELECT * FROM (
 
 - C2 前只有 CAR/KB 时，`(CAR∪KB) LIMIT` 与旧全局 `LIMIT` 语义等价——**演进时把既有域合并保留原语义，新域单独开窗口**，避免回归。
 - 调用方传入的 `limit` 必须 ≥ 各域配额（默认 `topK*4` 且至少 32，远大于 `ragKbTopk`/`ragNewsTopk`）。
-- **图片域（第四域）是同空间但独立检索**：`sparkora_image_embedding` 与三域同模型同维度，但**不并入 `searchTopKUnified`**（图片查询是独立入口 `POST /api/images/search`，不与文本块混排）。同空间只保证「同一 embedding 模型/维度」这一硬约束，不代表共用一条 SQL；新增域时按「是否需要与既有域混排」决定并入还是独立，不要为了「统一」把异质结果强行 UNION。
+- **图片域（第四域）是同空间但独立检索**：store 中 `domain=IMAGE` 与三域同模型同维度，但**不并入统一检索**（图片查询是独立入口 `POST /api/images/search`，走 `searchImages`，不与文本块混排）。同空间只保证「同一 embedding 模型/维度」这一硬约束，不代表共用一条检索路径；新增域时按「是否需要与既有域混排」决定并入还是独立，不要为了「统一」把异质结果强行 UNION。
 - 不要在服务层用「加大 limit」来补偿多域争抢——候选窗口隔离才是根因修复，加大 limit 会静默扩大下游注入集。
 
 ---

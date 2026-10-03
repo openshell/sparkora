@@ -69,22 +69,22 @@
 ## 4.1 向量模型防护（09-27 P1-⑧）
 
 - **配置单一来源**：`AI_EMBEDDING_MODEL`（`.env` → `sparkora.ai.embedding-model` → `AiProperties.embeddingModel`）；维度 `AI_EMBEDDING_DIM`（默认 1024，与 DDL `VECTOR(1024)` 一致）。
-- **4 张向量表加 `embedding_model VARCHAR(100)`**（Flyway V3）：`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding` / `sparkora_news_doc_embedding` / `sparkora_image_embedding`；存量行回填为实际部署配置模型（placeholder `${embeddingModel}`）。
-- **写入盖名**：4 条写路径（CAR/KB/NEWS/IMAGE）统一盖 `EmbeddingClient.modelName()`；**检索过滤**：4 条查询（`searchTopK`×3 + `searchTopKUnified` 三段）均加 `embedding_model = 当前模型`。换模型后旧模型行自动失效（可见降级而非静默混空间），重嵌后新向量自动生效。
+- ~~**4 张向量表加 `embedding_model VARCHAR(100)`**（Flyway V3）~~（**10-03 E6 旧表退役**：等价为单表 store `metadata.embeddingModel`，写入 `upsert` 盖名、检索/统计/差集 filter 带 `embeddingModel`）。
+- **写入盖名**：4 条写路径（CAR/KB/NEWS/IMAGE）统一盖 `EmbeddingClient.modelName()`（store metadata `embeddingModel`）；**检索过滤**按当前模型。换模型后旧模型行自动失效（可见降级而非静默混空间），重嵌后新向量自动生效。
 - **维度校验 fail-fast**：`EmbeddingClient.embedList` 校验返回长度 == `AI_EMBEDDING_DIM`，不符抛 `AiException`（中文提示含实际/期望维度与模型名），首次写入或查询即暴露。
-- **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）逐表 `GROUP BY embedding_model`，存在非当前模型的行时 WARN（列出模型名+条数，提示重嵌），异常仅 warn 不阻断启动。
+- **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）查单表 store `GROUP BY metadata.domain/embeddingModel`，存在非当前模型的行时 WARN（列出域+模型名+条数，提示重嵌），异常仅 warn 不阻断启动。
 - **重嵌入口**：CAR `POST /api/car/models/rebuild-all`、KB `POST /api/kb/docs/{id}/rebuild`、NEWS `POST /api/news/{id}/rebuild`（09-27 新增）、IMAGE `POST /api/images/embeddings/rebuild`；跨域一键重嵌编排 out of scope。
 
 ## 4.2 向量检索层（10-03 E1：Spring AI PgVectorStore 单表，阶段 A）
 
-> 迁移子任务 E1（`.trellis/tasks/10-03-e1-pgstore-migrate`）。旧 4 表保留、未删（可回退）。
+> 迁移子任务 E1（`.trellis/tasks/10-03-e1-pgstore-migrate`）。旧 4 表**已于 10-03 E6 删除**（见 §11）。
 
 - **拓扑**：单张 `vector_store`（Flyway `V5__pgvector_store.sql`；`id uuid / content text / metadata json / embedding vector(1024)`；HNSW cosine + metadata GIN）。`initialize-schema=false`（由 Flyway 建表）；维度/距离/索引由 `spring.ai.vectorstore.pgvector.*` 约定（1024 / cosine / hnsw）。
 - **metadata 契约**：`{domain(CAR|KB|NEWS|IMAGE), refId(域内 id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`；`content` = `chunk_text`（IMAGE 域 = 旧 `source_text`）。
 - **id 确定性**：`UUID.nameUUIDFromBytes(domain+":"+refId)`，供 upsert/delete/setActive 按 id 定位（store 无按 metadata 更新 API）。
 - **读路径**：`CarRagService` 经 `ai.vector.SearchStore`；候选窗按域隔离复现——CAR+KB 合并一次 `similaritySearch` + NEWS 独立一次（`domain in [...] && active && embeddingModel`）+ Java 合并；`similarityThreshold=0`，门槛仍在 Java 侧用 `ragMinScore`/`ragRejectScore` 判定。`ImageEmbeddingService.searchImages` 走 IMAGE 域（可选 `refId ∈ 白名单`）。
 - **活表同步层**：`active` 由写路径 `VectorStoreService.upsert/setActive/deleteByRef` 维护（软删/停用/重建/删父联动）；`CarChunkService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService` 的 persist/delete 同步单表。
-- **回填**：`VectorStoreBackfillRunner`（`@Order(50)`，守护线程，幂等差集）从旧表复用已算好的向量（**不重新嵌入**）搬入 store；异常仅 warn 不阻断。
+- **回填**：`VectorStoreBackfillRunner`（`@Order(50)`，守护线程，幂等差集）从旧表复用已算好的向量搬入 store；**回填完成后已随 E6 退役**（旧表 DROP）。
 - **阶段 A 对拍**：`.trellis/tasks/10-03-e1-pgstore-migrate/research/parity-A.md`（7 query 集 × CAR+KB/NEWS/IMAGE，候选集/分数/排序逐条一致）。
 - **契约不变**：`RagResult`/`Citation`/`rag_status`/`rag_citations` 与前端交互零变更。
 
@@ -113,7 +113,7 @@
 | PARAM_GROUP 块首行 | 固定 `车型：<全名>`（消除 EV/DM-i 同系跨版本检索混淆，即 S6.2 P1 遗留项）；块行文本 `参数名：清洗值` |
 | 清洗值展示 | 优先 `car_param_clean.param_value`，缺失回退 `raw_value`；NUMBER/LIST 类型且值不含单位时拼接单位（如 `2820mm`）；清洗与原始值均缺省跳过该行 |
 | 向量重建 | `rebuildForModel`：embedding 并发（固定线程池 ≤4）+ 单块失败重试 1 次；完成日志输出「成功 X/失败 Z」，失败块记 `sortOrder`（消除静默丢块） |
-| 批量重建/对账 | `POST /api/car/models/rebuild-all`（ADMIN/EDITOR）逐车型重建汇总；`GET /api/car/models/vector-stats`（三角色）返回 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅统计 `deleted=0`；2026-09-04 实测全库 380/380 缺失 0） |
+| 批量重建/对账 | `POST /api/car/models/rebuild-all`（ADMIN/EDITOR）逐车型重建汇总；`GET /api/car/models/vector-stats`（三角色）返回 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅统计 `deleted=0`；2026-09-04 实测全库 380/380 缺失 0；**10-03 E6 起 embeddedCount 改查单表 `vector_store`**——见 §11） |
 | 入库去重 | `persistVersions`/`persistParams` 同名版本/同名分组去重（官网接口历史上曾按模块重复推送，防再发）；重同步车型39 复测 clean 与参数版本值 1:1 精确对齐 |
 | AI 兜底空值防线 | `AiParamCleaner` 对 AI 返回 value 空白视为失败返回 null（走 FALLBACK 兜底），「无值清成空串」不再落库 |
 | 摊平核查结论 | 6432 清洗行疑云 = 历史上游重复推送 + `@TableLogic` 逻辑删先清后插堆积（非清洗层摊平）；详见 `archive/2026-09/09-04-clean-followup/research/flatten-findings.md` |
@@ -131,7 +131,7 @@
 
 ## 8. 关键实现路径
 
-- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarChunkService` 切块/配额/子查询/覆盖度）、`ai.vector.VectorStoreService`（单表 store 读写/同步，10-03 E1）、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。旧表路径 `mapper.CarDocEmbeddingMapper.searchTopKUnified` 保留（未删，可回退），E1 后不再被 `CarRagService` 调用。
+- 后端：`com.sparkora.car`（`CarRagService.retrieveForGeneration`、`CarChunkService` 切块/配额/子查询/覆盖度）、`ai.vector.VectorStoreService`（单表 store 读写/同步/统计/差集，10-03 E1/E6）、`ai.EmbeddingClient`、`ai.RagStatus`、`service.VersionService`（写入 `rag_status`/`rag_citations`；`service.BriefService` 的 FAST `generate` 曾写入 `brief.rag_status`/`rag_citations`，该路径已于 2026-09-26（R6）删除，`BriefService.citationsJson` 仍被 VersionService 复用）、`deep.service.FactSheetService`（WEB/KB 冲突裁决）。**旧表路径 `mapper.{CarDoc,KbChunk,NewsDoc,Image}EmbeddingMapper` 已于 10-03 E6 删除**（含 `searchTopKUnified`/`countByModel`/`findImageIdsWithoutEmbedding`），检索/对账/差集全部走单表 store。
 
 ---
 
@@ -167,3 +167,15 @@
 - **写路径**：`EmbeddingBatchRunner.processOne` 改调 `embedForIndex`（CAR/KB/NEWS 三域文本块经此写入，统一生效）。**查询路径 `embed(String)` 保持无缓存**（查询文本每次不同）。IMAGE 单图嵌入走 `ImageEmbeddingService.embedOne` 直调 `embed`，未接入缓存（图片嵌入文本含逐图字段、重复率可忽略）。
 - **模型切换安全**：键含 `embedding_model`，换模型天然 miss、绝不复用旧模型向量（AC3）。
 - **回退**：删缓存表 + revert；`embedForIndex` 退回直调 `embed`。
+
+---
+
+## 11. 旧向量表退役（10-03 E6）
+
+- **单一只真源**：4 域向量唯一真源 = 单表 `vector_store`（`metadata.domain`），旧 4 张 `sparkora_{car_doc,kb_chunk,news_doc,image}_embedding` 表**已由 Flyway `V9__drop_legacy_embedding_tables.sql` 物理删除**。写路径（`CarChunkService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService`）不再写旧表，只写 store。
+- **读路径改 store**：
+  - `GET /api/car/models/vector-stats`：`chunkCount` 主表权威（未逻辑删除块数），`embeddedCount` 走 `VectorStoreService.countCarEmbeddedByModel`（`metadata->>'domain'='CAR' AND metadata->>'embeddingModel'=当前模型` 按 `modelId` 聚合）。**响应结构不变**：`{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`。
+  - `EmbeddingModelReconcileRunner`（`@Order(60)`）：改查 `VectorStoreService.embeddingModelStats`（store `GROUP BY metadata.domain/embeddingModel`），非当前模型行 WARN、异常不阻断。
+  - `ImageEmbeddingService.rebuildMissing`：差集 = 图库 id 全集 − `VectorStoreService.refIdsByDomain("IMAGE", 当前模型)`，语义与原旧表 `LEFT JOIN` 差集一致；store 未注入（单测）时视为无缺失。
+- **删除件**：`CarDocEmbeddingMapper`/`KbChunkEmbeddingMapper`/`NewsDocEmbeddingMapper`/`ImageEmbeddingMapper`/`EmbeddingModelStatsMapper`/`VectorStoreBackfillMapper` + `VectorStoreBackfillRunner`（E1 回填已完成）全部删除。
+- **兼容/回退**：对拍前旧表与 store 逐字节等价（E1 阶段 A 已证）。DROP 不可逆，回退 = 由 store 重建旧表（向量逐字节可复现）或 `git revert` V9 + 从备份/重嵌恢复。

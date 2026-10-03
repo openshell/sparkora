@@ -59,18 +59,19 @@ graph LR
 ### 三域知识 + 问答
 
 ```
-统一检索（同向量空间 1024d，HNSW cosine）
-  ├─ CAR  车型域  sparkora_car_doc_embedding      锚点加权 AI_RAG_ANCHOR_BOOST
-  ├─ KB   通用域  sparkora_kb_chunk_embedding     AI_RAG_KB_ENABLED / AI_RAG_KB_TOPK
-  └─ NEWS 新闻域  sparkora_news_doc_embedding     AI_RAG_NEWS_TOPK（不受 KB 开关控制）
+统一检索（单表 vector_store，同向量空间 1024d，HNSW cosine + metadata.domain）
+  ├─ CAR  车型域  metadata.domain=CAR      锚点加权 AI_RAG_ANCHOR_BOOST
+  ├─ KB   通用域  metadata.domain=KB       AI_RAG_KB_ENABLED / AI_RAG_KB_TOPK
+  └─ NEWS 新闻域  metadata.domain=NEWS     AI_RAG_NEWS_TOPK（不受 KB 开关控制）
         │
         ├─→ 生成注入：简报/正文（RAG 必查 + 降级可见，ragStatus 四态）
         └─→ 多轮问答（/qa，三域合成 + 来源引用 + 答案配图）
 ```
 
-- 图片域 `sparkora_image_embedding` 与三域**同模型同维度同空间**，但检索入口独立（`POST /api/images/search`），不并入 `searchTopKUnified`。
+- 图片域 `metadata.domain=IMAGE` 与三域**同模型同维度同空间**，但检索入口独立（`POST /api/images/search`），不并入统一检索。
+- **单一只真源（10-03 E6）**：向量行统一存 `vector_store`；旧 4 张 `sparkora_*_embedding` 表已由 `V9` 物理删除，写路径只写 store，`vector-stats`/对账/补齐差集改查 store。
 - 知识域与问答的浏览/问答**不受** `kb_enabled` 控制，仅生成注入可开关。
-- **向量模型防护（09-27 P1-⑧）**：4 张向量表均有 `embedding_model` 列（Flyway V3），写入盖当前模型、检索按当前模型过滤（换模型后旧行自动失效）；`AI_EMBEDDING_DIM` 校验向量维度；启动 `EmbeddingModelReconcileRunner` 对非当前模型行告警。详见 [spec/retrieval.md §4.1](spec/retrieval.md)。
+- **向量模型防护**：写入盖 `metadata.embeddingModel`、检索按当前模型过滤（换模型后旧行自动失效）；`AI_EMBEDDING_DIM` 校验向量维度；启动 `EmbeddingModelReconcileRunner` 对非当前模型行告警。详见 [spec/retrieval.md §4.1/§11](spec/retrieval.md)。
 
 ---
 
@@ -85,7 +86,7 @@ graph LR
 | 版本生成 | [spec/version-generation.md](spec/version-generation.md) | `service.VersionService`、`deep.service.DeepWriterService` / `project/StepVersions.vue` |
 | 风格库 | [spec/style-library.md](spec/style-library.md) | `web.controller.StyleController`、`service.StyleService`、`domain.entity.StyleProfileEntity` / `views/StyleLibrary.vue` |
 | 配图 | [spec/image.md](spec/image.md) | `web.controller.ImageController`、`service.ImageService`/`ImageTagService`/`ImageEmbeddingService`/`IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`storage.ImageStorage`/`QiniuService` / `views/ImageLibrary.vue`、`components/MarkdownEditor.vue` |
-| 知识库检索（RAG 必查+降级可见） | [spec/retrieval.md](spec/retrieval.md) | `com.sparkora.car`（`CarRagService.retrieveForGeneration`）、`mapper.CarDocEmbeddingMapper.searchTopKUnified`、`ai.EmbeddingClient` / `project/deep/CitationList.vue` |
+| 知识库检索（RAG 必查+降级可见） | [spec/retrieval.md](spec/retrieval.md) | `com.sparkora.car`（`CarRagService.retrieveForGeneration`）、`ai.vector.VectorStoreService`（单表 store，E1/E6）、`ai.EmbeddingClient` / `project/deep/CitationList.vue` |
 | 系统检索设置 | [spec/settings.md](spec/settings.md) | `web.controller.SettingController`、`service.SettingService`、`domain.entity.SettingEntity` / `views/SettingsView.vue`、`layouts/AppShell.vue` |
 | 排版预览 | [spec/preview.md](spec/preview.md) | `service.PreviewService`/`WenyanThemeCatalog`/`WenyanServerService` / `project/StepPreview.vue` |
 | 公众号发布 | [spec/publish.md](spec/publish.md) | `service.PublishService`/`WenyanServerService`、`wenyan.*` / `project/StepPublish.vue` |

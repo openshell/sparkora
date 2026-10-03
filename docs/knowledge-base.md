@@ -11,9 +11,9 @@
 
 支撑理由（基于现有代码，非假设）：
 
-- **pgvector 已在库内**：`sparkora_car_doc_embedding` / `sparkora_kb_chunk_embedding` / `sparkora_news_doc_embedding` 三张向量表共用 1024 维空间与 HNSW `vector_cosine_ops` 索引，无需额外部署向量数据库。
+- **pgvector 已在库内**：三域向量行统一存单表 `vector_store`（`metadata.domain` 区分 CAR/KB/NEWS/IMAGE），共用 1024 维空间与 HNSW `vector_cosine_ops` 索引，无需额外部署向量数据库。（10-03 E1/E6 前为 4 张 `sparkora_*_embedding` 表，已退役。）
 - **EmbeddingClient 已就绪**：统一向量化入口（Qwen3-Embedding-8B，1024 维），三域块共用同一模型，相似度可直接跨域比较。
-- **统一检索已就绪**：`CarDocEmbeddingMapper.searchTopKUnified` 一次查询跨三域取候选（按域隔离候选窗口），`CarRagService.retrieveForGeneration` 完成锚点加权、分层配额、来源行内标注。
+- **统一检索已就绪**：`CarRagService.retrieveForGeneration` 经 `ai.vector.VectorStoreService` 跨三域取候选（`searchDomains([CAR,KB])` + `searchDomains([NEWS])` 按域隔离候选窗口），完成锚点加权、分层配额、来源行内标注。
 - **四态降级语义完整**：`RagStatus{OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE}` 保证「必查 + 降级可见」，检索失败不阻断主链路。
 - **citations 已就绪**：`RagResult.citations`（`Citation{source,modelName,chunkType,score,chunkText}`）直接复用于问答引用展示。
 - **不引入外部向量库的收益**：无新运维组件、无数据双写一致性负担；个人项目规模（车型 + KB + 约 167 篇新闻）下 pgvector 性能足够。
@@ -35,15 +35,14 @@
 
 ```
                  ┌─────────────────────────────────────────────┐
-                 │           统一检索(同向量空间 1024d)         │
-                 │  CarDocEmbeddingMapper.searchTopKUnified     │
+                 │           统一检索(单表 store 1024d)         │
+                 │  VectorStoreService.searchDomains            │
                  │  ┌────────┬────────┬────────┐               │
                  │  │  CAR   │   KB   │  NEWS  │  按域隔离窗口  │
                  │  └────┬───┴───┬────┴───┬────┘               │
                  └───────┼────────┼────────┼────────────────────┘
                          ▼        ▼        ▼
-              sparkora_car_doc_  sparkora_kb_  sparkora_news_
-              embedding          chunk_embedding doc_embedding
+                  vector_store(metadata.domain=CAR / KB / NEWS)
                          │        │        │
               ┌──────────┴────────┴────────┴───────────┐
               │      CarRagService.retrieveForGeneration │
@@ -57,11 +56,11 @@
             └─────────────────────────────────────┘
 ```
 
-| 域 | 来源表 | 切块首行锚点 | 注入标注 | 配额开关 |
+| 域 | 来源（store metadata） | 切块首行锚点 | 注入标注 | 配额开关 |
 |---|---|---|---|---|
-| CAR 车型 | `sparkora_car_doc_embedding` | 车型：<名称> | `【车型数据：<名称>】` | 锚点加权 `AI_RAG_ANCHOR_BOOST` |
-| KB 通用知识 | `sparkora_kb_chunk_embedding` | 知识：<标题>（<领域>） | `【通用知识：<标题>】` | `AI_RAG_KB_ENABLED` + `AI_RAG_KB_TOPK` |
-| NEWS 官方新闻 | `sparkora_news_doc_embedding` | 新闻：<标题>（<日期>） | `【官方新闻：<标题>】` | `AI_RAG_NEWS_TOPK`（不受 KB 开关控制） |
+| CAR 车型 | `vector_store` `domain=CAR`（refId=`car_chunk.id`） | 车型：<名称> | `【车型数据：<名称>】` | 锚点加权 `AI_RAG_ANCHOR_BOOST` |
+| KB 通用知识 | `vector_store` `domain=KB`（refId=`kb_chunk.id`） | 知识：<标题>（<领域>） | `【通用知识：<标题>】` | `AI_RAG_KB_ENABLED` + `AI_RAG_KB_TOPK` |
+| NEWS 官方新闻 | `vector_store` `domain=NEWS`（refId=`news_doc.id`） | 新闻：<标题>（<日期>） | `【官方新闻：<标题>】` | `AI_RAG_NEWS_TOPK`（不受 KB 开关控制） |
 
 - 首行 `知识来源：车型数据 + 通用知识库 + 官方新闻` 按命中构成动态拼接。
 - 检索状态：无命中 → `NO_KNOWLEDGE`；有命中但最高分 < `ragRejectScore` → `LOW_CONFIDENCE`（全抛弃）；检索异常 → `FAILED`；其余 → `OK`。

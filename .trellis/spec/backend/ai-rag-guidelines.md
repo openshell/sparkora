@@ -704,7 +704,7 @@ List<ImageAssetEntity> loadDerived(List<Long> imageIds)
 
 ### 3. Contracts
 - **record 加字段必须保留旧参构造器**：`Citation` 加可空 `docId` 时保留 5 参构造器（委托 6 参传 null），否则既有调用方（`BriefService.citationsJson`/`KnowledgeSearchTool`/`QaServiceTest`）编译失败。纯增量字段对 JSON 消费者无害（前端不读即无影响）。
-- **检索 SQL 已 SELECT 的列要在读行处补读**：统一检索 SQL 早已 `SELECT docId`，但 `retrieveUnified` 读行时丢弃 → 消费方拿不到定位 id。加字段是「读侧一行」的事，**不动 SQL、不动配额与排序**（`searchTopKUnified` 是三域候选窗口隔离的关键资产）。
+- **检索结果已携带的字段要在读行处补读**：统一检索早已携带 `docId`（10-03 E6 后为 store `metadata.refId`），但 `retrieveUnified` 读行时丢弃 → 消费方拿不到定位 id。加字段是「读侧一行」的事，**不动检索与配额、不动排序**（三域候选窗口隔离是关键资产）。
 - **重排/重建 record 处必须透传全部字段**：锚点 boost 分支 `new UnifiedHit(...)` 少传一个字段就静默丢数据（本任务最高风险点）。加字段时 grep 所有 `new XxxRecord(` 构造点逐一核对。
 - **展示性派生内容 = 只读 + 降级**：配图不写任何用户内容、无批准流程（与子C「写入正文须批准」不同，因为子C 改的是用户内容）。解析失败 → 落 null + warn，**主产物（答案）优先**；`QaService.ask` 调用处再包一层 try/catch 双保险。
 - **派生展示不落库（除本次的答案配图例外说明）**：本任务的 `image_refs` 是**消息的组成部分**（与答案同时产生、随消息生命周期），故落列；而「可随时重算的建议」（子C 配图建议）仍不落库（避免建议陈旧）。判定：内容是否为「该次生成的结果快照」——是则落，否则按需重算。
@@ -777,12 +777,12 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 
 ### 3. Contracts
 - **切块唯一实现**：KB/NEWS `chunkContent` 改为薄委托 `TextChunker`；header 由调用方构造（KB「知识：t（d）」/ NEWS「新闻：t（date）」），空正文语义参数化（KB `keepTitleWhenEmpty=true` 恒保留；NEWS `titlePresent && keepTitleWhenEmpty=false`）。**句读集合也按域参数化（KB `。；!?` / NEWS `。；;！!？?`），不得取超集**——两域原集合不同，取超集会改变 KB 切块边界（违反「产出逐块不变」）；`splitSentences` 参数化后仍是全库唯一实现。产出逐块不变由 `KbDocServiceTest`/`NewsDocServiceTest` + `TextChunkerTest`（含 `legacyChunk` 等价性锁）证明。
-- **切块滑动重叠（E2，2026-10-03）**：新增 6 参 `chunk(..., int overlapChars)`；**旧 5 参委托 `overlapChars=0`，逐块等价旧行为（向后兼容）**。仅 **KB/NEWS 服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用**；**CAR（参数分组块）与 IMAGE（`ImageEmbeddingTextBuilder`）不经 `TextChunker`，切块形态不变**。策略：相邻产出块中前块**严格 >overlapChars** 时取尾部片段（≤overlapChars，优先从片段内首个句读符之后对齐）作后块前缀；前缀+本块仍须 ≤`MAX_BODY_LEN`（放不下则不重叠）；**不整块重复、不增块数**。回退：revert E2 + 按旧切块重嵌（旧 4 表保留）。实测见 `docs/spec/retrieval.md §9` 与 `.trellis/tasks/10-03-e2-chunk-overlap/research/parity-B.md`。
+- **切块滑动重叠（E2，2026-10-03）**：新增 6 参 `chunk(..., int overlapChars)`；**旧 5 参委托 `overlapChars=0`，逐块等价旧行为（向后兼容）**。仅 **KB/NEWS 服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用**；**CAR（参数分组块）与 IMAGE（`ImageEmbeddingTextBuilder`）不经 `TextChunker`，切块形态不变**。策略：相邻产出块中前块**严格 >overlapChars** 时取尾部片段（≤overlapChars，优先从片段内首个句读符之后对齐）作后块前缀；前缀+本块仍须 ≤`MAX_BODY_LEN`（放不下则不重叠）；**不整块重复、不增块数**。回退：revert E2 + 按旧切块重嵌（**10-03 E6 起旧 4 表已删**，重嵌写入单表 store）。实测见 `docs/spec/retrieval.md §9` 与 `.trellis/tasks/10-03-e2-chunk-overlap/research/parity-B.md`。
 - **并发执行器唯一实现**：`EmbeddingBatchRunner` 泛型化「固定线程池 + 单块重试 + 失败收集 + 计数日志」；**各域失败策略用参数保留**（CAR/NEWS `maxParallel=4,maxRetries=1`；KB `maxParallel=1,maxRetries=0` 串行无重试）。
 - **事务边界统一（关键）**：embed 网络调用在事务外，随后经**自注入 `@Autowired @Lazy self`** 调 `@Transactional(REQUIRES_NEW)` 的持久化方法（`persistCarChunk`/`persistChunk`/`persistNewsDoc`）完成「插块行（拿 id）+ 插向量」原子写入。单测直 new 时 `(self==null?this:self)` 退化直调。
   - **反例（被本任务修复）**：`@Transactional protected insertDocWithEmbedding` 由同类线程池 lambda 内 `this` 调用 → 代理不生效、注解被忽略 → 向量插入失败时块行可能已落成孤儿、事务边界不明。
   - 收益同 IMAGE 范式：失败回滚不留孤儿块；`REQUIRES_NEW` 不污染调用方（`NewsService.upsertOne` 为 `@Transactional`）事务。
-- **向量模型名防护**：4 张向量表加 `embedding_model`；写入盖 `modelName()`、检索加 `embedding_model = #{model}`、对账/补齐口径同模型过滤；V3 用 Flyway placeholder 回填存量行 = 实际配置模型。详见 database-guidelines.md「向量模型名防护」。
+- **向量模型名防护**：写入盖 `modelName()`、检索/对账/补齐口径同模型过滤。~~4 张向量表加 `embedding_model` 列~~（**10-03 E6 旧表退役**：等价为单表 store `metadata.embeddingModel`，写入 `VectorStoreService.upsert` 盖名、检索 filter 带 `embeddingModel`、统计/差集 SQL 带 `metadata->>'embeddingModel'`）。详见 database-guidelines.md「向量模型名防护」。
 - **维度 fail-fast**：`embedList` 返回长度 ≠ `embeddingDim` 抛 `AiException`（含实际/期望与模型名）。
 - **embedding 后端 = Spring AI `EmbeddingModel`（C5）**：`EmbeddingClient` 内部改调 `EmbeddingModel.embed(text)`（OpenAI 兼容，指向 axonhub），**删除**原自研 RestClient/Jackson 调用；公共签名（`embed`/`embedList`/`modelName`/`toPgVector`）不变，8 个生产调用点与既有测试零改动。精度路径由 JSON→`List<Double>` 改为 SDK `float[]`→`double`，但 pgvector `vector` 本就是 float4，**检索结果 parity 不受影响**。
 - **检索存储 = Spring AI `PgVectorStore` 单表（E1，2026-10-03；**推翻 C5 的 Scope B 推迟**）**：C5 曾以「`PgVectorStore` 无法表达 JOIN 活表语义」推迟全量迁移；后续用户拍板**先迁 PgVectorStore**，E1 已落地：
@@ -793,7 +793,7 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
   - **域隔离候选窗口复现**：`searchDomains([CAR,KB])` 一次 + `searchDomains([NEWS])` 一次（对齐旧 UNION 的按域窗口）——`domain in [...]` 的 Spring AI filter 与旧语义等价。
   - **读取用 `similaritySearch`**（内部嵌入 query）；**写入/回填复用已算向量**（`VectorStoreService.upsert` 经 JdbcTemplate 直写 `embedding::text`，**不再嵌入**）；确定性 id `UUID.nameUUIDFromBytes(domain+":"+refId)`。
   - **`embedding_model` 防护等价为 metadata `embeddingModel` 过滤**。
-  - 旧 4 张 embedding 表**保留未删**（回退用），`CarRagService` 业务规则（锚点/配额/门槛/四态/子查询/覆盖度）语义不变。
+  - **旧 4 张 embedding 表已于 10-03 E6 物理删除**（`V9__drop_legacy_embedding_tables.sql`）：写路径只写 store，`vectorStats`/`EmbeddingModelReconcileRunner`/`rebuildMissing` 改查 store（`metadata.domain`+`embeddingModel` 聚合/差集），旧 mapper 与 `VectorStoreBackfillRunner` 删除。`CarRagService` 业务规则（锚点/配额/门槛/四态/子查询/覆盖度）语义不变。详见 `docs/spec/retrieval.md §11`。
   - 详见 `docs/spec/retrieval.md §4.2` 与 `.trellis/tasks/10-03-e1-pgstore-migrate/research/parity-A.md`（阶段 A 逐条对拍）。
   - **注意**：`spring.ai.vectorstore.pgvector.initialize-schema` 保持 **false**——**不得**开启（会在 Flyway 之外重复建表）；建表/变更一律走 `db/migration/V<n>__*.sql`。
 - **NEWS 手动重建端点**：`POST /api/news/{id}/rebuild`（ADMIN/EDITOR）→ `NewsDocService.rebuildForNews` 返回 `EmbedStats`。不做跨域一键重嵌编排。
@@ -802,15 +802,15 @@ int embeddingDim = 1024               // env AI_EMBEDDING_DIM
 - 切块空正文：KB 恒 `[header]`；NEWS 无标题 `[]`、有标题 `[header]`。
 - 嵌入单条失败：按 `maxRetries` 重试；仍失败计 `failed` 且**不持久化该条**（`EmbedStats` 可判定）。
 - 维度不符 → `AiException`，块/图不落库。
-- 换模型后旧行：检索不命中（`embedding_model` 过滤），启动 `EmbeddingModelReconcileRunner` WARN（非当前模型名 + 条数），不阻断启动。
+- 换模型后旧行：检索不命中（store `metadata.embeddingModel` 过滤），启动 `EmbeddingModelReconcileRunner` 查 store `GROUP BY metadata.domain/embeddingModel` WARN（非当前模型名 + 条数），不阻断启动。
 
 ### 5. Good/Base/Bad Cases
 - Good: KB 串行无重试、CAR/NEWS 并发重试 1 次，全部复用同一 `EmbeddingBatchRunner`，行为与改造前一致。
 - Base: 单测直 new 服务（无 Spring 代理）→ `(self==null?this:self)` 退化为直写不 NPE。
-- Bad: 在 rebuild 里直接 `this.insertDocWithEmbedding()`（`@Transactional` 失效）；或检索 SQL 漏加 `embedding_model` 过滤（换模型后静默混空间）。
+- Bad: 在 rebuild 里直接 `this.insertDocWithEmbedding()`（`@Transactional` 失效）；或 store 检索 filter 漏加 `embeddingModel`（换模型后静默混空间）；或写路径仍双写旧表（E6 已删旧表，会直接报错）。
 
 ### 6. Tests Required
-- `TextChunkerTest`（KB/NEWS 两语义；E2 增：默认无重叠等价旧实现回归锁、overlapTail 边界、句读对齐、不破 500 上限、不整块重复）；`EmbeddingBatchRunnerTest`（重试成功/两次失败/maxRetries=0/串行保序/空列表）；`EmbeddingClientTest`（维度不符抛 AiException + modelName）；`{Car,Kb,News}DocTransactionTest`（自注入代理持久化 + 无代理退化）；`EmbeddingMapperModelFilterTest`（4 查询含模型过滤、4 insert 带列、对账/补齐口径）；`EmbeddingModelReconcileRunnerTest`（非当前模型仅告警、异常不阻断）。
+- `TextChunkerTest`（KB/NEWS 两语义；E2 增：默认无重叠等价旧实现回归锁、overlapTail 边界、句读对齐、不破 500 上限、不整块重复）；`EmbeddingBatchRunnerTest`（重试成功/两次失败/maxRetries=0/串行保序/空列表）；`EmbeddingClientTest`（维度不符抛 AiException + modelName）；`{Car,Kb,News}DocTransactionTest`（自注入代理持久化 + 无代理退化，写单表 store）；`EmbeddingMapperModelFilterTest`（10-03 E6：检索 filter 含 `embeddingModel`/`active`/`domain`；store 统计/差集 SQL 含 `metadata->>'domain'`/`'embeddingModel'`/`'refId'`/`'modelId'`）；`EmbeddingModelReconcileRunnerTest`（store 聚合、非当前模型仅告警、异常不阻断）；`ImageEmbeddingServiceTest`（rebuildMissing store 差集、删图清 store）。
 
 ### 7. Wrong vs Correct
 #### Wrong
@@ -832,7 +832,9 @@ batchRunner.run(docs, CarChunkEntity::getChunkText,
 @Transactional(propagation = Propagation.REQUIRES_NEW)
 public void persistCarChunk(CarChunkEntity doc, String vec) {
     docMapper.insert(doc);                                   // 拿 id
-    embMapper.insert(doc.getId(), doc.getModelId(), vec, embeddingClient.modelName());
+    // E6:只写单表 store(旧表已退役),不再 embMapper.insert
+    vectorStoreService.upsert("CAR", doc.getId(), doc.getModelId(), doc.getChunkType(),
+            doc.getModelName(), true, embeddingClient.modelName(), doc.getChunkText(), vec);
 }
 ```
 

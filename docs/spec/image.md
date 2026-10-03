@@ -141,7 +141,7 @@
 
 **语义**：让图片可被**自然语言检索**（「销量海报」「出海签约的照片」），为配图建议与问答语义配图提供检索能力。图片本身没有可嵌入文本，用**描述性文本代理**（来源新闻标题 / 标签 / AI prompt / 文件名）向量化。
 
-**数据模型（`sparkora_image_embedding`，Flyway `db/migration/V1__baseline.sql` 09-15 img-semantic-search 段 `CREATE TABLE IF NOT EXISTS`）**：
+**数据模型（10-03 E1/E6 起：向量行统一存单表 `vector_store`，`metadata.domain=IMAGE` + `metadata.refId=image_asset.id` + `metadata.embeddingModel`；旧 `sparkora_image_embedding` 已由 `V9__drop_legacy_embedding_tables.sql` 物理删除）。下表为退役前模型（`V1__baseline.sql` 09-15 段），保留作历史契约参考**：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -152,10 +152,10 @@
 | source_text | TEXT NOT NULL | 嵌入原文（调试 + 重建可追溯） |
 | created_at | TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP | 创建时间 |
 
-- **一图一向量**：`CREATE UNIQUE INDEX IF NOT EXISTS uk_image_emb_image ON sparkora_image_embedding(image_id)` —— 唯一约束即幂等保证（重建先物理删后插，重复插入不可能；并发重复嵌入第二插入报唯一冲突由 `embedQuietly` 吞掉并 warn）。
-- 向量索引 `idx_image_emb_vec_hnsw`：`USING hnsw (embedding vector_cosine_ops)`（与三域统一 HNSW cosine）。
-- **不加 `deleted` 列**（物理表，同三域 embedding 表）；**不建 FK**：删图时应用层同事务物理清向量（`ImageService.delete` → `embeddingService.deleteByImageId`），防残留向量命中已删图。
-- 实体：本表**无 entity**（VECTOR 类型 MyBatis-Plus `BaseMapper` 无法处理），用注解 SQL mapper `ImageEmbeddingMapper`（`insert`/`deleteByImageId`/`findImageIdsWithoutEmbedding`/`searchTopK`，参照 `CarDocEmbeddingMapper` 先例；09-27 起 `insert`/`searchTopK`/`findImageIdsWithoutEmbedding` 均带 `embedding_model` 参数——检索按当前模型过滤，补缺失用 `LEFT JOIN ... AND e.embedding_model = #{model}` 使「只有旧模型向量」的图被判为缺失可补齐）。
+- **一图一向量**：退役前唯一索引 `uk_image_emb_image(image_id)` 即幂等保证。**E6 后**：store 行 id = `UUID.nameUUIDFromBytes("IMAGE:"+imageId)`，`upsert` 同 id 幂等；`deleteByImageId` 按 id 物理删，无需先删后插。
+- 向量索引：store 统一 HNSW `vector_cosine_ops`（`idx_vector_store_emb_hnsw`）。
+- **不加 `deleted` 列**；**不建 FK**：删图时应用层物理清 store 向量（`ImageService.delete` → `embeddingService.deleteByImageId`），防残留向量命中已删图。
+- 实体：store 行经 `VectorStoreService`（native JdbcTemplate / Spring AI `VectorStore`）读写；**旧 `ImageEmbeddingMapper` 已 E6 删除**；图片差集 `rebuildMissing` 改查 store（图库 id 全集 − `refIdsByDomain("IMAGE", 当前模型)`）。
 
 **嵌入文本构造（`com.sparkora.image.embed.ImageEmbeddingTextBuilder`，纯静态可单测）**：
 
@@ -188,7 +188,7 @@
 - 独立事务同时让「先删后插」**原子化**：重嵌失败回滚保留旧向量，不留「删了没插上」的空洞。
 - embedding 网络调用放在事务之外（不长时间占连接）。
 
-**检索实现（`ImageEmbeddingService.searchImages`）**：`query` 空校验 → **标签 AND 预过滤**（复用图库列表的 `resolveTagIds` 交集语义；交集为空**直接返回空列表且不调用 embedding**，省一次调用）→ `EmbeddingClient.embed(query)` → `ImageEmbeddingMapper.searchTopK`（HNSW cosine 排序，**门槛写在 SQL 的 WHERE**，不传输注定被丢弃的行；白名单候选集 ≤500 截断保底，与 `GET /api/images` 一致）→ 批查主表回填 `fileName/source/sourceRef` + 派生 `url/thumbUrl`（复用 `ImageService.fillDerived` 静态实现，同一派生规则只此一处）+ `ImageTagService.fillTags` 回填 `tags`。
+**检索实现（`ImageEmbeddingService.searchImages`）**：`query` 空校验 → **标签 AND 预过滤**（复用图库列表的 `resolveTagIds` 交集语义；交集为空**直接返回空列表且不调用 embedding**，省一次调用）→ `VectorStoreService.searchImages`（Spring AI PgVectorStore 单表，`domain=IMAGE && active && embeddingModel`，HNSW cosine 排序；白名单候选集 ≤500 截断保底，与 `GET /api/images` 一致）→ 批查主表回填 `fileName/source/sourceRef` + 派生 `url/thumbUrl`（复用 `ImageService.fillDerived` 静态实现，同一派生规则只此一处）+ `ImageTagService.fillTags` 回填 `tags`。**10-03 E6 起旧 `ImageEmbeddingMapper.searchTopK` 随旧表删除**。
 
 **接口契约（全部 `R<T>`，HTTP 200 业务失败）**：
 
@@ -374,7 +374,7 @@
 - **图库独立页 `/images`**（`ImageLibrary.vue`，AppShell 左 rail 入口）：上传、浏览、删除（ADMIN/EDITOR）。**S10 起**：筛选（来源下拉/关键字 300ms 防抖/项目）全部走服务端分页接口（size=24，`el-pagination` 翻页）；网格缩略图走 `thumbUrl`（imageView2/webp），点开大图预览用原图；上传内容哈希命中时提示「复用」；AI 来源图卡提供**一键重生成**（缓存感知，见上）；**AI 生图抽屉**（文生图/图生图，EDITOR 及以上；图生图三来源：粘贴/本地文件/图库选图，**09-26 起多张 ≤4 可混合**；n(1/2/4) 张候选生成，`projectId` 传空 = 全局图库，产物即进图库）由共用组件 `AiImageDrawer` 渲染。**UI 重设计（S10+）**：卡片瘦身——默认仅缩略图+来源小标，元数据/操作入 hover 浮层（移动端常显文件名行+「···」更多操作）；工具条两段式（主操作|浏览控制）；大图预览支持当前页连续浏览；筛选状态 chip 条（单独清除/一键全清）；批量选择模式（多选→单次确认删除，被引用图后端拒绝逐张提示）；舒适/紧凑密度切换（localStorage 记忆）。素材管理归图库，不在文章流程内。
   - **标签能力（09-13 image-tags）**：工具条「上传标签」预选控件（**09-28 pc-ui 已移除**——与标签筛选下拉视觉重复；上传打标改卡片「编辑标签」，见下）；工具条标签筛选下拉（数据源 `GET /api/images/tags`，与 chip 条联动，可与其他筛选组合）；卡片 hover 层/移动端常显区展示标签，**点标签直接触发筛选**；卡片 hover 操作区/移动端 ··· 菜单「编辑标签」→ 对话框全量覆盖（`PUT /{id}/tags`）；批量选择态「打标签」→ 对话框（标签多选 + add/remove 单选 → `POST /tags/batch`）。**R5 交互修复**：AI 抽屉文生图/图生图 prompt 拆为独立 ref（切换 tab 不再互相污染）；参考图选择弹窗独立数据源 + 页内搜索（300ms 防抖）+ 分页（不再只看主列表第一页）；来源标签补「比亚迪新闻」（`byd-news`，红色点）。
   - **主题分类筛选与来源展示（09-15 img-classify）**：标签筛选改 **multiple**（`tagFilter` 由字符串改数组，多标签 **AND**），chip 条**逐个展示可单独清除**（点已选标签再点即取消）；下拉按 `/` 前缀用 `el-option-group` **分组展示**（`主题` / `年份` / `其他`）；卡片 hover 层（移动端常显行）显示**来源行**「来源：<新闻标题> · <日期>」，点击跳新闻原文（走 `GET /api/images/{id}/source`，页内批查懒加载，非新闻图不显示）；支持外部入口 `/images?tag=主题/销量`（预置筛选，供新闻卡片点主题标签跳转）。**路由与筛选双向同步**：挂载时按 `route.query.tag` 预置筛选；chip 单独清除 / 全清 / 点卡片标签后 `router.replace` 把 URL 同步为当前选中（`syncRouteTag`）——否则清掉 chip 后 URL 仍留旧 tag，再次从新闻页点同一主题时 query 未变、vue-router 判定重复导航、watch 不触发，出现「点了没反应」。
-  - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（`sparkora_image_embedding`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由配图建议/问答配图承载）。
+  - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（单表 `vector_store` `domain=IMAGE`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由配图建议/问答配图承载）。
 - **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。详见 [knowledge/news.md](knowledge/news.md)。
 - **预览步配图面板（项目向导预览步）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；**09-26 起同一 `AiImageDrawer`（`mode="preview"`）渲染，图生图支持粘贴/本地文件/图库三来源参考图**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。**09-27-image-insert-bugs**：①无任何自动插入/自动设封面，一律用户显式点；②工具栏角标口径 = **解析正文图片引用**（`utils/bodyImageRefs.js`），显示「配图 N · 待传 M」——`N` 为已就绪插图数（不含封面、不含未上传占位），`M` 为**仍可上传**的粘贴图占位数（已失效的不计入，避免误导）；③正文含失效占位时顶部黄色警示条 + 复制/去发布/发布三处阻断。详见 [preview.md](preview.md)。
 - **预览页「智能建议」tab（09-15 article-auto-illustrate 子C）**：配图抽屉第 3 个 tab（`imgTab='suggest'`）。顶部：相似度门槛（默认 0.3）+ 标签预过滤多选（AND，数据源 `GET /api/images/tags`）+「生成建议/重新生成」按钮 + 提示「系统只给建议，点采用才写入正文」。按锚点分组卡片：锚点标题（`headingPath` 或「开头段落」）+ 锚点文本摘要 + 候选网格（缩略图/相关度百分比/标签）。每张候选「插入到此段」；每组「全部采用」/「忽略此段」。**空态三态**：未生成（引导点生成）/ 生成后无候选（提示调低门槛、换标签或先去图库补图）/ 全部被忽略。**建议不自动触发**——须用户点「生成建议」（避免打开抽屉即产生 embedding 调用）。移动端单列、触控目标 ≥44px。
@@ -383,9 +383,9 @@
 
 ## 9. 关键实现路径
 
-- 后端：`web.controller.ImageController`、`service.ImageService`（入库/去重/派生/删图）、`service.ImageTagService`、`service.ImageEmbeddingService`、`service.IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`news.classify.NewsImageClassifier`、`storage.ImageStorage`（抽象）+ `service.QiniuService`（实现）、`mapper.ImageEmbeddingMapper`/`ImageTagMapper`、`ImageTagBackfillRunner`(`@Order(10)`)/`ImageEmbeddingBackfillRunner`(`@Order(20)`)。
+- 后端：`web.controller.ImageController`、`service.ImageService`（入库/去重/派生/删图）、`service.ImageTagService`、`service.ImageEmbeddingService`、`service.IllustrationSuggestionService`、`image.embed.ImageEmbeddingTextBuilder`、`news.classify.NewsImageClassifier`、`storage.ImageStorage`（抽象）+ `service.QiniuService`（实现）、`mapper.ImageTagMapper`、`ai.vector.VectorStoreService`（图片向量读写，10-03 E1/E6）、`ImageTagBackfillRunner`(`@Order(10)`)/`ImageEmbeddingBackfillRunner`(`@Order(20)`)。
 - 前端：`views/ImageLibrary.vue`、`views/project/StepPreview.vue`（配图面板 + 智能建议 tab）、`components/AiImageDrawer.vue`（共用 AI 生图面板；09-26，比例/取消/真实比例缩略图 09-27）、`utils/imageGenRatio.js`（比例档 → 实际像素映射单一真源；09-27）、`utils/imageRefCache.js`（参考图会话缓存；09-26）、`components/MarkdownEditor.vue`（`insertMd`/`insertMdAtAnchor`）、`api/index.js`（`imageApi`）。
-- 表：`sparkora_image_asset`、`sparkora_image_tag`、`sparkora_image_embedding`、`sparkora_illustration_dismiss`、`sparkora_article_version`（`cover_image_id`）、`sparkora_article_version_image`（正文插图关联，P1-⑦）、`sparkora_news.cover_image_id`。
+- 表：`sparkora_image_asset`、`sparkora_image_tag`、`sparkora_illustration_dismiss`、`sparkora_article_version`（`cover_image_id`）、`sparkora_article_version_image`（正文插图关联，P1-⑦）、`sparkora_news.cover_image_id`；图片向量行存单表 `vector_store`（旧 `sparkora_image_embedding` 已 E6 退役）。
 
 ---
 

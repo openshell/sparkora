@@ -14,7 +14,7 @@
 |---|---|---|
 | `sparkora_news` | id / **news_id VARCHAR(200) UNIQUE**（官方字符串 id，业务唯一键）/ title(≤500) / url / image_url / publish_date / tags(JSON) / tag_names(JSON) / content / source(默认 `byd-news`) / sync_status(`SUCCESS`/`FAILED`) / last_sync_at / last_sync_error / **cover_image_id BIGINT**（09-15 img-classify 幂等补列：封面图对应的图库 asset id，可空不建外键）/ created_at / updated_at / deleted | 新闻主表；逻辑删。索引 `idx_news_publish(publish_date)` / `idx_news_status(sync_status)` |
 | `sparkora_news_doc` | id / **news_id BIGINT FK→sparkora_news(id)**（内部 id）/ seq / chunk_type(`NEWS_BODY`/`NEWS_TITLE`) / chunk_text / token_count / created_at / updated_at / deleted | 检索块；首行固定「新闻：<title>（<publishDate>）」。索引 `idx_news_doc_news` |
-| `sparkora_news_doc_embedding` | id / doc_id FK / news_id FK / embedding VECTOR(1024) / **embedding_model VARCHAR(100)（09-27）** / created_at | 物理表（无 `deleted`）；HNSW cosine `idx_news_doc_emb_vec` + `idx_news_doc_emb_news`；09-27 起写入盖模型名、统一检索按当前模型过滤 |
+| ~~`sparkora_news_doc_embedding`~~ | id / doc_id FK / news_id FK / embedding VECTOR(1024) / embedding_model VARCHAR(100) / created_at | **已退役（10-03 E6 `V9` DROP）**。现向量行统一存单表 `vector_store`（`metadata.domain=NEWS` + `metadata.refId=news_doc.id` + `metadata.embeddingModel`），HNSW cosine；检索/统计按当前模型过滤 |
 | `sparkora_news_sync_job` | id / job_type(`FULL`/`INCREMENT`/`SCHEDULED`/`RETRY`) / status(`RUNNING`/`SUCCESS`/`PARTIAL`/`FAILED`) / total / success / failed / failed_items(JSON:`[{newsId,title,error}]`) / started_at / finished_at / error_msg / created_by / created_at / deleted | 同步任务表（复用车型任务表范式）。索引 `idx_news_sync_job_created` |
 
 > 命名注意：`sparkora_news.news_id` 是**官方字符串 id**；`sparkora_news_doc.news_id` 是**内部 BIGINT 外键**。实体：`NewsEntity.newsId`(String) vs `NewsDocEntity.newsId`(Long)。
@@ -31,7 +31,7 @@
 
 ## 3. 入库与向量化
 
-- `com.sparkora.news.service.NewsDocService`（仿 `CarChunkService`/`KbDocService`）：`rebuildForNews(newsId)` **返回 `EmbedStats`（09-27 R6；手动重建端点用）**，先物理清 embedding+doc 再切块（首行「新闻：<title>（<publishDate>）」；空行分段、单段 ≤500、超长按句读（NEWS 保持历史集合 `。；;！!？?`）切分合并——**09-27 起薄委托 `com.sparkora.ai.TextChunker`**，NEWS 语义 = 空正文仅标题非空才保留标题块；**10-03 E2 起服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用相邻块句读滑动重叠**：前块 >60 字时取其尾部片段（优先对齐句读边界）作后块前缀，跨块边界语义不切断、不整块重复、不增块数；实测 1173 个相邻块对中 58.5% 建立 15–60 字重叠）+ embedding 并发化（委托 `EmbeddingBatchRunner`，`maxParallel=4,maxRetries=1`）+ 单块失败重试 1 次；**embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistNewsDoc`（doc 行与向量行同事务，修复此前 `@Transactional insertDocWithEmbedding` 同类直调代理失效）**；`deleteByNews` 物理清块与向量；`chunkTypeOf(chunks)` 纯函数判定块类型（唯一块且无换行 → `NEWS_TITLE`，其余 `NEWS_BODY`）；块数由调用方 `docMapper.selectCount` 计算，不再提供 `chunkCount(newsId)`/`NewsDocEmbeddingMapper.countByNews()`（C2 死代码已删）。
+- `com.sparkora.news.service.NewsDocService`（仿 `CarChunkService`/`KbDocService`）：`rebuildForNews(newsId)` **返回 `EmbedStats`（09-27 R6；手动重建端点用）**，先物理清 store 向量 + doc 再切块（10-03 E6 起旧 `sparkora_news_doc_embedding` 已退役）（首行「新闻：<title>（<publishDate>）」；空行分段、单段 ≤500、超长按句读（NEWS 保持历史集合 `。；;！!？?`）切分合并——**09-27 起薄委托 `com.sparkora.ai.TextChunker`**，NEWS 语义 = 空正文仅标题非空才保留标题块；**10-03 E2 起服务层显式传 `DEFAULT_OVERLAP_CHARS=60` 启用相邻块句读滑动重叠**：前块 >60 字时取其尾部片段（优先对齐句读边界）作后块前缀，跨块边界语义不切断、不整块重复、不增块数；实测 1173 个相邻块对中 58.5% 建立 15–60 字重叠）+ embedding 并发化（委托 `EmbeddingBatchRunner`，`maxParallel=4,maxRetries=1`）+ 单块失败重试 1 次；**embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistNewsDoc`（doc 行与向量行同事务，修复此前 `@Transactional insertDocWithEmbedding` 同类直调代理失效）**；`deleteByNews` 物理清块与向量；`chunkTypeOf(chunks)` 纯函数判定块类型（唯一块且无换行 → `NEWS_TITLE`，其余 `NEWS_BODY`）；块数由调用方 `docMapper.selectCount` 计算，不再提供 `chunkCount(newsId)`/`NewsDocEmbeddingMapper.countByNews()`（C2 死代码已删）。
 - `com.sparkora.news.service.NewsService`：
   - `syncFull()`（遍历 `data.pages` 全部页）/ `syncIncrement()`（列表按 date 倒序，本页全部「已存在且正文非空」即提前停止）；逐条抓正文 → 按 `news_id` 幂等 upsert → `rebuildForNews`；单条失败记 `failedItems` 不阻断；`list(page,size,keyword)`（分页 + title 模糊 + 块数）、`get(id)`、`existsWithContent(newsId)`。官方 date 解析失败置 null。
   - **09-13 image-tags 起**：`upsertOne` 另下载 `imageUrl` 封面字节走统一入库管线转存图库（`source=byd-news`、标签「新闻」，`sparkora_news.image_url` 保留原 URL 留痕）；**单图下载失败仅告警不阻断新闻入库**（同车型图容错先例）。
@@ -50,7 +50,7 @@
 
 ## 5. 统一检索接入（C2 跨层关键改动）
 
-- `CarDocEmbeddingMapper.searchTopKUnified`：在既有 CAR + KB 两段 UNION 后**追加第三段 NEWS**（`source='NEWS'`、`modelId=NULL`、`modelName=n.title`、JOIN `sparkora_news_doc d ... d.deleted=0` 与 `sparkora_news n ... n.deleted=0`）；既有两段语义不变。**候选窗口按域隔离（C2 check 修复）**：CAR+KB 合并取 top-`limit`（与 C2 前完全一致），NEWS 单独取 top-`limit`；不可三者共用一个全局 `LIMIT`——新闻块（≈1300+）与车型/KB 同向量空间且语义邻近时会占满整个窗口，把 CAR/KB 完全挤出候选（实测 BYD 新闻类 query CAR 候选从 32 掉到 0），使下游独立配额失效。**09-27：三段各加 `embedding_model = 当前模型` 过滤**（换模型后旧向量不再参与统一检索）。
+- NEWS 作为第三域接入检索（`source='NEWS'`、`modelId=NULL`、`modelName=n.title`，仅未逻辑删除的 `news_doc`/`news`）。**10-03 E1 起读路径走单表 store**：`CarRagService` 用 `searchDomains([CAR,KB])` + `searchDomains([NEWS])` 两次调用复现「候选窗口按域隔离」——CAR+KB 合并窗、NEWS 独立窗；不可共用一个全局 `LIMIT`（新闻块 ≈1300+ 与车型/KB 同向量空间且语义邻近时会占满窗口，把 CAR/KB 挤出，实测 BYD 新闻类 query CAR 候选从 32 掉到 0）。**10-03 E6 起旧 `searchTopKUnified`（`CarDocEmbeddingMapper`）随旧表一并删除**。
 - `CarRagService.retrieveForGeneration`：新增 NEWS 候选池 + 独立配额 `AI_RAG_NEWS_TOPK`（默认 4，`0` 关闭 NEWS 注入）；**NEWS 不受 `AI_RAG_KB_ENABLED` 控制**；行内标注「【官方新闻：<title>】」；首行 `sourceLine` 支持三域组合（车型数据 / 通用知识库 / 官方新闻）；**锚点加权仅对 `source=CAR` 生效**（NEWS/KB 不变）；`coveredText` 仅统计 CAR 参数块；citations 纳入 NEWS（`source=NEWS`）。**不改 `RagStatus` 四态语义与既有 CAR/KB 行为**；主查询过采样沿用 C2 前口径 `max(topK*4,32)`（候选窗口隔离由 mapper 负责，无需额外余量）。
 
 ---
@@ -92,9 +92,9 @@
 
 ## 9. 关键实现路径
 
-- 后端：`com.sparkora.news.client.BydNewsClient`、`news.service.{NewsContentParser,NewsService,NewsDocService,NewsSyncJobService,NewsSyncScheduler}`、`news.classify.NewsImageClassifier`、`web.controller.NewsController`、`mapper.NewsDocEmbeddingMapper`。
+- 后端：`com.sparkora.news.client.BydNewsClient`、`news.service.{NewsContentParser,NewsService,NewsDocService,NewsSyncJobService,NewsSyncScheduler}`、`news.classify.NewsImageClassifier`、`web.controller.NewsController`、`ai.vector.VectorStoreService`（NEWS 向量写入/删除，10-03 E1/E6）。
 - 前端：`views/knowledge/NewsKnowledgePanel.vue`、`api/index.js` 的 `newsApi`。
-- 表：`sparkora_news` / `sparkora_news_doc` / `sparkora_news_doc_embedding` / `sparkora_news_sync_job`。
+- 表：`sparkora_news` / `sparkora_news_doc` / `sparkora_news_sync_job`；向量行存单表 `vector_store`（旧 `sparkora_news_doc_embedding` 已 E6 退役）。
 
 ---
 

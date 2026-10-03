@@ -76,7 +76,7 @@ QaController ─▶ QaService.ask(sessionId, question, user)
 | 新闻关联图（便宜路径，始终执行） | 答案引用含 `source=NEWS` 且该引用 `docId` 非空 | `Citation.docId`(= `sparkora_news_doc.id`) → `news_id`(内部 BIGINT) → `sparkora_news.id` → `cover_image_id` → `sparkora_image_asset` |
 | 语义检索图（语义路径，仅图片意图） | 问题命中图片意图关键词 | `ImageEmbeddingService.searchImages(cleanQuery, limit, AI_IMAGE_MIN_SCORE, null)` |
 
-- **`Citation` / `UnifiedHit` 加可空 `docId`**（09-15 补读）：`searchTopKUnified` SQL 本已 `SELECT docId`（CAR=`car_chunk.id` / KB=`kb_chunk.id` / NEWS=`news_doc.id`），此前读行时丢弃，现补读并透传（**含锚点 boost 重排分支**，漏传会让 id 静默丢失）。`Citation` **保留 5 参兼容构造器**（`docId=null`）；`BriefService.citationsJson`（现由 `VersionService` 复用写入版本引用明细；FAST 简报写入路径已于 2026-09-26（R6）删除）与 `KnowledgeSearchTool`（深度检索）行为不变。
+- **`Citation` / `UnifiedHit` 加可空 `docId`**（09-15 补读）：统一检索本已携带 `docId`（CAR=`car_chunk.id` / KB=`kb_chunk.id` / NEWS=`news_doc.id`，10-03 E1 后为 store `metadata.refId`），此前读行时丢弃，现补读并透传（**含锚点 boost 重排分支**，漏传会让 id 静默丢失）。`Citation` **保留 5 参兼容构造器**（`docId=null`）；`BriefService.citationsJson`（现由 `VersionService` 复用写入版本引用明细；FAST 简报写入路径已于 2026-09-26（R6）删除）与 `KnowledgeSearchTool`（深度检索）行为不变。
 - **图片意图判定**（`QaImageIntent`，纯静态关键词，不用 LLM）：命中 `看图/看图片/看张图/看照片/图片/海报/照片/配图/给我看/我想看/看一下` 任一即触发语义检索；**非图片意图不调 `searchImages`**（无 embedding 浪费）。
 - **合并去重**：按 `imageId` 去重，**新闻关联图优先**（与答案引用强相关），上限 `QaService.IMAGE_REF_MAX = 3`（常量，不配置化）。
 - **降级（绝不阻断答案）**：`QaImageRefService` 各路径与 `QaService.ask` 调用处均包 try/catch，异常仅 warn；配图解析失败/为空 → `image_refs` 落 **null**，答案照常落库。
@@ -134,5 +134,5 @@ QaController ─▶ QaService.ask(sessionId, question, user)
 - 问答为**同步一次性返回**，无流式输出（AI 超时见 `.env AI_TIMEOUT_MS`，前端 `ask` 超时 120s）。
 - 历史无摘要压缩，超长会话丢最旧（见 §2）。
 - 会话不可分享/导出（Out of Scope，后续可扩展）。
-- `sparkora_*_embedding` 为物理表（无 `deleted`），删除带逻辑删除的实体时需按外键一条 SQL 兜底物理清（既有实现已处理）。
-- 问答链路消费的 `searchTopKUnified`/`searchTopK`（图片）自 09-27 起按 `embedding_model = 当前模型` 过滤；换模型后旧模型向量对问答不可见，需先重嵌各域（见 [car.md](car.md)/[kb.md](kb.md)/[news.md](news.md)）。
+- 向量行统一存单表 `vector_store`（10-03 E1/E6，旧 4 张 `sparkora_*_embedding` 物理表已退役）；删除带逻辑删除的实体时需按域 `refId`/`modelId` 兜底物理清 store 行（`VectorStoreService.deleteByRef`/`deleteByCarModel`，既有实现已处理）。
+- 问答链路消费的统一检索（文本块）与 `searchImages`（图片）自 09-27 起按当前模型过滤（10-03 E1/E6 后为 store `metadata.embeddingModel`）；换模型后旧模型向量对问答不可见，需先重嵌各域（见 [car.md](car.md)/[kb.md](kb.md)/[news.md](news.md)）。

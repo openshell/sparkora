@@ -14,10 +14,10 @@
 |---|---|
 | `car_model.intro_images` | **语义 = 图库 `image_asset.id` 列表 JSON**（非 URL）；存量旧数据可能为 URL 数组，双读兼容 |
 | `introImageUrls` | 非持久化派生字段（`@TableField(exist=false)`）：`list()`/`detail()` 由 `introImages` 实时解析——数字 id → `ImageService.publicUrl`，`http` 开头原样保留，解析失败跳过；前端 `CarLibrary.vue` 缩略图取 `introImageUrls[0]` |
-| 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块，并按 `model_id` 物理清理 `sparkora_car_doc_embedding`（兜底历史逻辑删除残留）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
+| 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块；并按 `modelId` 物理清理单表 store（`deleteByCarModel`，兜底历史逻辑删除残留；**10-03 E6 前为 `sparkora_car_doc_embedding`，已退役**）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
 | 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 定时 `@Scheduled`（`job_type=SCHEDULED`，以官网目录全量幂等刷新，**未过期** RUNNING 任务存在则跳过；陈旧 RUNNING（`started_at` 超 60 分钟）先置 FAILED 自愈后继续，见 [news.md §4](news.md)）；默认关闭 |
 | 配置 | `CAR_SYNC_ENABLED`（默认 false）/ `CAR_SYNC_CRON`（默认 `0 0 3 * * ?`） |
-| KB 索引 | `sparkora_kb_chunk_embedding` 由 IVFFLAT 统一为 HNSW cosine（见 [kb.md](kb.md)） |
+| KB 索引 | 矢量层统一为单表 `vector_store` HNSW cosine + metadata GIN（10-03 E1/E6；原 `sparkora_kb_chunk_embedding` 已退役，见 [kb.md](kb.md)） |
 
 - `intro_images` 字段级：图库资产 id 列表（JSON 字符串，TEXT 列），由 `CarModelService.persistIntroImages` 在同步时转存图库后写入（单图失败不阻断）；标签 `车型-<车型名>`（见 [image.md](../image.md)「BYD 图片自动分类」）。
 - `introImageUrls` 与 `introImages` 的区别是前端常见 bug 来源：**不要把 `introImages` 当 URL 用**。
@@ -28,9 +28,9 @@
 
 - `com.sparkora.car.service.CarChunkService`：按车型参数/版本/分组切块（`PARAM_GROUP` / `MODEL_INFO` / `RIGHTS` / `FEATURE` 等 `chunkType`），首行固定 `车型：<全名>`（消除 EV/DM-i 同系跨版本检索混淆，S6b）；块行文本 `参数名：清洗值`。
 - `rebuildForModel`：embedding 并发（固定线程池 ≤4）+ 单块失败重试 1 次；**09-27 起委托 `com.sparkora.ai.EmbeddingBatchRunner`**（embed 在事务外，持久化经自注入 `@Lazy self` 走 `@Transactional(REQUIRES_NEW)` 的 `persistCarChunk`——doc 行与向量行同事务，失败回滚不留孤儿块，且不污染调用方事务）。
-- 表：`sparkora_car_model`（主表）、`sparkora_car_chunk`（文档块）、`sparkora_car_doc_embedding`（物理向量表，无 `deleted`，HNSW cosine `idx_car_doc_emb_vec`；**09-27 加 `embedding_model VARCHAR(100)` 列**，写入盖当前模型、检索按当前模型过滤）、`sparkora_car_param_clean`（清洗结果）。
+- 表：`sparkora_car_model`（主表）、`sparkora_car_chunk`（文档块）、`sparkora_car_param_clean`（清洗结果）。向量行存单表 `vector_store`（`metadata.domain=CAR`、`metadata.modelId`、`metadata.chunkType`、`metadata.embeddingModel`，写入盖当前模型、检索按当前模型过滤）；**旧表 `sparkora_car_doc_embedding` 已由 10-03 E6 `V9` 删除**。
 - 切块质量与清洗三态（`RULE`/`AI`/`FALLBACK`）、清洗统计、覆盖度声明见 [retrieval.md §5/§6](../retrieval.md)。
-- 向量模型防护（09-27 P1-⑧）：`EmbeddingClient.embedList` 校验返回维度 == `AI_EMBEDDING_DIM`（默认 1024），不符抛 `AiException`；`car_doc_embedding.embedding_model` 记录写入时模型，`searchTopK`/`searchTopKUnified` 均带 `embedding_model = 当前模型` 过滤，换模型后旧向量自动失效（不静默混空间）；`vector-stats` 的 `embeddedCount` 只计当前模型行（旧模型块判为缺失、可重建补齐）。
+- 向量模型防护（09-27 P1-⑧；10-03 E6 迁移 store）：`EmbeddingClient.embedList` 校验返回维度 == `AI_EMBEDDING_DIM`（默认 1024），不符抛 `AiException`；向量行 `metadata.embeddingModel` 记录写入时模型，统一检索 filter 与 store 统计/差集均带当前模型过滤，换模型后旧向量自动失效（不静默混空间）；`vector-stats` 的 `embeddedCount` 只计 `vector_store` 中当前模型行（`VectorStoreService.countCarEmbeddedByModel`，旧模型块判为缺失、可重建补齐）。
 
 ---
 
@@ -65,9 +65,9 @@
 | POST | `/api/car/sync/jobs/{id}/retry` | ADMIN/EDITOR | 重试失败项，返回新任务 `{jobId}` |
 | POST | `/api/car/models/{id}/sync` | ADMIN/EDITOR | 单车型同步（详情页用，同步阻塞；返回 `{model, cleanStats}`）；车型不存在 404 |
 | POST | `/api/car/sync` | ADMIN/EDITOR | 全量同步**已取消**（S6 重构），恒 `R.fail(400, "全量同步已取消,请在同步页选择车型后同步")` |
-| DELETE | `/api/car/models/{id}` | ADMIN/EDITOR | 删除车型（逻辑删 + 物理清 embedding，不删图库资产） |
+| DELETE | `/api/car/models/{id}` | ADMIN/EDITOR | 删除车型（逻辑删 + 物理清 store 向量，不删图库资产） |
 | GET | `/api/car/models/{id}/clean-stats` | 三角色 | 清洗统计（按 `method`/`valueType` 分组） |
-| GET | `/api/car/models/vector-stats` | 三角色 | 向量对账 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅 `deleted=0`） |
+| GET | `/api/car/models/vector-stats` | 三角色 | 向量对账 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅 `deleted=0`；`embeddedCount` 10-03 E6 起查 `vector_store`，结构不变） |
 | POST | `/api/car/models/rebuild-all` | ADMIN/EDITOR | 逐车型重建向量汇总 |
 | POST | `/api/car/rag` | 三角色 | 内部问答检索 `{modelId, query, topK?}` |
 
