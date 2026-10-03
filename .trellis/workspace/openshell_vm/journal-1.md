@@ -1283,3 +1283,27 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 50: E5 覆盖度三域统一 + 嵌入缓存（10-03 任务树最后一子）
+<!-- trellis-session: v=2 fp=560f45199e3e9a6d -->
+
+**Date**: 2026-10-03
+**Task**: E5 覆盖度三域统一 + 嵌入缓存（10-03 任务树最后一子）
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b316a68` | feat(E5): 覆盖度三域统一 + 内容寻址嵌入缓存 |
+| `9fcc111` | docs(spec): 记录 E5 覆盖度三域统一与嵌入缓存契约 |
+| `273be7e` | chore(task): archive 10-03-e5-coverage-dedup |
+
+### Status
+
+[OK] **Completed**

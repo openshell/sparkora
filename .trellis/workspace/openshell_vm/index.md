@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 49
+- **Total Sessions**: 50
 - **Last Active**: 2026-10-03
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1285 | Active |
+| `journal-1.md` | ~1309 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 50 | 2026-10-03 | E5 覆盖度三域统一 + 嵌入缓存（10-03 任务树最后一子） | `b316a68`, `9fcc111`, `273be7e` | `main` |
 | 49 | 2026-10-03 | E4 命名规范化 car_doc→car_chunk 完成 | `9f819c2`, `2a39e26` | `main` |
 | 48 | 2026-10-03 | E3 KB 数据模型规范化：受控 domain + 来源/标签/生效期 | `e1bf616` | `main` |
 | 47 | 2026-10-03 | E2 切块滑动重叠 + 全库重嵌 | `d50acd3`, `7a8aab9`, `10c3566` | `main` |
