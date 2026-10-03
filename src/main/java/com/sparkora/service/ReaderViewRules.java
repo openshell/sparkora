@@ -62,7 +62,7 @@ public final class ReaderViewRules {
     /**
      * R1:构造「禁止写入正文的断言」块(深度写作与多版本主题分支共用)。
      *
-     * <p>与 {@code DeepWriterService.appendBriefSection} 的差异(刻意):<b>不按原文兜底</b>——
+     * <p>与简报 JSON 字段通用注入(逐项/原文兜底)的差异(刻意):<b>不按原文兜底</b>——
      * fact_risks 里含写给作者的祈使句 {@code suggestion},按原文追加等于把泄漏源原样送回素材区;
      * 解析失败/非数组一律视为无可用断言(返回 null 不注入)。
      *

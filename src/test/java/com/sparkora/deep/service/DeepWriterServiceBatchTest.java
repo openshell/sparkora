@@ -74,6 +74,10 @@ class DeepWriterServiceBatchTest {
         b.setProjectId(PROJECT_ID);
         b.setGenMode("DEEP");
         b.setFactSheet("{\"entries\":[{\"key\":\"价格\",\"value\":\"239900\",\"confidence\":0.9}]}");
+        // C4:startBatch 入口要求写作蓝图已确认,否则 409;夹具给已确认蓝图。
+        b.setWritingBlueprint("{\"thesis\":\"论点\",\"argumentStructure\":[{\"sectionId\":\"S1\",\"heading\":\"价格\",\"role\":\"ARGUMENT\",\"claim\":\"价格\"}],"
+                + "\"evidenceMap\":[{\"sectionId\":\"S1\",\"entryKeys\":[\"价格\"],\"coverage\":\"COVERED\"}]}");
+        b.setBlueprintStatus("CONFIRMED");
         return b;
     }
 

@@ -50,6 +50,15 @@ import java.util.regex.Pattern;
  *     写给作者的 suggestion 祈使句不再进素材区(线上 version 44 实测泄漏源);
  *  R2 system 追加 {@link ReaderViewRules#READER_RULES} 读者视角铁律(与 VersionService 主题分支共用文本);
  *  R3 落库前经 {@link MetaLeakCleaner} 句级清洗兜底,位置在 ⑥ 数值回查之前。
+ *
+ * 10-03-writer-evidence-projection(C4 写作按映射取用):
+ *  写作从「整本 fact_sheet 注入」升级为「按 C3 {@code writing_blueprint} 的 argumentStructure 逐节、
+ *  按 evidenceMap.entryKeys 硬约束取用」——每节仅注入该节映射到的 fact 条目,未映射事实/数值不得进正文;
+ *  coverage=MISSING/PARTIAL 的节只允许定性陈述。数值回查升级为白名单:投影模式下只拿被映射条目的
+ *  子集做允许集合,蓝图外数值 → {@code fact_risks} high。{@code writing_blueprint} 空/解析失败/
+ *  argumentStructure 空数组 → 退化为既有整本手册注入(保留 kind 分组),保证不崩。
+ *  {@code write()} 本身不做评审门(异步体内抛会被吞成项目失败);仅同步入口
+ *  {@link #startWithSpecs} 要求 {@code writing_blueprint} 非空且 {@code blueprint_status=CONFIRMED}。
  */
 @Slf4j
 @Service
@@ -152,10 +161,13 @@ public class DeepWriterService {
         return startWithSpecs(projectId, b, List.of(spec));
     }
 
-    /** 公共编排:项目校验 + 陈旧判定 + 原子抢占 + 触发异步 + 返回占位。 */
+    /** 公共编排:项目校验 + 蓝图评审门 + 陈旧判定 + 原子抢占 + 触发异步 + 返回占位。 */
     private Map<String, Object> startWithSpecs(Long projectId, ArticleBriefEntity b, List<StyleSpec> specs) {
         ArticleProjectEntity p = projectMapper.selectById(projectId);
         if (p == null) throw new IllegalArgumentException("项目不存在");
+        // C4 写作评审门(仅同步入口;write() 内不做此门——异步体内抛会被吞成项目失败,体验差,
+        // 且保持 write() 可被单测直接驱动)。控制器已把 IllegalStateException → 409。
+        requireConfirmedBlueprint(b);
         if (statusService.stuckGenerating(p)) {
             throw new IllegalStateException("该项目正在生成中，请稍候（刷新页面可查看进度）");
         }
@@ -172,6 +184,19 @@ public class DeepWriterService {
         if (projectId != null && !projectId.equals(b.getProjectId()))
             throw new IllegalArgumentException("brief 不属于该项目");
         return b;
+    }
+
+    /**
+     * C4 写作评审门:蓝图非空且 {@code blueprint_status=CONFIRMED} 才放行,否则 409 语义。
+     *
+     * <p>仅在同步入口 {@link #startWithSpecs} 调用;{@link #write} 不做此门(异步体内抛会被吞成项目失败,
+     * 且保持 write() 可被单测直接驱动)。
+     */
+    static void requireConfirmedBlueprint(ArticleBriefEntity b) {
+        boolean hasBlueprint = b.getWritingBlueprint() != null && !b.getWritingBlueprint().isBlank();
+        if (!hasBlueprint || !"CONFIRMED".equals(b.getBlueprintStatus())) {
+            throw new IllegalStateException("写作蓝图尚未确认，请先确认写作蓝图再生成正文");
+        }
     }
 
     /**
@@ -228,10 +253,15 @@ public class DeepWriterService {
             log.warn("取项目快照失败 projectId={}: {}", projectId, e.getMessage());
         }
         JsonNode sheet = json.readTree(b.getFactSheet() == null ? "{}" : b.getFactSheet());
+        JsonNode entries = sheet.path("entries");
         // R5(09-27-tavily-extract-kind-hypotheses):手册条目带 kind 时按「参数事实 / 背景素材」分组呈现;
         // 全无 kind(历史 fact_sheet)时退化为原平铺行为(prompt 与旧实现逐字等价)。
-        boolean hasKind = hasKind(sheet.path("entries"));
-        StringBuilder factCtx = buildFactContext(sheet.path("entries"), hasKind);
+        boolean hasKind = hasKind(entries);
+        // C4(10-03-writer-evidence-projection):解析写作蓝图,按 evidenceMap.entryKeys 逐节投影 fact_sheet。
+        // 投影模式判定:argumentStructure 为非空数组;空/解析失败 → 降级为整本手册注入(不崩)。
+        JsonNode blueprint = parseBlueprint(b.getWritingBlueprint());
+        boolean projection = blueprint != null && blueprint.path("argumentStructure").isArray()
+                && !blueprint.path("argumentStructure").isEmpty();
         // R2(09-27-deep-writing-adaptive-sections):排版铁律「节数行」按目标字数自适应;其余铁律逐字保留。
         // C1:固定指令文字块外置为模板(prompts/deep/write-system-*.st 与 shared/reader-rules.st),
         // 动态的 [[layoutRule]] 与 [[hasKind]] 分支仍由 Java 控制,拼接结构逐字不变。
@@ -241,7 +271,17 @@ public class DeepWriterService {
                     : "")
                 + layoutRule(p == null ? null : p.getWordCountTarget())
                 + com.sparkora.ai.PromptTemplateLoader.render("deep/write-system-layout.st", java.util.Map.of())
-                + com.sparkora.ai.PromptTemplateLoader.render("shared/reader-rules.st", java.util.Map.of()) + "\n";
+                + com.sparkora.ai.PromptTemplateLoader.render("shared/reader-rules.st", java.util.Map.of());
+        // C4 硬约束(投影模式):蓝图未映射的事实/数值不得进入正文;每节数值逐字出自【本节可用证据】。
+        if (projection) {
+            system = system + "\n深度写作硬约束(写作蓝图已确认,必须遵守):\n"
+                    + "1. 逐节写作:严格按下方各节「## 标题」的节次与标题组织正文。\n"
+                    + "2. 正文中出现的所有具体数值必须逐字出自该节【本节可用证据】;"
+                    + "蓝图未映射到本节的任何事实/数值不得出现。\n"
+                    + "3. 【本节可用证据】中标注 coverage=MISSING/PARTIAL 的论点,"
+                    + "只能用不带具体数值的定性陈述,不得给出任何数字。\n";
+        }
+        system = system + "\n";
         // 09-10-style-library-enhance:风格指令从 user prompt 迁入 system prompt(与仿写链路统一注入位置)
         if (stylePrompt != null && !stylePrompt.isBlank()) {
             system = system + "\n文风要求:\n" + stylePrompt + "\n" + STYLE_ENFORCE;
@@ -257,29 +297,30 @@ public class DeepWriterService {
         if (p != null && p.getContentDescription() != null && !p.getContentDescription().isBlank()) {
             user.append("内容描述:").append(p.getContentDescription()).append('\n');
         }
-        user.append("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
+        if (projection) {
+            // C4:逐节投影——每节仅注入该节 evidenceMap.entryKeys 对应的 fact 条目(按 key 从 fact_sheet 取)。
+            user.append(buildBlueprintSections(blueprint, entries, hasKind));
+        } else {
+            // 降级模式(无蓝图/解析失败/argumentStructure 空):沿用整本手册注入(保留 kind 分组),保证不崩。
+            StringBuilder factCtx = buildFactContext(entries, hasKind);
+            user.append("事实手册(数值唯一来源):\n").append(factCtx).append('\n');
+        }
         if (b.getClarifyAnswers() != null && !b.getClarifyAnswers().isBlank()) {
             user.append("用户锁定需求:\n").append(b.getClarifyAnswers()).append('\n');
         }
-        // R1(09-27-brief-writing-linkage-fix):简报字段显式注入写作 prompt——简报是唯一结构化中间件,
-        // 此前 titleCandidates/coreViewpoints/outline/factRisks 在写作阶段零引用(仅末尾一句空指引)。
-        // 历史 brief 字段缺失/为空 → 跳过对应块,prompt 退化为旧行为(不报错不阻断)。
-        appendBriefSection(user, "标题候选", b.getTitleCandidates(), true);
         // S6 选定标题:项目级 selected_title 非空时注入(与 VersionService 既有措辞同源);
         // 为空的历史项目不追加,prompt 与旧行为逐字等价。
         if (p != null && p.getSelectedTitle() != null && !p.getSelectedTitle().isBlank()) {
             user.append("\n【用户已选定标题,正文一级标题(#)请采用该标题,勿偏离原意】\n")
                 .append(p.getSelectedTitle()).append('\n');
         }
-        appendBriefSection(user, "核心观点", b.getCoreViewpoints(), true);
-        appendBriefSection(user, "大纲", b.getOutline(), false);
         // R1(10-02-fix-meta-leak-in-article-body):原「事实风险:」整块注入改为「禁止写入正文的断言」——
         // fact_risks[].suggestion 是写给作者的祈使句,进正文素材区必被复述/改写成读者话术(线上 version 44 实测);
         // 只抽陈述性的 claim 作禁写清单,保留风险防护价值。
         String forbidden = ReaderViewRules.forbiddenClaimsBlock(b.getFactRisks());
         if (forbidden != null) user.append(forbidden);
-        // 末尾指引句与旧实现逐字一致:空字段 brief 的 prompt 与旧行为等价(AC-01);有字段时其内容已在上方列出
-        user.append("主题与大纲参考 brief(标题候选/核心观点/大纲),直接写正文 Markdown。");
+        // 末尾指引句(投影/降级共用):直接写正文 Markdown。
+        user.append("直接写正文 Markdown。");
         // R4(09-27-brief-writing-linkage-fix):正文是全链路最长输出,对齐 R4/R6 范式——
         // 首次 4096;截断(finish_reason=length)或异常提额 8192 重试一次,仅两次均失败才抛。
         // 重试只包裹 AI 调用,版本 insert 仍只执行一次(下方落库逻辑不动)。
@@ -308,8 +349,9 @@ public class DeepWriterService {
         }
         content = cleaned.content();
 
-        // ⑥ 数值回查
-        List<String> unknown = verifyNumbers(content, b.getFactSheet());
+        // ⑥ 数值回查(白名单):投影模式仅允许 evidenceMap.entryKeys 映射到的条目参与比对,
+        // 蓝图未映射条目里的数字因不在允许集合 → 报 high(AC3);降级模式沿用整本 fact_sheet。
+        List<String> unknown = verifyNumbers(content, allowedFactSubset(blueprint, projection, b.getFactSheet()));
         String factRisks;
         if (unknown.isEmpty()) {
             factRisks = "[]";
@@ -404,47 +446,137 @@ public class DeepWriterService {
         return line.toString();
     }
 
-    /**
-     * R1(09-27-brief-writing-linkage-fix):把简报 JSON 字段块追加进写作 prompt。
-     *
-     * <p>规则:
-     * <ul>
-     *   <li>null/空白/{@code "[]"}/{@code "{}"} → 跳过(历史 brief 无字段时 prompt 与旧行为等价);</li>
-     *   <li>{@code asArray=true}:解析为数组则逐项 {@code - } 列出(元素为对象时 toString);
-     *       解析失败或非数组 → 原样追加(不丢信息);</li>
-     *   <li>{@code asArray=false}(outline):解析成功 → toString 追加(结构未知,不强解);失败 → 原样。</li>
-     * </ul>
-     * 全程 try/catch 仅 warn,绝不因简报字段异常阻断正文生成。
-     */
-    private void appendBriefSection(StringBuilder sb, String label, String jsonText, boolean asArray) {
-        if (jsonText == null || jsonText.isBlank()
-                || "[]".equals(jsonText.trim()) || "{}".equals(jsonText.trim())) {
-            return;
-        }
+    // ==================== C4 写作按映射取用(10-03-writer-evidence-projection) ====================
+
+    /** C4:解析写作蓝图 JSON;null/空白/解析失败/非对象 → null(降级整本手册注入,不崩)。 */
+    private JsonNode parseBlueprint(String writingBlueprint) {
+        if (writingBlueprint == null || writingBlueprint.isBlank()) return null;
         try {
-            boolean parsed = false;
-            if (asArray) {
-                JsonNode node = json.readTree(jsonText);
-                if (node != null && node.isArray()) {
-                    sb.append(label).append(":\n");
-                    for (JsonNode item : node) {
-                        sb.append("- ").append(item.isTextual() ? item.asText() : item.toString()).append('\n');
-                    }
-                    parsed = true;
+            JsonNode n = json.readTree(writingBlueprint);
+            return n != null && n.isObject() ? n : null;
+        } catch (Exception e) {
+            log.warn("写作蓝图解析失败,降级为整本手册注入: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * C4 投影模式:按 {@code argumentStructure} 逐节构造写作块。
+     *
+     * <p>每节仅注入该节 {@code evidenceMap.entryKeys}(可多个 evidence 项同 sectionId,合并去重)
+     * 按 key 从 fact_sheet 取到的条目;kind 分组语义由 {@link #buildFactContext} 沿用。
+     * {@code coverage=MISSING/PARTIAL} 的节追加显式定性指令(不得给出具体数值)。
+     */
+    static String buildBlueprintSections(JsonNode blueprint, JsonNode entries, boolean hasKind) {
+        StringBuilder out = new StringBuilder();
+        String thesis = text(blueprint, "thesis");
+        String angle = text(blueprint, "audienceAngle");
+        out.append("写作蓝图(thesis:").append(thesis).append(";读者切入:").append(angle).append("):\n");
+        // key → entry 投影索引(fact_sheet 内 key 稳定唯一,首见为准)
+        Map<String, JsonNode> byKey = new LinkedHashMap<>();
+        for (JsonNode e : entries) {
+            String k = e.path("key").asText("");
+            if (!k.isBlank()) byKey.putIfAbsent(k, e);
+        }
+        JsonNode evidenceMap = blueprint.path("evidenceMap");
+        for (JsonNode section : blueprint.path("argumentStructure")) {
+            String sectionId = text(section, "sectionId");
+            String heading = text(section, "heading");
+            out.append("\n## ").append(heading.isBlank() ? sectionId : heading).append('\n');
+            appendKV(out, "本节角色", text(section, "role"));
+            appendKV(out, "本节论点", text(section, "claim"));
+            appendKV(out, "叙述意图", text(section, "narrativeIntent"));
+            appendKV(out, "与全文关系", text(section, "argumentRelation"));
+            // 收集该节 entryKeys(多 evidence 项同 sectionId 合并去重)与最差 coverage
+            List<String> keys = new ArrayList<>();
+            String coverage = null;
+            for (JsonNode ev : evidenceMap) {
+                if (!sectionId.equals(text(ev, "sectionId"))) continue;
+                for (JsonNode k : ev.path("entryKeys")) {
+                    String ks = k.asText();
+                    if (!ks.isBlank() && !keys.contains(ks)) keys.add(ks);
                 }
-            } else {
-                JsonNode node = json.readTree(jsonText);
-                if (node != null) {
-                    sb.append(label).append(":\n").append(node.toString()).append('\n');
-                    parsed = true;
+                coverage = worstCoverage(coverage, text(ev, "coverage"));
+            }
+            // 无 evidenceMap 项/无有效 key → 视为 MISSING(该节只能定性)
+            if (coverage == null) coverage = "MISSING";
+            // 仅取映射到的条目(蓝图未映射的 fact 条目一律不进本节)
+            com.fasterxml.jackson.databind.node.ArrayNode matched =
+                    com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+            for (String k : keys) {
+                JsonNode e = byKey.get(k);
+                if (e != null) matched.add(e);
+            }
+            out.append("【本节可用证据】(数值唯一来源,所有数值必须逐字出自此处):\n");
+            if (matched.isEmpty()) out.append("- (无)\n");
+            else out.append(buildFactContext(matched, hasKind));
+            if (!"COVERED".equals(coverage)) {
+                out.append("【本节约束】").append(coverageInstruction(coverage)).append('\n');
+            }
+        }
+        return out.toString();
+    }
+
+    /** coverage 取最差:MISSING &gt; PARTIAL &gt; COVERED;null 视为未给。 */
+    static String worstCoverage(String a, String b) {
+        int ra = coverageRank(a), rb = coverageRank(b);
+        return rb > ra ? b : a;
+    }
+
+    private static int coverageRank(String c) {
+        if ("MISSING".equals(c)) return 2;
+        if ("PARTIAL".equals(c)) return 1;
+        if ("COVERED".equals(c)) return 0;
+        return -1;
+    }
+
+    /** 非 COVERED 节的显式定性指令(不得给出任何数字)。 */
+    static String coverageInstruction(String coverage) {
+        if ("PARTIAL".equals(coverage)) {
+            return "本节所需证据仅部分在事实手册中：只有上方列出的证据可逐字引用数值,未列出的不得给出任何数字。";
+        }
+        return "本节所需证据未在事实手册中：正文只能用不带具体数值的定性陈述,不得给出任何数字。";
+    }
+
+    /**
+     * C4 数值回查白名单:投影模式 → 仅「被 evidenceMap.entryKeys 映射到的 fact_sheet 条目」子集
+     * (构造 {@code {"entries":[...]}});降级模式 → 原 fact_sheet 原样返回。
+     *
+     * <p>这样蓝图未映射条目里的数值因不在允许集合而报 high(AC3);
+     * {@link #verifyNumbers} 内部归一化/正则口径与 C7 零回归。
+     */
+    static String allowedFactSubset(JsonNode blueprint, boolean projection, String factSheet) {
+        if (!projection || blueprint == null) return factSheet;
+        Set<String> keys = new java.util.LinkedHashSet<>();
+        for (JsonNode ev : blueprint.path("evidenceMap")) {
+            for (JsonNode k : ev.path("entryKeys")) {
+                String ks = k.asText();
+                if (!ks.isBlank()) keys.add(ks);
+            }
+        }
+        com.fasterxml.jackson.databind.node.ArrayNode allowed =
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+        try {
+            if (factSheet != null && !factSheet.isBlank()) {
+                for (JsonNode e : new ObjectMapper().readTree(factSheet).path("entries")) {
+                    if (keys.contains(e.path("key").asText(""))) allowed.add(e);
                 }
             }
-            // 非数组/解析未产出结构:按原文追加(仅在此处补块头,避免解析失败时块头重复)
-            if (!parsed) sb.append(label).append(":\n").append(jsonText.trim()).append('\n');
         } catch (Exception e) {
-            log.warn("简报字段「{}」注入写作 prompt 失败,按原文追加: {}", label, e.getMessage());
-            sb.append(label).append(":\n").append(jsonText.trim()).append('\n');
+            // 手册畸形 → 允许集合为空(全部数值报 high),不阻断落库
         }
+        com.fasterxml.jackson.databind.node.ObjectNode root =
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+        root.set("entries", allowed);
+        return root.toString();
+    }
+
+    private static void appendKV(StringBuilder sb, String label, String value) {
+        if (value != null && !value.isBlank()) sb.append("- ").append(label).append(':').append(value).append('\n');
+    }
+
+    private static String text(JsonNode node, String field) {
+        return node.path(field).asText("").trim();
     }
 
     /**
