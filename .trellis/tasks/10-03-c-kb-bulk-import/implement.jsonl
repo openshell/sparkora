@@ -1,0 +1,7 @@
+{"file": "docs/spec/knowledge/kb.md", "reason": "KB 域权威契约：受控 domain/来源/标签/生效期/切块/嵌入与既有单条 CRUD，批量导入必须与其对齐且零回归"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "多步写入失败顺序（失败先于写库、不留孤儿文档）——批量导入逐条落库的错误边界依据"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "不可逆副作用隔离/多步写入失败顺序，批量导入解析应先于任何写库"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义 + 400/403/500 映射矩阵，batch 端点的错误码约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "包落位：com.sparkora.kb（解析器）/ kb.service（批量服务）/ web.controller（端点）"}
+{"file": ".trellis/tasks/10-03-c-kb-bulk-import/prd.md", "reason": "C 需求与验收（AC-C1..C4、R1..R6）"}
+{"file": ".trellis/tasks/10-03-c-kb-bulk-import/design.md", "reason": "C 技术设计：格式解析/行模型/去重策略/失败事务/端点契约"}

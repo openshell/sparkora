@@ -3,13 +3,16 @@ package com.sparkora.web.controller;
 import com.sparkora.common.R;
 import com.sparkora.domain.entity.KbDocEntity;
 import com.sparkora.kb.KbDomain;
+import com.sparkora.kb.service.KbBatchImportService;
 import com.sparkora.kb.service.KbDocService;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.web.dto.KbDocSaveDto;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -24,9 +27,11 @@ import java.util.Map;
 public class KbDocController {
 
     private final KbDocService service;
+    private final KbBatchImportService batchImportService;
 
-    public KbDocController(KbDocService service) {
+    public KbDocController(KbDocService service, KbBatchImportService batchImportService) {
         this.service = service;
+        this.batchImportService = batchImportService;
     }
 
     /** 受控领域词表(保序,供前端下拉);读三角色。 */
@@ -107,6 +112,27 @@ public class KbDocController {
             return R.ok(Map.of("total", st.total(), "success", st.success(), "failed", st.failed()));
         } catch (Exception e) {
             return R.fail(500, e.getMessage());
+        }
+    }
+
+    /**
+     * 批量导入(10-03 C)：CSV/JSON/Markdown 三格式，逐条复用单条 create 链路。
+     * 整体解析失败(格式无法识别/CSV 缺表头/JSON 非数组/超上限)→ 400 且**不落任何文档**；
+     * 单条失败/重复 → 进入 results 失败项,其余继续。
+     */
+    @PostMapping("/docs/batch")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> batch(@RequestParam("file") MultipartFile file,
+                                        @RequestParam(value = "format", required = false) String format) {
+        try {
+            if (file == null || file.isEmpty()) return R.fail(400, "请上传导入文件");
+            String text = new String(file.getBytes(), StandardCharsets.UTF_8);
+            String operator = SecurityUtil.current() == null ? "system" : SecurityUtil.current().getUsername();
+            return R.ok(batchImportService.importBatch(file.getOriginalFilename(), format, text, operator));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "批量导入失败: " + e.getMessage());
         }
     }
 }

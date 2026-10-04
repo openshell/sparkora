@@ -146,7 +146,14 @@ export const kbApi = {
   create: (data) => http.post('/kb/docs', data),
   update: (id, data) => http.put(`/kb/docs/${id}`, data),
   remove: (id) => http.delete(`/kb/docs/${id}`),
-  rebuild: (id) => http.post(`/kb/docs/${id}/rebuild`)
+  rebuild: (id) => http.post(`/kb/docs/${id}/rebuild`),
+  // 批量导入（10-03 C）：multipart file + 可选 format(csv/json/markdown)。逐条 embedding，放宽超时
+  batchImport: (file, format) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    if (format) fd.append('format', format)
+    return http.post('/kb/docs/batch', fd, { timeout: 300000 })
+  }
 }
 
 export const imageApi = {

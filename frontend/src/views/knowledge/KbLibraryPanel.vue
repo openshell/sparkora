@@ -1,6 +1,9 @@
 <template>
   <div class="kb-panel">
     <div class="panel-toolbar">
+      <el-button v-if="user.isEditorOrAbove" @click="openBatch">
+        <el-icon class="btn-icon"><Upload /></el-icon>批量导入
+      </el-button>
       <el-button v-if="user.isEditorOrAbove" type="primary" @click="openCreate">
         <el-icon class="btn-icon"><Plus /></el-icon>新建知识
       </el-button>
@@ -36,6 +39,76 @@
         </div>
       </el-card>
     </div>
+
+    <!-- 批量导入对话框（CSV / JSON / Markdown） -->
+    <el-dialog v-model="batchDlg" title="批量导入知识" width="680px" :close-on-click-modal="false">
+      <div class="batch-tip">
+        支持 <b>CSV</b> / <b>JSON</b> / <b>Markdown</b> 三种格式，按文件后缀自动识别（也可手动指定）。
+        逐条导入，单条失败不影响其余；同「标题 + 领域」已存在或批内重复将自动跳过。
+      </div>
+      <el-form label-position="top">
+        <el-form-item label="文件">
+          <input class="batch-file" type="file" ref="batchFileInput"
+            accept=".csv,.json,.md,.markdown,text/*"
+            @change="onPickFile" :disabled="batching" />
+        </el-form-item>
+        <el-form-item label="格式">
+          <el-select v-model="batchFormat" placeholder="按文件自动判定" clearable style="width: 220px"
+            :disabled="batching">
+            <el-option label="CSV" value="csv" />
+            <el-option label="JSON" value="json" />
+            <el-option label="Markdown" value="markdown" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-collapse class="batch-help">
+        <el-collapse-item title="字段与样例模板">
+          <div class="batch-help-body">
+            <p>字段与单条录入一致：<code>title</code>（必填，≤200）、<code>domain</code>（受控词表，空为「通用」）、
+              <code>content</code>（必填，≤50000）、<code>source</code>（≤200）、<code>tags</code>（≤50/个）、
+              <code>effectiveFrom</code> / <code>effectiveTo</code>（yyyy-MM-dd，可空）。单批最多 200 条。</p>
+            <p><b>CSV</b> 首行表头，<code>tags</code> 用 <code>;</code> 分隔：</p>
+            <pre class="batch-sample">title,domain,content,source,tags,effectiveFrom,effectiveTo
+家用充电桩选择,充电,看车型支持的功率与物业条件,官网,充电;安装,2026-01-01,</pre>
+            <p><b>JSON</b> 对象数组（<code>tags</code> 可数组或 <code>;</code> 字符串）：</p>
+            <pre class="batch-sample">[{"title":"保养周期","domain":"保养","content":"首保 5000 公里。","tags":["保养","首保"]}]</pre>
+            <p><b>Markdown</b> 以一级标题 <code># </code> 分段，每段一篇；无 H1 则整文件一篇（标题取文件名）。</p>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+
+      <!-- 结果面板 -->
+      <div v-if="batchResult" class="batch-result">
+        <div class="batch-sum">
+          共 {{ batchResult.total }} 条 · 成功 <b class="ok">{{ batchResult.success }}</b> ·
+          失败 <b class="bad">{{ batchResult.failed }}</b>
+        </div>
+        <el-table :data="batchResult.results" size="small" max-height="280"
+          :row-class-name="batchRowClass">
+          <el-table-column label="序号" width="64">
+            <template #default="{ row }">{{ row.index + 1 }}</template>
+          </el-table-column>
+          <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip />
+          <el-table-column label="状态" width="80">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.success ? 'success' : 'danger'" effect="plain">
+                {{ row.success ? '成功' : '失败' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="error" label="说明" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.error || '—' }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <template #footer>
+        <el-button @click="batchDlg = false" :disabled="batching">关闭</el-button>
+        <el-button type="primary" :loading="batching" :disabled="!batchFile" @click="onBatchImport">
+          开始导入
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 新建/编辑抽屉 -->
     <el-drawer v-model="editDlg" :title="editingId ? '编辑知识' : '新建知识'" size="90%" style="max-width:640px">
@@ -78,7 +151,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, WarningFilled } from '@element-plus/icons-vue'
+import { Plus, Upload, WarningFilled } from '@element-plus/icons-vue'
 import { kbApi } from '../../api'
 import { useUserStore } from '../../store/user'
 
@@ -91,6 +164,13 @@ const editingId = ref(null)
 const saving = ref(false)
 const rebushing = ref(null)
 const formRef = ref(null)
+// 批量导入（10-03 C）
+const batchDlg = ref(false)
+const batchFile = ref(null)
+const batchFileInput = ref(null)
+const batchFormat = ref('')
+const batching = ref(false)
+const batchResult = ref(null)
 // 领域受控词表（来自后端 GET /api/kb/domains，与 com.sparkora.kb.KbDomain 同源）
 const domains = ref([])
 const emptyForm = () => ({ title: '', domain: '', source: '', tags: [], effectiveRange: [], content: '', enabled: true })
@@ -177,6 +257,50 @@ const onSave = async () => {
   }
 }
 
+// ==================== 批量导入（10-03 C） ====================
+
+const openBatch = () => {
+  batchFile.value = null
+  batchFormat.value = ''
+  batchResult.value = null
+  // el-dialog 默认不销毁内容；原生 file input 会残留上次选择，重置以免重选同名文件不触发 change
+  if (batchFileInput.value) batchFileInput.value.value = ''
+  batchDlg.value = true
+}
+
+const onPickFile = (e) => {
+  batchFile.value = e.target.files?.[0] || null
+  batchResult.value = null
+}
+
+const batchRowClass = ({ row }) => (row.success ? '' : 'batch-row-fail')
+
+const onBatchImport = async () => {
+  if (!batchFile.value) return
+  if (batching.value) return            // 非幂等提交：同步重入守卫，置位早于首个 await
+  batching.value = true
+  try {
+    const res = await kbApi.batchImport(batchFile.value, batchFormat.value || undefined)
+    // 业务失败为 HTTP 200 + R.fail(code,msg)，axios 不 reject，必须显式检查 code
+    if (res.code !== 0) {
+      ElMessage.error(res.msg || '批量导入失败')
+      return
+    }
+    const data = res.data || {}
+    batchResult.value = data
+    if (data.failed > 0) {
+      ElMessage.warning(`导入完成：成功 ${data.success}/${data.total}，失败 ${data.failed}（详见结果面板）`)
+    } else {
+      ElMessage.success(`导入完成：${data.success}/${data.total} 条已创建并向量化`)
+    }
+    await load()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || '批量导入失败')
+  } finally {
+    batching.value = false
+  }
+}
+
 const onDel = (d) => {
   ElMessageBox.confirm(`删除「${d.title}」?其向量块将一并清除。`, '删除知识', { type: 'warning' })
     .then(async () => {
@@ -220,4 +344,19 @@ onMounted(() => { load(); loadDomains() })
 .state-title { margin: 10px 0 4px; font-weight: 600; }
 .state-msg { color: var(--faint); font-size: 13px; margin-bottom: 14px; }
 .btn-icon { margin-right: 4px; }
+
+/* 批量导入对话框 */
+.batch-tip { color: var(--faint); font-size: var(--fs-13); line-height: 1.7; margin-bottom: 14px; }
+.batch-file { font-size: var(--fs-13); }
+.batch-help { margin: 4px 0 12px; }
+.batch-help-body { font-size: var(--fs-13); line-height: 1.8; color: var(--ink); }
+.batch-help-body code { background: var(--n-50); padding: 1px 4px; border-radius: var(--radius-xs); font-size: var(--fs-12); }
+.batch-sample { background: var(--n-50); padding: 8px 10px; border-radius: var(--radius-sm);
+  font-size: var(--fs-12); line-height: 1.6; overflow-x: auto; white-space: pre; margin: 6px 0; }
+.batch-result { margin-top: 8px; }
+.batch-sum { font-size: var(--fs-13); margin-bottom: 8px; }
+.batch-sum .ok { color: var(--el-color-success); }
+.batch-sum .bad { color: var(--el-color-danger); }
+:deep(.batch-row-fail) { color: var(--el-color-danger); }
+:deep(.batch-row-fail td) { color: var(--el-color-danger); }
 </style>

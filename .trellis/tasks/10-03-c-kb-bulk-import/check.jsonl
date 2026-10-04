@@ -1,0 +1,5 @@
+{"file": "docs/spec/knowledge/kb.md", "reason": "核对批量导入未破坏既有单条 CRUD/domain 词表/切块嵌入契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对解析失败先于写库、单条失败不留孤儿文档"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对 batch 端点 400/403/500 映射与 R<T> 包装"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端：API 具名导出、无直调 http、页面结构/CSS 变量一致"}
+{"file": ".trellis/tasks/10-03-c-kb-bulk-import/prd.md", "reason": "C 验收基线 AC-C1..C4"}

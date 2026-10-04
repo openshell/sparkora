@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 /**
  * /api 全局参数异常兜底：把 Spring 框架层抛出的 400（类型不匹配/缺参/请求体不可读/multipart 超限）
@@ -44,6 +45,12 @@ public class ApiExceptionHandler {
     public R<Void> validation(BindException ex) {
         FieldError fe = ex.getBindingResult().getFieldError();
         return R.fail(400, fe != null && fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "参数校验失败");
+    }
+
+    /** multipart 缺少必填 part（如批量导入缺 file）——与 MissingServletRequestParameter 同语义。 */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public R<Void> missingPart(MissingServletRequestPartException ex) {
+        return R.fail(400, "缺少必填文件: " + ex.getRequestPartName());
     }
 
     /** multipart 超限/损坏（upload 走的是 @RequestParam，容器层异常在此兜底）。 */

@@ -53,8 +53,10 @@
 | PUT | `/api/kb/docs/{id}` | 编辑（自动重建；`enabled=false` 清块） |
 | DELETE | `/api/kb/docs/{id}` | 删除（逻辑删文档 + 物理清块/标签） |
 | POST | `/api/kb/docs/{id}/rebuild` | 手动重建，返回 `{total, success, failed}` |
+| POST | `/api/kb/docs/batch` | **10-03 C 批量导入**：multipart `file` + 可选 `format`（csv/json/markdown；缺省后缀优先→内容嗅探）。返回 `{total,success,failed,results:[{index,title,success,error}]}`；逐条委托单条 `create`（normalize/切块/嵌入），单条失败/重复不阻断；整体解析失败/超 LIMIT → 400 且不落任何文档 |
 
-- 前端：`views/KbLibrary.vue`（列表卡片/新建编辑抽屉/删除确认/重建向量含失败提示；domain 为 `el-select` 受控值，另有 source 输入、tags 多选 allow-create、生效期 `daterange`；列表展示领域/标签/来源/生效期），AppShell 左 rail「知识库」入口；`api/index.js` 的 `kbApi`（含 `domains()`）。
+- **批量导入语义（10-03 C）**：解析器 `com.sparkora.kb.KbBatchParser`（纯静态）/ 服务 `com.sparkora.kb.service.KbBatchImportService`（`MAX_ROWS=200`、单条正文 ≤50000、来源 ≤200）；去重键 `title+domain`（库内预取 + 批内 seen 双层，默认**跳过**回报「已存在同标题同领域文档，已跳过」，不覆盖）；Markdown 无 H1 时整篇标题取文件名去后缀。**既有单条 CRUD/domains 契约零改动**。
+- 前端：`views/knowledge/KbLibraryPanel.vue`（知识中心「知识库」tab；列表卡片/新建编辑抽屉/删除确认/重建向量含失败提示/批量导入对话框；domain 为 `el-select` 受控值，另有 source 输入、tags 多选 allow-create、生效期 `daterange`；列表展示领域/标签/来源/生效期），AppShell 左 rail「知识库」入口；`api/index.js` 的 `kbApi`（含 `domains()`/`batchImport()`）。
 
 ---
 
