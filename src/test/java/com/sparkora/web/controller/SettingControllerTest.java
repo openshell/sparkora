@@ -48,9 +48,40 @@ class SettingControllerTest {
         mvc.perform(put("/api/settings").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("外部搜索策略仅支持 TAVILY/SEARXNG 的顺序组合"));
+                .andExpect(jsonPath("$.msg").value("外部搜索策略仅支持 TAVILY/SEARXNG/SERPER 的顺序组合"));
         verify(service, never()).update(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    /** 10-04-serper-provider A-R9:含 SERPER 的顺序组合应被接受并透传。 */
+    @Test
+    void 含SERPER顺序_合法_透传并落库() throws Exception {
+        SettingEntity row = new SettingEntity();
+        row.setId(1L);
+        row.setWebProviderOrder("TAVILY,SERPER,SEARXNG");
+        when(service.update(isNull(), isNull(), eq("TAVILY,SERPER,SEARXNG"), isNull())).thenReturn(row);
+
+        String body = "{\"webProviderOrder\":\"TAVILY,SERPER,SEARXNG\"}";
+        mvc.perform(put("/api/settings").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.webProviderOrder").value("TAVILY,SERPER,SEARXNG"));
+        verify(service).update(isNull(), isNull(), eq("TAVILY,SERPER,SEARXNG"), isNull());
+    }
+
+    /** A-R9:仅 SERPER 优先的两源顺序也应合法。 */
+    @Test
+    void SERPER优先两源_合法_透传() throws Exception {
+        SettingEntity row = new SettingEntity();
+        row.setId(1L);
+        row.setWebProviderOrder("SERPER,TAVILY");
+        when(service.update(isNull(), isNull(), eq("SERPER,TAVILY"), isNull())).thenReturn(row);
+
+        String body = "{\"webProviderOrder\":\"SERPER,TAVILY\"}";
+        mvc.perform(put("/api/settings").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.webProviderOrder").value("SERPER,TAVILY"));
     }
 
     @Test

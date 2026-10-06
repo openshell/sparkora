@@ -58,4 +58,28 @@ class SearchToolTest {
         assertTrue(!tool.available());
         assertTrue(tool.search("q", 3).isEmpty());
     }
+
+    // ===== 10-04-serper-provider A:searchVertical 默认实现(不破坏既有实现) =====
+
+    /** A-R3/AC-A9:不支持垂直的工具有默认实现(委托 search),SearxNG/KB 零改动即合规。 */
+    @Test
+    void searchVertical默认实现_委托search_行为等价() {
+        // SearxngSearchTool 未覆写 searchVertical → 默认委托 search(连接失败返回空,不抛)
+        SearxngSearchTool tool = new SearxngSearchTool(
+                new org.springframework.mock.env.MockEnvironment().withProperty("SEARXNG_BASE_URL", "http://127.0.0.1:1"),
+                new com.fasterxml.jackson.databind.ObjectMapper());
+        assertEquals(tool.search("q", 5), tool.searchVertical("q", "news", 5), "默认实现等价 search");
+        assertEquals(tool.search("q", 5), tool.searchVertical("q", "web", 5));
+    }
+
+    @Test
+    void SERPER_有密钥_可用性只判配置不闩锁() {
+        SerperSearchTool tool = new SerperSearchTool(new DeepProperties() {
+            @Override public String effectiveSerperKey() { return "dummy-key"; }
+        }, new com.fasterxml.jackson.databind.ObjectMapper());
+        assertEquals("SERPER", tool.name());
+        assertTrue(tool.available(), "有 key 即可用");
+        assertTrue(tool.configured(), "配置就绪");
+        assertTrue(tool.lastCallOk(), "未调用过乐观为真");
+    }
 }

@@ -488,6 +488,71 @@ class SubAgentRunnerTest {
         }
     }
 
+    // ===== 10-04-serper-provider A-R3:时效题垂直路由 =====
+
+    private static com.sparkora.config.DeepProperties deepProps(boolean newsEnabled) {
+        com.sparkora.config.DeepProperties p = new com.sparkora.config.DeepProperties();
+        p.setWebVerticalNewsEnabled(newsEnabled);
+        return p;
+    }
+
+    /** 时效题 + 开关默认开 → 走 searchVertical(news),不走 search。 */
+    @Test
+    void 时效题_开关开_走news垂直() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        when(router.searchVertical(anyString(), anyInt(), any(), eq("news")))
+                .thenReturn(oneHitOutcome());
+        AiClient ai = mock(AiClient.class);
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class),
+                router, deepProps(true));
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("最近的销量动态如何?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
+
+        org.mockito.Mockito.verify(router).searchVertical(anyString(), anyInt(), any(), eq("news"));
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never()).search(anyString(), anyInt(), any());
+    }
+
+    /** 非时效题 → 走既有 search(web),不调 searchVertical。 */
+    @Test
+    void 非时效题_走web() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        when(router.search(anyString(), anyInt(), any())).thenReturn(oneHitOutcome());
+        AiClient ai = mock(AiClient.class);
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class),
+                router, deepProps(true));
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("海狮08的价格是多少?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
+
+        org.mockito.Mockito.verify(router).search(anyString(), anyInt(), any());
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never())
+                .searchVertical(anyString(), anyInt(), any(), anyString());
+    }
+
+    /** 开关关闭 → 即使时效题也走 web(零回归)。 */
+    @Test
+    void 时效题_开关关闭_仍走web() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        when(router.search(anyString(), anyInt(), any())).thenReturn(oneHitOutcome());
+        AiClient ai = mock(AiClient.class);
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class),
+                router, deepProps(false));
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.research("最新的销量动态如何?", List.of("WEB"), 2, List.of(), "海狮08", "[]", null, snap);
+
+        org.mockito.Mockito.verify(router).search(anyString(), anyInt(), any());
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never())
+                .searchVertical(anyString(), anyInt(), any(), anyString());
+    }
+
     @Test
     void isNegativeAnswer_前缀兜底与正例() {
         assertTrue(SubAgentRunner.isNegativeAnswer("不对比其他车型"));

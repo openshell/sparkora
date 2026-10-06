@@ -53,4 +53,32 @@ class WebProviderOrderTest {
         assertThrows(IllegalArgumentException.class, () -> WebProviderOrder.parse("TAVILY,GOOGLE"));
         assertThrows(IllegalArgumentException.class, () -> WebProvider.from(""));
     }
+
+    // ===== 10-04-serper-provider A-R7:三值策略标签 =====
+
+    @Test
+    void SERPER加入_解析成功且标签为PRIMARY_FANOUT() {
+        WebProviderOrder o = WebProviderOrder.parse("SERPER,TAVILY");
+        assertEquals(List.of(WebProvider.SERPER, WebProvider.TAVILY), o.providers());
+        assertEquals(WebProviderOrder.PRIMARY_FANOUT, o.strategyLabel());
+        assertEquals("SERPER,TAVILY", o.raw());
+    }
+
+    @Test
+    void 默认顺序不变_仍TAVILY_SEARXNG零回归() {
+        assertEquals("TAVILY,SEARXNG", WebProviderOrder.DEFAULT_RAW, "默认值不变是零回归前提");
+        assertEquals(List.of(WebProvider.TAVILY, WebProvider.SEARXNG), WebProviderOrder.defaults().providers());
+        assertEquals("TAVILY_FIRST", WebProviderOrder.defaults().strategyLabel(), "纯 legacy 顺序标签逐字不变");
+    }
+
+    @Test
+    void SERPER大小写不敏感() {
+        assertEquals(WebProvider.SERPER, WebProvider.from(" serper "));
+        assertEquals(WebProviderOrder.PRIMARY_FANOUT, WebProviderOrder.parse("tavily,serper").strategyLabel());
+    }
+
+    @Test
+    void SERPER与SEARXNG组合_也回落PRIMARY_FANOUT() {
+        assertEquals(WebProviderOrder.PRIMARY_FANOUT, WebProviderOrder.parse("SEARXNG,SERPER").strategyLabel());
+    }
 }

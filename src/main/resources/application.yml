@@ -134,6 +134,16 @@ sparkora:
   deep:                                  # S9 深度生成模式
     search-web-enabled: ${SEARCH_WEB_ENABLED:true}   # 研究子代理外部搜索总开关
     tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)
+    # 10-04-serper-provider A-R6:Tavily 端点可配置(默认官方;中转端点改此项,无需改代码重编)
+    tavily-api-base: ${DEEP_TAVILY_API_BASE_URL:https://api.tavily.com}
+    # 10-04-serper-provider A:Serper provider(Header X-API-KEY 认证;DEEP_SERPER_API_KEY 优先于 SERPER_API_KEY)
+    serper-api-key: ${SERPER_API_KEY:}
+    # Serper 端点可配置(默认官方;中转为 https://search.604020.xyz/serper——路径前缀必须保留)
+    serper-api-base: ${DEEP_SERPER_API_BASE_URL:https://google.serper.dev}
+    serper-gl: ${DEEP_SERPER_GL:cn}      # 地域;空则不下发该键
+    serper-hl: ${DEEP_SERPER_HL:zh-cn}   # 语言;空则不下发该键
+    # 时效题是否走 Serper /news 垂直(默认开;关闭时全部走 /search,零回归开关)
+    web-vertical-news-enabled: ${DEEP_WEB_VERTICAL_NEWS:true}
     research-timeout-ms: ${DEEP_RESEARCH_TIMEOUT_MS:120000}    # 单子代理超时
     max-agents: ${DEEP_MAX_AGENTS:6}                            # 子代理数上限(R5 默认 6;计划问题数超过时截断)
     # 外部搜索 provider 顺序(部署级默认;运行时由 ADMIN 在系统设置覆盖)

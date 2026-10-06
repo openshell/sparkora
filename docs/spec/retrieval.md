@@ -69,6 +69,21 @@
 
 ---
 
+## 3.2 外部搜索 provider 策略与降级链（10-04-serper-provider A）
+
+深度研究的 WEB 检索由 `WebSearchRouter`（`com.sparkora.deep.search`）按 `WebSearchSnapshot` 的策略顺序逐个尝试；
+provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源，
+**首个产出有效命中即采信并停止**（不让付费 provider 无条件重复调用）。逐次尝试明细落 `research_notes[].search.attempts`。
+
+- **provider 值域**（`WebProvider`）：`TAVILY` / `SEARXNG` / `SERPER`（10-04 A 追加末尾）。
+- **顺序配置**：部署级 `sparkora.deep.web-provider-order`（`.env DEEP_WEB_PROVIDER_ORDER`），默认 **`TAVILY,SEARXNG`**（`TAVILY_FIRST`，零回归前提）；运行时 ADMIN 设置页可覆盖（优先级更高）。
+- **策略标签**（`WebProviderOrder.strategyLabel()`，经 `/deep/status` 的 `webStrategy` 透出）：`TAVILY_FIRST` / `SEARXNG_FIRST`；顺序含 `SERPER` 时回落 `PRIMARY_FANOUT`（避免首元素非 SEARXNG 被误标 `TAVILY_FIRST`）。
+- **Serper 认证与端点**：Header `X-API-KEY`（**非** body `api_key`，与 Tavily 不同）；端点 `DEEP_SERPER_API_BASE_URL` 可配置（官方 `https://google.serper.dev` / 中转 `https://search.604020.xyz/serper`，路径前缀保留）。垂直 `web`→`/search`、`news`→`/news`（`news` 才有 `date`/`source`）见 [brief-generation.md §4](brief-generation.md)。
+- **降级链位置**：`SERPER` 未配置时 `toolHealth.SERPER=UNCONFIGURED` 且被路由跳过，Tavily/SearxNG 行为不受影响；顺序含 SERPER 但不配置 key 时，等价于该 provider 不存在。
+- **配置项**：`SERPER_API_KEY`/`DEEP_SERPER_API_KEY`、`DEEP_SERPER_API_BASE_URL`、`DEEP_SERPER_GL`/`DEEP_SERPER_HL`、`DEEP_WEB_VERTICAL_NEWS`、`DEEP_TAVILY_API_BASE_URL`（字段级见 [brief-generation.md §8](brief-generation.md)）。
+
+---
+
 ## 4. 检索门槛（粗调值，**待按真实 query 分数分布校准**；`REJECT` 须 ≥ `MIN`）
 
 | `.env` 变量 | 默认 | 代码用途 |

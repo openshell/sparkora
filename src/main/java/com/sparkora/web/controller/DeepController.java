@@ -39,6 +39,8 @@ public class DeepController {
     private final com.sparkora.service.BriefService briefService;
     private final com.sparkora.deep.tool.SearxngSearchTool searxngTool;
     private final com.sparkora.deep.tool.TavilySearchTool tavilyTool;
+    /** Serper 搜索(10-04 A:toolHealth 增量展示 SERPER 就绪态)。 */
+    private final com.sparkora.deep.tool.SerperSearchTool serperTool;
     private final com.sparkora.config.DeepProperties deepProps;
     /** 系统检索设置(09-15:toolHealth 反映真实 KB/WEB 运行时门控) */
     private final com.sparkora.service.SettingService settingService;
@@ -54,6 +56,7 @@ public class DeepController {
                           com.sparkora.service.BriefService briefService,
                           com.sparkora.deep.tool.SearxngSearchTool searxngTool,
                           com.sparkora.deep.tool.TavilySearchTool tavilyTool,
+                          com.sparkora.deep.tool.SerperSearchTool serperTool,
                           com.sparkora.config.DeepProperties deepProps,
                           com.sparkora.service.SettingService settingService,
                           com.sparkora.deep.service.ClarifyConversationService clarifyConversationService,
@@ -65,6 +68,7 @@ public class DeepController {
         this.briefService = briefService;
         this.searxngTool = searxngTool;
         this.tavilyTool = tavilyTool;
+        this.serperTool = serperTool;
         this.deepProps = deepProps;
         this.settingService = settingService;
         this.clarifyConversationService = clarifyConversationService;
@@ -285,6 +289,8 @@ public class DeepController {
             toolHealth.put("KB", settingService.isKbEnabled() ? "OK" : "DISABLED");
             toolHealth.put("SEARXNG", webHealth(webAllowed, searxngTool.configured(), searxngTool.lastCallOk()));
             toolHealth.put("TAVILY", webHealth(webAllowed, tavilyTool.configured(), tavilyTool.lastCallOk()));
+            // 10-04 A-A7:Serper 增量键(未配置 → UNCONFIGURED,与 Tavily 现状一致;不破坏既有三键)
+            toolHealth.put("SERPER", webHealth(webAllowed, serperTool.configured(), serperTool.lastCallOk()));
             out.put("toolHealth", toolHealth);
             // 外部搜索策略(09-25):增量暴露有效策略(运行时设置优先 > 部署级默认),不改既有三键值域
             var snap = researchService.resolveSnapshot(b.getId());

@@ -3,6 +3,7 @@ package com.sparkora.deep.search;
 import com.sparkora.deep.search.WebResultNormalizer.WebHit;
 import com.sparkora.deep.tool.SearchTool;
 import com.sparkora.deep.tool.SearxngSearchTool;
+import com.sparkora.deep.tool.SerperSearchTool;
 import com.sparkora.deep.tool.TavilySearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -13,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 外部搜索路由组件(09-25-brief-web-search R1/R2/R5)。
+ * 外部搜索路由组件(09-25-brief-web-search R1/R2/R5;10-04-serper-provider 注册 SERPER)。
  *
  * <p>职责:按快照中的有效策略顺序逐个尝试 provider,首个产出「有效命中」即采信并停止;
  * provider 未配置 → 跳过(UNCONFIGURED);异常/超时/空结果/结果全部无有效 URL → 记录降级原因后尝试下一个。
@@ -34,9 +35,11 @@ public class WebSearchRouter {
 
     private final Map<WebProvider, SearchTool> tools = new EnumMap<>(WebProvider.class);
 
-    public WebSearchRouter(TavilySearchTool tavilyTool, SearxngSearchTool searxngTool) {
+    public WebSearchRouter(TavilySearchTool tavilyTool, SearxngSearchTool searxngTool,
+                           SerperSearchTool serperTool) {
         tools.put(WebProvider.TAVILY, tavilyTool);
         tools.put(WebProvider.SEARXNG, searxngTool);
+        tools.put(WebProvider.SERPER, serperTool);
     }
 
     /**
@@ -48,6 +51,27 @@ public class WebSearchRouter {
      * @return 结果与尝试元数据(永不返回 null;开关关闭时 hits 为空)
      */
     public WebSearchOutcome search(String query, int maxResults, WebSearchSnapshot snapshot) {
+        return searchInternal(query, maxResults, snapshot, null);
+    }
+
+    /**
+     * 按垂直搜索(10-04-serper-provider A-R3):{@code vertical=news} 走时效垂直(Serper {@code /news})。
+     *
+     * <p>与 {@link #search} 同语义(首个有效命中即停/未配置跳过/异常隔离),仅把工具调用换为
+     * {@link SearchTool#searchVertical};用于 SubAgentRunner 的时效题路由。不支持垂直的工具经
+     * {@link SearchTool#searchVertical} 默认实现回落 {@code search},行为等价。
+     */
+    public WebSearchOutcome searchVertical(String query, int maxResults, WebSearchSnapshot snapshot, String vertical) {
+        return searchInternal(query, maxResults, snapshot, vertical);
+    }
+
+    /**
+     * 搜索核心。
+     *
+     * @param vertical {@code null} 表示走既有 {@link SearchTool#search}(零回归路径);
+     *                 非空时走 {@link SearchTool#searchVertical}(news 垂直)
+     */
+    private WebSearchOutcome searchInternal(String query, int maxResults, WebSearchSnapshot snapshot, String vertical) {
         if (snapshot == null || !snapshot.webAllowed()) {
             // R4:任一部署级/运行时 WEB 开关关闭时不发起任何请求
             return WebSearchOutcome.empty(snapshot == null ? null : snapshot.order(), REASON_DISABLED);
@@ -64,7 +88,8 @@ public class WebSearchRouter {
             long began = System.currentTimeMillis();
             List<SearchTool.SearchHit> raw;
             try {
-                raw = tool.search(query, maxResults);
+                raw = vertical == null ? tool.search(query, maxResults)
+                        : tool.searchVertical(query, vertical, maxResults);
             } catch (Exception e) {
                 long cost = System.currentTimeMillis() - began;
                 // R12:异常文本可能含密钥,仅记类型化原因,不回传原始异常文本

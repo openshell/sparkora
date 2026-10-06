@@ -329,4 +329,28 @@ class ResearchPlannerServiceTest {
         assertEquals(false, ResearchPlannerService.isBackgroundQuestion(""));
         assertEquals(false, ResearchPlannerService.isBackgroundQuestion("   "));
     }
+
+    // ===== 10-04-serper-provider A-R3:时效题判定(垂直路由) =====
+
+    @Test
+    void isTimeSensitiveQuestion_时效词命中() {
+        assertTrue(ResearchPlannerService.isTimeSensitiveQuestion("最近的销量如何?"));
+        assertTrue(ResearchPlannerService.isTimeSensitiveQuestion("最新的价格动态?"));
+        assertTrue(ResearchPlannerService.isTimeSensitiveQuestion("今年发布了哪些车型?"));
+        assertTrue(ResearchPlannerService.isTimeSensitiveQuestion("当前市场表现?"));
+    }
+
+    @Test
+    void isTimeSensitiveQuestion_参数题为负例() {
+        assertEquals(false, ResearchPlannerService.isTimeSensitiveQuestion("海狮08的价格是多少?"));
+        assertEquals(false, ResearchPlannerService.isTimeSensitiveQuestion("续航里程与充电速度?"));
+        assertEquals(false, ResearchPlannerService.isTimeSensitiveQuestion("车身尺寸参数?"));
+    }
+
+    @Test
+    void isTimeSensitiveQuestion_空输入为false() {
+        assertEquals(false, ResearchPlannerService.isTimeSensitiveQuestion(null));
+        assertEquals(false, ResearchPlannerService.isTimeSensitiveQuestion(""));
+        assertEquals(false, ResearchPlannerService.isTimeSensitiveQuestion("   "));
+    }
 }

@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/design.md", "reason": "§0.1 列出 R1 的六条实测硬性约束（apiBase 必可配置/单次上限 10/仅 news 垂直有 date/Header 认证/gl+hl 默认中文/Tavily 侧对称），是本子任务设计的直接依据"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "含『搜索工具可用性契约』与 toolHealth 状态码约定、ToolCallback 能力层，是扩展 SearchTool 与 toolHealth 的权威规范"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义与错误映射矩阵，决定 Serper 失败/未配置时的降级与健康状态表达方式"}
+{"file": "docs/spec/brief-generation.md", "reason": "深度研究搜索 provider 与状态机的模块权威契约，本子任务改动需字段级同步"}
+{"file": "docs/spec/retrieval.md", "reason": "检索域与 provider 策略（DEEP_WEB_PROVIDER_ORDER / 降级链）契约来源"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "本子任务需同时更新 docs/spec 与 .env.example，须遵循规格文档层级与引用规则"}

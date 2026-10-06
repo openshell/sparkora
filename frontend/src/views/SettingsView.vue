@@ -35,12 +35,15 @@
               <div class="setting-name">外部搜索策略</div>
               <div class="setting-desc">
                 决定子代理优先调用哪个搜索源：<b>Tavily 优先</b>使用 Tavily、不可用时降级 SearxNG（默认）；
-                <b>SearxNG 优先</b>则相反。MVP 不做双源聚合，首选源命中即停止，不重复调用付费源。
+                <b>SearxNG 优先</b>则相反；含 <b>Serper</b> 的顺序在首选源不可用时经 Serper 兜底
+                （Serper 需在 .env 配置密钥，否则自动跳过）。MVP 不做双源聚合，首选源命中即停止，不重复调用付费源。
               </div>
             </div>
-            <el-select v-model="form.webProviderOrder" :disabled="!canEdit || !form.webSearchEnabled" style="min-width: 160px">
+            <el-select v-model="form.webProviderOrder" :disabled="!canEdit || !form.webSearchEnabled" style="min-width: 200px">
               <el-option label="Tavily 优先" value="TAVILY,SEARXNG" />
               <el-option label="SearxNG 优先" value="SEARXNG,TAVILY" />
+              <el-option label="Tavily 优先（Serper 兜底）" value="TAVILY,SERPER,SEARXNG" />
+              <el-option label="Serper 优先" value="SERPER,TAVILY,SEARXNG" />
             </el-select>
           </div>
 

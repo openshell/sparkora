@@ -190,6 +190,24 @@ public class ResearchPlannerService {
                 || java.util.Arrays.stream(BACKGROUND_SIGNALS).anyMatch(question::contains);
     }
 
+    // ==================== 10-04-serper-provider A:时效题判定(垂直路由) ====================
+
+    /** A(10-04)时效信号词:命中则问题视为时效型,可路由 Serper {@code /news} 垂直。 */
+    private static final String[] TIME_SENSITIVE_SIGNALS = {
+            "最新", "近期", "最近", "现在", "今年", "当前", "动态", "发布"};
+
+    /**
+     * 时效型问题判定(10-04-serper-provider A-R3/§5.1):命中 {@link #TIME_SENSITIVE_SIGNALS} 任一即为时效型。
+     *
+     * <p>用途:Serper 垂直路由决策——时效题走 {@code /news}(返回 {@code date}/{@code source}),
+     * 其余走 {@code /search}。与 {@link #isBackgroundQuestion} 同处、同为纯字符串判定、无副作用、包级可见。
+     * <b>不做时效性计算</b>(R4b 默认 off),仅决定垂直选择。
+     */
+    static boolean isTimeSensitiveQuestion(String question) {
+        if (question == null || question.isBlank()) return false;
+        return java.util.Arrays.stream(TIME_SENSITIVE_SIGNALS).anyMatch(question::contains);
+    }
+
     /**
      * R2(09-26)确定性兜底:主题/内容描述命中背景信号词、且现有 keyQuestions 无背景型问题时,
      * 追加一条背景/来龙去脉型问题,并同步追加对应 toolHints(保证问题与提示 1:1,避免落到 KB-only 默认)。

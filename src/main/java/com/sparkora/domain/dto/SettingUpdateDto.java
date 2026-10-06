@@ -17,10 +17,11 @@ public class SettingUpdateDto {
     private Boolean webSearchEnabled;
 
     /**
-     * 外部搜索 provider 顺序(逗号分隔;TAVILY,SEARXNG=TAVILY_FIRST / SEARXNG,TAVILY=SEARXNG_FIRST)。
-     * null/空表示不改;非空时仅允许两枚举的组合,非法值 400。
+     * 外部搜索 provider 顺序(逗号分隔;TAVILY,SEARXNG=TAVILY_FIRST / SEARXNG,TAVILY=SEARXNG_FIRST /
+     * 含 SERPER 时回落 PRIMARY_FANOUT 标签)。10-04-serper-provider A-R9:放开 SERPER。
+     * null/空表示不改;非空时仅允许 TAVILY/SEARXNG/SERPER 的任意顺序组合,非法值 400。
      */
-    @Pattern(regexp = "^\\s*$|^\\s*(TAVILY|SEARXNG)(\\s*,\\s*(TAVILY|SEARXNG))*\\s*$",
-            message = "外部搜索策略仅支持 TAVILY/SEARXNG 的顺序组合")
+    @Pattern(regexp = "^\\s*$|^\\s*(TAVILY|SEARXNG|SERPER)(\\s*,\\s*(TAVILY|SEARXNG|SERPER))*\\s*$",
+            message = "外部搜索策略仅支持 TAVILY/SEARXNG/SERPER 的顺序组合")
     private String webProviderOrder;
 }

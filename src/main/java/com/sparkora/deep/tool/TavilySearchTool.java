@@ -34,7 +34,7 @@ public class TavilySearchTool implements SearchTool {
     private final ObjectMapper json;
     /** 正文补抓单条上限(字符):工具层唯一上限,默认 2000。 */
     private final int contentMaxChars;
-    /** API base(测试可注入;生产默认 https://api.tavily.com)。 */
+    /** API base(测试可注入;生产默认 https://api.tavily.com)。10-04 A-R6:可经配置切换中转端点。 */
     private final String apiBase;
     /** 最近一次调用是否成功(仅供健康展示;不参与 available 门控,失败可自恢复)。 */
     private volatile boolean lastOk = true;
@@ -42,14 +42,14 @@ public class TavilySearchTool implements SearchTool {
     @org.springframework.beans.factory.annotation.Autowired
     public TavilySearchTool(com.sparkora.config.DeepProperties deepProps,
                             ObjectMapper mapper) {
-        this(deepProps, mapper, DEFAULT_API_BASE);
+        this(deepProps, mapper, deepProps == null ? null : deepProps.effectiveTavilyApiBase());
     }
 
     /** 测试可注入 API base(仅包级可见,不改变生产默认端点)。 */
     TavilySearchTool(com.sparkora.config.DeepProperties deepProps, ObjectMapper mapper, String apiBase) {
         this.apiKey = deepProps == null ? "" : deepProps.effectiveTavilyKey();
         this.contentMaxChars = deepProps == null ? 2000 : deepProps.effectiveWebContentMaxChars();
-        this.apiBase = apiBase == null || apiBase.isBlank() ? DEFAULT_API_BASE : apiBase;
+        this.apiBase = apiBase == null || apiBase.isBlank() ? DEFAULT_API_BASE : stripTrailingSlash(apiBase);
         this.rest = RestClient.builder()
                 .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(
                         HttpClientSettings.defaults().withConnectTimeout(Duration.ofSeconds(5))
@@ -150,5 +150,12 @@ public class TavilySearchTool implements SearchTool {
     private String truncate(String s) {
         if (s == null) return "";
         return s.length() > contentMaxChars ? s.substring(0, contentMaxChars) : s;
+    }
+
+    /** 末尾斜杠归一(避免拼出 {@code //search});保留路径段。 */
+    private static String stripTrailingSlash(String base) {
+        String b = base.trim();
+        while (b.endsWith("/") && b.length() > 1) b = b.substring(0, b.length() - 1);
+        return b;
     }
 }

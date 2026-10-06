@@ -202,18 +202,22 @@ public interface SearchTool {
     default boolean configured() { return true; }     // 密钥/地址是否就绪,不随调用结果变化
     default boolean lastCallOk() { return true; }     // 最近一次调用是否成功(初值乐观,仅供展示)
     List<SearchHit> search(String query, int maxResults);
+    // 10-04 A:垂直搜索;web/news。默认委托 search(不支持垂直的工具零改动即合规)
+    default List<SearchHit> searchVertical(String query, String vertical, int maxResults) { return search(query, maxResults); }
     default List<SearchHit> extract(List<String> urls, String query) { return List.of(); }  // 09-27 R1:正文补抓
 }
 ```
+- **认证差异（跨实现约定）**：Serper 用 Header `X-API-KEY`；Tavily 用 body `api_key`，两者不通用。
+- **未知 vertical** 回落 `web` + warn（运行时启发式，**不抛异常**）；与 `WebProvider.from()` 对配置错误抛 `IllegalArgumentException` 刻意不同。
 
 ### 3. Contracts
-- **`available()` 只表示「配置就绪」**：Tavily = 密钥非空；SEARXNG = 地址非空。**不得包含 `lastCallOk()`**——否则调用失败后 `available()==false`，调用方（`SubAgentRunner`）跳过 `search()`，而失败标志只能在被跳过的 `search()` 里重置 → **永久禁用，直到重启**（自锁死）。
+- **`available()` 只表示「配置就绪」**：Tavily/Serper = 密钥非空；SEARXNG = 地址非空。**不得包含 `lastCallOk()`**——否则调用失败后 `available()==false`，调用方（`SubAgentRunner`）跳过 `search()`，而失败标志只能在被跳过的 `search()` 里重置 → **永久禁用，直到重启**（自锁死）。
 - `configured()` = 配置态（与 `available()` 同源，供 `toolHealth` 三态判定复用）。
 - `lastCallOk()` = 最近一次调用健康态，仅用于**展示**；调用失败置 false 不再影响门控，故下次研究天然重试（自恢复）。
 - `toolHealth`（`/deep/status` 响应）值为状态码字符串，非布尔：
   - `OK` | `DISABLED`（被设置门控关闭）| `UNCONFIGURED`（无 key/地址）| `FAILED`（最近一次调用失败）
   - `KB` = `SettingService.isKbEnabled() ? "OK" : "DISABLED"`（反映 DB 运行时门控，**不恒 true**）。
-  - `SEARXNG`/`TAVILY`：`webAllowed = DeepProperties.isSearchWebEnabled() && SettingService.isWebSearchEnabled()`；优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。
+  - `SEARXNG`/`TAVILY`/`SERPER`：`webAllowed = DeepProperties.isSearchWebEnabled() && SettingService.isWebSearchEnabled()`；优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。`SERPER` 为 10-04 A 增量键（未配置 → `UNCONFIGURED`），既有三键值域不变。
 - 前端 `ResearchProgress.vue` 未拿到 `toolHealth`（首轮前/接口异常）时渲染 `--`，**不得**乐观默认全部可用。
 
 ### 4. Validation & Error Matrix
@@ -255,19 +259,21 @@ public boolean available() { return apiKey != null && !apiKey.isBlank() && lastO
 ### 2. Signatures
 ```java
 // 策略值对象（解析失败明确拒绝,不静默）
-enum WebProvider { TAVILY, SEARXNG }
+enum WebProvider { TAVILY, SEARXNG, SERPER }   // 10-04 A 追加 SERPER 于末尾
 record WebProviderOrder(List<WebProvider> providers) {
     static WebProviderOrder parse(String csv);     // 空回退 TAVILY,SEARXNG;未知值抛 IllegalArgumentException
     static WebProviderOrder defaults();
     String raw();                                   // 规范化串(落库/日志/响应)
-    String strategyLabel();                         // TAVILY_FIRST / SEARXNG_FIRST
+    String strategyLabel();                         // TAVILY_FIRST / SEARXNG_FIRST / PRIMARY_FANOUT(含 SERPER 时)
 }
 
 // 启动时解析一次的快照（同批次共享）
 record WebSearchSnapshot(WebProviderOrder order, boolean webAllowed, Long briefId, int maxResults)
 
-// 路由（@Component,注入 TavilySearchTool + SearxngSearchTool）
+// 路由（@Component,注入 TavilySearchTool + SearxngSearchTool + SerperSearchTool）
 WebSearchOutcome search(String query, int maxResults, WebSearchSnapshot snapshot)
+// 10-04 A:vertical 非空时走 searchVertical(news);null 走既有 search(零回归)
+WebSearchOutcome searchVertical(String query, int maxResults, WebSearchSnapshot snapshot, String vertical)
 record WebSearchOutcome(List<WebHit> hits, WebProvider usedProvider, List<Attempt> attempts)
 record Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason, boolean ok)
 
@@ -280,11 +286,12 @@ record WebHit(String sourceId, String title, String url, String snippet, String 
 ### 3. Contracts
 - **策略路由在子代理之前**：`WebSearchRouter` 逐个 provider 尝试，首个产出有效命中即停止；未配置跳过（`UNCONFIGURED`），异常/空/全部无效 URL 记 `fallbackReason` 后尝试后备。每 provider 每次最多调用一次——**不让付费 provider 无条件重复调用**（无 BOTH 聚合）。
 - **快照一次解析**：`DeepResearchService.run` 启动时解析策略与双开关（`SEARCH_WEB_ENABLED && web_search_enabled`），同批次全部子代理共用；启动后改设置不改变该批次。运行时设置非空优先于部署级 `DEEP_WEB_PROVIDER_ORDER`。
+- **新增 provider 必须同时放开「设置面」（10-04 A-R9 踩坑）**：运行时 provider order **永远优先从 DB `sparkora_setting.web_provider_order` 取**（`DeepResearchService.resolveSnapshot`），而 `SettingService.get()` 在行缺失时插入默认 `TAVILY,SEARXNG`（**永远非空**）→ `.env DEEP_WEB_PROVIDER_ORDER` 只在 DB 行为空时才生效。因此**光把 provider 加进 `WebProvider` 枚举并注册进 `WebSearchRouter` 不足以启用它**——还必须同步放开设置面：`SettingUpdateDto` 的 `@Pattern`、`SettingsView.vue` 的选项、以及列宽迁移（`web_provider_order VARCHAR(20)→VARCHAR(50)`，三源串 `TAVILY,SERPER,SEARXNG`=21 字符超原宽）。否则该 provider 在任何受支持路径下都不会被路由到（配置项形同虚设）。
 - **sourceId 稳定且可回溯**：`W1,W2…` 按本次输入顺序；URL 规范化后去重（fragment 变体视为同条）。事实只能引用本次输入的 sourceId。
 - **后验校验**：WEB 事实的 sourceId 未知 / URL 不匹配 / provider 不匹配 → 剔除并转 gap，**不整条 agent 失败**；KB 事实不受此校验。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**（防模型漏标 `type` 而自造 URL 混入），通过后 `type` 归一为 `WEB`（否则 FactSheet 默认按 KB 0.9 采信）。
 - **降级原因不含异常原文/密钥**：异常路径只记类型化 `ERROR`，不回传 `e.getMessage()`（可能含密钥/URL）。
 - `webCount` = 实际接受的 WEB 结果数（不再用事实条数 `webCalls`）；`search.resultCount` 与之同口径，**LLM 汇总失败走 `rawFallback` 时不归零**（搜索发生的事实不变），此时 `search.fallbackReason=LLM_FALLBACK`，provider 层 `attempts` 的 `ok`/`fallbackReason` 保持原样，两类失败不混淆。
-- `available()` 语义不变（仅配置就绪，无失败闩锁）；`toolHealth` 三键值域不变，`webStrategy`/`webProviderOrder` 为增量字段。
+- `available()` 语义不变（仅配置就绪，无失败闩锁）；`toolHealth` 原有三键值域不变（10-04 A 增量追加 `SERPER` 键），`webStrategy`/`webProviderOrder` 为增量字段。
 
 ### 4. Validation & Error Matrix
 - provider 未配置 → 跳过，`fallbackReason=UNCONFIGURED`。
@@ -300,6 +307,8 @@ record WebHit(String sourceId, String title, String url, String snippet, String 
 
 ### 6. Tests Required
 - 策略解析（默认/去重/大小写/未知值拒绝）；首源命中不调后备（`verify(never())`）；失败降级；开关门控（不发起请求）；URL 协议校验/规范化/去重/截断；sourceId 后验校验（合法/未知/URL 与 provider 不匹配）；降级原因不含异常文本；`rawFallback` JSON 转义完整。
+- **设置面放开新 provider（A-R9）**：`PUT /settings` 接受含新 provider 的顺序组合（如 `SERPER,TAVILY`、`TAVILY,SERPER,SEARXNG`）并落库；非法值仍 400；默认值不变；列宽迁移可容三源串。
+- **迁移不可由单测证明（A-R9 教训）**：本仓测试**不启动 Flyway/DB**（无 `src/test/resources`、无 `@SpringBootTest`），`mvn test` 全绿**不能**证明新增 `V<n>__*.sql` 会在真实库干净应用——须另以「对真实 PG 在 `BEGIN…ROLLBACK` 内跑该 DDL」或启动后端观察 `flyway_schema_history` 佐证。新增迁移编号须确认无 `V<n>__*.sql` 占用（跨任务预留也要核对）。
 
 ### 7. Wrong vs Correct
 #### Wrong
@@ -407,7 +416,7 @@ private String chat(String system, String user)
 - **snippet 只保真、不替代抽取**：降级仍 `status=FALLBACK` + gap；snippet 是「素材可用」而非「已核验事实」。
 - **手册条目透传为可选增量字段**：`FactSheetService` 取簇内**首个非空** snippet 写入 `entry.snippet`；无则字段**完全不出现**（旧契约与既有消费方零回归，对齐 `sourcesList` 增量范式）。`DeepWriterService` 与 `BriefService` prompt 可见该证据（写作/简报阶段提取背景素材）。
 - **汇总失败先提额重试（R4）**：`chat` 首次 `chatJson(...,2048)`；任何失败（`finish_reason=length` 截断 / 空内容 / 非法 JSON）提额 `4096` 重试一次，仅仍失败才抛出 → FALLBACK。净调用 ≤2 次/agent。
-- **不改口径/不改红线**：`webCount`/`search.resultCount` 降级不归零、`search.fallbackReason=LLM_FALLBACK`；`available()` 无闩锁、`toolHealth` 三键与优先级、`research_notes` 主字段集与状态值域均不变。
+- **不改口径/不改红线**：`webCount`/`search.resultCount` 降级不归零、`search.fallbackReason=LLM_FALLBACK`、`available()` 无闩锁、`toolHealth` 优先级、`research_notes` 主字段集与状态值域均不变（`toolHealth` 10-04 A 起增量含 `SERPER`，原有键不变）。
 
 ### 4. Validation & Error Matrix
 - snippet 为空/null → 写空串（字段仍在，不破坏结构）；>200 字 → 截断。
@@ -1167,7 +1176,7 @@ BriefDto dto = aiClient.structured(system, user, 8192, BriefDto.class).entity();
 ```java
 // 工厂（非 bean）
 SearchToolCallbacks(KnowledgeSearchTool kbTool, WebSearchRouter webRouter, List<Long> anchors, WebSearchSnapshot snapshot)
-ToolCallback[] forTools(List<String> names)   // names ∈ {KB, TAVILY, SEARXNG, WEB}（大小写不敏感）
+ToolCallback[] forTools(List<String> names)   // names ∈ {KB, TAVILY, SEARXNG, SERPER, WEB}（大小写不敏感）
 // 工具名（对模型暴露）: kb_search / web_search
 ```
 
@@ -1184,7 +1193,7 @@ ToolCallback[] forTools(List<String> names)   // names ∈ {KB, TAVILY, SEARXNG,
 - **可用性门控**：`available()==false` 的 KB 不暴露；WEB 仅当 `snapshot.webAllowed()` 且至少一个 provider
   `configured()` 时暴露（与 `DeepResearchService.applySettingGates` 的 WEB 剔除语义一致）。
 - **工具名兼容 `WEB` 别名**：流水线词汇（`applySettingGates`/`parseTools`/`ClarifyService`）用 `KB`/`WEB`，
-  适配器同时认 `TAVILY`/`SEARXNG`/`WEB`（同名去重为一个 `web_search`）。
+  适配器同时认 `TAVILY`/`SEARXNG`/`SERPER`/`WEB`（同名去重为一个 `web_search`）。
 - **异常绝不抛出**：工具方法内部捕获全部异常，返回中性提示串（不含异常原文/密钥，可能含 URL），仅类型化日志
   ——与 `SearchTool`「绝不抛出」约定一致。
 

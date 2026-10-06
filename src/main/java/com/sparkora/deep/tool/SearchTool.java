@@ -4,8 +4,17 @@ import java.util.List;
 
 /**
  * 研究子代理搜索工具抽象(S9 深度生成)。
- * 实现:KnowledgeSearchTool(本地统一检索)/ SearxngSearchTool / TavilySearchTool。
+ * 实现:KnowledgeSearchTool(本地统一检索)/ SearxngSearchTool / TavilySearchTool / SerperSearchTool。
  * 所有 WEB 来源条目必须带 url;KB 条目带 docId/modelName 供事实手册溯源。
+ *
+ * <p><b>认证差异(跨实现约定,务必遵守)</b>:{@code SerperSearchTool} 用 <b>Header {@code X-API-KEY}</b> 认证;
+ * {@code TavilySearchTool} 用 <b>body {@code api_key}</b>。两者不通用——把 Tavily 的 body 写法复制到 Serper
+ * 会 401。新增付费 provider 时先确认其认证方式。
+ *
+ * <p><b>垂直(vertical)</b>:{@link #searchVertical(String, String, int)} 默认委托 {@link #search(String, int)}
+ * (等价 {@code vertical=web});未知 vertical 值按 {@code web} 处理并 warn，<b>不抛异常</b>——垂直选择是
+ * 运行时启发式路由，可回退;这与 {@code WebProvider.from()} 对<b>运维配置错误</b>抛
+ * {@link IllegalArgumentException} 的做法刻意不同(配置错误必须暴露 vs 启发式可回退)。
  */
 public interface SearchTool {
 
@@ -25,6 +34,25 @@ public interface SearchTool {
      * 搜索。返回命中条目(不超过 maxResults);异常由实现内部捕获并返回空列表(不抛出,避免子代理整体失败)。
      */
     List<SearchHit> search(String query, int maxResults);
+
+    /**
+     * 按垂直搜索(10-04-serper-provider A-R3)。
+     *
+     * <p>{@code vertical ∈ {web, news}}:{@code web}=通用网页({@code /search}，{@code organic[]})；
+     * {@code news}=时效新闻垂直(仅有此垂直返回 {@code date}/{@code source}，供 R4b 时效能力使用)。
+     *
+     * <p>默认实现委托 {@link #search(String, int)}(等价 {@code vertical=web})——不支持垂直的工具
+     * (SearxNG/KB)零改动即满足契约。{@code SerperSearchTool} 覆写为真实垂直路由;
+     * 未知 vertical 值回落 {@code web} + warn，不抛出。
+     *
+     * @param query      查询串
+     * @param vertical   垂直({@code web}/{@code news}；null/未知按 {@code web})
+     * @param maxResults 返回条数上限
+     * @return 命中列表;异常实现内部捕获返回空列表(不抛出)
+     */
+    default List<SearchHit> searchVertical(String query, String vertical, int maxResults) {
+        return search(query, maxResults);
+    }
 
     /**
      * 按 URL 抽取正文片段(09-27-tavily-extract-kind-hypotheses R1,机制 B:search 拿摘要 + 按需 extract 补正文)。

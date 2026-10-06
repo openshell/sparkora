@@ -14,7 +14,8 @@ import java.util.Set;
  *   <li>未知值明确拒绝(抛 {@link IllegalArgumentException}),不静默吞掉;</li>
  *   <li>空或缺省回退代码默认 {@code TAVILY,SEARXNG}(=TAVILY_FIRST,2026-09-25 反转旧决策)。</li>
  * </ul>
- * 约定:字符串 {@code TAVILY,SEARXNG} 即语义策略 {@code TAVILY_FIRST};{@code SEARXNG,TAVILY} 即 {@code SEARXNG_FIRST}。
+ * 约定:字符串 {@code TAVILY,SEARXNG} 即语义策略 {@code TAVILY_FIRST};{@code SEARXNG,TAVILY} 即 {@code SEARXNG_FIRST}；
+ * 10-04 A/B 起多 provider 并行聚合策略语义为 {@code PRIMARY_FANOUT}。
  */
 public record WebProviderOrder(List<WebProvider> providers) {
 
@@ -25,6 +26,8 @@ public record WebProviderOrder(List<WebProvider> providers) {
     public static final String TAVILY_FIRST = "TAVILY_FIRST";
     /** SEARXNG_FIRST 语义标签。 */
     public static final String SEARXNG_FIRST = "SEARXNG_FIRST";
+    /** 多源并行聚合语义标签(10-04 A 预留,B 的 PRIMARY_FANOUT 策略回落此标签)。 */
+    public static final String PRIMARY_FANOUT = "PRIMARY_FANOUT";
 
     public WebProviderOrder {
         providers = providers == null ? List.of() : List.copyOf(providers);
@@ -60,9 +63,17 @@ public record WebProviderOrder(List<WebProvider> providers) {
     }
 
     /**
-     * 语义策略标签:{@code TAVILY_FIRST} / {@code SEARXNG_FIRST}(MVP 仅两值;未知组合回退 {@link #TAVILY_FIRST})。
+     * 语义策略标签(10-04 扩为三值):
+     * <ul>
+     *   <li>顺序含 {@link WebProvider#SERPER}(三源/新组合)→ {@link #PRIMARY_FANOUT};
+     *       <b>必须</b>如此:否则加 SERPER 后首元素非 SEARXNG 的顺序会被一律误标 {@code TAVILY_FIRST};</li>
+     *   <li>其余沿用两值逻辑(首元素 SEARXNG → {@code SEARXNG_FIRST},否则 {@code TAVILY_FIRST});</li>
+     *   <li>B 的 PRIMARY_FANOUT 策略(web-fanout 开启)在快照层同样回落此标签。</li>
+     * </ul>
+     * 纯 legacy 顺序({@code TAVILY,SEARXNG} / {@code SEARXNG,TAVILY})的标签逐字不变(零回归)。
      */
     public String strategyLabel() {
+        if (providers.contains(WebProvider.SERPER)) return PRIMARY_FANOUT;
         if (!providers.isEmpty() && providers.get(0) == WebProvider.SEARXNG) return SEARXNG_FIRST;
         return TAVILY_FIRST;
     }

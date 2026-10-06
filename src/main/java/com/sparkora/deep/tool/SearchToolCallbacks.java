@@ -42,6 +42,8 @@ public class SearchToolCallbacks {
     public static final String TOOL_TAVILY = "TAVILY";
     /** 工具名:WEB 检索(SearxNG;经 router 策略路由)。 */
     public static final String TOOL_SEARXNG = "SEARXNG";
+    /** 工具名:WEB 检索(Serper;经 router 策略路由)。10-04-serper-provider A。 */
+    public static final String TOOL_SERPER = "SERPER";
     /**
      * 工具名:WEB 检索(流水线词汇)。{@code DeepResearchService.applySettingGates}/{@code parseTools}/
      * {@code ClarifyService} 的工具词汇是 {@code KB}/{@code WEB},故此处兼容 {@code WEB} 别名,
@@ -109,7 +111,8 @@ public class SearchToolCallbacks {
                     adapters.add(new KbAdapter(kbTool, anchors));
                     kbAdded = true;
                 }
-            } else if (TOOL_TAVILY.equals(name) || TOOL_SEARXNG.equals(name) || TOOL_WEB.equals(name)) {
+            } else if (TOOL_TAVILY.equals(name) || TOOL_SEARXNG.equals(name)
+                    || TOOL_SERPER.equals(name) || TOOL_WEB.equals(name)) {
                 if (!webAdded && webAvailable()) {
                     adapters.add(new WebAdapter(webRouter, snapshot));
                     webAdded = true;
@@ -129,7 +132,9 @@ public class SearchToolCallbacks {
     private boolean webAvailable() {
         if (webRouter == null || snapshot == null || !snapshot.webAllowed()) return false;
         try {
-            return webRouter.configured(WebProvider.TAVILY) || webRouter.configured(WebProvider.SEARXNG);
+            return webRouter.configured(WebProvider.TAVILY)
+                    || webRouter.configured(WebProvider.SEARXNG)
+                    || webRouter.configured(WebProvider.SERPER);
         } catch (Exception e) {
             log.warn("web_search 可用性判定异常,按不可用处理: {}", e.getClass().getSimpleName());
             return false;
@@ -176,7 +181,7 @@ public class SearchToolCallbacks {
         }
 
         @Tool(name = NAME_WEB,
-              description = "检索外部网页(按策略路由 Tavily/SearxNG),返回带稳定 sourceId、URL、来源 provider 的结果,"
+              description = "检索外部网页(按策略路由 Tavily/SearxNG/Serper),返回带稳定 sourceId、URL、来源 provider 的结果,"
                           + "事实引用必须使用返回的 sourceId。")
         public String webSearch(
                 @ToolParam(description = "检索查询串") String query,

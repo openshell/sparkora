@@ -40,13 +40,24 @@ public class SubAgentRunner {
     private final ObjectMapper json;
     private final KnowledgeSearchTool kbTool;
     private final WebSearchRouter webRouter;
+    /** 深度配置(10-04 A:webVerticalNewsEnabled 决定时效题是否走 news 垂直;测试可空=强制 web)。 */
+    private final com.sparkora.config.DeepProperties deepProps;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public SubAgentRunner(AiClient aiClient, ObjectMapper json,
-                          KnowledgeSearchTool kbTool, WebSearchRouter webRouter) {
+                          KnowledgeSearchTool kbTool, WebSearchRouter webRouter,
+                          com.sparkora.config.DeepProperties deepProps) {
         this.aiClient = aiClient;
         this.json = json;
         this.kbTool = kbTool;
         this.webRouter = webRouter;
+        this.deepProps = deepProps;
+    }
+
+    /** 兼容构造器(无 DeepProperties:测试用;垂直强制 web,保证零回归)。 */
+    public SubAgentRunner(AiClient aiClient, ObjectMapper json,
+                          KnowledgeSearchTool kbTool, WebSearchRouter webRouter) {
+        this(aiClient, json, kbTool, webRouter, null);
     }
 
     /** 研究笔记(标准化产物)。factsJson 为 {facts:[…],gaps:[…]} 字符串。 */
@@ -109,7 +120,12 @@ public class SubAgentRunner {
         boolean kbAuthoritative = !background && kbParamAuthoritative;
         if (toolsAllowed.contains("WEB") && snapshot != null && snapshot.webAllowed() && webQuota > 0 && !kbAuthoritative) {
             appliedWebQuery = webQuery(topic, question, lockedAnswers);
-            outcome = webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot);
+            // 10-04-serper-provider A-R3:时效题走 news 垂直(仅 Serper 支持;开关关闭时强制 web→零回归)。
+            // background 参数型/参数题仍走 web:参数事实通常非时效问题(§5.1)。
+            String vertical = resolveVertical(question);
+            outcome = vertical == null
+                    ? webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot)
+                    : webRouter.searchVertical(appliedWebQuery, Math.min(5, webQuota), snapshot, vertical);
             webHits = outcome.hits();
             // R1:背景题对 top 1–2 URL 调 extract 取正文并回填(失败/空/Tavily 不可用 → 保持 null 摘要降级)
             if (background && !webHits.isEmpty()) {
@@ -335,6 +351,18 @@ public class SubAgentRunner {
         if (q.isEmpty()) return t;
         if (t.contains(q) || q.contains(t)) return t.length() >= q.length() ? t : q;
         return t + ", " + q;
+    }
+
+    /**
+     * 10-04-serper-provider A-R3:垂直路由决策。
+     *
+     * <p>时效题(命中 {@link ResearchPlannerService#isTimeSensitiveQuestion})且开关开启 → {@code news};
+     * 其余(含开关关闭/无 DeepProperties 的测试路径)→ {@code null}(走既有 search,零回归)。
+     * 参数型事实即使命中时效词也非时效需求,但判定成本低且 news 与 search 同价,不做额外区分。
+     */
+    private String resolveVertical(String question) {
+        if (deepProps == null || !deepProps.isWebVerticalNewsEnabled()) return null;
+        return ResearchPlannerService.isTimeSensitiveQuestion(question) ? "news" : null;
     }
 
     /**

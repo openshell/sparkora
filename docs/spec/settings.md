@@ -21,7 +21,7 @@ Flyway `db/migration/V1__baseline.sql` 单行表（固定 `id=1`，首次读取�
 |---|---|---|
 | `kb_enabled` | `BOOLEAN NOT NULL DEFAULT FALSE` | 内部知识库（CAR 车型域 + KB 通用域）启用；**默认停用**（知识库数据质量治理中，停用期间优先外部搜索资料） |
 | `web_search_enabled` | `BOOLEAN NOT NULL DEFAULT TRUE` | 外部搜索（策略路由的 Tavily/SearxNG）启用 |
-| `web_provider_order` | `VARCHAR(20) NOT NULL DEFAULT 'TAVILY,SEARXNG'` | 外部搜索 provider 顺序（09-25）；`TAVILY,SEARXNG`=TAVILY_FIRST / `SEARXNG,TAVILY`=SEARXNG_FIRST。运行时全局策略，优先于部署级 `DEEP_WEB_PROVIDER_ORDER`；空回退部署级默认 |
+| `web_provider_order` | `VARCHAR(50) NOT NULL DEFAULT 'TAVILY,SEARXNG'` | 外部搜索 provider 顺序（09-25；10-04-serper-provider A-R9 列宽 20→50 以容纳 SERPER）；`TAVILY,SEARXNG`=TAVILY_FIRST / `SEARXNG,TAVILY`=SEARXNG_FIRST / 含 `SERPER` 时回落 `PRIMARY_FANOUT` 标签。运行时全局策略，优先于部署级 `DEEP_WEB_PROVIDER_ORDER`；空回退部署级默认 |
 | `updated_by` / `updated_at` / `deleted` | `BIGINT` / `TIMESTAMP NOT NULL DEFAULT now()` / `SMALLINT NOT NULL DEFAULT 0` | 审计（手工赋值）/逻辑删除惯例 |
 
 - 实体 `com.sparkora.domain.entity.SettingEntity`（`@TableName("sparkora_setting")`）、`SettingService`。
@@ -36,7 +36,7 @@ Flyway `db/migration/V1__baseline.sql` 单行表（固定 `id=1`，首次读取�
 | 接口 | 方法 | 角色 | 请求/响应 |
 |---|---|---|---|
 | `/settings` | GET | ADMIN, EDITOR | `data: {id, kbEnabled, webSearchEnabled, webProviderOrder, updatedBy, updatedAt, deleted}`（首次访问自动插默认行） |
-| `/settings` | PUT | **仅 ADMIN** | `@Valid {kbEnabled?, webSearchEnabled?, webProviderOrder?}`（null/空不改；`webProviderOrder` 仅允许 `TAVILY`/`SEARXNG` 的顺序组合，其余 400 中文提示）；响应同 GET（写后刷缓存） |
+| `/settings` | PUT | **仅 ADMIN** | `@Valid {kbEnabled?, webSearchEnabled?, webProviderOrder?}`（null/空不改；`webProviderOrder` 允许 `TAVILY`/`SEARXNG`/`SERPER` 的任意顺序组合，其余 400 中文提示）；响应同 GET（写后刷缓存） |
 
 ---
 
@@ -45,7 +45,7 @@ Flyway `db/migration/V1__baseline.sql` 单行表（固定 `id=1`，首次读取�
 | 开关 | 生效行为 |
 |---|---|
 | `kbEnabled=false` | `DeepResearchService.applySettingGates` 剔除 KB 工具（子代理不装配本地检索）；产物 `rag_status=DISABLED`；锚点车型仅保留写作偏好语义，不触发本地检索 |
-| `webSearchEnabled=false` | 剔除 WEB 工具（SEARXNG/Tavily 不调用）；`toolHealth.SEARXNG/TAVILY=DISABLED` |
+| `webSearchEnabled=false` | 剔除 WEB 工具（SEARXNG/Tavily/Serper 不调用）；`toolHealth.SEARXNG/TAVILY/SERPER=DISABLED` |
 | `webProviderOrder` | 深度研究启动时进入 `WebSearchSnapshot`（与开关一起解析一次），决定 `WebSearchRouter` 尝试顺序；启动后改设置不改变已启动批次（策略为全局层，非项目级/用户级） |
 | 双关 | 子代理无资料工具，LLM prompt 注入「未检索任何外部资料,不得编造,数据未核实」；生成继续不阻断（沿用不硬阻断决策），`factRisks`/`gaps` 标注 |
 | 两者全开 | 维持 S9 现状：KB 优先（R2 冲突裁决 KB>WEB），WEB 单源 0.4 进 warnings |

@@ -93,9 +93,9 @@ graph TD
 
 - `toolHealth`（2026-09-15 契约升级，值由布尔改状态码 `OK|DISABLED|UNCONFIGURED|FAILED`）：
   - `KB` = `kb_enabled ? OK : DISABLED`（反映设置页运行时门控）。见 [settings.md](settings.md)。
-  - `SEARXNG`/`TAVILY` 先判 `SEARCH_WEB_ENABLED && webSearchEnabled`（false → `DISABLED`），再按 `configured()` → `UNCONFIGURED`、`lastCallOk()` → `FAILED`/`OK`。
+  - `SEARXNG`/`TAVILY`/`SERPER`（10-04-serper-provider A 增量）先判 `SEARCH_WEB_ENABLED && webSearchEnabled`（false → `DISABLED`），再按 `configured()` → `UNCONFIGURED`、`lastCallOk()` → `FAILED`/`OK`。`SERPER` 未配置时 `UNCONFIGURED`（与 Tavily 同理），既有三键值域不变。
   - 优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。前端未拿到该字段时渲染 `--`（未知态，不谎报可用）。
-  - `webStrategy`（09-25 增量）：有效策略标签 `TAVILY_FIRST`/`SEARXNG_FIRST`；`webProviderOrder` 为规范化 provider 串。**配置就绪不等于已验证可用**——以 agents[].search 实际调用为准。
+  - `webStrategy`（09-25 增量；10-04 扩为三值）：有效策略标签 `TAVILY_FIRST`/`SEARXNG_FIRST`/`PRIMARY_FANOUT`（顺序含 `SERPER` 时回落此标签）；`webProviderOrder` 为规范化 provider 串。**配置就绪不等于已验证可用**——以 agents[].search 实际调用为准。
 - 权限冒烟：viewer 访问写接口 403（`hasAnyRole('ADMIN','EDITOR')`）。
 
 ### 3.4 `clarify_session` JSON（C1）
@@ -214,8 +214,17 @@ graph TD
 | KB | `KnowledgeSearchTool` | 委托 `CarRagService.retrieveForGeneration` 统一检索（[knowledge/kb.md](knowledge/kb.md)，S8） | 异常 warn，不抛出 |
 | SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + `lastCallOk()=false`（仅供健康展示）；`available()` 仅判地址就绪，失败不闩锁 |
 | TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}`；09-27 增 `POST /extract` 正文补抓 | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；`extract` 失败不污染 `lastCallOk()` |
+| SERPER | `SerperSearchTool`（10-04 A 新增） | POST `{SERPER_API_BASE_URL}/search` `{q,num,gl,hl}`（web）或 `/news`（news），**Header `X-API-KEY` 认证**（非 body `api_key`） | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；空响应/非法 JSON/异常 → 空列表不抛 |
 
-- **WEB 策略路由（09-25，取代旧硬编码 SEARXNG→Tavily）**：`WebSearchRouter`（`com.sparkora.deep.search`）按快照策略顺序逐个尝试 provider，首个产出**有效命中**即采信并停止；provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源。每次研究启动时解析一次 `WebSearchSnapshot`（策略 + 双开关），同批次全部子代理共用。MVP 仅两策略：`TAVILY_FIRST`（默认）/ `SEARXNG_FIRST`；不支持 BOTH 双源聚合。
+- **Serper 字段级契约（10-04-serper-provider A）**：
+  - **认证隔离**：Serper 用 **Header `X-API-KEY`**，Tavily 用 **body `api_key`**——两者不通用（把 Tavily 写法复制到 Serper 会 401），已写入 `SearchTool` 类注释。
+  - **端点可配置**：`sparkora.deep.serper-api-base` ← `.env DEEP_SERPER_API_BASE_URL`（默认官方 `https://google.serper.dev`）。中转端点为 `https://search.604020.xyz/serper`，**路径段 `/serper` 必须保留**（`effectiveSerperApiBase()` 兜底 + 末尾斜杠归一）。仅改配置即可切换官方/中转。
+  - **垂直**：`SearchTool.searchVertical(query, vertical, maxResults)`（default 委托 `search`，SearxNG/KB 零改动）；`web`→`/search`（解析 `organic[]` 的 `link/title/snippet`），`news`→`/news`（解析 `news[]`，额外把 `date`/`source` 保留到 `SearchHit.content` 的 JSON 载体，供后续 R4b 时效能力消费，本任务不做新鲜度计算）。未知 vertical 回落 `web` + warn，**不抛异常**（运行时启发式，与 `WebProvider.from()` 对配置错误抛异常刻意不同）。
+  - **垂直路由归属**：`SubAgentRunner.resolveVertical` 按时效性选垂直——`ResearchPlannerService.isTimeSensitiveQuestion`（词表 `最新/近期/最近/现在/今年/当前/动态/发布`）命中且 `sparkora.deep.web-vertical-news-enabled=true`（默认）时走 `news`，否则走既有 `search`（零回归）。
+  - **地域参数**：默认 `gl=cn`/`hl=zh-cn`（实测显著提升中文召回）；`sparkora.deep.serper-gl`/`serper-hl` 可配，**空白值不下发该键**。国际源场景须覆盖为 `us`/`en`。
+  - **条数上限**：Serper 单次实际硬上限 **10**（实测 `num=20` 只回 10），请求 `num` clamp 到 `min(maxResults, 10)`；`Attempt.resultCount` 记 **normalize 后实际命中数**（非请求数）。
+
+- **WEB 策略路由（09-25，取代旧硬编码 SEARXNG→Tavily；10-04-serper-provider 扩为三源）**：`WebSearchRouter`（`com.sparkora.deep.search`）按快照策略顺序逐个尝试 provider，首个产出**有效命中**即采信并停止；provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源。每次研究启动时解析一次 `WebSearchSnapshot`（策略 + 双开关），同批次全部子代理共用。默认策略 `TAVILY_FIRST`；`SEARXNG_FIRST` 可切；顺序含 `SERPER` 时策略标签回落 `PRIMARY_FANOUT`。**仍不支持 BOTH 双源聚合**（多源并行聚合由后继任务 B 实现）。
 - **WEB 结果治理（R8/R9）**：`WebResultNormalizer` 在子代理/LLM 之前完成协议校验（仅 http/https 绝对 URL）、URL 规范化（去 fragment、小写 scheme/host）、按规范化 URL 去重、截断，并分配稳定 `sourceId`（`W1,W2…` 按本次输入顺序）。`SearchHit` 增量带 `sourceId`/`provider`（旧 7 参构造器保留兼容）。
 - **事实后验校验（R9）**：`SubAgentRunner.validateFacts` 只接受引用本次输入 `sourceId` 且 URL/provider 匹配的 WEB 事实；未知 sourceId / URL 或 provider 不匹配 → 从 facts 剔除并转为 gap（不整条 agent 失败）。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**，通过后 `type` 归一为 `WEB`；仅缺 `type` 且无 `url`/`sourceId` 的 KB 事实沿用既有行为。
 - **WEB query 构造（R7）**：项目主题 + 研究问题 + **存量已锁定**澄清答案（旧 `clarify_answers` 中非空 `a`，去重）；未锁定答案绝不进入 query。新认知链路不再写 `clarify_answers`，此路径仅对存量数据生效。**否定答案过滤（R5，09-27-brief-writing-linkage-fix）**：语义为「放弃/无偏好」的否定值（精确匹配「不对比/不比较/无所谓/都可以/都行/不限/无偏好/随便/暂无/不需要/无/没有/不涉及/跳过」+ `不对比`/`不需要` 前缀）不注入 query。
@@ -233,7 +242,7 @@ graph TD
 - **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB → **KB 胜出**；WEB 条目降级为该条目 `alternatives`（URL 列表）去重后留证据，并写 warnings。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
 - **近似 claim 归并（09-25-fact-claim-merge）**：`FactSheetService.merge` 用 `ClaimSimilarity` 贪心聚类；数值签名硬前提（`numberValues` 集合必须完全相等）；原文 trim 相同直接同一事实；相似度阈值 `TH_NUMERIC=0.45` / `TH_TEXT=0.70`。纯本地、确定、可单测、不调 LLM。
 - `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 `modelName` 字段。
-- 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.deep.tavily-api-key`（`DeepProperties` 绑定前缀 `sparkora.deep`）。
+- 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.deep.tavily-api-key`；Serper 同构 `DEEP_SERPER_API_KEY` → `SERPER_API_KEY` → `sparkora.deep.serper-api-key`（`DeepProperties` 绑定前缀 `sparkora.deep`）。
 
 ---
 
@@ -305,6 +314,11 @@ graph TD
 | `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署） |
 | `CRAWL4AI_BASE_URL` | 空 | 预留：Crawl4AI 正文抓取工具未接入（正文补抓改由 Tavily `/extract` 承担，见 §4） |
 | `DEEP_WEB_CONTENT_MAX_CHARS` | `2000` | 背景题 WEB 正文补抓单条上限（字符）：Tavily `/extract` 取正文后工具层截断的唯一上限；参数题不补抓 |
+| `SERPER_API_KEY` / `DEEP_SERPER_API_KEY` | 空 | Serper 密钥（`.env`；`DEEP_` 前缀可覆盖）。未配置 → `toolHealth.SERPER=UNCONFIGURED`、策略路由跳过，不影响 Tavily/SearxNG |
+| `DEEP_SERPER_API_BASE_URL` | `https://google.serper.dev` | Serper 端点（URL 类键以 `_BASE_URL` 结尾）；中转为 `https://search.604020.xyz/serper`（路径前缀保留） |
+| `DEEP_SERPER_GL` / `DEEP_SERPER_HL` | `cn` / `zh-cn` | Serper 地域/语言参数；空白不下发该键。国际源须覆盖为 `us`/`en` |
+| `DEEP_WEB_VERTICAL_NEWS` | `true` | 时效题（`isTimeSensitiveQuestion`）是否走 Serper `/news` 垂直；关闭时全部走 `/search`（零回归） |
+| `DEEP_TAVILY_API_BASE_URL` | `https://api.tavily.com` | Tavily 端点（A-R6 单端点可配置；末尾斜杠归一） |
 | `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap）；目前仅由 `application.yml` 占位符 `${DEEP_RESEARCH_TIMEOUT_MS:120000}` 提供，未列入 `.env.example` |
 | `DEEP_MAX_AGENTS` | `6` | 子代理数上限（虚拟线程 per-task executor；总检索预算约 8 → `webQuota=max(1,8/n)`）。**窗口选择**：`DeepResearchService.selectResearchWindow` 预算内**优先保背景/来龙去脉型问题**（`ResearchPlannerService.isBackgroundQuestion`），其余按原序补足，最终索引升序归位（`run` 落占位与 `doRunAsync` 执行共用同一选择器，question↔toolHints 索引对齐） |
 

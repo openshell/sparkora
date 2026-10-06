@@ -30,6 +30,9 @@
       <el-tag size="small" :type="healthView('TAVILY').type" effect="plain">
         Tavily {{ healthView('TAVILY').text }}
       </el-tag>
+      <el-tag size="small" :type="healthView('SERPER').type" effect="plain">
+        Serper {{ healthView('SERPER').text }}
+      </el-tag>
       <el-tag size="small" type="info" effect="plain">
         策略 {{ strategyText }}
       </el-tag>
@@ -93,6 +96,7 @@ const strategyText = computed(() => {
   const s = webStrategy.value
   if (s === 'TAVILY_FIRST') return 'Tavily 优先'
   if (s === 'SEARXNG_FIRST') return 'SearxNG 优先'
+  if (s === 'PRIMARY_FANOUT') return '多源聚合'
   return '--'
 })
 

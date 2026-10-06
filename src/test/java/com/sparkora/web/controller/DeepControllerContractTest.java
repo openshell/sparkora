@@ -8,6 +8,7 @@ import com.sparkora.deep.service.DeepResearchService;
 import com.sparkora.deep.service.DeepWriterService;
 import com.sparkora.deep.service.ResearchPlannerService;
 import com.sparkora.deep.tool.SearxngSearchTool;
+import com.sparkora.deep.tool.SerperSearchTool;
 import com.sparkora.deep.tool.TavilySearchTool;
 import com.sparkora.domain.entity.ArticleBriefEntity;
 import com.sparkora.mapper.ArticleBriefMapper;
@@ -50,6 +51,7 @@ class DeepControllerContractTest {
     @Mock BriefService briefService;
     @Mock SearxngSearchTool searxngTool;
     @Mock TavilySearchTool tavilyTool;
+    @Mock SerperSearchTool serperTool;
     @Mock SettingService settingService;
     @Mock com.sparkora.deep.service.ClarifyConversationService clarifyConversationService;
     @Mock ResearchPlannerService researchPlannerService;
@@ -62,7 +64,7 @@ class DeepControllerContractTest {
     void setUp() {
         props = new DeepProperties();
         DeepController controller = new DeepController(researchService, writerService,
-                briefMapper, briefService, searxngTool, tavilyTool,
+                briefMapper, briefService, searxngTool, tavilyTool, serperTool,
                 props, settingService, clarifyConversationService, researchPlannerService, blueprintService);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ApiExceptionHandler()).build();
     }
@@ -395,6 +397,33 @@ class DeepControllerContractTest {
                         .content("{\"briefId\":9}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(400));
+    }
+
+    /** 10-04 A-A7:toolHealth 增量含 SERPER;未配置 → UNCONFIGURED,既有三键不破坏。 */
+    @Test
+    void status_toolHealth含SERPER_未配置为UNCONFIGURED() throws Exception {
+        ArticleBriefEntity b = new ArticleBriefEntity();
+        b.setId(9L);
+        b.setProjectId(3L);
+        b.setGenMode("DEEP");
+        when(briefMapper.selectById(9L)).thenReturn(b);
+        when(settingService.isKbEnabled()).thenReturn(true);
+        when(settingService.isWebSearchEnabled()).thenReturn(true);
+        when(tavilyTool.configured()).thenReturn(true);
+        when(tavilyTool.lastCallOk()).thenReturn(true);
+        when(searxngTool.configured()).thenReturn(false);   // SearxNG 未配置
+        when(searxngTool.lastCallOk()).thenReturn(true);
+        when(serperTool.configured()).thenReturn(false);     // Serper 未配置
+        when(serperTool.lastCallOk()).thenReturn(true);
+        when(researchService.resolveSnapshot(9L))
+                .thenReturn(WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 9L, 5));
+
+        mvc.perform(get("/api/projects/3/deep/status").param("briefId", "9"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.toolHealth.SERPER").value("UNCONFIGURED"))
+                .andExpect(jsonPath("$.data.toolHealth.TAVILY").value("OK"))
+                .andExpect(jsonPath("$.data.toolHealth.SEARXNG").value("UNCONFIGURED"))
+                .andExpect(jsonPath("$.data.toolHealth.KB").value("OK"));
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.sparkora.deep.search;
 
 import com.sparkora.deep.tool.SearchTool;
 import com.sparkora.deep.tool.SearxngSearchTool;
+import com.sparkora.deep.tool.SerperSearchTool;
 import com.sparkora.deep.tool.TavilySearchTool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,9 +35,10 @@ class WebSearchRouterTest {
 
     @Mock TavilySearchTool tavily;
     @Mock SearxngSearchTool searxng;
+    @Mock SerperSearchTool serper;
 
     private WebSearchRouter router() {
-        return new WebSearchRouter(tavily, searxng);
+        return new WebSearchRouter(tavily, searxng, serper);
     }
 
     private static WebSearchSnapshot snapshot(String order, boolean allowed) {
@@ -183,5 +186,45 @@ class WebSearchRouterTest {
         when(tavily.available()).thenReturn(true);
         when(searxng.available()).thenReturn(true);
         assertTrue(router().extract("q", List.of("https://x.com/a")).isEmpty());
+    }
+
+    // ===== 10-04-serper-provider A:SERPER 注册 / 未配置跳过 / resultCount 实际返回数 / 垂直 =====
+
+    /** A-A3:未配置的 SERPER 跳过并记 UNCONFIGURED,不影响 TAVILY 采信。 */
+    @Test
+    void SERPER未配置_跳过且不影响TAVILY() {
+        when(serper.available()).thenReturn(false);
+        when(tavily.available()).thenReturn(true);
+        when(tavily.search(anyString(), anyInt()))
+                .thenReturn(List.of(SearchTool.SearchHit.web("TAVILY", "t", "https://t.com/a", "s")));
+        WebSearchOutcome out = router().search("q", 5, snapshot("SERPER,TAVILY", true));
+        assertEquals(WebProvider.SERPER, out.attempts().get(0).provider());
+        assertEquals(WebSearchRouter.REASON_UNCONFIGURED, out.attempts().get(0).fallbackReason());
+        assertEquals(WebProvider.TAVILY, out.usedProvider());
+        verify(serper, never()).search(anyString(), anyInt());
+    }
+
+    /** A-A6:attempts.resultCount 记 normalize 后实际命中数,而非请求条数。 */
+    @Test
+    void resultCount_记实际返回数而非请求数() {
+        when(tavily.available()).thenReturn(true);
+        // 请求 maxResults=5,provider 只回 2 条 → resultCount 必须为 2
+        when(tavily.search(anyString(), anyInt())).thenReturn(List.of(
+                SearchTool.SearchHit.web("TAVILY", "t1", "https://t.com/a", "s"),
+                SearchTool.SearchHit.web("TAVILY", "t2", "https://t.com/b", "s")));
+        WebSearchOutcome out = router().search("q", 5, snapshot("TAVILY,SEARXNG", true));
+        assertEquals(2, out.attempts().get(0).resultCount(), "resultCount 必须是实际命中数,不是请求数");
+    }
+
+    /** A-R3:SERPER 垂直搜索经 searchVertical 转发(news 垂直)。 */
+    @Test
+    void 垂直搜索_经searchVertical转发到SERPER() {
+        when(serper.available()).thenReturn(true);
+        when(serper.searchVertical(anyString(), eq("news"), anyInt()))
+                .thenReturn(List.of(SearchTool.SearchHit.web("SERPER", "n", "https://n.com/1", "s")));
+        WebSearchOutcome out = router().searchVertical("q", 5, snapshot("SERPER", true), "news");
+        assertEquals(WebProvider.SERPER, out.usedProvider());
+        verify(serper).searchVertical("q", "news", 5);
+        verify(serper, never()).search(anyString(), anyInt());
     }
 }
