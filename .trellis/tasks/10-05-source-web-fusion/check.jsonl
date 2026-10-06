@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-05-source-web-fusion/prd.md", "reason": "核对 AC-F1..F6 逐条达成，尤其 F3 独立交叉判定反例"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对事实来源契约与融合优先级未被破坏"}
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/prd.md", "reason": "核对与姊妹任务契约同构、未分叉"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对 fact_sheet 结构与置信规则字段级一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对零回归与确定性断言真实执行"}

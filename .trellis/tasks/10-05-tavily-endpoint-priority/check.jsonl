@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-05-tavily-endpoint-priority/prd.md", "reason": "逐条核对 AC-T1..T-A8 是否可验证"}
+{"file": ".trellis/tasks/10-05-tavily-endpoint-priority/design.md", "reason": "核对实现是否遵守独立超时、身份固定、质量门默认保守"}
+{"file": "src/main/java/com/sparkora/deep/tool/TavilySearchTool.java", "reason": "核对双 RestClient 与 failover 落点、无共享超时"}
+{"file": "src/main/java/com/sparkora/deep/service/FactSheetService.java", "reason": "核对双端点不提升独立来源计数"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对 spec 已同步端点观测字段且旧字段不变"}

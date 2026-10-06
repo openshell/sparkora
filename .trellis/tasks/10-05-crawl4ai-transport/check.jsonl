@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-05-crawl4ai-transport/prd.md", "reason": "核对 AC-C1..C5 逐条达成"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对抓取契约与降级语义未被破坏"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对无不可逆副作用、零回归断言真实执行"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对失败/未配置状态表达一致"}

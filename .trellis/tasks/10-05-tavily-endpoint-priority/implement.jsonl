@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/10-05-tavily-endpoint-priority/design.md", "reason": "本任务双端点 model、failover 流程、独立超时、质量门与身份约束"}
+{"file": ".trellis/tasks/10-05-tavily-endpoint-priority/prd.md", "reason": "需求 T-R1..T-R7 与 AC-T1..T-A8"}
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/design.md", "reason": "父任务 §2.4 usedProviders 契约与 §5.3 extract 现状（本任务不扩展 extract）"}
+{"file": "docs/spec/brief-generation.md", "reason": "外部搜索 provider 与事实来源字段级契约，需同步端点观测字段"}
+{"file": "docs/spec/retrieval.md", "reason": "WEB 引用/去重/降级契约，双端点须遵守同 provider 去重"}
+{"file": ".env.example", "reason": "中转端点/超时/质量门配置键命名与默认值"}

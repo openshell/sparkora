@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/10-05-source-web-fusion/prd.md", "reason": "本任务需求与 AC 的唯一来源"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "§2.5 事实来源契约、§2.4 向量域契约、§3.5 融合优先级，本任务必须遵守"}
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/prd.md", "reason": "外部搜索 provider/usedProviders/SearchMeta 契约来源，融合须与之同构"}
+{"file": "docs/spec/brief-generation.md", "reason": "§4-§5 工具层/研究笔记/事实手册置信规则（merge/独立来源判定/近似归并），融合改造权威契约"}
+{"file": "docs/spec/retrieval.md", "reason": "引用明细与来源标注契约"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "搜索工具可用性/三域检索/开关契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "确定性规则优先与零回归基线要求"}

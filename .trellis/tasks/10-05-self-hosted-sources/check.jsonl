@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-05-self-hosted-sources/prd.md", "reason": "核对 AC-P1..P7 集成验收是否达成"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对 §2 共享契约是否被子任务遵守、未被分叉"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对验证未改生产数据、无不可逆副作用、零回归断言真实执行"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移幂等与表结构变更合规"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "核对规格文档层级与引用同步（spec/.env.example）"}

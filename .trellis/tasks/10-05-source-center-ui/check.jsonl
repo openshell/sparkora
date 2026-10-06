@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-05-source-center-ui/prd.md", "reason": "核对 AC-U1..U5 逐条达成"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 API 分层/懒挂载/轮询清理/防抖清理等规范合规"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对既有 Tab/路由零回归，并同步本次定位突破"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对前端构建门禁与验证真实执行"}

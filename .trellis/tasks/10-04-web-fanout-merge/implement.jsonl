@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/design.md", "reason": "§2 完整论证机制一：为何不无条件全打、为何 fallback 组保持短路、为何 maxResults 不放大、为何 sourceId 必须在合并后统一分配"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "搜索工具可用性与降级链约定，决定 primary/fallback 分组与异常隔离的实现方式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "provider 抛异常时的降级语义与状态表达（沿用 Attempt(REASON_ERROR) 且不记 message）"}
+{"file": "docs/spec/brief-generation.md", "reason": "多源聚合改变搜索层行为，需与模块契约中的 provider 策略章节对齐"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "sourceId 分配与契约扩展跨 router→normalizer→SubAgentRunner→FactSheetService 四层，是典型跨层一致性风险点"}

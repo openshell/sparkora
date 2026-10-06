@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-05-crawl4ai-transport/prd.md", "reason": "本任务需求与 AC 的唯一来源"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "§2.2 抓取契约（FetchResult.limited 语义）与 §3.4 降级策略，本任务必须遵守"}
+{"file": ".trellis/spec/backend/external-cli-integration.md", "reason": "外部服务调用约定（参数优先级/降级链/非幂等），Crawl4AI 作为外部 HTTP 服务须遵循"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "搜索工具可用性契约与 lastCallOk 语义，抓取通道健康态照此实现"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "未配置/失败/超时的降级表达与错误映射矩阵"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "Crawl4AI 为容器化外部服务，端口/健康检查/环境注入约定参考"}
+{"file": "docs/spec/brief-generation.md", "reason": "§8 CRAWL4AI_BASE_URL 现为预留，本任务实装后须字段级同步"}
+{"file": "doc/汽车资讯信源调研报告-2026-10-05.md", "reason": "乘联会 WAF 实测与资源红线（并发≤2/同站≤2每天）是本任务硬约束来源"}

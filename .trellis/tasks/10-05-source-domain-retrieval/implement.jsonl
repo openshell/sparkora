@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-05-source-domain-retrieval/prd.md", "reason": "本任务需求与 AC 的唯一来源（含迁移与域隔离硬约束）"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "§2.3/§2.4 内容与向量域契约、§3.1 泛化决策、§3.2 表归属、§5 迁移，本任务必须遵守"}
+{"file": "docs/spec/knowledge/news.md", "reason": "§5 域隔离窗口/来源标注/配额/切块嵌入范式，泛化改造直接依据"}
+{"file": "docs/spec/knowledge/kb.md", "reason": "§5 统一检索契约与候选窗口按域隔离硬约束"}
+{"file": "docs/spec/retrieval.md", "reason": "§4.2 单表 store 读路径/§9 切块重叠/§11 旧表退役，向量域改动权威契约"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 幂等迁移与 metadata 回填规范"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索/覆盖度/嵌入缓存/开关契约，泛化后不得破坏"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "迁移不可逆副作用隔离与对拍基线要求"}

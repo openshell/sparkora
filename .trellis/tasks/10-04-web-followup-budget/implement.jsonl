@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/design.md", "reason": "§3 论证确定性缺口驱动而非 LLM 自主多轮、§4 论证三级预算/跨轮去重/批次内缓存、§5.4 给出 extract 缺陷修法，是本子任务三块内容的直接依据"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "检索契约与降级链约定，决定 Round 2 失败时的降级不阻断语义"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "补检索超时/异常/预算耗尽的错误与状态表达方式"}
+{"file": "docs/spec/brief-generation.md", "reason": "两轮研究流程与预算字段需写入模块权威契约"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Round 2 增量写回横跨 DeepResearchService→SubAgentRunner→FactSheetService→notes JSON，跨层写入顺序与锁是主要风险点"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "多步写入失败顺序与不可逆副作用隔离，直接关系 updateAgent 增量写回的安全性"}

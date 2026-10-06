@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-05-source-domain-retrieval/prd.md", "reason": "核对 AC-E1..E7 逐条达成，尤其 E2 域隔离与 E3 BYD 等价"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对向量域契约与泛化决策未被破坏"}
+{"file": "docs/spec/knowledge/news.md", "reason": "核对 §5 域隔离与来源标注回归口径"}
+{"file": "docs/spec/retrieval.md", "reason": "核对 rag_status 四态语义与读路径契约不变"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对迁移回滚预案与对拍证据真实"}

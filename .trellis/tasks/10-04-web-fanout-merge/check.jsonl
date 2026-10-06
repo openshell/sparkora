@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-04-brief-retrieval-sources/design.md", "reason": "重点核对 §2.3『sourceId 合并后统一分配』与 AC-B4 反例单测是否落实"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对搜索降级链与工具可用性契约在 fanout 路径下仍成立"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对零回归断言真实执行、未触碰生产数据"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对 usedProviders/strategyLabel 等契约变更与规格文档一致"}

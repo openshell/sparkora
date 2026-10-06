@@ -1,0 +1,3 @@
+{"file": "docs/spec/brief-generation.md", "reason": "父任务持有跨子任务的模块权威契约基线，三个子任务共同变更此文档"}
+{"file": "docs/spec/retrieval.md", "reason": "检索域与 provider 策略契约基线"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "检索与搜索工具可用性契约基线"}

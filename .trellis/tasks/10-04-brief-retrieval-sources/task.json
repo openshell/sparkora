@@ -1,0 +1,31 @@
+{
+  "id": "brief-retrieval-sources",
+  "name": "brief-retrieval-sources",
+  "title": "简报检索来源增强（Serper + 多源质量编排）",
+  "description": "接入 Serper/Tavily 多源搜索并建立有质量、有规划的调用编排，提升简报与正文的信息覆盖与可信度",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-10-04",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-04-serper-provider",
+    "10-04-web-fanout-merge",
+    "10-04-web-followup-budget",
+    "10-05-tavily-endpoint-priority"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

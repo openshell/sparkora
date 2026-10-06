@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-05-source-crawl-base/prd.md", "reason": "核对 AC-B1..B6 逐条达成"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对信源注册表/采集内容契约与调度粒度未被破坏"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对任务表原子锁与陈旧自愈合规、幂等"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对失败顺序与零回归（不改 sparkora_news* 语义）"}
+{"file": "docs/spec/knowledge/news.md", "reason": "核对 BYD 新闻链路未被本任务回归"}

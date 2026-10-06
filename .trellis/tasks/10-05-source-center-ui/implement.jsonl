@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-05-source-center-ui/prd.md", "reason": "本任务需求与 AC 的唯一来源"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "§2.1 信源注册表字段（UI 展示依据）与任务地图"}
+{"file": "docs/spec/knowledge/center.md", "reason": "知识中心现状（两 Tab 聚合浏览/API 分层/懒挂载/同步轮询范式）与本次重构对象"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 分层、Tab 懒挂载、同步类异步任务轮询、页面骨架等前端规范"}
+{"file": "docs/spec/knowledge/news.md", "reason": "现有新闻 Tab 与采集轮询范式，信源内容视图参照与并入对象"}

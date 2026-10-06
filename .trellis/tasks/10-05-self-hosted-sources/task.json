@@ -1,0 +1,32 @@
+{
+  "id": "self-hosted-sources",
+  "name": "self-hosted-sources",
+  "title": "自建汽车资讯信源与外部搜索融合基座",
+  "description": "混合形态采集权威汽车信源(RSS+站点抓取+Crawl4AI)入库为通用信源域,并与外部搜索融合,提升简报与正文质量",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-10-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-05-source-crawl-base",
+    "10-05-crawl4ai-transport",
+    "10-05-source-domain-retrieval",
+    "10-05-source-center-ui",
+    "10-05-source-web-fusion"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

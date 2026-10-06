@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-05-source-crawl-base/prd.md", "reason": "本任务需求与 AC 的唯一来源"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "§2.1 信源注册表/§2.3 采集内容契约/§3.2 表归属/§3.3 调度粒度，本任务必须遵守"}
+{"file": "docs/spec/knowledge/news.md", "reason": "现有单源采集/解析/入库/任务/调度范式（BydNewsClient/NewsContentParser/NewsSyncJobService/NewsSyncScheduler），泛化采集基座直接复用与参照"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "任务表建表、RUNNING→RUNNING 原子抢占、陈旧自愈、幂等 upsert 的权威规范"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "单条失败不阻断、任务终态 SUCCESS/PARTIAL/FAILED 表达"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "多步写入失败顺序与不可逆副作用隔离"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "采集→内容契约→入库跨层，字段映射需一致"}
+{"file": "doc/汽车资讯信源调研报告-2026-10-05.md", "reason": "A/B/C 级信源清单、发布节奏、工信部路径需人工定位等实测约束"}
