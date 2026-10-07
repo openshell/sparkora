@@ -24,7 +24,7 @@
 | id | Long | 主键 |
 | project_id | Long | 关联项目（workspace 单租户 MVP，不单设 `workspace_id`；可空 = 全局图库） |
 | file_name | String(255) | 原始文件名（生成图为 prompt 摘要命名） |
-| source | String(20) | `upload` / `ai-text2img` / `ai-img2img` / `byd`（车型介绍图）/ `byd-news`（新闻封面图，09-13 image-tags 新增） |
+| source | String(20) | `upload` / `ai-text2img` / `ai-img2img` / `byd`（车型介绍图）/ `byd-news`（新闻封面图，09-13 image-tags 新增）/ `source`（通用信源采集正文图，10-05-source-crawl-base 新增） |
 | prompt_text | String | 生成 prompt（AI 来源时） |
 | ref_image_id | Long | **图生图**的参考图 id（自引用 `sparkora_image_asset.id`，可空，**单列**）。规则（09-26 img2img-multi-ref）：参考图恰好 **1 张且来自图库**（`refImageIds`）→ 落该 id（可走后端 `/regenerate`）；**多张**（含本地/粘贴 `files` 混入，或图库多选）→ **NULL**（单列无法表达多对多，重生成靠前端会话缓存） |
 | width / height | Integer | 尺寸（px；取不到时为空） |
@@ -100,9 +100,9 @@
 |---|---|---|
 | 车型介绍图（`source=byd`） | `车型-<车型名>`（如 `车型-大唐EV`） | `CarModelService.persistIntroImages` preset 传 tags，走统一管线自动落标；**存量追溯**由 `ImageTagBackfillRunner` 启动一次性遍历 `car_model.intro_images` asset id 列表 mergeTags（幂等可重跑，异常不阻断启动；URL 旧格式跳过） |
 | 新闻封面图（`source=byd-news`） | `新闻` + **`主题/<主题名>`** + **`年份/<年>`**（09-15 img-classify） | `NewsService.upsertOne` 下载 `imageUrl` 字节走 `saveExternalImage` 入库（相对 URL 拼 `https://www.byd.com`，带 `sourceRef=news_id`）；标签由 `NewsImageClassifier.toTagsFrom(title, publishDate)` 派生（零 AI）。单图下载失败仅告警**不阻断新闻入库**；`sparkora_news.image_url` 保留原 URL 留痕 |
+| 通用信源采集正文图（`source=source`） | 来源**标题** + 来源 `category` | `SourceImageService.transfer` 遍历正文图（选择器 `parse_rules.images`）→ `ImageService.saveExternalImage(null, url, detailBaseUrl, ...)` 转存；**相对 URL 按栏目 `detail_base_url` 解析**（不硬编码 byd.com）；`sourceRef`=派生 `news_id`；单图失败 warn 跳过不阻断 |
 
-- 新闻正文内嵌图**不入库**（图片型新闻多为装饰长图，量级/噪音风险，范围外）。
-- 来源白名单 `SOURCES` = `upload` / `ai-text2img` / `ai-img2img` / `byd` / **`byd-news`**（非法值 400）。
+- 来源白名单 `SOURCES` = `upload` / `ai-text2img` / `ai-img2img` / `byd` / `byd-news` / **`source`**（非法值 400）。
 
 ---
 
@@ -162,6 +162,7 @@
 | source | 文本构成 |
 |---|---|
 | `byd-news` | 来源**新闻标题**（优先，由 `source_ref` 反查 `sparkora_news.news_id`）+ 标签（含 `主题/*`、`年份/*`）；查不到标题退化为只用标签 |
+| `source`（通用信源采集正文图） | 来源**标题**（由 `source_ref` 反查 `sparkora_news.news_id`，10-05 起 `ImageEmbeddingService.newsTitleOf` 对 `source` 同 `byd-news` 反查）+ 标签（来源标题 + `category`）；查不到标题退化为只用标签 |
 | `ai-text2img` / `ai-img2img` | `prompt_text` + 标签 |
 | `upload` | 文件名（去扩展名）+ 标签 |
 | `byd`（车型图） | 文件名（去扩展名）+ 标签（含 `车型-*`） |
@@ -267,7 +268,7 @@
 
 | 方法 | 路径 | 权限 | 请求 | 响应 |
 |---|---|---|---|---|
-| GET | `/api/images` | 三角色 | `?projectId=&source=&keyword=&tag=&page=1&size=24` 组合查询（`source` 白名单 `upload/ai-text2img/ai-img2img/byd/byd-news`，非法值 400；`keyword` 命中 `file_name`/`prompt_text`，ILIKE；**09-15 起 `tag` 支持多值**——重复参数或单值内逗号分隔，语义为 **AND**（图片须同时具备所有指定标签），逐标签查 `idx_image_tag_name` 取 id 集求交集，交集为空直接返回空页；其余筛选照常组合；单值行为与旧版单标签等价） | `PageResult`：`{rows[], total, page, size}`；rows 内每条含 `url` + `thumbUrl` + **`tags[]`**（按名称排序）+ **`sourceRef`**。**S10 起不再返回全量列表** |
+| GET | `/api/images` | 三角色 | `?projectId=&source=&keyword=&tag=&page=1&size=24` 组合查询（`source` 白名单 `upload/ai-text2img/ai-img2img/byd/byd-news/source`，非法值 400；`keyword` 命中 `file_name`/`prompt_text`，ILIKE；**09-15 起 `tag` 支持多值**——重复参数或单值内逗号分隔，语义为 **AND**（图片须同时具备所有指定标签），逐标签查 `idx_image_tag_name` 取 id 集求交集，交集为空直接返回空页；其余筛选照常组合；单值行为与旧版单标签等价） | `PageResult`：`{rows[], total, page, size}`；rows 内每条含 `url` + `thumbUrl` + **`tags[]`**（按名称排序）+ **`sourceRef`**。**S10 起不再返回全量列表** |
 | GET | `/api/images/{id}/source` | 三角色 | —（09-15 img-classify 新增） | `data = {sourceRef, news, imageUrl}`：`news` 为 `{id, newsId, title, publishDate, url}`（`source_ref` 为官方 `news_id` 且能反查到新闻时）；**非新闻图（upload / AI 生成图 / 车型图）或查无新闻 → `news: null`**（显式输出，HTTP 200 不报错）；图片不存在 `R.fail(400)` |
 | GET | `/api/images/tags` | 三角色 | — | `data` = `[{name, count}]`（全库标签 + 引用数量，count 降序「常用优先」；预选控件与筛选联想同源复用；**09-15 起名称含 `主题/`、`年份/` 前缀**，响应结构不变） |
 | POST | `/api/images/search` | 三角色 | `{query, topK?, minScore?, tags?[]}`（09-15 img-semantic-search 新增；`tags` AND 语义同 `GET /api/images`；`topK` 默认 10 上限 50，超限收敛不报错；`minScore` null 时用 `AI_IMAGE_MIN_SCORE` 默认 0.3） | `data = [{imageId, score, sourceText, fileName, source, sourceRef, url, thumbUrl, tags[]}]`（`score` 余弦相似度降序）。`query` 空 → `R.fail(400,"检索内容不能为空")`；`tags` 交集空 → `data:[]`（不调 embedding）；模型未配置/调用失败 → `R.fail(500,…)`。契约详解见上文「图片语义检索」 |

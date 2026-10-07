@@ -225,6 +225,13 @@ sparkora:
     timeout-ms: ${CRAWL4AI_TIMEOUT_MS:20000}
     # HTTP 通道无硬日上限,仅同 host 最小间隔(工信部一次公示含多条子页可一轮采完)
     source-http-min-interval-ms: ${SOURCE_HTTP_MIN_INTERVAL_MS:2000}
+  source:
+    # 10-05-source-crawl-base:通用信源采集基座(信源注册表 + 多栏目 + 动态调度)
+    # 总开关默认关闭=零回归;关闭时不注册任何调度、不发起采集。
+    collect-enabled: ${SOURCE_COLLECT_ENABLED:false}
+    # 资源红线(父 design §3.3):全局串行、并发 ≤2、同站 ≤2/天。
+    max-concurrency: ${SOURCE_MAX_CONCURRENCY:2}
+    per-site-daily-max: ${SOURCE_PER_SITE_DAILY_MAX:2}
   qiniu:
     enabled: ${QINIU_ENABLED:true}
     access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK

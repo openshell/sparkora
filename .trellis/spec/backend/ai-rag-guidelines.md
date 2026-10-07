@@ -96,6 +96,7 @@ CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long>
 ### 3. Contracts
 - **来源标注**：`context` 首行 `知识来源：…`；块内 `【车型数据：name】/【通用知识：title】/【官方新闻：title】`。
 - **配额**：CAR 核心块 `carQuota`；KB 独立 `ragKbTopk`（受 `ragKbEnabled`）；NEWS 独立 `ragNewsTopk`（**不受** `ragKbEnabled` 控制，0=关闭）。
+- **NEWS 域泛化（10-05 起）**：NEWS 域同为「通用信源采集」承载域（复用 `sparkora_news*`，见 database-guidelines.md「复用既有域的向量 id 空间」）。BYD 官方新闻 = `sourceType=byd-news`/`category=官方新闻` 的**特例**，其标注/配额/前端行为逐字等价；用户采集源在同一域内以 metadata `sourceType` 二级隔离（E 实现）。**`/api/news` 只返回 BYD**，通用信源走 `/api/source-contents`。
 - **锚点加权**：仅 `source=CAR` 且 `modelId∈anchorModelIds` 乘 `ragAnchorBoost`；KB/NEWS 不受影响。
 - **候选窗口按域隔离**：见 database-guidelines.md「多域统一检索」。调用方 `limit` 用 `max(topK*4,32)`。
 

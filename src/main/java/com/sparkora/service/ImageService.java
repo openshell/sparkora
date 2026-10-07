@@ -352,8 +352,9 @@ public class ImageService {
 
     // ==================== 查询 / 封面 / 插图 / 完成配图 ====================
 
-    /** 来源参数白名单（docs/spec/image.md；非法值 400）。09-13 image-tags 起新增 byd-news（比亚迪新闻封面）。 */
-    private static final java.util.Set<String> SOURCES = java.util.Set.of("upload", "ai-text2img", "ai-img2img", "byd", "byd-news");
+    /** 来源参数白名单（docs/spec/image.md；非法值 400）。09-13 image-tags 起新增 byd-news（比亚迪新闻封面）；
+     *  10-05-source-crawl-base 起新增 source（通用信源采集正文配图）。 */
+    private static final java.util.Set<String> SOURCES = java.util.Set.of("upload", "ai-text2img", "ai-img2img", "byd", "byd-news", "source");
 
     /**
      * 统一入库管线（S10 去重内聚）：五来源（upload/文生图/图生图/BYD 车型图/BYD 新闻封面）共用。
@@ -441,7 +442,25 @@ public class ImageService {
      */
     public ImageAssetEntity saveExternalImage(Long projectId, String url, String fileName, String source,
                                               List<String> tags, String operator, String sourceRef) {
-        String absolute = resolveBydUrl(url);
+        return saveExternalResolved(projectId, resolveBydUrl(url), fileName, source, tags, operator, sourceRef);
+    }
+
+    /**
+     * 外部图片下载入库（10-05-source-crawl-base 增「按传入基址解析」重载）：
+     * 相对 URL 按 {@code baseUrl} 拼绝对链——通用信源（工信部/乘联会/盖世）的相对图链若仍走
+     * {@link #resolveBydUrl} 会被拼成 {@code www.byd.com} 域而下载失败。BYD 旧路径继续用上面 7 参重载（基址仍为 byd）。
+     * 其余语义（下载 → 魔数嗅探 → 统一入库管线 → sourceRef 补写）与旧路径完全一致。
+     *
+     * @param baseUrl 相对 URL 解析基址（如栏目 detail_base_url）；为空时退回 byd 域（兼容旧调用）
+     */
+    public ImageAssetEntity saveExternalImage(Long projectId, String url, String baseUrl, String fileName,
+                                              String source, List<String> tags, String operator, String sourceRef) {
+        return saveExternalResolved(projectId, resolveUrl(url, baseUrl), fileName, source, tags, operator, sourceRef);
+    }
+
+    /** 已解析为绝对链后的转存核心：下载 → 魔数嗅探 → 统一入库管线（两条 saveExternalImage 入口共用）。 */
+    private ImageAssetEntity saveExternalResolved(Long projectId, String absolute, String fileName, String source,
+                                                  List<String> tags, String operator, String sourceRef) {
         byte[] bytes = fetchExternalBytes(absolute);
         String ext = sniffExt(bytes);
         ImageAssetEntity preset = new ImageAssetEntity();
@@ -463,10 +482,22 @@ public class ImageService {
 
     /** 外部相对 URL 解析：http(s) 开头原样返回，否则拼 BYD 官网域名（参照前端 resolveUrl 语义）。 */
     private static String resolveBydUrl(String url) {
+        return resolveUrl(url, "https://www.byd.com");
+    }
+
+    /**
+     * 外部相对 URL 解析（基址可传）：http(s)/协议相对（//host）开头原样返回，否则按 {@code baseUrl} 拼绝对链。
+     * 基址为空时退回 BYD 域（兼容旧调用）。供通用信源按栏目 {@code detail_base_url} 解析相对图链。
+     */
+    static String resolveUrl(String url, String baseUrl) {
         String u = url == null ? "" : url.trim();
         if (u.isEmpty()) throw new IllegalArgumentException("图片 URL 为空");
-        if (u.toLowerCase(Locale.ROOT).startsWith("http://") || u.toLowerCase(Locale.ROOT).startsWith("https://")) return u;
-        return "https://www.byd.com" + (u.startsWith("/") ? u : "/" + u);
+        String lower = u.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return u;
+        if (u.startsWith("//")) return "https:" + u;   // 协议相对链
+        String base = (baseUrl == null || baseUrl.isBlank()) ? "https://www.byd.com" : baseUrl.trim();
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + (u.startsWith("/") ? u : "/" + u);
     }
 
     /** 下载外部图片字节（超时 30s，同 TRANSFER_TIMEOUT 量级）；非 200/空内容抛异常。 */

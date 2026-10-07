@@ -238,9 +238,9 @@ public class ImageEmbeddingService {
         return ImageEmbeddingTextBuilder.build(img, tags, newsTitle);
     }
 
-    /** byd-news 且 source_ref 非空时反查来源新闻标题；其他来源/查不到返回 null。 */
+    /** byd-news / source 且 source_ref 非空时反查来源新闻标题；其他来源/查不到返回 null。 */
     private String newsTitleOf(ImageAssetEntity img) {
-        if (!"byd-news".equals(img.getSource())) return null;
+        if (!"byd-news".equals(img.getSource()) && !"source".equals(img.getSource())) return null;
         String ref = img.getSourceRef();
         if (ref == null || ref.isBlank()) return null;
         NewsMapper nm = newsMapper.getIfAvailable();

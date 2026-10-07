@@ -5,6 +5,12 @@
 职责：比亚迪官方新闻采集 → 清洗入库 → 切块向量化，作为与车型（CAR）/通用知识（KB）并列的**第三知识域 NEWS** 接入统一检索。**新闻与车型不关联**。
 
 > C2 正式规格（2026-09-11）。父任务：`09-11-knowledge-base-data-foundation`；依赖 C1（复用同步任务/调度范式与统一检索改动，见 [car.md](car.md)）。
+>
+> **10-05-source-crawl-base 起**：NEWS 域同时承载**通用信源采集基座**（工信部/乘联会/盖世等）的采集产物——
+> 采集产物复用 `sparkora_news`/`sparkora_news_doc`（共享 `domain=NEWS` 向量 id 空间），BYD 官方新闻即
+> `source='byd-news'`（存量 `source_id IS NULL`）的**特例**。通用信源的注册表/任务表/采集编排见
+> [sources.md](sources.md)；**`/api/news` 只返回 `source='byd-news'`（或 `source_id IS NULL`）**，通用信源内容
+> 经 `GET /api/source-contents` 浏览（数据隔离，不污染「新闻=BYD」语义）。切块/向量化由 E 统一处理，本页 BYD 章节行为不变。
 
 ---
 
@@ -12,7 +18,7 @@
 
 | 表 | 字段 | 说明 |
 |---|---|---|
-| `sparkora_news` | id / **news_id VARCHAR(200) UNIQUE**（官方字符串 id，业务唯一键）/ title(≤500) / url / image_url / publish_date / tags(JSON) / tag_names(JSON) / content / source(默认 `byd-news`) / sync_status(`SUCCESS`/`FAILED`) / last_sync_at / last_sync_error / **cover_image_id BIGINT**（09-15 img-classify 幂等补列：封面图对应的图库 asset id，可空不建外键）/ created_at / updated_at / deleted | 新闻主表；逻辑删。索引 `idx_news_publish(publish_date)` / `idx_news_status(sync_status)` |
+| `sparkora_news` | id / **news_id VARCHAR(200) UNIQUE**（官方字符串 id，业务唯一键；通用信源为派生 `"<sourceId>:<channelId>:<externalId>"`）/ title(≤500) / url / image_url / publish_date / tags(JSON) / tag_names(JSON) / content / source(默认 `byd-news`；通用信源为 `source`) / sync_status(`SUCCESS`/`FAILED`) / last_sync_at / last_sync_error / **cover_image_id BIGINT**（09-15 img-classify 幂等补列：封面图对应的图库 asset id，可空不建外键）/ **source_id BIGINT NULL**（10-05 通用信源 FK，NULL=存量 BYD）/ **channel_id BIGINT NULL**（10-05 栏目 FK）/ **category VARCHAR(30)**（10-05 来源分类）/ created_at / updated_at / deleted | 新闻主表；逻辑删。索引 `idx_news_publish(publish_date)` / `idx_news_status(sync_status)` / `idx_news_source(source_id)` |
 | `sparkora_news_doc` | id / **news_id BIGINT FK→sparkora_news(id)**（内部 id）/ seq / chunk_type(`NEWS_BODY`/`NEWS_TITLE`) / chunk_text / token_count / created_at / updated_at / deleted | 检索块；首行固定「新闻：<title>（<publishDate>）」。索引 `idx_news_doc_news` |
 | ~~`sparkora_news_doc_embedding`~~ | id / doc_id FK / news_id FK / embedding VECTOR(1024) / embedding_model VARCHAR(100) / created_at | **已退役（10-03 E6 `V9` DROP）**。现向量行统一存单表 `vector_store`（`metadata.domain=NEWS` + `metadata.refId=news_doc.id` + `metadata.embeddingModel`），HNSW cosine；检索/统计按当前模型过滤 |
 | `sparkora_news_sync_job` | id / job_type(`FULL`/`INCREMENT`/`SCHEDULED`/`RETRY`) / status(`RUNNING`/`SUCCESS`/`PARTIAL`/`FAILED`) / total / success / failed / failed_items(JSON:`[{newsId,title,error}]`) / started_at / finished_at / error_msg / created_by / created_at / deleted | 同步任务表（复用车型任务表范式）。索引 `idx_news_sync_job_created` |
@@ -59,8 +65,8 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/news` | 三角色 | 分页列表 `?page&size&keyword`，`PageResult`（含 id/title/publishDate/tagNames/imageUrl/chunkCount；**09-15 img-classify 起另含 `coverImageUrl`**（图库公网 URL，无同步封面时为 null）**与 `themes`**（标题分类命中主题，保序数组）；列表/详情均携带） |
-| GET | `/api/news/{id}` | 三角色 | 详情（含 `content`）；不存在 `R.fail(404)` |
+| GET | `/api/news` | 三角色 | 分页列表 `?page&size&keyword`，`PageResult`（含 id/title/publishDate/tagNames/imageUrl/chunkCount；**09-15 img-classify 起另含 `coverImageUrl`**（图库公网 URL，无同步封面时为 null）**与 `themes`**（标题分类命中主题，保序数组）；列表/详情均携带）。**10-05 起只返回 `source='byd-news'`（或存量 `source_id IS NULL`）**，通用信源内容不泄漏 |
+| GET | `/api/news/{id}` | 三角色 | 详情（含 `content`）；不存在或**非 BYD 来源** `R.fail(404)` |
 | POST | `/api/news/sync/jobs` | ADMIN/EDITOR | body `{jobType:"FULL"\|"INCREMENT"}`（缺省 INCREMENT），返回 `{jobId}` |
 | GET | `/api/news/sync/jobs/{id}` | 三角色 | 任务进度；不存在 `R.fail(404)` |
 | GET | `/api/news/sync/jobs` | 三角色 | 任务历史（按 id 倒序） |

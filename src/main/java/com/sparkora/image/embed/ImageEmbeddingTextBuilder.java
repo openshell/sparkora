@@ -47,8 +47,8 @@ public final class ImageEmbeddingTextBuilder {
 
         List<String> parts = new ArrayList<>();
         switch (source) {
-            case "byd-news" -> {
-                // 新闻图：标题是信息量最大的信号（主题分类词也来自标题），标签补充结构化维度
+            case "byd-news", "source" -> {
+                // 新闻/通用信源图：标题是信息量最大的信号（主题分类词也来自标题），标签补充结构化维度
                 addIfPresent(parts, newsTitle);
                 addAllIfPresent(parts, tags);
             }

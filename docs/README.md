@@ -94,6 +94,7 @@ graph LR
 | 知识域 · 车型（CAR） | [spec/knowledge/car.md](spec/knowledge/car.md) | `com.sparkora.car.*`（`CarModelService`/`CarChunkService`/`CarSyncJobService`/`CarSyncScheduler`）、`web.controller.CarModelController` / `views/CarLibrary.vue`、`CarDetail.vue`、`CarSync.vue` |
 | 知识域 · 通用知识库（KB） | [spec/knowledge/kb.md](spec/knowledge/kb.md) | `com.sparkora.kb.service.KbDocService`、`web.controller.KbDocController` / `views/KbLibrary.vue` |
 | 知识域 · 官方新闻（NEWS） | [spec/knowledge/news.md](spec/knowledge/news.md) | `com.sparkora.news.*`（`client.BydNewsClient`/`service.NewsService`/`service.NewsDocService`/`service.NewsSyncJobService`/`service.NewsSyncScheduler`/`classify.NewsImageClassifier`）、`web.controller.NewsController` / `views/knowledge/NewsKnowledgePanel.vue` |
+| 知识域 · 通用信源采集基座（SOURCE） | [spec/knowledge/sources.md](spec/knowledge/sources.md) | `com.sparkora.source.*`（`client.{RssSourceClient,SiteSourceClient}`/`service.{SourceCollectService,SourceJobService,SourceScheduleService,SourceImageService,SourceService,SourceContentService}`）、`web.controller.SourceController` |
 | 知识中心浏览页 | [spec/knowledge/center.md](spec/knowledge/center.md) | `frontend/src/router/index.js`（`/knowledge`） / `views/KnowledgeCenter.vue`、`views/knowledge/*` |
 | 多轮对话式问答（QA） | [spec/knowledge/qa.md](spec/knowledge/qa.md) | `com.sparkora.qa.service.*`（`QaService`/`QaImageRefService`/`QaImageIntent`）、`web.controller.QaController` / `views/QaChat.vue` |
 | 历史验收清单（只读快照） | [spec/acceptance.md](spec/acceptance.md) | —（2026-08-18 历史快照，不再维护） |
@@ -189,6 +190,7 @@ graph TD
 | 微信公众号 | `WECHAT_MP_ENABLED` / `WECHAT_APP_ID` / `WECHAT_APP_SECRET` / `WECHAT_API_BASE_URL` / `WECHAT_TIMEOUT_MS` | 经 wenyan-server 发布，微信凭据配在 server 端（Sparkora 不直连微信） |
 | 车型同步 | `CAR_GOODS_LIST_URL` / `CAR_GOODS_INFO_URL` / `CAR_GOODS_PARAMS_URL` / `CAR_GOODS_ATTR_LIST_URL` / `CAR_TIMEOUT_MS` / `CAR_HMAC_SIGN_KEY` / `CAR_HMAC_SECRET_KEY` / `CAR_SYNC_ENABLED` / `CAR_SYNC_CRON` | [spec/knowledge/car.md](spec/knowledge/car.md) |
 | 新闻同步 | `NEWS_LIST_URL` / `NEWS_DETAIL_BASE_URL` / `NEWS_TIMEOUT_MS` / `NEWS_PAGE_SIZE` / `NEWS_SYNC_ENABLED` / `NEWS_SYNC_CRON` | [spec/knowledge/news.md](spec/knowledge/news.md) |
+| 通用信源采集 | `SOURCE_COLLECT_ENABLED` / `SOURCE_MAX_CONCURRENCY` / `SOURCE_PER_SITE_DAILY_MAX`、`CRAWL4AI_BASE_URL`（通道，C 持有）/ `SOURCE_HTTP_MIN_INTERVAL_MS` | [spec/knowledge/sources.md](spec/knowledge/sources.md) |
 | 已废弃/未启用 | `WENYAN_THEME_NAMES`（废弃，主题目录改由 `WenyanThemeCatalog` 权威固定）、`CRAWL4AI_*`（随「校验」步取消，未启用） | [wenyan.md](wenyan.md)、[spec/overview.md](spec/overview.md) |
 
 ---

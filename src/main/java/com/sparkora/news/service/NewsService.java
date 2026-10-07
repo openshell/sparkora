@@ -252,11 +252,14 @@ public class NewsService {
         return n != null && n.getContent() != null && !n.getContent().isBlank();
     }
 
-    /** 分页列表(标题模糊;填充块数)。09-15 img-classify:另填封面的图库公网 URL 与标题分类主题。 */
+    /** 分页列表(标题模糊;填充块数)。09-15 img-classify:另填封面的图库公网 URL 与标题分类主题。
+     *  10-05-source-crawl-base:仅返回 BYD 来源(source='byd-news' 或存量 source_id IS NULL),
+     *  通用信源采集内容走 {@code /api/source-contents},不泄漏进「新闻=BYD」语义。 */
     public PageResult<NewsEntity> list(long page, long size, String keyword) {
         if (page < 1) page = 1;
         if (size < 1 || size > 100) size = 12;
         QueryWrapper<NewsEntity> qw = new QueryWrapper<>();
+        qw.and(w -> w.eq("source", "byd-news").or().isNull("source_id"));
         String kw = keyword == null ? "" : keyword.trim();
         if (!kw.isEmpty()) qw.like("title", kw);
         qw.orderByDesc("publish_date").orderByDesc("id");
@@ -270,14 +273,23 @@ public class NewsService {
         return new PageResult<>(p.getRecords(), p.getTotal(), p.getCurrent(), p.getSize());
     }
 
-    /** 详情(含 content)。不存在抛 IllegalArgumentException(控制器映射 404)。 */
+    /** 详情(含 content)。不存在抛 IllegalArgumentException(控制器映射 404)。
+     *  10-05-source-crawl-base:仅允许 BYD 来源(通用信源内容不被 {@code /api/news/{id}} 泄漏)。 */
     public NewsEntity get(Long id) {
         NewsEntity n = newsMapper.selectById(id);
         if (n == null) throw new IllegalArgumentException("新闻不存在");
+        if (!isBydSource(n)) throw new IllegalArgumentException("新闻不存在");
         n.setChunkCount(docMapper.selectCount(new QueryWrapper<com.sparkora.domain.entity.NewsDocEntity>()
                 .eq("news_id", id)));
         fillDerived(n);
         return n;
+    }
+
+    /** 是否 BYD 来源(source='byd-news' 或存量 source_id 为空)。 */
+    static boolean isBydSource(NewsEntity n) {
+        if (n == null) return false;
+        if ("byd-news".equals(n.getSource())) return true;
+        return n.getSourceId() == null;
     }
 
     /**

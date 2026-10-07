@@ -40,6 +40,12 @@ public class NewsEntity {
     private Integer deleted;
     /** 封面图对应的图库资产 id（09-15 img-classify；可空，不建外键）。 */
     private Long coverImageId;
+    /** 信源注册表 id（10-05-source-crawl-base；可空=存量 BYD 新闻）。 */
+    private Long sourceId;
+    /** 信源栏目 id（10-05-source-crawl-base；可空）。 */
+    private Long channelId;
+    /** 来源分类（10-05-source-crawl-base；官方新闻|销量数据|投诉榜|政策公示|行业资讯）。 */
+    private String category;
     /** 非持久化派生字段:该新闻的向量块数(列表展示用,由 NewsService 填充)。 */
     @TableField(exist = false)
     private Long chunkCount;

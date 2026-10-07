@@ -317,6 +317,17 @@ SELECT * FROM (
 - **图片域（第四域）是同空间但独立检索**：store 中 `domain=IMAGE` 与三域同模型同维度，但**不并入统一检索**（图片查询是独立入口 `POST /api/images/search`，走 `searchImages`，不与文本块混排）。同空间只保证「同一 embedding 模型/维度」这一硬约束，不代表共用一条检索路径；新增域时按「是否需要与既有域混排」决定并入还是独立，不要为了「统一」把异质结果强行 UNION。
 - 不要在服务层用「加大 limit」来补偿多域争抢——候选窗口隔离才是根因修复，加大 limit 会静默扩大下游注入集。
 
+### 复用既有域的向量 id 空间：新功能不得另建平行 `*_doc` 自增表（10-05-source-crawl-base 先例）
+
+`VectorStoreService.docId(domain, refId) = UUID.nameUUIDFromBytes(domain + ":" + refId)` 是**确定性**主键。若为新概念（如「通用信源文档」）另建一张带独立 `BIGSERIAL id` 的表并把它当 `domain` 的 `refId` 来源，其自增 id 会与既有域表（如 `sparkora_news_doc.id`）**撞号**：`docId("NEWS", 5)` 对两条不同文档产生**同一 UUID**，向量互相覆盖（静默数据损坏）。
+
+**约定**：新增一类「同域内容」时，**复用该域既有的 doc 表与 id 空间**，把差异化维度表达为**新增可空列 / metadata**，不要新建平行 id 空间。
+
+- 先例：通用信源采集复用 `sparkora_news`（增可空 `source_id`/`channel_id`/`category`）+ 复用 `sparkora_news_doc`（**不建 `sparkora_source_doc`**）；BYD 官方新闻降为 `source='byd-news'`/`source_id IS NULL` 特例，`domain=NEWS` 的 `refId=news_doc.id` 语义与全部检索/引用链路**零改动**。
+- **不要改 `domain` 名来「区分」新来源**：改名会使全部存量向量 id 失配、须全量重嵌。区分维度走 metadata（E 的 `sourceType`/`category`），不改 `domain`。
+- **复用主表必须配数据隔离**：复用 `sparkora_news` 后，既有按全表语义的查询（如 `NewsService.list/get` 驱动的 `/api/news`）会连带泄漏新来源内容。新增来源时**同一提交内**给这些旧查询加来源过滤（`source='byd-news' OR source_id IS NULL`），新来源走新端点（`/api/source-contents`）。先例 `news.md` §6。
+- **`news_id UNIQUE` 的派生**：复用表时新来源的业务唯一键须按 `"<sourceId>:<channelId>:<externalId>"` 派生串填充（BYD 保持官方字符串 id），避免跨源/跨栏目撞唯一键。
+
 ---
 
 ## Naming Conventions

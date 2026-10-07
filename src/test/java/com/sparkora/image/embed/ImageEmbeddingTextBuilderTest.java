@@ -67,6 +67,13 @@ class ImageEmbeddingTextBuilderTest {
     }
 
     @Test
+    void 通用信源图_与新闻图同分派_标题优先并拼标签() {
+        assertEquals("乘联会10月销量 销量数据",
+                ImageEmbeddingTextBuilder.build(img("source", "source-1_10_ext-1.jpg", null),
+                        List.of("销量数据"), "乘联会10月销量"));
+    }
+
+    @Test
     void 全空兜底_仍产出非空文本() {
         ImageAssetEntity e = img("upload", null, null);
         assertEquals("(图片 37)", ImageEmbeddingTextBuilder.build(e, List.of(), null));
