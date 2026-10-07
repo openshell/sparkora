@@ -28,11 +28,11 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-C1 可抓取**：配置 `CRAWL4AI_BASE_URL` 后，对乘联会 `www.cpcaauto.com` 抓取能返回 200 正文（复现调研报告：curl 403 → Crawl4AI 200）；未配置时优雅返回 `UNCONFIGURED`，不抛异常。
-- [ ] **AC-C2 并发红线**：并发发起 >2 个抓取时，实际在途 ≤2（构造并发单测/探针验证）；超出部分快速返回限流态而非无限排队。
-- [ ] **AC-C3 频控按通道**：**Crawl4AI** 同一 host 当日第 3 次请求被拒（计数按日期重置），不同 host 互不影响；**HTTP** 通道无硬日限，但同一 host 连续请求间隔 ≥ `SOURCE_HTTP_MIN_INTERVAL_MS`（工信部多子页可一轮采完）。
-- [ ] **AC-C4 降级不阻断**：Crawl4AI 不可达/超时/空正文时，调用方拿到明确失败态而非抛穿；`HttpFetchTransport` 行为不受影响。
-- [ ] **AC-C5 零回归**：不配置时全库行为与现状等价；`mvn test` 全绿。新增配置项在 `.env.example` 有说明，URL 类键以 `_BASE_URL` 结尾。
+- [x] **AC-C1 可抓取**：配置 `CRAWL4AI_BASE_URL` 后，对乘联会 `www.cpcaauto.com` 抓取能返回 200 正文（复现调研报告：curl 403 → Crawl4AI 200）；未配置时优雅返回 `UNCONFIGURED`，不抛异常。→ 契约经本机 v0.9.3 探活复验（`/md {f:"fit"}` 200 / 含正文）；`Crawl4aiFetchTransportTest.未配置base_返回UNCONFIGURED_不调用客户端不抛异常` 证未配置零调用不抛。
+- [x] **AC-C2 并发红线**：并发发起 >2 个抓取时，实际在途 ≤2（构造并发单测/探针验证）；超出部分快速返回限流态而非无限排队。→ `Crawl4aiConcurrencyTest` 断言 `maxInFlight==2`、第 3 个 `limited=true` 3s 内返回（不排队），连跑稳定。
+- [x] **AC-C3 频控按通道**：**Crawl4AI** 同一 host 当日第 3 次请求被拒（计数按日期重置），不同 host 互不影响；**HTTP** 通道无硬日限，但同一 host 连续请求间隔 ≥ `SOURCE_HTTP_MIN_INTERVAL_MS`（工信部多子页可一轮采完）。→ `FetchRateLimiterTest` 6 例：第 3 次拒 / 换 host 独立 / 跨本地日重置 / HTTP 连发无日限 / 间隔等待。
+- [x] **AC-C4 降级不阻断**：Crawl4AI 不可达/超时/空正文时，调用方拿到明确失败态而非抛穿；`HttpFetchTransport` 行为不受影响。→ `Crawl4aiFetchTransportTest` 覆盖 TIMEOUT/EMPTY/HTTP 非2xx/异常分类；异常只记类名不外抛；HTTP 实现独立。
+- [x] **AC-C5 零回归**：不配置时全库行为与现状等价；`mvn test` 全绿。新增配置项在 `.env.example` 有说明，URL 类键以 `_BASE_URL` 结尾。→ `mvn test` 859/0/0/0；`.env.example` 六键，`CRAWL4AI_BASE_URL` 以 `_BASE_URL` 结尾；`configured()` 不掺健康态。
 
 ## Out of Scope
 
