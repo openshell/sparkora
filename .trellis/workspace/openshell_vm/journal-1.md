@@ -1433,3 +1433,36 @@ FetchTransport 抽象(HTTP/Crawl4AI)+并发≤2+按通道频控;check 抓到多�
 ### Next Steps
 
 - 实现 10-05-source-crawl-base(信源注册/排期/任务表)
+
+
+## Session 56: 10-04 B 多源并行聚合 PRIMARY_FANOUT+跨源合并
+<!-- trellis-session: v=2 fp=09a0194cb3926b2b -->
+
+**Date**: 2026-10-08
+**Task**: 10-04 B 多源并行聚合 PRIMARY_FANOUT+跨源合并
+**Branch**: `main`
+
+### Summary
+
+实现 WebSearchRouter primary 组并行聚合与 WebResultNormalizer.merge;check 修正默认 primary 集合反转 P1
+
+### Main Changes
+
+- 新增 SearchStrategy + PRIMARY_FANOUT 路由 + merge 跨源合并 + SearXNG 质量门 + 契约增量
+- check 修复:默认 DEEP_WEB_PRIMARY_PROVIDERS 由 SEARXNG 改为 TAVILY,SERPER,SEARXNG
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] mvn test 893/0/0/0;npm run build ✓
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实现 10-05-tavily-endpoint-priority(Tavily 双端点)
