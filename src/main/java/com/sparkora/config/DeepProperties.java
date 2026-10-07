@@ -56,10 +56,69 @@ public class DeepProperties {
      * 注意:仅 Serper 支持垂直；Tavily/SearxNG 的 {@code searchVertical} 默认委托 {@code search}。
      */
     private boolean webVerticalNewsEnabled = true;
+    /**
+     * WEB 搜索策略(10-04-web-fanout-merge B-R1):{@code first_hit}(默认,单源短路,现有部署零回归)
+     * 或 {@code primary_fanout}(primary 组并行聚合)。运行时 {@code sparkora_setting} 不放开该开关。
+     */
+    private String webFanout = "first_hit";
+    /**
+     * PRIMARY_FANOUT 的 primary 组 provider 集合(10-04-web-fanout-merge B-R2):逗号分隔,默认
+     * {@code TAVILY,SERPER,SEARXNG}——付费/托管源(Tavily、Serper)互补交叉为主,免费高召回的 SearXNG
+     * 亦参与召回(配质量门后进合并池)。解析取 {@code order ∩ 该集合} 且保持 order 顺序;
+     * 为空或全部不在 order 中 → 整体回落 FIRST_HIT(SearxNG-only 部署逐位不变)。
+     */
+    private String webPrimaryProviders = "TAVILY,SERPER,SEARXNG";
+    /**
+     * SearXNG 结果质量门域名黑名单(10-04-web-fanout-merge B-R2a):逗号分隔,默认剔除跳转聚合/视频噪声域。
+     * 仅对进 primary 组的 SearXNG 结果生效;域名在 {@link #webAllowDomains} 中者优先生效(覆盖黑名单)。
+     */
+    private String webDenyDomains = "bilibili.com,weixin.sogou.com";
+    /** SearXNG 结果质量门域名白名单(可空):命中者跳过黑名单与 URL 类型过滤(人工放行)。 */
+    private String webAllowDomains = "";
 
     /** 生效正文上限(≤0 视为不截断/使用默认；防御异常配置)。 */
     public int effectiveWebContentMaxChars() {
         return webContentMaxChars > 0 ? webContentMaxChars : 2000;
+    }
+
+    /**
+     * 生效搜索策略(10-04-web-fanout-merge B-R1):解析 {@link #webFanout};空白回退 FIRST_HIT,
+     * 未知值抛 {@link IllegalArgumentException}(配置错误明确暴露)。
+     */
+    public com.sparkora.deep.search.SearchStrategy effectiveSearchStrategy() {
+        return com.sparkora.deep.search.SearchStrategy.parse(webFanout);
+    }
+
+    /** 生效 primary 组 provider 集合(B-R2):解析逗号分隔;去空白/去重/大小写不敏感,未知值抛异常。 */
+    public java.util.List<com.sparkora.deep.search.WebProvider> effectivePrimaryProviders() {
+        java.util.List<com.sparkora.deep.search.WebProvider> out = new java.util.ArrayList<>();
+        if (webPrimaryProviders == null) return out;
+        for (String part : webPrimaryProviders.split(",")) {
+            if (part.isBlank()) continue;
+            com.sparkora.deep.search.WebProvider p = com.sparkora.deep.search.WebProvider.from(part);
+            if (!out.contains(p)) out.add(p);
+        }
+        return out;
+    }
+
+    /** 生效 SearXNG 质量门域名黑名单(B-R2a):逗号分隔,trim + 小写。 */
+    public java.util.List<String> effectiveWebDenyDomains() {
+        return parseDomains(webDenyDomains);
+    }
+
+    /** 生效 SearXNG 质量门域名白名单(B-R2a,可空):命中者跳过黑名单/URL 类型过滤。 */
+    public java.util.List<String> effectiveWebAllowDomains() {
+        return parseDomains(webAllowDomains);
+    }
+
+    private static java.util.List<String> parseDomains(String csv) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (csv == null) return out;
+        for (String part : csv.split(",")) {
+            String d = part.trim().toLowerCase();
+            if (!d.isEmpty() && !out.contains(d)) out.add(d);
+        }
+        return out;
     }
 
     /** 生效密钥:显式 DEEP_TAVILY_API_KEY 优先,否则读环境变量 TAVILY_API_KEY(.env)。 */

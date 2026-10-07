@@ -267,20 +267,28 @@ record WebProviderOrder(List<WebProvider> providers) {
     String strategyLabel();                         // TAVILY_FIRST / SEARXNG_FIRST / PRIMARY_FANOUT(含 SERPER 时)
 }
 
-// 启动时解析一次的快照（同批次共享）
-record WebSearchSnapshot(WebProviderOrder order, boolean webAllowed, Long briefId, int maxResults)
+// 启动时解析一次的快照（同批次共享；10-04 B 增 4 参 → 8 参，保留 4 参兼容构造器默认 FIRST_HIT）
+record WebSearchSnapshot(WebProviderOrder order, boolean webAllowed, Long briefId, int maxResults,
+                         SearchStrategy strategy, List<WebProvider> primaryProviders,
+                         List<String> denyDomains, List<String> allowDomains)
+// 10-04 B:搜索策略(部署级配置,DEEP_WEB_FANOUT),未知值抛异常
+enum SearchStrategy { FIRST_HIT, PRIMARY_FANOUT }
 
 // 路由（@Component,注入 TavilySearchTool + SearxngSearchTool + SerperSearchTool）
 WebSearchOutcome search(String query, int maxResults, WebSearchSnapshot snapshot)
 // 10-04 A:vertical 非空时走 searchVertical(news);null 走既有 search(零回归)
 WebSearchOutcome searchVertical(String query, int maxResults, WebSearchSnapshot snapshot, String vertical)
-record WebSearchOutcome(List<WebHit> hits, WebProvider usedProvider, List<Attempt> attempts)
-record Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason, boolean ok)
+// 10-04 B:usedProvider 保留(首个产出命中的 provider);usedProviders 增量(本轮采信的全部 provider)
+record WebSearchOutcome(List<WebHit> hits, WebProvider usedProvider, List<Attempt> attempts)   // 保留旧 3 参
+record Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason, boolean ok,
+               int witnessTotal)   // 10-04 B:witnessTotal 增量,旧 5 参兼容构造器保留
 
 // 治理（纯静态,可单测）
-static List<WebHit> normalize(List<SearchHit> raw, int maxResults)   // 协议校验+规范化+去重+截断+sourceId
+static List<WebHit> normalize(List<SearchHit> raw, int maxResults)   // 协议校验+规范化+去重+截断+sourceId（单源路径）
 static String normalizeUrl(String url)                                // 非法返回 null
-record WebHit(String sourceId, String title, String url, String snippet, String provider)
+// 10-04 B:跨源合并;sourceId 在 merge 末尾统一分配 W1..Wn
+static List<WebHit> merge(List<WebProvider> order, Map<WebProvider,List<WebHit>> perProvider, int maxResults)
+record WebHit(String sourceId, String title, String url, String snippet, String provider)   // 10-04 B 增 witnessCount/witnessEndpoints
 ```
 
 ### 3. Contracts
@@ -288,6 +296,9 @@ record WebHit(String sourceId, String title, String url, String snippet, String 
 - **快照一次解析**：`DeepResearchService.run` 启动时解析策略与双开关（`SEARCH_WEB_ENABLED && web_search_enabled`），同批次全部子代理共用；启动后改设置不改变该批次。运行时设置非空优先于部署级 `DEEP_WEB_PROVIDER_ORDER`。
 - **新增 provider 必须同时放开「设置面」（10-04 A-R9 踩坑）**：运行时 provider order **永远优先从 DB `sparkora_setting.web_provider_order` 取**（`DeepResearchService.resolveSnapshot`），而 `SettingService.get()` 在行缺失时插入默认 `TAVILY,SEARXNG`（**永远非空**）→ `.env DEEP_WEB_PROVIDER_ORDER` 只在 DB 行为空时才生效。因此**光把 provider 加进 `WebProvider` 枚举并注册进 `WebSearchRouter` 不足以启用它**——还必须同步放开设置面：`SettingUpdateDto` 的 `@Pattern`、`SettingsView.vue` 的选项、以及列宽迁移（`web_provider_order VARCHAR(20)→VARCHAR(50)`，三源串 `TAVILY,SERPER,SEARXNG`=21 字符超原宽）。否则该 provider 在任何受支持路径下都不会被路由到（配置项形同虚设）。
 - **sourceId 稳定且可回溯**：`W1,W2…` 按本次输入顺序；URL 规范化后去重（fragment 变体视为同条）。事实只能引用本次输入的 sourceId。
+- **PRIMARY_FANOUT 分组（10-04 B）**：策略由 `DEEP_WEB_FANOUT`（默认 `first_hit`，零回归）决定。`primary = order ∩ DEEP_WEB_PRIMARY_PROVIDERS`（**默认 `TAVILY,SERPER,SEARXNG`**：付费源互补交叉为主、SEARXNG 亦参与召回）；`primary` 为空 → **整体回落 `first_hit`**；`primary` 组用虚拟线程并行调用（各取满 `maxResults`）→ 合并；仅当 `primary` **全部无命中**时才按 `first_hit` 短路逻辑对 fallback 组（order 中不在 primary 集者）兜底。**默认集合必须含付费源**——父设计 §2.1 明确 primary=托管/付费高质量源（Tavily、Serper）、fallback=SearxNG；预算模型（§4.1）亦按「计量源 = Tavily+Serper」推导，故默认只放 `SEARXNG` 会反转主备、令付费交叉在开启灰度时静默失效。
+- **跨源合并 sourceId 统一分配（正确性关键，10-04 B）**：`WebResultNormalizer.merge(order, perProvider, maxResults)` 按 `normalizeUrl` 跨源去重（首次出现 provider 胜出=order 靠前优先）、`witnessCount` 记同 URL 被多个 provider 命中次数（`witnessEndpoints` 记同 provider 多 endpoint；**均不参与** `sourceCount`/confidence）、order 位次稳定排序、截断到 `maxResults`（**不放大**）。**`sourceId` 必须在 merge 末尾统一分配 `W1..Wn`**：若各 provider 各自 `normalize` 后都从 `W1` 起号，`validateFacts` 的 `byId.get(sourceId)` URL+provider 严格比对会把第二个 provider 的引用误判为不匹配而剔除。
+- **SearXNG 质量门（10-04 B）**：仅对进 primary 组的 `SEARXNG` 结果生效（非 SearXNG 不施加，零回归）——域名黑名单 `DEEP_WEB_DENY_DOMAINS`（默认 `bilibili.com`/`weixin.sogou.com`）、URL 含 `/video/` 或 `link?url=` 丢弃、空 title+content/非法 URL 丢弃；`DEEP_WEB_ALLOW_DOMAINS` 命中者放行。**只影响是否进合并池，不提升独立交叉计数。**
 - **后验校验**：WEB 事实的 sourceId 未知 / URL 不匹配 / provider 不匹配 → 剔除并转 gap，**不整条 agent 失败**；KB 事实不受此校验。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**（防模型漏标 `type` 而自造 URL 混入），通过后 `type` 归一为 `WEB`（否则 FactSheet 默认按 KB 0.9 采信）。
 - **降级原因不含异常原文/密钥**：异常路径只记类型化 `ERROR`，不回传 `e.getMessage()`（可能含密钥/URL）。
 - `webCount` = 实际接受的 WEB 结果数（不再用事实条数 `webCalls`）；`search.resultCount` 与之同口径，**LLM 汇总失败走 `rawFallback` 时不归零**（搜索发生的事实不变），此时 `search.fallbackReason=LLM_FALLBACK`，provider 层 `attempts` 的 `ok`/`fallbackReason` 保持原样，两类失败不混淆。

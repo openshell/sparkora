@@ -224,8 +224,14 @@ graph TD
   - **地域参数**：默认 `gl=cn`/`hl=zh-cn`（实测显著提升中文召回）；`sparkora.deep.serper-gl`/`serper-hl` 可配，**空白值不下发该键**。国际源场景须覆盖为 `us`/`en`。
   - **条数上限**：Serper 单次实际硬上限 **10**（实测 `num=20` 只回 10），请求 `num` clamp 到 `min(maxResults, 10)`；`Attempt.resultCount` 记 **normalize 后实际命中数**（非请求数）。
 
-- **WEB 策略路由（09-25，取代旧硬编码 SEARXNG→Tavily；10-04-serper-provider 扩为三源）**：`WebSearchRouter`（`com.sparkora.deep.search`）按快照策略顺序逐个尝试 provider，首个产出**有效命中**即采信并停止；provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源。每次研究启动时解析一次 `WebSearchSnapshot`（策略 + 双开关），同批次全部子代理共用。默认策略 `TAVILY_FIRST`；`SEARXNG_FIRST` 可切；顺序含 `SERPER` 时策略标签回落 `PRIMARY_FANOUT`。**仍不支持 BOTH 双源聚合**（多源并行聚合由后继任务 B 实现）。
+- **WEB 策略路由（09-25，取代旧硬编码 SEARXNG→Tavily；10-04-serper-provider 扩为三源；10-04 B 增 PRIMARY_FANOUT）**：`WebSearchRouter`（`com.sparkora.deep.search`）策略由 `sparkora.deep.web-fanout`（`.env DEEP_WEB_FANOUT`，默认 `first_hit`）决定：
+  - **`first_hit`（默认，零回归）**：按快照策略顺序逐个尝试 provider，首个产出**有效命中**即采信并停止；provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全部无有效 URL 记降级原因后尝试后备源。
+  - **`primary_fanout`（B）**：`primary = order ∩ DEEP_WEB_PRIMARY_PROVIDERS`（默认含 `SEARXNG`）；`primary` 为空 → 整体回落 `first_hit`（SearxNG-only 部署逐位不变）；`primary` 组用虚拟线程**并行**调用（各取满 `maxResults`），独立治理后由 `WebResultNormalizer.merge` 跨源合并；只有 `primary` 全空时才按 `first_hit` 逻辑对 fallback 组（order 中不在 primary 集的已配置源）兜底。
+  - 每次研究启动时解析一次 `WebSearchSnapshot`（策略 + 双开关 + primary 集 + 质量门配置），同批次全部子代理共用。默认策略 `TAVILY_FIRST`；`SEARXNG_FIRST` 可切；策略 `primary_fanout` 或顺序含 `SERPER` 时策略标签回落 `PRIMARY_FANOUT`。**运行时 `sparkora_setting` 不放开 fanout 开关**（直接决定成本）。
+- **跨源合并（B-R3）**：`WebResultNormalizer.merge(order, perProvider, maxResults)`——按 `normalizeUrl` 跨源去重（**首次出现的 provider 胜出** = order 靠前优先）；`witnessCount` 累加同一 URL 被多个 **provider** 命中的次数、`witnessEndpoints` 记同一 provider 多 endpoint 命中次数（**均不参与** `sourceCount`/confidence，仅可观测）；provider 在 order 中位次升序、provider 内保持原 rank；合并排序后截断到 `maxResults`（**不放大**）；**`sourceId` 在 merge 末尾统一分配 `W1..Wn`**（正确性关键：`validateFacts` 用 URL+provider 严格比对，若各 provider 各从 `W1` 起号会误剔引用）。
+- **SearXNG 质量门（B-R2a）**：SearXNG 进 primary 组时先过滤——域名黑名单 `DEEP_WEB_DENY_DOMAINS`（默认 `bilibili.com`/`weixin.sogou.com`）、URL 含 `/video/` 或 `link?url=` 丢弃、空 `title`+`content`/非法 URL 丢弃；`DEEP_WEB_ALLOW_DOMAINS` 命中者跳过。**只影响是否进合并池，不提升独立交叉计数**；对 non-SearXNG provider 不施加（零回归）。
 - **WEB 结果治理（R8/R9）**：`WebResultNormalizer` 在子代理/LLM 之前完成协议校验（仅 http/https 绝对 URL）、URL 规范化（去 fragment、小写 scheme/host）、按规范化 URL 去重、截断，并分配稳定 `sourceId`（`W1,W2…` 按本次输入顺序）。`SearchHit` 增量带 `sourceId`/`provider`（旧 7 参构造器保留兼容）。
+- **契约增量（B-R4/R5）**：`WebSearchOutcome` 保留 `usedProvider`（首个命中 provider），新增 `usedProviders: List<WebProvider>`；`SubAgentRunner.SearchMeta` 保留 `provider`，新增 `providers: List<String>`；`attempts[]` 每项增 `witnessTotal`（该 provider 命中中已被其他 provider 见证的条数）。均向后兼容（旧构造器保留）。
 - **事实后验校验（R9）**：`SubAgentRunner.validateFacts` 只接受引用本次输入 `sourceId` 且 URL/provider 匹配的 WEB 事实；未知 sourceId / URL 或 provider 不匹配 → 从 facts 剔除并转为 gap（不整条 agent 失败）。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**，通过后 `type` 归一为 `WEB`；仅缺 `type` 且无 `url`/`sourceId` 的 KB 事实沿用既有行为。
 - **WEB query 构造（R7）**：项目主题 + 研究问题 + **存量已锁定**澄清答案（旧 `clarify_answers` 中非空 `a`，去重）；未锁定答案绝不进入 query。新认知链路不再写 `clarify_answers`，此路径仅对存量数据生效。**否定答案过滤（R5，09-27-brief-writing-linkage-fix）**：语义为「放弃/无偏好」的否定值（精确匹配「不对比/不比较/无所谓/都可以/都行/不限/无偏好/随便/暂无/不需要/无/没有/不涉及/跳过」+ `不对比`/`不需要` 前缀）不注入 query。
 - **背景题正文补抓（R1/R3，09-27-tavily-extract-kind-hypotheses，机制 B）**：`SearchTool` 增 `default List<SearchHit> extract(urls, query)`（默认空，`TavilySearchTool` 覆写为 `POST /extract`：`{api_key, urls, query, chunks_per_source:3, extract_depth:"basic"}`，取 `raw_content` markdown，**工具层截断**到 `DEEP_WEB_CONTENT_MAX_CHARS` 默认 2000）。
@@ -248,7 +254,7 @@ graph TD
 
 ## 5. 研究笔记 / 事实手册结构
 
-- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok}]}`——**不含任何密钥**；`webCount` 语义为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`。
+- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, providers, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok,witnessTotal}]}`——**不含任何密钥**；`provider`=首个产出命中的 provider，`providers`（10-04 B 增量）=本轮采信的全部 provider，`attempts[].witnessTotal`=该 provider 命中中已被其他 provider 见证的条数；`webCount` 语义为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`。
 - **降级保真 snippet（R1，09-26）**：`SubAgentRunner.rawFallback` 每条降级 fact 在 `claim` 之外增 `snippet`（≤200 字，转义完整）；`FactSheetService` 透传簇内首个非空 snippet 到 entry（增量可选字段，无则不出现）；写作/简报 prompt 可见该证据。
 - **逐 agent 实时回写语义（2026-09-26 修复）**：`run()` 落 `PENDING` 占位后，`doRunAsync` 在 submit 任何子代理之前一次性把全部 N 个 agent 覆写为 `RUNNING`；每个 agent 由一个独立收集器任务驱动，完成/超时/异常后**立即回写**（天然乱序）。超时/异常仍 `cancel(true)` + `FAILED` + gap。全部收集器 join 后才执行 `FactSheetService.merge` 与自动蓝图。
   - **LLM 汇总截断/失败重试（R4，09-26）**：`SubAgentRunner.chat` 首次 `chatJson(...,2048)`；任何失败（截断/空/非法 JSON）提额 `4096` 重试一次，仅重试仍失败才抛出 → `FALLBACK`。净调用上限仍 2 次/agent。
@@ -318,6 +324,10 @@ graph TD
 | `DEEP_SERPER_API_BASE_URL` | `https://google.serper.dev` | Serper 端点（URL 类键以 `_BASE_URL` 结尾）；中转为 `https://search.604020.xyz/serper`（路径前缀保留） |
 | `DEEP_SERPER_GL` / `DEEP_SERPER_HL` | `cn` / `zh-cn` | Serper 地域/语言参数；空白不下发该键。国际源须覆盖为 `us`/`en` |
 | `DEEP_WEB_VERTICAL_NEWS` | `true` | 时效题（`isTimeSensitiveQuestion`）是否走 Serper `/news` 垂直；关闭时全部走 `/search`（零回归） |
+| `DEEP_WEB_FANOUT` | `first_hit` | **10-04 B**：搜索策略 `first_hit`（单源短路，默认零回归）/ `primary_fanout`（primary 组并行聚合）。运行时设置页不放开 |
+| `DEEP_WEB_PRIMARY_PROVIDERS` | `TAVILY,SERPER,SEARXNG` | **10-04 B**：PRIMARY_FANOUT 的 primary 组（逗号分隔；order ∩ 此集）；付费源互补交叉为主、SEARXNG 亦参与召回；为空/无交集 → 整体回落 `first_hit` |
+| `DEEP_WEB_DENY_DOMAINS` | `bilibili.com,weixin.sogou.com` | **10-04 B**：SearXNG 质量门域名黑名单（仅作用 SearXNG） |
+| `DEEP_WEB_ALLOW_DOMAINS` | 空 | **10-04 B**：SearXNG 质量门白名单（命中者跳过黑名单/URL 类型过滤） |
 | `DEEP_TAVILY_API_BASE_URL` | `https://api.tavily.com` | Tavily 端点（A-R6 单端点可配置；末尾斜杠归一） |
 | `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap）；目前仅由 `application.yml` 占位符 `${DEEP_RESEARCH_TIMEOUT_MS:120000}` 提供，未列入 `.env.example` |
 | `DEEP_MAX_AGENTS` | `6` | 子代理数上限（虚拟线程 per-task executor；总检索预算约 8 → `webQuota=max(1,8/n)`）。**窗口选择**：`DeepResearchService.selectResearchWindow` 预算内**优先保背景/来龙去脉型问题**（`ResearchPlannerService.isBackgroundQuestion`），其余按原序补足，最终索引升序归位（`run` 落占位与 `doRunAsync` 执行共用同一选择器，question↔toolHints 索引对齐） |

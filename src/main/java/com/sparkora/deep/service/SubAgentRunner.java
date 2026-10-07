@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sparkora.ai.AiClient;
+import com.sparkora.deep.search.WebProvider;
 import com.sparkora.deep.search.WebResultNormalizer;
 import com.sparkora.deep.search.WebResultNormalizer.WebHit;
 import com.sparkora.deep.search.WebSearchOutcome;
@@ -71,9 +72,20 @@ public class SubAgentRunner {
     /**
      * 搜索可观测元数据(R10):策略/实际 provider/结果数/耗时/降级原因/逐 provider attempts/query。
      * 不得记录 API 密钥。
+     *
+     * <p>10-04-web-fanout-merge B-R4 增量:保留 {@code provider}(首个产出命中的 provider,兼容既有前端/测试),
+     * <b>新增</b> {@code providers}(本轮采信的全部 provider 列表;FIRST_HIT 为单元素/空)。保留旧 7 参构造器。
      */
     public record SearchMeta(String strategy, String provider, String query, int resultCount, long latencyMs,
-                             String fallbackReason, List<Map<String, Object>> attempts) {
+                             String fallbackReason, List<Map<String, Object>> attempts,
+                             List<String> providers) {
+
+        /** 兼容构造器(7 参):providers 由 provider 派生。 */
+        public SearchMeta(String strategy, String provider, String query, int resultCount, long latencyMs,
+                          String fallbackReason, List<Map<String, Object>> attempts) {
+            this(strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts,
+                    provider == null ? List.of() : List.of(provider));
+        }
     }
 
     /**
@@ -204,13 +216,17 @@ public class SubAgentRunner {
             m.put("latencyMs", a.latencyMs());
             m.put("fallbackReason", a.fallbackReason());
             m.put("ok", a.ok());
+            // 10-04 B-R5:交叉验证观测(该 provider 命中中已被其他 provider 见证的条数)
+            m.put("witnessTotal", a.witnessTotal());
             attempts.add(m);
         }
         long latency = outcome.attempts().stream().mapToLong(WebSearchOutcome.Attempt::latencyMs).sum();
         String reason = llmFallback ? "LLM_FALLBACK" : outcome.fallbackReason();
+        List<String> providers = new ArrayList<>();
+        for (WebProvider p : outcome.usedProviders()) providers.add(p.name());
         return new SearchMeta(snapshot == null ? null : snapshot.strategyLabel(),
                 outcome.usedProvider() == null ? null : outcome.usedProvider().name(),
-                query, resultCount, latency, reason, attempts);
+                query, resultCount, latency, reason, attempts, providers);
     }
 
     /**

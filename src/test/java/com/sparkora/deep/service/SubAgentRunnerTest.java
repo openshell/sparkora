@@ -639,4 +639,88 @@ class SubAgentRunnerTest {
         // 原始条目仍带可溯源 sourceId
         assertTrue(note.factsJson().contains("W1"));
     }
+
+    // ===== B-R4/AC-B6(10-04-web-fanout-merge):SearchMeta.providers 为增量字段,旧字段语义不变 =====
+
+    /** FANOUT 场景:usedProviders 多元素 → search.providers 完整列出;旧 provider 仍为首个。 */
+    @Test
+    void SearchMeta_providers增量透出_旧provider字段语义不变() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        WebResultNormalizer.WebHit h1 = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a", "s", "TAVILY");
+        WebResultNormalizer.WebHit h2 = new WebResultNormalizer.WebHit("W2", "t2", "https://s.com/a", "s", "SEARXNG");
+        WebSearchOutcome outcome = new WebSearchOutcome(List.of(h1, h2), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true, 0),
+                        new WebSearchOutcome.Attempt(WebProvider.SEARXNG, 1, 12L, null, true, 0)),
+                List.of(WebProvider.TAVILY, WebProvider.SEARXNG));
+        when(router.search(anyString(), anyInt(), any())).thenReturn(outcome);
+        AiClient ai = mock(AiClient.class);
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.parse("TAVILY,SEARXNG"), true, 7L, 5,
+                com.sparkora.deep.search.SearchStrategy.PRIMARY_FANOUT,
+                List.of(WebProvider.TAVILY, WebProvider.SEARXNG), List.of(), List.of());
+
+        SubAgentRunner.Note note = r.research("问题", List.of("WEB"), 2, List.of(), "主题", "[]", null, snap);
+
+        assertNotNull(note.search());
+        assertEquals("TAVILY", note.search().provider(), "旧 provider 字段语义不变(首个命中)");
+        assertEquals(List.of("TAVILY", "SEARXNG"), note.search().providers(), "新增 providers 完整列出参与源");
+    }
+
+    /** 旧 7 参 SearchMeta 构造器:providers 由 provider 派生(向后兼容)。 */
+    @Test
+    void SearchMeta_旧7参构造器_providers派生自provider() {
+        SubAgentRunner.SearchMeta meta = new SubAgentRunner.SearchMeta(
+                "TAVILY_FIRST", "TAVILY", "q", 1, 10L, null, List.of());
+        assertEquals(List.of("TAVILY"), meta.providers());
+    }
+
+    // ===== B-R3/AC-B4(10-04-web-fanout-merge):fanout 合并后 sourceId 可经 validateFacts 严格比对 =====
+
+    /**
+     * 反例/正例:两个 provider 各产出结果,经真实 merge 统一分配 sourceId 后,
+     * LLM 引用任一 sourceId(含第二个 provider 的 W2)+ URL + provider 均能通过后验校验。
+     * 若各 provider 各从 W1 起号,W2 的引用会被误剔——本用例锁死该正确性。
+     */
+    @Test
+    void fanout合并后_引用任意sourceId均通过validateFacts() throws Exception {
+        com.sparkora.deep.tool.TavilySearchTool tavily = mock(com.sparkora.deep.tool.TavilySearchTool.class);
+        com.sparkora.deep.tool.SearxngSearchTool searxng = mock(com.sparkora.deep.tool.SearxngSearchTool.class);
+        com.sparkora.deep.tool.SerperSearchTool serper = mock(com.sparkora.deep.tool.SerperSearchTool.class);
+        when(tavily.available()).thenReturn(true);
+        when(searxng.available()).thenReturn(true);
+        when(tavily.search(anyString(), anyInt())).thenReturn(List.of(
+                SearchTool.SearchHit.web("TAVILY", "t", "https://t.com/1", "s")));
+        when(searxng.search(anyString(), anyInt())).thenReturn(List.of(
+                SearchTool.SearchHit.web("SEARXNG", "s", "https://s.com/1", "s")));
+        WebSearchRouter router = new WebSearchRouter(tavily, searxng, serper);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.parse("TAVILY,SEARXNG"), true, 1L, 5,
+                com.sparkora.deep.search.SearchStrategy.PRIMARY_FANOUT,
+                List.of(WebProvider.TAVILY, WebProvider.SEARXNG), List.of(), List.of());
+
+        WebSearchOutcome out = router.search("q", 5, snap);
+        assertEquals(2, out.hits().size());
+        // 找第二个 provider 的命中(SEARXNG),其 sourceId 必须全局唯一(非 W1)
+        WebResultNormalizer.WebHit sx = out.hits().stream()
+                .filter(h -> "SEARXNG".equals(h.provider())).findFirst().orElseThrow();
+        assertFalse("W1".equals(sx.sourceId()), "第二 provider 的 sourceId 不得与第一 provider 冲突");
+
+        SubAgentRunner r = new SubAgentRunner(null, new ObjectMapper(), null, null);
+        String factsJson = "{\"facts\":[" + fact(sx.sourceId(), sx.url(), sx.provider())
+                + ",{\"claim\":\"c2\",\"value\":\"v\",\"source\":{\"type\":\"WEB\",\"sourceId\":\"W999\","
+                + "\"url\":\"https://evil.com/x\"}}],\"gaps\":[]}";
+        String validated = r.validateFacts(factsJson, out.hits());
+
+        ObjectMapper m = new ObjectMapper();
+        assertEquals(1, m.readTree(validated).path("facts").size(), "合法引用保留、未知 sourceId 转 gap");
+        assertTrue(validated.contains("https://s.com/1"), "第二个 provider 的 URL 被权威回填");
+        assertEquals(1, m.readTree(validated).path("gaps").size(), "未知 sourceId 计入 gap");
+    }
+
+    private static String fact(String sourceId, String url, String provider) {
+        return "{\"claim\":\"c1\",\"value\":\"v\",\"source\":{\"type\":\"WEB\",\"sourceId\":\"" + sourceId
+                + "\",\"url\":\"" + url + "\",\"provider\":\"" + provider + "\"}}";
+    }
 }

@@ -209,7 +209,10 @@ public class DeepResearchService {
                 ? WebProviderOrder.parse(props.getWebProviderOrder())
                 : WebProviderOrder.parse(raw);
         boolean allowed = props.isSearchWebEnabled() && settingService.isWebSearchEnabled();
-        return WebSearchSnapshot.of(order, allowed, briefId, 5);
+        // 10-04-web-fanout-merge B:策略/primary 组/质量门由部署级配置解析一次;运行时设置不放开(成本敏感)
+        return WebSearchSnapshot.of(order, allowed, briefId, 5,
+                props.effectiveSearchStrategy(), props.effectivePrimaryProviders(),
+                props.effectiveWebDenyDomains(), props.effectiveWebAllowDomains());
     }
 
     /** 异步执行研究(逐 agent 落库;由 self 代理调用)。 */

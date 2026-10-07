@@ -15,6 +15,7 @@
         </div>
         <div class="a-meta" v-if="a.status === 'DONE' || a.status === 'FALLBACK'">
           命中 {{ factCount(a) }} 条<span v-if="a.webCount > 0">(WEB {{ a.webCount }})</span>· 缺口 {{ gapCount(a) }} 条
+          <span v-if="agentProviders(a).length" class="a-prov">· 来源 {{ agentProviders(a).join('/') }}</span>
         </div>
         <div class="a-meta err" v-if="a.status === 'FAILED'">子代理失败,缺口已计入手册</div>
       </el-card>
@@ -75,6 +76,17 @@ const factCount = (a) => {
 }
 const gapCount = (a) => {
   try { const f = typeof a.factsJson === 'string' ? JSON.parse(a.factsJson) : a.factsJson; return (f.gaps || []).length } catch { return 0 }
+}
+// 10-04 B:来源 provider 列表(增量字段 search.providers;缺失时回退 attempts 中 ok 的 provider,再回退首个 provider)。
+// 旧前端不读该字段不报错——此处仅增量展示,不影响降级原因等既有渲染。
+const agentProviders = (a) => {
+  const search = a.search || {}
+  if (Array.isArray(search.providers) && search.providers.length) return search.providers
+  const attempts = Array.isArray(search.attempts) ? search.attempts : []
+  const ok = attempts.filter(at => at && at.ok && at.provider).map(at => at.provider)
+  if (ok.length) return ok
+  if (search.provider) return [search.provider]
+  return []
 }
 const tagType = (s) => ({ DONE: 'success', FALLBACK: 'warning', FAILED: 'danger', RUNNING: 'warning', PENDING: 'info' }[s] || 'info')
 const label = (s) => ({ DONE: '已完成', FALLBACK: '降级完成', FAILED: '失败', RUNNING: '进行中', PENDING: '排队' }[s] || s)
@@ -181,6 +193,7 @@ onUnmounted(() => clearInterval(timer))
 .a-head { display: flex; justify-content: space-between; gap: var(--sp-2); align-items: flex-start; }
 .a-q { font-size: var(--fs-13); line-height: var(--lh-14); font-weight: 600; color: var(--ink); }
 .a-meta { color: var(--faint); font-size: var(--fs-12); line-height: var(--lh-12); margin-top: var(--sp-1); }
+.a-prov { color: var(--faint); }
 .a-meta.err { color: var(--el-color-danger); }
 .tool-health { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
 .fallback-line { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; font-size: var(--fs-12); line-height: var(--lh-12); color: var(--faint); }
