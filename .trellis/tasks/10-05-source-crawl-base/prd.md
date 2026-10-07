@@ -44,17 +44,17 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-B1 注册与采集**：注册工信部（A 级 HTTP，BYD 申报全收）与乘联会（B 级，需 Crawl4AI）后，工信部可手动采集入库；乘联会在 Crawl4AI 未配置时明确降级、配置后可采；幂等重跑不产生重复。
-- [ ] **AC-B11 一源多栏目**：给一个源配置 **2 个栏目**（如乘联会「行业新闻」+「车市解读」）后，两栏目各自按自身 `parse_rules`/`category` 采集、独立去重（同 `externalId` 在不同栏目视为不同条目）、独立降级；源详情 API 返回 `channels[]`；**只挂 1 个栏目的源行为与「一源一列表页」等价**（零回归）。
-- [ ] **AC-B2 每源排期**：两个源 cron 不同时互不阻塞；同源运行中再次触发被跳过（防重叠）；**新增/停用信源后调度任务能运行时动态注册/注销**（验证 `@Scheduled` 静态注解不满足此需求已改用动态调度）。
-- [ ] **AC-B8 发布窗口**：配置乘联会「每月 8-11 日」窗口后，窗口期内每日触发一次、成功后本批跳过、失败次日重试；非窗口期不触发（与单点 cron 行为区分）。
-- [ ] **AC-B9 内容查询 API**：`/api/source-contents` 支持分页/关键词/category/sourceId 筛选；详情含正文与切块数；`source=byd` 条目返回 U 条件渲染所需字段；viewer 可读、写接口 403。**U 可直接消费该契约**。
-- [ ] **AC-B10 配图转存**：采集含图内容后，正文图片经 `saveExternalImage` 入图库（`source=source`、`sourceRef` 可反查标题）；相对图链按 `detail_base_url` 正确解析（构造「相对路径图」用例断言域名正确、非 `byd.com`）；单图失败不阻断该条与本任务；无图源行为不变。
-- [ ] **AC-B7 结构化解析**：乘联会销量表等表格内容解析后保留行列语义，数值不丢失（下游 E 可检索命中）。
-- [ ] **AC-B3 RSS 与 SITE 双形态**：至少 1 个 RSS 源与 1 个 SITE 源各自可采（可用测试 feed + 工信部/盖世验证）；RSS 解析不新增依赖。
-- [ ] **AC-B4 容错**：单条详情失败记入 `failed_items` 且其余继续；正文空仍入库；陈旧 RUNNING 超 60 分钟自动置 FAILED。
-- [ ] **AC-B5 任务可见**：`/api/source-jobs` 能查到进度/失败明细，失败项可重试。
-- [ ] **AC-B6 零回归**：不改 `sparkora_news*` 表语义；BYD 新闻同步行为不变；**既有 `/api/news` 只返回 `source=byd-news`，不泄漏通用信源内容**；`mvn test` 全绿。
+- [x] **AC-B1 注册与采集**：注册工信部（A 级 HTTP，BYD 申报全收）与乘联会（B 级，需 Crawl4AI）后，工信部可手动采集入库；乘联会在 Crawl4AI 未配置时明确降级、配置后可采；幂等重跑不产生重复。→ `SourceCollectServiceTest`（幂等重跑走 update 不 insert；`needCrawl4ai` 未配置→降级跳过不失败；HTTP 源成功）。**live 站点未真连**（见下）。
+- [x] **AC-B11 一源多栏目**：给一个源配置 **2 个栏目**（如乘联会「行业新闻」+「车市解读」）后，两栏目各自按自身 `parse_rules`/`category` 采集、独立去重（同 `externalId` 在不同栏目视为不同条目）、独立降级；源详情 API 返回 `channels[]`；**只挂 1 个栏目的源行为与「一源一列表页」等价**（零回归）。→ `SourceChannelTest`/`SourceCollectServiceTest`（派生 `news_id` 按栏目唯一）；`SourceControllerContractTest.信源详情_返回channels数组`。
+- [x] **AC-B2 每源排期**：两个源 cron 不同时互不阻塞；同源运行中再次触发被跳过（防重叠）；**新增/停用信源后调度任务能运行时动态注册/注销**（验证 `@Scheduled` 静态注解不满足此需求已改用动态调度）。→ `SourceScheduleService`（`Map<Long,ScheduledFuture>`+`TaskScheduler`+`CronTrigger`）；`SourceScheduleServiceTest` 注册/改 cron/注销/禁用不注册/总开关关闭不注册；多源无 `@Scheduled`（grep 仅 Javadoc）。
+- [x] **AC-B8 发布窗口**：配置乘联会「每月 8-11 日」窗口后，窗口期内每日触发一次、成功后本批跳过、失败次日重试；非窗口期不触发（与单点 cron 行为区分）。→ `SourceScheduleServiceTest`（窗口→每日 cron / 窗口判定 / 非窗口不触发 / 采完跳过）；`SourceJobServiceTest`（仅全成功标记批次完成，PARTIAL 不标记）。
+- [x] **AC-B9 内容查询 API**：`/api/source-contents` 支持分页/关键词/category/sourceId 筛选；详情含正文与切块数；`source=byd` 条目返回 U 条件渲染所需字段；viewer 可读、写接口 403。**U 可直接消费该契约**。→ `SourceController` 8 端点 + `SourceContentDTO`；`SourceControllerContractTest`（分页筛选/详情正文+chunkCount/byd 字段/channels[]/角色守卫）。
+- [x] **AC-B10 配图转存**：采集含图内容后，正文图片经 `saveExternalImage` 入图库（`source=source`、`sourceRef` 可反查标题）；相对图链按 `detail_base_url` 正确解析（构造「相对路径图」用例断言域名正确、非 `byd.com`）；单图失败不阻断该条与本任务；无图源行为不变。→ `SourceImageServiceTest`+`ImageServiceUrlResolveTest`（`source` 白名单、按基址解析断言非 byd 域、单图失败继续、无图不调用）；`resolveBydUrl` 保留给 BYD 零回归。
+- [x] **AC-B7 结构化解析**：乘联会销量表等表格内容解析后保留行列语义，数值不丢失（下游 E 可检索命中）。→ `SourceTableParserTest`（列数/数值齐全、空单元格占位）；`SourceChannelTest.详情_表格并入正文保留行列`。
+- [x] **AC-B3 RSS 与 SITE 双形态**：至少 1 个 RSS 源与 1 个 SITE 源各自可采（可用测试 feed + 工信部/盖世验证）；RSS 解析不新增依赖。→ `RssSourceClient`（jsoup `Parser.xmlParser()` 无新依赖）+ `RssSourceClientTest`（RSS2/Atom/pubDate 缺失容错）；`SiteSourceClient`。
+- [x] **AC-B4 容错**：单条详情失败记入 `failed_items` 且其余继续；正文空仍入库；陈旧 RUNNING 超 60 分钟自动置 FAILED。→ `SourceCollectServiceTest`（单条失败进 failed_items、正文空仍入库）；`SourceJobServiceTest`（陈旧>60min 置 FAILED）。
+- [x] **AC-B5 任务可见**：`/api/source-jobs` 能查到进度/失败明细，失败项可重试。→ `SourceController`（list/get/retry）；`SourceJobServiceTest`+`SourceControllerContractTest`。
+- [x] **AC-B6 零回归**：不改 `sparkora_news*` 表语义；BYD 新闻同步行为不变；**既有 `/api/news` 只返回 `source=byd-news`，不泄漏通用信源内容**；`mvn test` 全绿。→ 无 `sparkora_source_doc`/新向量 refId 空间；`NewsService.list` 过滤 `source='byd-news' OR source_id IS NULL`、`get` 拒非 BYD；`NewsServiceSourceIsolationTest`；`mvn test` **978/0/0/0**（基线 915）。
 
 ## Out of Scope
 
