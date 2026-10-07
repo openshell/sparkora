@@ -1466,3 +1466,41 @@ FetchTransport 抽象(HTTP/Crawl4AI)+并发≤2+按通道频控;check 抓到多�
 ### Next Steps
 
 - 实现 10-05-tavily-endpoint-priority(Tavily 双端点)
+
+
+## Session 57: 10-05 Tavily 双端点：中转优先+官方兜底+质量门
+<!-- trellis-session: v=2 fp=9a6ff53baac110ba -->
+
+**Date**: 2026-10-08
+**Task**: 10-05 Tavily 双端点：中转优先+官方兜底+质量门
+**Branch**: `main`
+
+### Summary
+
+TavilySearchTool relay→official failover,三独立 RestClient,端点级+结果级质量门;配置语义迁移(DEEP_TAVILY_API_BASE_URL→中转)
+
+### Main Changes
+
+- 新增双端点 failover + 独立超时 + 质量门
+- Attempt.usedEndpoint + toolHealth.tavilyEndpoints 增量契约
+- spec 记录 DEEP_TAVILY_API_BASE_URL 语义迁移与多构造器装配守卫
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `55a39d1` | feat(10-05): Tavily 双端点(中转优先+官方兜底+独立超时+质量门) |
+| `2562003` | docs(task): 10-05-tavily-endpoint-priority AC 勾选收口 |
+| `0668938` | chore(task): archive 10-05-tavily-endpoint-priority |
+
+### Testing
+
+- [OK] mvn test 915/0/0/0; compile exit 0
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实现 10-05-source-crawl-base(信源注册/排期/任务表)

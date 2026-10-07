@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 56
+- **Total Sessions**: 57
 - **Last Active**: 2026-10-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1468 | Active |
+| `journal-1.md` | ~1506 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 57 | 2026-10-08 | 10-05 Tavily 双端点：中转优先+官方兜底+质量门 | `55a39d1`, `2562003`, `0668938` | `main` |
 | 56 | 2026-10-08 | 10-04 B 多源并行聚合 PRIMARY_FANOUT+跨源合并 | - | `main` |
 | 55 | 2026-10-07 | 10-05 Crawl4AI 抓取通道：实现/复核/归档 | `8f9c0f1`, `e3eeb33`, `ad5e8ed` | `main` |
 | 54 | 2026-10-03 | 10-03 B 知识中心信息架构收敛(E2E 同步) | `66ce0a5` | `main` |
