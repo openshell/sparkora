@@ -1,7 +1,7 @@
 # 自建汽车资讯信源与外部搜索融合基座
 
 > 父任务：持有需求集、任务地图、跨子任务验收与最终集成评审；**本身不是实现目标**。
-> 调研依据：`doc/汽车资讯信源调研报告-2026-10-05.md`（单日单机实测）。
+> 调研依据：`docs/汽车资讯信源调研报告-2026-10-05.md`（单日单机实测）。
 > 姊妹任务：`10-04-brief-retrieval-sources`（外部搜索源增强，独立推进，不被本任务阻塞）。
 
 ## Goal
@@ -22,7 +22,7 @@
 - **Crawl4AI 为预留未接入**：`CRAWL4AI_BASE_URL` 在 `docs/spec/brief-generation.md` §8 一直列为预留，正文补抓现由 Tavily `/extract` 承担。本任务把它从预留变为实装。
 - 外部搜索现状（姊妹任务范围内，本任务只做融合消费）：`WebSearchRouter` 单 provider 短路、`WebProvider{TAVILY,SEARXNG}`、`TavilySearchTool` 等，见 `docs/spec/brief-generation.md` §4。
 
-**调研报告实测结论（`doc/汽车资讯信源调研报告-2026-10-05.md`）**
+**调研报告实测结论（`docs/汽车资讯信源调研报告-2026-10-05.md`）**
 
 - A 级直连可抓（普通 HTTP）：工信部 `www.miit.gov.cn` + 装备中心 `www.miit-eidc.org.cn`（列表页路径需人工定位一次）、盖世汽车 `www.gasgoo.com`（含 captcha 脚本，低风险）。
 - **暂不接入（用户 2026-10-05）**：车质网 `www.12365auto.com`、汽车之家 `www.autohome.com.cn`。理由：汽车之家属泛行业资讯、外部搜索已能覆盖（含其榜单/车家号）；车质网投诉月榜对「BYD 优先」的正文写作非必需，且非 BYD 对比数据已由乘联会销量覆盖。后续按需再加（源注册表支持随时新增，无需改架构）。
@@ -36,10 +36,14 @@
 
 ## Requirements（父级需求集，供子任务映射）
 
-- **P-R1 信源注册与采集（→ `10-05-source-crawl-base`）**：信源以数据/配置注册（url/type/垂直/cron 或发布窗口/enabled/解析规则/权威档）；支持 `type=RSS|SITE` 混合形态；每源独立排期；采集产出规范化去重 + 原始留存 + 幂等 upsert；单条失败不阻断并落 `failed_items`。
+- **P-R1 信源注册与采集（→ `10-05-source-crawl-base`）**：信源以数据/配置注册（源级：name/type/垂直/cron 或发布窗口/enabled/权威档；**栏目级（一源多栏目）：list_url/detail_base_url/category/解析规则/fetchMode**）；支持 `type=RSS|SITE` 混合形态；**一源可挂多个栏目（列表页）**，每栏目独立解析/去重/降级；每源独立排期；采集产出规范化去重 + 原始留存 + 幂等 upsert；单条失败不阻断并落 `failed_items`。**扩展方式：新增栏目 = 追加一条 channel 配置，代码零改动**。
 - **P-R2 抓取通道（→ `10-05-crawl4ai-transport`）**：抽象抓取 transport（HTTP fetch / Crawl4AI 无头浏览器）；Crawl4AI 实装（`CRAWL4AI_BASE_URL`），全局并发 ≤2、串行调度；**频控按通道区分**（Crawl4AI 同 host ≤2/天；HTTP 走最小间隔 + 单轮上限，无硬日限）；抓取失败按源降级并可见。
 - **P-R3 检索接入（→ `10-05-source-domain-retrieval`）**：**保留 `domain=NEWS` 不改名**（避免确定性向量 id 失配/全量重嵌），以 `sourceType/category` 细分「官方新闻/自建信源」；采集内容切块+嵌入进 `vector_store`；统一检索按域隔离窗口、**域内按 sourceType 二级隔离窗口/配额（保护 BYD 不被采集源挤占）**、独立配额、来源标注、新鲜度；**结构化（表格）内容走保留行列语义的切块策略，不得被 `TextChunker` 压平丢数**（见设计 §6）；生成链路可注入。**四态 `rag_status` 语义不变。**
 - **P-R7 事实来源类型（→ `10-05-source-web-fusion`，评审新增）**：自建信源事实使用**新增 `SOURCE` 类型 + 权威分档**（官方/政务 0.9、行业媒体 0.7、论坛/自媒体 0.5，默认不启用分档）。`SubAgentRunner.validateFacts` 白名单由 `KB|WEB` 扩为 `KB|WEB|SOURCE`；`FactSheetService` 新增 `SOURCE` 分级分支。**不扩展则自建信源事实会被拒或误当 KB 拿 0.9。**
+- **P-R8 采集信源配图接入图库（→ B 采转存 + E 图库可检索；用户 2026-10-05 新增）**：采集详情页**正文图片**抽取后经既有 `ImageService.saveExternalImage` 转存图库（图库完全依赖图床，本地不留），使采集信源的配图可作为**文章配图**素材被语义检索命中。复用既有图库设施，**不新建图库**：
+  - **B（转存侧）**：`SiteSourceClient` 详情解析时抽取正文图片；单图失败不阻断（照新闻封面图容错）；图库 `source` 白名单（`ImageService.SOURCES`，现 `{upload,ai-text2img,ai-img2img,byd,byd-news}`）新增 **`source`** 来源值；`source_ref` = 该内容对应 `sparkora_news_doc` 或 `news_id`，用于反查标题。
+  - **E（检索侧）**：`ImageEmbeddingTextBuilder` 新增 `source` 分支（用信源标题作嵌入文本主信号，同 `byd-news` 模式，`sourceRef` 反查）；使新来源图可被 `ImageEmbeddingService.searchImages` 命中并进入既有配图/问答配图链路。
+  - **不做**：视频入库；反盗链/水印处理；图片版权审核（沿用「采集公开内容供内部创作参考」定位）。
 - **P-R4 知识中心重构（→ `10-05-source-center-ui`）**：信源注册管理与采集任务监控 UI（启停/手动触发/进度/失败重试）；采集内容统一浏览（新闻并入「信源内容」视图）。
 - **P-R5 外部+本地融合（→ `10-05-source-web-fusion`）**：在 `FactSheetService` 层融合本地信源与外部搜索；本地优先/外部补缺、跨源同 URL 去重、自有语料置信与时效规则；与 `10-04-brief-retrieval-sources` 的 `usedProviders`/`SearchMeta` 契约兼容。**须遵守 §2.6 的 `SOURCE` 类型与权威分档**，且同 provider 多 endpoint 不得提升独立交叉计数。
 - **P-R6 贯穿：零回归与降级**：不启用任何自建信源时，现有 BYD 新闻链路与生成行为逐位等价；自建信源采集/检索失败一律降级不阻断创作。
@@ -54,7 +58,8 @@
 - [ ] **AC-P9 SOURCE 事实可用**：自建信源事实以 `SOURCE` 类型进入 `fact_sheet`（`validateFacts` 不拒、不误标 KB 0.9），并按权威档取置信；构造「误标 KB」与「产出 SOURCE」两反例单测。
 - [ ] **AC-P5 融合可观测**：同一项目下，融合前后 `fact_sheet` 的本地来源占比、同 URL 去重数、本地 vs 外部置信分层可见；`MULTI` 交叉规则不把同源多通道误判为独立交叉。
 - [ ] **AC-P6 零回归基线**：未启用自建信源时，`mvn test` 现有全绿 + `npm run build` 通过；BYD 新闻同步与深度研究行为逐位等价。
-- [ ] **AC-P7 契约与文档**：`docs/spec/knowledge/{news,center}.md`、`docs/spec/retrieval.md`、`docs/spec/brief-generation.md`、`.env.example` 同步字段级契约；URL 类配置键一律 `_BASE_URL` 结尾。
+- [ ] **AC-P7 契约与文档**：`docs/spec/knowledge/{news,center}.md`、`docs/spec/retrieval.md`、`docs/spec/brief-generation.md`、`docs/spec/image.md`、`.env.example` 同步字段级契约；URL 类配置键一律 `_BASE_URL` 结尾。
+- [ ] **AC-P10 采集配图可用（用户 2026-10-05）**：采集信源详情页正文图片经转存进入图库（`source=source`），且可被 `ImageEmbeddingService.searchImages` 语义检索命中（嵌入文本以信源标题为主信号）；单图失败不阻断采集；未配图/无图源行为与现状等价。
 
 ## Out of Scope（父级范围外）
 
@@ -62,8 +67,8 @@
 - **公众号 / B站 / 微博**采集：走 SearXNG `sogou wechat`/`bilibili` 搜索聚合，属外部搜索线，不纳入自建采集（实测其跳转链接撞搜狗 `antispider`，服务端取不到正文与可引用 URL）。
 - **中汽协 / 崔东树站**直连：本机 DNS 不可达，用转载/公众号替代。
 - 海外站（Autocar/InsideEVs 等）本轮不接（需代理出口，二期）。
-- 采集内容的人工编辑/审核工作流。
-- 图片/视频内容下载与入库（沿用新闻「正文内嵌图不入库」限制）。
+- 采集内容的**人工编辑/审核**工作流。
+- **采集配图以外的媒体**：视频/音频内容下载与入库（正文内嵌图见 P-R8 已纳入；视频不入库）。
 - LLM 驱动的采集结果语义清洗（沿用确定性清洗优先原则）。
 - 采集内容的去重合并去重策略变更（复用 `title+domain` 幂等语义）。
 
@@ -81,6 +86,7 @@
 | D9 | 频控策略 | **按通道区分**：Crawl4AI 同 host ≤2/天；HTTP 无硬日限，用最小间隔+单轮上限控速（原统一 ≤2/天会锁死工信部 BYD 全收） | 评审 2026-10-05 |
 | D4 | 任务拆分 | 父任务 + 5 个可独立验收子任务（见 Delivery） | 用户 |
 | D5 | 抓取通道 | Crawl4AI 从预留变为实装，独立成子任务（B 级 WAF/SPA 必需，且潜在复用正文补抓） | 实测驱动 |
+| D11 | 采集配图接入图库 | **纳入**（用户 2026-10-05）。采集信源正文图转存既有图库作文章配图素材；**扩 B（转存）+ E（图库可检索），不新建任务**。复用 `sparkora_image_asset`/`saveExternalImage`；新增图库来源值 `source`；关键修正 `saveExternalImage` 相对 URL 硬编码 `byd.com` 的问题（见设计 §5.5） | 用户 2026-10-05 |
 
 ## Delivery（任务地图）
 
@@ -89,8 +95,8 @@
 | 子任务 | 交付内容 | 前置依赖（显式） |
 |---|---|---|
 | [`10-05-crawl4ai-transport`](../10-05-crawl4ai-transport/prd.md) | P-R2：抓取 transport 抽象 + Crawl4AI 实装 + 并发/频控 | **无，可立即开工** |
-| [`10-05-source-crawl-base`](../10-05-source-crawl-base/prd.md) | P-R1：信源注册表 + 调度 + RSS/站点解析 + 任务监控 + **内容查询 API** | `10-05-crawl4ai-transport`（复用其 `FetchTransport` 接口；Crawl4AI 实现未配置时 A 级源走 HTTP） |
-| [`10-05-source-domain-retrieval`](../10-05-source-domain-retrieval/prd.md) | P-R3：泛化 SOURCE 域 + 入库切块嵌入 + 检索/配额/标注/新鲜度 + 注入 | `10-05-source-crawl-base` |
+| [`10-05-source-crawl-base`](../10-05-source-crawl-base/prd.md) | P-R1：信源注册表 + 调度 + RSS/站点解析 + 任务监控 + **内容查询 API** + **正文配图转存（P-R8）** | `10-05-crawl4ai-transport`（复用其 `FetchTransport` 接口；Crawl4AI 实现未配置时 A 级源走 HTTP） |
+| [`10-05-source-domain-retrieval`](../10-05-source-domain-retrieval/prd.md) | P-R3：泛化 SOURCE 域 + 入库切块嵌入 + 检索/配额/标注/新鲜度 + 注入 + **采集配图进入图库检索（P-R8）** | `10-05-source-crawl-base` |
 | [`10-05-source-center-ui`](../10-05-source-center-ui/prd.md) | P-R4：信源管理 UI + 采集任务监控 + 内容浏览 | `10-05-source-crawl-base`、`10-05-source-domain-retrieval` |
 | [`10-05-source-web-fusion`](../10-05-source-web-fusion/prd.md) | P-R5：本地+外部融合、置信与去重规则 | `10-05-source-domain-retrieval`、`10-04-brief-retrieval-sources` |
 

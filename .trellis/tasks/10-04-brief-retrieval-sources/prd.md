@@ -22,9 +22,9 @@
 - **外部情报**：Bing Search API v7 已于 2025-08-11 下线；Spring AI 官方 hybrid search / rerank 仍为 open issue，无现成 API。
 - **第三方中转实测（2026-10-04，`curl` 直测）**：
   - **Serper 中转 `https://search.604020.xyz/serper` —— 可用**（key 已在 `.env` 的 `SERPER_API_KEY`，值不在此复述）。`/search` 连续 10 次 10/10 成功、1.3–1.5s；`/news`、`/scholar`、`/images` 均 200；`gl=cn`/`hl=zh-cn` 生效。**该中转仅授权 serper**，`/tavily/*` 返回 403 `{"detail":"this API key is not permitted to use tavily"}`；错 key 401 `{"detail":"invalid API key"}`。**`num=20` 实测只回 10 条**（`credits=1`）→ 单次硬上限 10 条。中文召回质量良好（秦PLUS 价格 → autohome.com.cn / byd.com 官方；销量 → 新浪财经 / news.cn / stcn.com / d1ev.com）。
-  - **Tavily 中转 `https://tavily.ivanli.cc/api/tavily` —— 不可用，不采用**（key 已注释在 `.env`，未启用）。首两次 `/search`(200,3.27s) 与 `/extract`(200,2.10s) 响应结构与官方 Tavily 完全兼容（`results[].title/url/content` + `raw_content`），随后持续 **554 空响应体恒定 16.2s**（含 `query=test`），最终 **443 连接被拒**（DNS 117.139.140.63 EdgeOne 仍解析）。**注意与本仓超时的交互**：中转需 16.2s 才失败，而 `TavilySearchTool.java:56` readTimeout=15s → 客户端必然先超时，表现为 `REASON_ERROR`，排查时易误判为本地网络问题。
+  - **Tavily 中转 `https://tavily.ivanli.cc/api/tavily` —— 可连通、间歇性慢失败（结论已修正，2026-10-05 复测；采用，见 D5）**：首测为 554 空响应体恒定约 16s → 443 连接拒绝；**复测为间歇性**——失败仍恒定约 16s（0B/`554`），但可成功。**注意与本仓超时的交互**：中转失败需 16.2s 才暴露，而 `TavilySearchTool` 现为统一 readTimeout=15s → 客户端必然先超时、表现为 `REASON_ERROR`，排查时易误判为本地网络问题。故「中转优先」须配**独立短超时 + 快速兜底**（落地子任务 `10-05-tavily-endpoint-priority`）。
   - **Serper `/news` 垂直每条带 `date`（相对时间，如「2小时前」）+ `source`（发布方，如「新浪网」）+ `imageUrl`；但 `/search` 的 `organic[]` 只有 `link/position/snippet/title`，无 `date`。** → 时效/来源维度**仅在 news 垂直下可得**，不需自建域名白名单。
-  - 结论：primary 组 = **Tavily 官方 key（`.env` 中现有 `TAVILY_API_KEY`，值不在此复述）+ Serper 中转**，仍是两个真交叉源（`name()` 不同 → `FactSheetService.distinctSources` 可识别为 2 源）。
+  - 结论：计量 primary 组 = **Tavily 官方 key（`.env` 中现有 `TAVILY_API_KEY`，值不在此复述）+ Serper 中转**，是两个真交叉源（`name()` 不同 → `FactSheetService.distinctSources` 可识别为 2 源）；**SearXNG 亦参与 primary 召回（默认含、免费不计预算），但须过质量门（D7），且同 provider 多端点不提升独立交叉计数（D6）**。
 
 ## Requirements
 
@@ -35,8 +35,8 @@
   - **R1b 地域参数默认中文**（实测 `gl=cn&hl=zh-cn` 回显生效，中文召回命中 autohome/byd.com/新浪财经/news.cn；英文默认会削弱中文召回）→ 默认带 `gl=cn`/`hl=zh-cn`，可配覆盖。
   - **R1c 垂直支持**：`searchVertical(query, vertical, maxResults)`，`vertical ∈ {web, news}`，默认 `web` 保持现状。时效题（命中「最新/近期/现在/今年/当前/动态/发布」等信号）路由 `news`，其余走 `web`；R3 的补检索目标（`confidence<=0.4` 的 param 类）默认走 `web`。`/news` 与 `/search` 同价（`credits=1`），无额外费用。
   - **R1d per-provider 结果上限**：实测 `num=20` 只回 10 条（单次硬上限 10）→ `attempts.resultCount` 必须记**实际**返回数而非请求数，否则预算核算失真。
-  - **R1e Tavily 侧对称**：`TavilySearchTool.java:30` 同样硬编码 `DEFAULT_API_BASE`（仅包级测试构造器可注入，`:49`）→ 同批加 `sparkora.deep.tavilyApiBase` + `effectiveTavilyApiBase()`。纯对称性收益（实测唯一 Tavily 中转已挂），非必需，但两 provider 配置方式不一致会成为长期维护陷阱。
-- **R2 有规划的多源调用**：新增 `SearchStrategy { FIRST_HIT, PRIMARY_FANOUT }`（默认 `FIRST_HIT`）；`PRIMARY_FANOUT` 下仅对 **primary 组**（非 SEARXNG 的已配置 provider）并行调用，**fallback 组（自建/公共实例）保持短路兜底**，primary 全空时才按原逻辑兜底。跨源合并按 `normalizeUrl` 去重、累加 `witnessCount`、按 order 位次稳定排序，**`maxResults` 不放大**，合并后统一分配全局唯一 `sourceId`（否则 `validateFacts` 的 URL/provider 严格比对会误剔）。设计论证见 `design.md` §2。
+  - **R1e Tavily 侧对称**：`TavilySearchTool.java:30` 同样硬编码 `DEFAULT_API_BASE`（仅包级测试构造器可注入，`:49`）→ 同批加 `sparkora.deep.tavilyApiBase` + `effectiveTavilyApiBase()`。A 只做**单端点可配置**（默认官方）；**双端点编排（中转优先 + 官方兜底 + 独立超时 + 质量门）是 D5 决策、落在 `10-05-tavily-endpoint-priority`**，A 不实现。
+- **R2 有规划的多源调用**：新增 `SearchStrategy { FIRST_HIT, PRIMARY_FANOUT }`（默认 `FIRST_HIT`）；`PRIMARY_FANOUT` 下对 **primary 组**（由 `DEEP_WEB_PRIMARY_PROVIDERS` 配置，**默认含 SEARXNG**）并行调用，**fallback 组 = order 中不在 primary 集的已配置源**，仅当 primary 全部无命中时按原短路逻辑兜底。SearXNG 进 primary 须过质量门（域名黑名单 `DEEP_WEB_DENY_DOMAINS` 默认含 `bilibili.com`/`weixin.sogou.com`、非正文页 `/video/`、跳转 `link?url=` 丢弃），质量门只影响是否进合并池、**不提升独立交叉计数**。跨源合并按 `normalizeUrl` 去重、累加 `witnessCount`、按 order 位次稳定排序，**`maxResults` 不放大**，合并后统一分配全局唯一 `sourceId`（否则 `validateFacts` 的 URL/provider 严格比对会误剔）。设计论证见 `design.md` §2。
 - **R3 覆盖驱动的多轮补检索**：Round 1 现状不变 → `fact_sheet.merge` 后由**纯函数零 LLM** 的 `selectFollowupTargets(fact_sheet, maxFollowups)` 按三类规则（检索类 gap / `confidence<=0.4` 且 `kind=param` 的 entry / 既无 entry 也无 gap 的 keyQuestion）识别缺口 → 每目标 1 次多源 fanout + ≤1 次 LLM 增量抽取，**复用同一 Note 增量写回**（不新建子代理、不重跑 plan），query 复用 `webQuery` 确定性拼装。合并完成后才调 `generateFromFactSheet`。设计论证见 `design.md` §3。
 - **R5 调用预算与治理**：`WebCallBudget` 三级预算（per-round / per-brief，per-provider 沿用 `maxResults` 语义）；跨轮次按规范化 URL 去重（防虚高 `sourceCount` + 省 token）；批次内进程内 TTL 缓存（**不做跨批次持久缓存**，避免返回陈旧证据反噬质量）；`SearchMeta.attempts` 增量 `dedupedCount`/`cacheHit`/`budgetExhausted` 可观测；超限或异常**降级不阻断**，已获证据照常入册。设计论证见 `design.md` §4。
 
@@ -44,7 +44,7 @@
 
 - **R4a 来源权威度分档**：`sparkora.deep.web-source-grading=off`。**维持默认 off**——实测发现 `/news` 的 `source` 是**媒体名**（新浪网）而非域名，做权威分档仍需人工维护「名称→分档表」，与原域名白名单是同一易腐问题；分档表设计为外部配置而非硬编码。详见 `design.md` §5.2。
 - **R4b 时效性新鲜度**（**由实测上调为「可选实现，成本极低」**）：解析 `/news` 每条自带的 `date`（相对时间，如「2小时前」）做新鲜度偏好。**关键约束：`/serper/search` 的 `organic[]` 无 `date`，仅 `/news` 垂直可得**，故只在 R1c 的 news 路由下成立，不得宣称全局时效能力。详见 `design.md` §5.0。
-- **R6 正文级抓取扩展**：`sparkora.deep.web-extract-policy` 取 `off`/`background-only`(默认,现状)/`param-cross`；不做「全部补抓」——extract 额外付费 + 延迟，参数型 snippet 通常已含数值，`param-cross` 精准命中 R3 交叉验证目标即可。实测依据：官方 Tavily `/extract` 返回 `raw_content` 正常（首测拿到 2381 字符），但唯一 Tavily 中转已不可用，故 extract 仍走官方端点。
+- **R6 正文级抓取扩展**：`sparkora.deep.web-extract-policy` 取 `off`/`background-only`(默认,现状)/`param-cross`；不做「全部补抓」——extract 额外付费 + 延迟，参数型 snippet 通常已含数值，`param-cross` 精准命中 R3 交叉验证目标即可。实测依据：官方 Tavily `/extract` 返回 `raw_content` 正常（首测拿到 2381 字符）。Tavily 双端点（含中转）落地见 `10-05-tavily-endpoint-priority`；`extract` 本任务仍走官方端点。
 
 **贯穿项**
 
@@ -57,7 +57,7 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC1（零回归基线）** 不设任何新配置时，深度研究行为与现状**逐位等价**：单 provider 短路、每 agent 1 条上限、仅背景题补正文、`rag_status` 四态语义不变；`mvn test` 现有 510 例全绿 + `npm run build` 通过。
+- [ ] **AC1（零回归基线）** 不设任何新配置时，深度研究行为与现状**逐位等价**：单 provider 短路、每 agent 1 条上限、仅背景题补正文、`rag_status` 四态语义不变；`mvn test` 现有 842 例全绿 + `npm run build` 通过。
 - [ ] **AC2（Serper 可用）** `SERPER_API_KEY` + `SERPER_API_BASE_URL` 配置后，深度研究可经 `WebSearchRouter` 命中 Serper 结果（`name()="SERPER"`、Header `X-API-KEY` 认证、5s/15s 超时口径与 Tavily 一致）；未配置时 `toolHealth` 显示 `UNCONFIGURED`，不影响 Tavily/SearxNG；**仅改配置即可在官方端点与中转之间切换**，无需改代码。
 - [ ] **AC2a（垂直路由）** 时效信号问题走 `/news` 垂直并能拿到 `date`/`source` 字段；非时效问题走 `/web`；两者均为默认行为向后兼容（不配置时全走 `web`）；`/news` 与 `/web` 同价（`credits=1`），调用量不因此翻倍。
 - [ ] **AC3（多源聚合正确性）** `PRIMARY_FANOUT` 下：primary 组并行且单 provider 异常不影响其他；primary 为空回落 `FIRST_HIT`；跨源去重生效且 `witnessCount` 正确；**合并后 `sourceId` 全局唯一**，LLM 引用任意 `sourceId` 都能通过 `validateFacts` 的 URL+provider 严格比对（构造反例单测）；`maxResults` 不放大。
@@ -77,7 +77,7 @@
 - `CRAWL4AI_*` 独立抓取服务接入（正文能力由 provider `extract` 承担）。
 - 现有 `rag_status` 四态语义与 `retrieveForGeneration` 本地检索打分/配额规则变更。
 - R4 来源分级（权威度子项）、R6 补抓扩展的**业务逻辑实现**（本轮仅留配置位，默认 off）。
-- **Tavily 中转（结论已修正，2026-10-05 复测）**：`tavily.ivanli.cc` 早前实测 554→连接拒绝；**复测为「可连通、间歇性慢失败」——失败恒定约 16.5s、`http=554`、0B**，且与 `TavilySearchTool` 的 15s readTimeout 冲突（客户端必先超时）。故本轮仍**不启用**（官方 key 足够），但结论从「不可用」修正为「**可连通但受并发限制，只作低并发 fallback**」。`.env` 注释保留 key 与端点备查。若后续启用，须为其配独立短 timeout 与并发度 1（见下方 provider 分层）。
+- **Tavily 双端点编排（中转优先 + 官方兜底 + 独立超时 + 质量门）**：属子任务 `10-05-tavily-endpoint-priority`，本任务 A/B/C 不实现；本任务 `extract` 仍走官方端点。中转实测为「可连通、间歇性慢失败（恒定约 16s）」——与 `TavilySearchTool` 15s readTimeout 冲突（客户端必先超时），故双端点须配独立短超时。
 
 ## Key Decisions（已全部决策，无阻塞项）
 
@@ -87,8 +87,8 @@
 | D2 | 搜索 provider 选择 | **Serper**（中转）+ 现有 Tavily（官方端点）。不接博查/秘塔/Search1API/智谱 | 用户 |
 | D3 | 调用预算档位 | **保守档**：`maxTotalWebCalls=20` / `webCallBudgetPerRound=12` / `maxFollowups=2`。`per-round` 由初版提案 8 修正为 12——若用 8，Round 1 在 n=6 时提前 `budgetExhausted`，主抓手 R2 反被自己的预算掐死；生效值取 `max(配置值, maxAgents × |primary 组|)` 保护性下限 | 用户（档位）+ 实测修正（数值） |
 | D4 | 交付拆分 | **父任务 + 3 个可独立验收子任务**，见下方 Delivery | 用户 |
-| D5 | Tavily 中转 | **采用，中转优先、官方兜底**（用户 2026-10-05 指令反转原「不采用」）。中转可连通但间歇性慢失败（恒定约 16.5s），故配**独立短超时 + 快速兜底 + 质量门**；Tavily **统一为一个来源**（provider 名恒 `TAVILY`）；不限额度。落地见子任务 `10-05-tavily-endpoint-priority` | 用户指令 + 实测证据 |
-| D6 | provider 身份 × endpoint 实例 | **同一 provider 的多个 endpoint 共享 provider 身份，不得提升独立来源计数**（仅记 `witnessEndpoints` 供调度/健康）。`usedProviders`/`SearchMeta.providers` 为跨树契约，`10-05-source-web-fusion` 依赖之 | 评审（2026-10-05），须回填 design |
+| D5 | Tavily 中转 | **采用，中转优先、官方兜底**（用户 2026-10-05 指令反转原「不采用」）。中转可连通但间歇性慢失败（恒定约 16s），故配**独立短超时 + 快速兜底 + 质量门**；Tavily **统一为一个来源**（provider 名恒 `TAVILY`）；不限额度。落地见子任务 `10-05-tavily-endpoint-priority` | 用户指令 + 实测证据 |
+| D6 | provider 身份 × endpoint 实例 | **同一 provider 的多个 endpoint 共享 provider 身份，不得提升独立来源计数**（仅记 `witnessEndpoints` 供调度/健康）。`usedProviders`/`SearchMeta.providers` 为跨树契约，`10-05-source-web-fusion` 依赖之。已落 design §2.2/§2.3 与 `10-05-tavily-endpoint-priority` | 评审（2026-10-05），已回填 design |
 | D7 | SearXNG 参与召回 | **参与 primary fanout（可配，默认含）**，但须过质量门（域名黑名单/正文页过滤）后才进合并池；不提升独立交叉计数。用户 2026-10-05：不介意多召回，但不得污染生成 | 用户 2026-10-05 |
 
 ## Delivery（任务地图）

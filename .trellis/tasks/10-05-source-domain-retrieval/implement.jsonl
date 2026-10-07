@@ -6,3 +6,4 @@
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 幂等迁移与 metadata 回填规范"}
 {"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索/覆盖度/嵌入缓存/开关契约，泛化后不得破坏"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "迁移不可逆副作用隔离与对拍基线要求"}
+{"file": "docs/spec/image.md", "reason": "图片语义检索与嵌入文本按 source 分派契约（ImageEmbeddingTextBuilder），配图检索接入（E-R8）依据"}

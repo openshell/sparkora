@@ -26,7 +26,7 @@
 
 ```bash
 mvn -q -DskipTests compile
-mvn test                                    # 现有 510 例全绿
+mvn test                                    # 现有 842 例全绿
 ```
 
 ## 测试清单

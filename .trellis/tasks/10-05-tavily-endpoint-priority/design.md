@@ -31,7 +31,7 @@ officialKey  = effectiveTavilyKey()
 - relay：connect 5s / read `DEEP_TAVILY_RELAY_READ_TIMEOUT_MS`（默认 8000）
 - official：connect 5s / read `DEEP_TAVILY_OFFICIAL_READ_TIMEOUT_MS`（默认 30000）
 
-> 关键：**不能共用同一超时**。实测中转失败恒定 16.5s，若用官方 30s 超时会把失败拖长；若用统一 15s，
+> 关键：**不能共用同一超时**。实测中转失败恒定约 16s，若用官方 30s 超时会把失败拖长；若用统一 15s，
 > 中转失败必超时且官方也受牵连。独立超时是「快速失败 + 快速兜底」的前提（AC-T3）。
 
 **`extract` 的超时须独立（P2 修正）**：现 `TavilySearchTool` 的 `search` 与 `extract` **共用同一 `RestClient`**

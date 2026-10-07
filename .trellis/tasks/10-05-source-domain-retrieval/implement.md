@@ -18,8 +18,9 @@
 6. **检索二级隔离**：`CarRagService` NEWS 候选按 `sourceType` 二分 + 独立配额（BYD 原配额、user 新配额默认 0）。
 7. **标注**：按 category 细分行内来源 + citations `source`；BYD 分支逐字保留。
 8. **配置**：`AI_RAG_SOURCE_TOPK`（默认 0）等进 `.env.example`。
-9. **文档**：`news.md` §5、`kb.md` §5、`retrieval.md` §4.2/§11 字段级同步。
-10. **测试**（见下）→ 全绿后交 check。
+9. **配图检索接入（E-R8）**：`ImageEmbeddingTextBuilder.build` 新增 `source` 分支（标题为主信号）；`ImageEmbeddingService.newsTitleOf` 反查由「仅 `byd-news`」扩展为「`source` 亦反查」；`domain=IMAGE` 向量不变、无新迁移。
+10. **文档**：`news.md` §5、`kb.md` §5、`retrieval.md` §4.2/§11、`image.md`（新 `source` 来源值）字段级同步。
+11. **测试**（见下）→ 全绿后交 check。
 
 ## 实现期第一件核对事项
 
@@ -31,7 +32,7 @@
 
 ```bash
 mvn -q -DskipTests compile
-mvn test                                    # 现有 510 例全绿
+mvn test                                    # 现有 842 例全绿
 ```
 
 ## 测试清单
@@ -40,6 +41,7 @@ mvn test                                    # 现有 510 例全绿
 - `SourceDocServiceTest`：切块→入库；`refId=news_doc.id`；metadata 含 sourceType/category；embedding 失败不阻断。
 - `CarRagServiceTest`（增）：NEWS 二级隔离（BYD 不被 user 源挤占）；`AI_RAG_SOURCE_TOPK=0` 零回归；category 标注正确；BYD 逐字等价。
 - `VectorStoreServiceTest`（增）：V14 回填后 `domain=NEWS` 行有 sourceType/category；id 不变。
+- `ImageEmbeddingTextBuilderTest`（增）：`source=source` 分支用来源标题作嵌入文本；`byd-news`/AI/upload 分支不变（AC-E10）；`ImageEmbeddingService` 对 `source` 反查标题。
 - 回归：四态、`ragMinScore`/`ragRejectScore` 判定不变。
 
 ## 风险检查点（实现期）

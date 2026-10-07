@@ -8,11 +8,12 @@
 
 | 层 | 文件（新增/改） | 改动 |
 |---|---|---|
-| 迁移 | `db/migration/V13__source_registry.sql` | 新增 `sparkora_source` / `sparkora_source_job` / `sparkora_source_doc`；对 `sparkora_news` 加 `source_id` |
+| 迁移 | `db/migration/V13__source_registry.sql` | 新增 `sparkora_source` / `sparkora_source_channel` / `sparkora_source_job`；对 `sparkora_news` 加 `source_id` |
 | 配置 | `config/SourceProperties.java`（新增） | 采集开关、Crawl4AI base、并发/同站上限 |
 | 领域 | `source/domain/SourceEntity`、`SourceJobEntity`、`SourceDocEntity` | MyBatis-Plus 实体 |
 | 客户端 | `source/client/SourceClient`、`RssSourceClient`、`SiteSourceClient` | 列表/详情；RSS 用 jsoup XML，SITE 选择器集中 |
 | 解析 | `source/service/SourceTableParser` | HTML 表格 → 保留行列的文本（父 §6） |
+| 配图 | `source/service/SourceImageService`（新增） | 正文图片抽取 → `ImageService.saveExternalImage` 转存图库（父 §5.5） |
 | 调度 | `source/service/SourceScheduleService` | 动态 `TaskScheduler` + `CronTrigger` 按源注册/注销 |
 | 服务 | `source/service/SourceCollectService`、`SourceJobService` | 采集编排、幂等 upsert、任务/失败明细 |
 | 控制器 | `web/controller/SourceController` | `/api/sources*`、`/api/source-jobs*` |
@@ -39,24 +40,34 @@
 ### 2.2 表结构
 
 ```
-sparkora_source                       -- 信源注册表
+sparkora_source                       -- 信源注册表（站点/机构级，多栏目见下）
   id BIGSERIAL PK
   name            VARCHAR(100)  源名（工信部/乘联会/盖世/...）
   type            VARCHAR(10)   RSS | SITE
-  list_url        VARCHAR(500)  列表/feed 地址
-  detail_base_url VARCHAR(500)  详情基址（相对链接拼接）
-  category        VARCHAR(30)   官方新闻|销量数据|投诉榜|政策公示|行业资讯
   vertical        VARCHAR(30)   汽车/政策/...（预留）
-  cron            VARCHAR(50)   每源 cron（动态注册）
+  cron            VARCHAR(50)   每源 cron（动态注册，源级默认）
+  window_start_day/window_end_day  SMALLINT   发布窗口（可选；窗口内每日触发）
   authority_tier  VARCHAR(20)   official|industry|media|ugc（F 用；默认不启用分档）
-  need_crawl4ai   BOOLEAN       该源是否需 Crawl4AI（B 级源）
-  parse_rules     TEXT          JSON：列表选择器/详情选择器/表格选择器
+  need_crawl4ai   BOOLEAN       该源默认是否需 Crawl4AI（可被栏目覆盖）
+  enabled         BOOLEAN
+  created_at/updated_at/deleted
+
+sparkora_source_channel               -- 栏目表（评审 2026-10-05：一源多列表页）
+  id BIGSERIAL PK
+  source_id       BIGINT REFERENCES sparkora_source(id)
+  name            VARCHAR(100)  栏目名（乘联会「车市解读」）
+  list_url        VARCHAR(500)  该栏目列表/feed 地址
+  detail_base_url VARCHAR(500)  详情基址
+  category        VARCHAR(30)   官方新闻|销量数据|投诉榜|政策公示|行业资讯（栏目级）
+  parse_rules     TEXT          JSON：列表/详情/日期/正文/表格/图片选择器（栏目级）
+  need_crawl4ai   BOOLEAN NULL  可选覆盖源级
   enabled         BOOLEAN
   created_at/updated_at/deleted
 
 sparkora_source_job                   -- 采集任务表（仿 sparkora_news_sync_job）
   id BIGSERIAL PK
   source_id       BIGINT REFERENCES sparkora_source(id)   -- 单源任务
+  channel_id      BIGINT NULL REFERENCES sparkora_source_channel(id)  -- 可空=整源
   job_type        VARCHAR(20)   SCHEDULED|MANUAL|RETRY
   status          VARCHAR(20)   RUNNING|SUCCESS|PARTIAL|FAILED
   total/success/failed INTEGER
@@ -73,8 +84,9 @@ sparkora_news_doc   结构不变（domain=NEWS 向量 refId 来源）
 sparkora_news_doc_embedding  结构不变
 ```
 
+- **一源多栏目（评审 2026-10-05）**：列表地址/详情基址/`category`/`parse_rules` 全部下沉到 `sparkora_source_channel`；`sparkora_source` 只留源级公共字段与排期。**只挂一个栏目的源 = 行为与「一源一列表页」等价**（零回归）。新增「乘联会其他报告」= 追加一个 channel 行，代码零改动。
 - 存量 BYD 行 `source_id=NULL` → E 回填时按 `source='byd-news'` 认成 `sourceType=byd-news`。
-- `news_id` 唯一性：BYD 保持官方字符串 id；其他源用 `sourceId + ":" + externalId` 前缀化，避免跨源撞 `news_id`。
+- `news_id` 唯一性：BYD 保持官方字符串 id；其他源用 `sourceId + ":" + channelId + ":" + externalId` 前缀化，避免跨源/跨栏目撞 `news_id`。
 - **既有 `/api/news` 必须加 `source` 过滤（P1，数据隔离 — 评审新增）**：`NewsService.list/get`（`NewsService:256-285`）现查全表、无来源过滤；
   复用 `sparkora_news` 后工信部/乘联会/盖世内容会被 `/api/news` 一并列出，污染「新闻=BYD」语义。修正：`list` 默认
   `source='byd-news'`（或 `source_id IS NULL`）；若要浏览通用信源走 B-R9 的 `/api/source-contents`。`get(id)` 同理校验来源。
@@ -109,8 +121,27 @@ sparkora_news_doc_embedding  结构不变
   **不**交给 `TextChunker` 的「段内换行转空格」处理。表格文本作为 `content` 的一部分入库。
 - 抓取经 C 的 transport；`need_crawl4ai && !crawlAvailable()` → 跳过并记降级原因（不失败整个任务）。
 
-## 5. 幂等与容错
+### 4.1 正文配图转存（P-R8 / B-R10）
 
+采集详情解析时抽取正文图片并转存图库（父 §5.5），使采集信源配图可作**文章配图**素材。复用既有图库设施，**不新建图库**。
+
+```
+SourceImageService.transfer(source, item, content):
+  urls = extractImages(content.html, source.parse_rules.images)   # 选择器集中配置
+  ref  = item.newsId ?? docRef
+  for (i, u) in urls:
+    abs = resolveAgainst(u, source.detail_base_url)               # 相对→绝对，按源基址
+    try: imageService.saveExternalImage(null, abs, "source-"+ref+"-"+i+"."+ext,
+                                         "source", tags, "system", ref)
+    catch e: log.warn(...); continue                               # 单图失败不阻断
+```
+
+- **相对 URL 解析**：现 `ImageService.saveExternalImage` → `resolveBydUrl()` **硬编码拼 `https://www.byd.com`**（`:456-462`）。工信部/盖世/乘联会的相对图链会拼错域，故须改为**按调用方传入的基址解析**（新增可传 `baseUrl` 的重载，`resolveBydUrl` 保留给 BYD 旧路径，零回归）。
+- 图库来源值新增 **`"source"`**（`ImageService.SOURCES` 白名单 `:356`），否则图库列表/检索按 source 过滤时会被排除。
+- `sourceRef` 用该内容的**派生 `news_id`**（`<sourceId>:<externalId>`，解析期即确定、无需等 upsert；见 §2.2），供 E 的嵌入文本反查标题（父 §5.5）。
+- **不做**视频入库、反盗链/水印、版权审核。
+
+## 5. 幂等与容错
 - `sparkora_news` upsert key = `(source_id, news_id)`；重复采集同 `externalId` → 更新 `content`/`last_sync_at`，不新增行。
 - 单条详情失败 → 进 `failed_items`，其余继续（照 `NewsService` 容错）。
 - 正文空 → 仍入库元数据（沿用新闻容错，E 端空正文只保留标题块）。
@@ -120,10 +151,10 @@ sparkora_news_doc_embedding  结构不变
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/sources` | 登录 | 列表（含 enabled/tier/最近任务态） |
-| GET | `/api/sources/{id}` | 登录 | 详情 |
-| PUT | `/api/sources/{id}` | ADMIN/EDITOR | 编辑/启停（触发调度重注册） |
-| POST | `/api/sources/{id}/collect` | ADMIN/EDITOR | 手动触发，返回 `{jobId}` |
+| GET | `/api/sources` | 登录 | 列表（含 enabled/tier/最近任务态/栏目数） |
+| GET | `/api/sources/{id}` | 登录 | 详情（含 `channels[]`） |
+| PUT | `/api/sources/{id}` | ADMIN/EDITOR | 编辑源级字段（触发调度重注册） |
+| POST | `/api/sources/{id}/collect` | ADMIN/EDITOR | 手动触发（可指定 `channelId`），返回 `{jobId}` |
 | GET | `/api/source-jobs` | 登录 | 进度/历史 |
 | POST | `/api/source-jobs/{id}/retry` | ADMIN/EDITOR | 重试失败项 |
 | GET | `/api/source-contents` | 登录 | 内容列表（分页/`keyword`/`category`/`sourceId`）——**U 前置** |

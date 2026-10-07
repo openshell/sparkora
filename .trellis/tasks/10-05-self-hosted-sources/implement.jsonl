@@ -4,5 +4,5 @@
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义与错误映射矩阵，采集失败/未配置的降级与任务终态表达依据"}
 {"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索、工具可用性契约与开关契约，泛化信源域与检索接入须遵循"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "采集→切块→向量→检索跨层数据流，新增域/字段时防止层间格式漂移"}
-{"file": "doc/汽车资讯信源调研报告-2026-10-05.md", "reason": "信源实测矩阵/发布节奏/资源红线，采集基座的源清单与排期依据"}
+{"file": "docs/汽车资讯信源调研报告-2026-10-05.md", "reason": "信源实测矩阵/发布节奏/资源红线，采集基座的源清单与排期依据"}
 {"file": "docs/spec/knowledge/news.md", "reason": "现有单源采集/切块/入库/任务/调度范式，泛化采集基座直接复用与参照"}

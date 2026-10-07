@@ -25,6 +25,11 @@
 - **E-R6 来源标注与前端兼容**：`CitationList.vue`/`FactSheetSummary.vue` 的 source 分支需兼容新 sourceType（**增量**，旧前端不读不报错）；`rag_citations` JSON 结构增量向后兼容。
 - **E-R7 字段贯通（P0，评审新增）**：`sourceType`/`category` 必须贯通 **`UnifiedHit` 与 `Citation` 两级 record**——`CarRagService.Citation`（:87）是送到 `KnowledgeSearchTool` 的实际载体，只改 `UnifiedHit` 会在 `UnifiedHit→Citation` 映射时丢字段，F 将永远拿不到 sourceType。两处均加可空字段 + 兼容构造器，组 `cites`（:418）与 `toUnified`（:466）同步读 metadata。
 - **E-R7 配置与文档**：`AI_RAG_*` 配额项、新鲜度开关进 `.env.example`；同步 `docs/spec/knowledge/news.md`（泛化说明）、`docs/spec/knowledge/kb.md` §5、`docs/spec/retrieval.md` §4.2/§11 字段级契约。
+- **E-R8 采集配图进入图库检索（用户 2026-10-05 新增，P-R8 检索侧）**：B 转存的采集信源配图（图库 `source=source`）须可被既有**图片语义检索**命中，从而进入文章配图/问答配图链路。要点：
+  - `ImageEmbeddingTextBuilder.build` 新增 `source` 分支：以来源内容**标题**（经 `sourceRef` 反查 `sparkora_news`）为嵌入主信号 + 标签（同 `byd-news` 模式）；
+  - `ImageEmbeddingService.newsTitleOf` 的反查当前**硬编码仅 `byd-news`**，扩展为对 `source` 来源亦反查（或统一「凡 `sourceRef` 可反查即用」）；
+  - 图库向量域 `domain=IMAGE`（`refId=imageId`）不变，**无新迁移**（向量由既有 `ImageEmbeddingService` 写入）。
+  - 零回归：未接入采集图时 `byd-news`/AI/upload 图行为不变。
 
 ## Acceptance Criteria
 
@@ -37,6 +42,7 @@
 - [ ] **AC-E5 四态不变**：`rag_status` `OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE/DISABLED` 语义与判定口径不变（门槛 `ragMinScore`/`ragRejectScore` 仍作用于原分）。
 - [ ] **AC-E6 降级不阻断**：信源切块/嵌入失败不阻断生成；生成链路可正常跑通。
 - [ ] **AC-E7 零回归**：未接入自建信源时行为与现状等价；`npm run build` 通过。
+- [ ] **AC-E10 采集配图可检索**：`source=source` 的图经 `ImageEmbeddingService.searchImages` 命中（嵌入文本含来源标题）；`byd-news`/AI/upload 图行为不变；`domain=IMAGE` 向量写入无新迁移。
 
 ## Out of Scope
 
@@ -44,7 +50,7 @@
 - 信源管理 UI（→ `10-05-source-center-ui`）。
 - 外部搜索融合理由与置信规则（→ `10-05-source-web-fusion`）。
 - 混合检索 BM25+RRF、外部向量库。
-- 图片/视频内容入库。
+- 视频内容入库（正文配图采集侧见 B-R10，检索侧见 E-R8 已纳入）。
 - 跨域一键重嵌编排。
 
 ## Notes

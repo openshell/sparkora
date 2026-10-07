@@ -91,6 +91,7 @@ B 的关键判断：**质量提升的主要来源是「多源交叉 + 覆盖兜�
 
 - **跨源去重**：按既有 `normalizeUrl`（:74-92，小写 scheme/host、去 fragment、保留 path/query）去重。**首次出现的 provider 胜出**（order 靠前 = 优先级高）。
 - **见证计数（`witnessCount`）**：同一 URL 被多个 provider 命中时累加。用途有二：(a) 可观测；(b) **不**把它当成 `sourceCount`（见下方「重要澄清」）。
+- **endpoint 见证（`witnessEndpoints`，D6）**：同一 provider 的多个 endpoint（如 Tavily 官方 + 中转）命中同一 URL 时，只累加 `witnessEndpoints` 供调度/健康观测，**不得**混入 `witnessCount`，也**不得**抬升 `sourceCount`/confidence。provider 身份（`name()`）是独立来源计数的唯一粒度。
 - **排序**：先按 provider 在 order 中的位次升序（稳定），provider 内保持原 rank。→ 等价于「优先级高的源的更靠前结果优先」。
 - **截断**：合并排序后截到 `maxResults`。
 - **`sourceId` 在 merge 之后统一分配** `W1..Wn`（现有 `normalize` 里的 `sourceId = "W" + (out.size()+1)` 逻辑上移到 merge 末尾）。这是**必须做对**的一步：`validateFacts` 用 `byId.get(sourceId)` 严格比对 URL + provider（`SubAgentRunner:257-321`），若两个 provider 都从 `W1` 起号，引用会被误判为 URL 不匹配而剔除。
@@ -246,7 +247,7 @@ briefService.generateFromFactSheet(...)   // 只在最后调用一次
 - 现状：`enrichContent` 仅对背景题取 top 1–2 URL 调 `extract`（`SubAgentRunner:142` + :409-442）。
 - 扩展档位：`off` / `background-only`（现状默认） / `param-cross`（参数题中「Round 2 交叉验证目标」也补抓）。
 - **不做「全部补抓」**：extract 是额外付费调用 + 延迟，而参数型 snippet 通常已含数值；只在**需要交叉验证**时补抓性价比最高。`param-cross` 正是精准命中 R3 的补检索目标，天然与 B 方案主线一致。
-- **实测依据**：官方 Tavily `/extract` 返回 `raw_content` 正常（首个中转实测拿到 2381 字符）；`DEEP_TAVILY_API_BASE_URL` 中转为**可连通但间歇性慢失败（恒定约 16.5s）**，本任务 extract 仍走官方端点；双端点编排见 `10-05-tavily-endpoint-priority`。
+- **实测依据**：官方 Tavily `/extract` 返回 `raw_content` 正常（首个中转实测拿到 2381 字符）；`DEEP_TAVILY_API_BASE_URL` 中转为**可连通但间歇性慢失败（恒定约 16s）**，本任务 extract 仍走官方端点；双端点编排见 `10-05-tavily-endpoint-priority`。
 
 ### 5.4 顺带修既有缺陷（默认配置下行为等价）
 
@@ -260,7 +261,7 @@ briefService.generateFromFactSheet(...)   // 只在最后调用一次
 
 - **无 DB 迁移**：全部为进程内状态（预算/去重/缓存均在批次上下文）。
 - **默认全关 = 零回归**：`webFanout=FIRST_HIT`、`webFollowup=off`、`webSourceGrading=off`、`webExtractPolicy=background-only`、`maxTotalWebCalls=20`、`webCallBudgetPerRound=12`。现有部署不设任何新配置即可保持逐位等价行为。
-- **配置面**：`DeepProperties` 新增字段全部带默认值；`.env.example` 同步新增 `SERPER_API_BASE_URL` / `SERPER_API_KEY` / `DEEP_SERPER_API_BASE_URL` / `DEEP_SERPER_API_KEY` + `DEEP_TAVILY_API_BASE_URL`（对称）+ `DEEP_WEB_FANOUT` / `DEEP_WEB_FOLLOWUP_MAX` / `DEEP_WEB_CALL_BUDGET` / `DEEP_WEB_CALL_BUDGET_PER_ROUND` / `DEEP_WEB_EXTRACT_POLICY` / `DEEP_WEB_NEWS_ENABLED`。
+- **配置面**：`DeepProperties` 新增字段全部带默认值；`.env.example` 同步新增 `SERPER_API_BASE_URL` / `SERPER_API_KEY` / `DEEP_SERPER_API_BASE_URL` / `DEEP_SERPER_API_KEY` + `DEEP_TAVILY_API_BASE_URL`（对称）+ `DEEP_WEB_FANOUT` / `DEEP_WEB_FOLLOWUP_MAX` / `DEEP_WEB_CALL_BUDGET` / `DEEP_WEB_CALL_BUDGET_PER_ROUND` / `DEEP_WEB_EXTRACT_POLICY` / `DEEP_WEB_VERTICAL_NEWS`。
   - **配置键命名约定**：URL 类配置一律以 `_BASE_URL` 结尾（对齐既有 `SEARXNG_BASE_URL`）。`.env` 中曾误用 `SERPER_API_BASE`，导致该 URL 被 `secret-guard` 插件（`.opencode/plugins/secret-guard.js:12` 的 `NON_SECRET_KEY_RE` 只排除 `_URL`/`_HOST`/`_BASE_URL` 等后缀）误判为凭据并告警——已改正为 `SERPER_API_BASE_URL`。
 - **运行时开关（`sparkora_setting`）只放开 provider order**（沿用现状），**不放开 fanout / followup / budget**。理由：这三项直接决定成本，运营误开会造成账单失控；而 `settingService` 的 provider order 已被现有运维流程使用，收窄面最小化风险。
 - **灰度顺序**：`webFanout=primary_fanout` 单开 → 观察 `attempts` 的多源命中率与 `fact_sheet` 的 `MULTI` 占比 → 再 `webFollowupMax=2` 单开 → 观察总调用量与 `fact_sheet` 覆盖率提升。
@@ -281,7 +282,7 @@ briefService.generateFromFactSheet(...)   // 只在最后调用一次
 | R4 时效性 | 可选实现（解析 `/news` 的 `date`） | 宣称全局时效能力 | `/serper/search` 的 `organic[]` **无 `date`**，仅 `/news` 垂直可得（§5.0） |
 | 垂直路由 | `web`/`news` 两垂直，时效题路由 news | 全程单一 `/search` | 两垂直信息量差异显著；news 与 search 同价（`credits=1`），无额外费用（§5.1） |
 | Serper 地域参数 | 默认 `gl=cn`/`hl=zh-cn`（可配） | 用 Serper 英文默认 | 实测 `gl=cn` 命中 autohome/byd.com/新浪财经/news.cn；英文默认会削弱中文召回 |
-| R6 | 默认 off 的配置开关 | 本轮实现并默认开 | extract 额外付费；Tavily 中转间歇性慢失败（恒定约 16.5s），extract 仍走官方端点（§5.3） |
+| R6 | 默认 off 的配置开关 | 本轮实现并默认开 | extract 额外付费；Tavily 中转间歇性慢失败（恒定约 16s），extract 仍走官方端点（§5.3） |
 | `extract` provider 序 | 改为快照 order + 尊重 `webAllowed` | 保持枚举序 | 修既有不一致（付费路径）；默认配置下等价 |
 | 运行时开关 | 只放开 provider order | 同时放开 fanout/followup/budget | 直接决定成本，运营误开即账单失控 |
 
@@ -295,7 +296,7 @@ briefService.generateFromFactSheet(...)   // 只在最后调用一次
 | 多源 fanout 触发 rate limit | 部分 provider 空结果 | 异常隔离沿用既有 `continue`；primary 全空时 fallback 组兜底；`lastCallOk` 健康展示 |
 | 预算上限设得过低 | 覆盖度反而下降 | 数值由用户确认（Q2，取保守档 20/12/2），并保留 `budgetExhausted` 观测项便于调参；`per-round` 取 `max(配置值, maxAgents × |primary|)` 保护性下限 |
 | Serper 单次实际返回少于请求（实测 20→10） | 预算核算失真 | `attempts.resultCount` 必须记**实际**返回数；per-provider clamp 按 provider 分别设上限 |
-| 中转端点不稳定（实测 Tavily 中转间歇性慢失败，恒定约 16.5s；Serper 中转目前 10/10 稳定） | 主搜索源整体不可用 | 沿用既有降级：`available()`/`configured()` 门控 + `lastCallOk` 健康展示 + primary 全空时 fallback 组兜底；`apiBase` 可配置以便快速切换官方端点；Tavily 专有「中转优先/官方兜底/独立超时/质量门」见 `10-05-tavily-endpoint-priority` |
+| 中转端点不稳定（实测 Tavily 中转间歇性慢失败，恒定约 16s；Serper 中转目前 10/10 稳定） | 主搜索源整体不可用 | 沿用既有降级：`available()`/`configured()` 门控 + `lastCallOk` 健康展示 + primary 全空时 fallback 组兜底；`apiBase` 可配置以便快速切换官方端点；Tavily 专有「中转优先/官方兜底/独立超时/质量门」见 `10-05-tavily-endpoint-priority` |
 | 中转失败慢于本仓超时（Tavily 中转 16.2s vs readTimeout 15s） | 表现为 `REASON_ERROR` 而非 HTTP 状态，排查易误判 | `Attempt` 已只记 `e.getClass().getSimpleName()` 不记 message（防密钥泄漏）；需在运维文档写明「中转类故障常表现为超时而非状态码」 |
 
 ## 9. 验证策略
@@ -310,11 +311,11 @@ briefService.generateFromFactSheet(...)   // 只在最后调用一次
 
 **契约测试**：`toolHealth` 含 `SERPER`（未配置 → `UNCONFIGURED`）；`research` 启动返回体含新增 `providers` / `followups` 增量字段，旧字段不变。
 
-**回归**：`mvn test`（现有 510 例必须全绿）+ `npm run build`（前端若消费 `toolHealth` / `SearchMeta`）。
+**回归**：`mvn test`（现有 842 例必须全绿）+ `npm run build`（前端若消费 `toolHealth` / `SearchMeta`）。
 
-## 10. 任务拆分建议（待确认）
+## 10. 任务拆分（已确认，2026-10-05）
 
-本方案含 3 个可独立验收的交付物，按 workflow「multi-deliverable 用父+子」建议拆为：
+本方案含 4 个可独立验收的交付物，已按父+子拆分：
 
 - **父任务** `brief-retrieval-sources`（当前任务）：持有需求集、任务地图、跨子任务验收、最终集成评审；**不作为实现目标**。
 - **子任务 A `serper-provider`**：R1 + `WebProvider`/`WebProviderOrder`/`strategyLabel`/`toolHealth` 契约扩展。独立可验收（默认配置下现有行为零变化）。

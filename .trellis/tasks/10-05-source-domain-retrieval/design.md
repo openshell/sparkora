@@ -15,7 +15,8 @@
 | 检索 | `ai/vector/SearchStore.java` / `VectorStoreService.java` | 从 metadata 读出 `sourceType`/`category` |
 | 契约 | `CarRagService.UnifiedHit` **与 `Citation`** | **两处都要加 `sourceType`/`category` 字段**——`Citation` 是送到 `KnowledgeSearchTool` 的实际载体，只改 `UnifiedHit` 会在映射时丢字段（P0） |
 | 标注 | `CarRagService` 行内来源 + citations `source` | 按 category 细分（BYD 逐字等价） |
-| 文档 | `docs/spec/knowledge/news.md` §5、`kb.md` §5、`retrieval.md` §4.2/§11 | 字段级契约 |
+| 配图 | `image/embed/ImageEmbeddingTextBuilder.java`、`service/ImageEmbeddingService.java` | 新增 `source` 分支 + 标题反查扩展（P-R8，父 §5.5） |
+| 文档 | `docs/spec/knowledge/news.md` §5、`kb.md` §5、`retrieval.md` §4.2/§11、`image.md` | 字段级契约 |
 
 **不做**：采集/调度（B）；UI（U）；融合置信规则（F）；BM25/RRF。
 
@@ -30,7 +31,7 @@ B 已把通用信源内容写入 `sparkora_news`/`sparkora_news_doc`（B design 
 - `metadata` 增写 `sourceType`（`byd-news` / `user-source`）、`category`、`publishDate`。
 - **`sourceType` 需细到「可判独立来源」的粒度（实测 2026-10-05：盖世）**：盖世「车企官宣销量」与「销量排行」**来源基础不同**——
   官宣是车企自报（与乘联会独立可交叉），排行页可能派生自乘联会/上险（不可计独立交叉）。故 `sourceType` 至少区分
-  `gasgoo-announce` / `gasgoo-ranking`，供 F 判定是否计入独立交叉。信源注册表可配每个 `sourceType` 的 `crossCounted` 布尔。
+  `gasgoo-announce` / `gasgoo-ranking`，供 F 判定是否计入独立交叉。**粒度=栏目（channel）**（评审 2026-10-05：源可多栏目，同一盖世源的「官宣」「排行」是两条 channel，各带自己的 `sourceType` 与 `crossCounted` 布尔配置）。`sourceType` 由该内容所属 channel 的配置决定，非源级单一值。
 
 > 与 B 的职责切分：B 落**原始内容**（`sparkora_news.content`），E 负责**切块+嵌入**（`_doc`/`_embedding`）。避免两任务重复写同一批表。
 
@@ -97,8 +98,17 @@ citations `source` 字段同步（`Citation.source()`）。
   `sourceType`/`category`（存量=byd）/`publishDate`；`id` 列不动，**无需重嵌**。
 - 幂等：仅当键缺失时写入。
 
-## 7. 四态与配额不变
+## 6.5 采集配图进入图库检索（P-R8 检索侧）
 
+B 已把采集信源正文图转存图库（`source=source`，父 §5.5）。E 负责让它们**可被语义检索命中**：
+
+- `ImageEmbeddingTextBuilder.build` 新增 `source` 分支：嵌入文本 = 来源内容标题（`sourceRef` 反查 `sparkora_news`）+ 标签，同 `byd-news` 模式（图片本身无文本，标题是主信号）。
+- `ImageEmbeddingService.newsTitleOf` 现**硬编码 `"byd-news".equals(source)`**（`:241`）→ 扩展为 `source` 来源亦反查（或统一「凡 `sourceRef` 可反查即用」）。
+- 图库向量域 `domain=IMAGE`（`refId=imageId`）**不变**，无新迁移；向量仍由既有 `ImageEmbeddingService.embedQuietly` 写入。
+- 命中后进入既有 `IllustrationSuggestionService`（文章配图）/ 问答配图链路，无需改消费端。
+- 零回归：`byd-news`/AI/upload 分支不变（新增 `case`，不动旧 `case`）。
+
+## 7. 四态与配额不变
 `rag_status`（OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE）、`ragMinScore`/`ragRejectScore` 判定**完全不动**；
 新增的 `AI_RAG_SOURCE_TOPK` 默认 0，未启用时不改任何既有选择结果。
 

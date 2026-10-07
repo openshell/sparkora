@@ -1,7 +1,7 @@
 # design.md — 自建汽车资讯信源与外部搜索融合基座
 
 > 父任务设计：定义跨子任务架构、共享契约、迁移策略、任务边界与回滚。子任务的实现细节在各自 `design.md` 展开。
-> 依据：`doc/汽车资讯信源调研报告-2026-10-05.md`；仓库现状见 `prd.md` Background。
+> 依据：`docs/汽车资讯信源调研报告-2026-10-05.md`；仓库现状见 `prd.md` Background。
 
 ---
 
@@ -32,9 +32,9 @@
                     ┌────────────────────┘              └──────────────────┐
                     ▼                                                     ▼
       ┌──────────────────────────┐                      ┌──────────────────────────┐
-      │ 本地信源域 SOURCE         │                      │ 外部搜索（姊妹任务）       │
-      │  vector_store domain=SOURCE│                     │  WebSearchRouter          │
-      │  按域隔离窗口+配额+标注     │                      │  Tavily/Serper/SearXNG    │
+      │ 本地信源域（复用 NEWS 域） │                      │ 外部搜索（姊妹任务）       │
+      │  vector_store domain=NEWS  │                      │  WebSearchRouter          │
+      │  +sourceType/category 标注  │                      │  Tavily/Serper/SearXNG    │
       └────────────▲─────────────┘                      └──────────────────────────┘
                    │ 切块+嵌入（E）
       ┌────────────┴─────────────┐
@@ -60,21 +60,38 @@
 
 ## 2. 共享契约（子任务必须遵守，不得各自另立）
 
-### 2.1 信源注册表（B 定义，E/U 消费）
+### 2.1 信源注册表（B 定义，E/U 消费；**支持一个源挂多栏目** — 评审 2026-10-05）
+
+> **修正依据**：乘联会天然是多栏目站（行业新闻 `news.php?types=news` / 车市解读 `?types=csjd` / 发布会报告 `?types=cpc`），工信部亦多公示页。若 `list_url` 单值，只能把「一个站点」拆成多行源，导致 `source_id` 分裂、去重/配额/UI 语义变脏。故注册表**从「一源一列表页」升级为「一源多栏目（channel）」**。
 
 ```
 SourceDefinition {
-  id, name, url,
+  id, name,
   type: RSS | SITE,
-  category:  官方新闻 | 销量数据 | 投诉榜 | 政策公示 | 行业资讯 | ...
   vertical:  web | news,
   schedule:  { cron 或 发布窗口(每月 8-11 日 / 月初 / 每月 4,19 日) },
+  fetchMode: HTTP | CRAWL4AI,        // B 级源标 CRAWL4AI（源级默认，栏目可覆盖）
+  authorityTier: 1|2|3,              // F 置信分档用（预留，默认不启用分档）
   enabled:   boolean,
-  fetchMode: HTTP | CRAWL4AI,        // B 级源标 CRAWL4AI
-  parseRule: { 列表选择器 / 详情选择器 / 日期选择器 / 正文容器 },  // SITE 用
-  authorityTier: 1|2|3               // F 置信分档用（预留，默认不启用分档）
+  channels: [ SourceChannel ]        // 一个源 ≥1 个栏目
+}
+
+SourceChannel {
+  id, sourceId,
+  name,                              // 栏目名（如「车市解读」）
+  listUrl,                           // 该栏目列表/feed 地址
+  detailBaseUrl,                     // 详情相对链接基址
+  category,                          // 官方新闻 | 销量数据 | 政策公示 | 行业资讯 | ...
+  parseRule: { 列表选择器 / 详情选择器 / 日期选择器 / 正文容器 / 表格选择器 / 图片选择器 },
+  fetchMode: HTTP | CRAWL4AI?,       // 可选覆盖源级
+  enabled:   boolean
 }
 ```
+
+- **一个源 = 一个站点/机构；一个栏目 = 一个列表页**。`category`/`parseRule` 下沉到栏目级（同站不同栏目选择器与分类不同）。
+- **零回归**：仅一个栏目的源 = 只建一条 channel，行为与「一源一列表页」等价。
+- **兼容**：`sparkora_source` 仍持有源级公共字段（name/type/schedule/fetchMode/authorityTier/enabled）；列表相关字段全部移入子表 `sparkora_source_channel`（见 B design §2.2）。
+- **扩展性**：新增「乘联会其他报告」= 给该源**追加一个 channel 行**（配 `listUrl` + `parseRule` + `category`），代码零改动。
 
 ### 2.2 抓取契约（C 定义，B 消费）
 
@@ -89,11 +106,12 @@ FetchTransport.fetch(url, opts) → FetchResult {
 
 ```
 RawSourceItem {
-  sourceId, externalId,            // externalId = 源内唯一键（官方 id / 规范化 URL）
-  title, url, publishDate, content, tags?
+  sourceId, channelId,             // channelId = 具体栏目（一个源可有多个）
+  externalId,                      // externalId = 源内唯一键（官方 id / 规范化 URL）
+  title, url, publishDate, content, category, tags?
 }
 ```
-- 幂等键 = `(sourceId, externalId)`。
+- 幂等键 = `(sourceId, channelId, externalId)`（同站不同栏目独立去重）。
 
 ### 2.4 向量域契约（E 定义，F 消费）— 关键（评审修正 2026-10-05）
 
@@ -161,10 +179,11 @@ publishDate = ISO 日期（可空）               // 新鲜度用
 
 ### 3.2 采集表归属（B 与 E 的边界协调）
 
-- **方案 A（推荐）**：新建通用 `sparkora_source` + `sparkora_source_doc` + `sparkora_source_sync_job`，BYD 新闻保持既有 `sparkora_news*` 表不动，E 在检索/切块层把两者统一到 SOURCE 域。
-- **方案 B**：把 `sparkora_news*` 直接扩列为通用信源表。
-- **取舍**：A 对现有新闻链路零侵入、风险隔离好，代价是 E 需做两表的统一映射；B 表更简洁但破坏现有新闻契约面大。
-- **决策倾向 A**：与「BYD 新闻作为特例、保持等价」的目标一致。**B 与 E 的实现须在各自 design 中锁定同一方案，避免两任务各自建表。**
+**决策（评审收口 2026-10-05，与 §2.5.1 一致）：复用 `sparkora_news*` 表，不新建平行 id 空间。**
+- 新增 `sparkora_source`（信源注册表）+ `sparkora_source_job`（采集任务表）；采集产物**复用 `sparkora_news`**（增可空 `source_id` FK，NULL=存量 BYD）+ `sparkora_news_doc`/`sparkora_news_doc_embedding`（结构不变）。
+- 理由：`domain=NEWS` 向量的 `refId` 必须是 `sparkora_news_doc.id`（`VectorStoreService` 类注释 + `CarRagService:66`）。若为 `sparkora_source_doc` 另建自增 id，会与 `sparkora_news_doc.id` **撞号** → `docId("NEWS", n)` 产生同一 UUID → 向量互相覆盖。
+- 被否决的替代：新建独立 `sparkora_source_doc` 作为向量 `refId` 来源（撞号，见 §2.5.1）；把 `sparkora_news*` 整体改名/改语义（破坏面大）。
+- **B/E 职责切分**：B 落**原始内容**（`sparkora_news.content`），E 负责**切块+嵌入**（`_doc`/`_embedding` + `vector_store.metadata`）。两者须在各自 design 锁定同一方案（B design §2.1、E design §2 已锁定）。
 
 ### 3.3 调度粒度与资源红线（B）
 
@@ -192,7 +211,7 @@ publishDate = ISO 日期（可空）               // 新鲜度用
       → 详情抓取（C）
       → 规范化 + (sourceId,externalId) 幂等 upsert 到 sparkora_source*
       → 任务表记账（success/failed_items）
-[E] 采集内容 → TextChunker 切块 → EmbeddingBatchRunner 嵌入 → vector_store(domain=SOURCE, sourceType, category, publishDate)
+[E] 采集内容 → 切块（结构化保留行列语义，§6） → EmbeddingBatchRunner 嵌入 → vector_store(domain=NEWS, sourceType, category, publishDate)
       → CarRagService 按域隔离窗口取候选 → 配额 → 来源标注 → 注入生成
 [F] SubAgentRunner 产 fact（本地 SOURCE 事实 + 外部 WEB 事实）
       → FactSheetService.merge：同 claim 本地优先 / 跨源同 URL 去重 / 独立交叉判定 / 置信分档
@@ -207,8 +226,32 @@ publishDate = ISO 日期（可空）               // 新鲜度用
 - **Flyway**：新增 `V13+` 脚本，**不改已应用的 V1–V11**。
 - **不改 `domain` 名**：保留 `domain=NEWS`，避免 `docId` 确定性主键失配与全量重嵌（见 §3.1）。
 - **存量 NEWS 回填**：迁移脚本将 `vector_store` 中 `metadata->>'domain'='NEWS'` 行补 `sourceType=byd-news`、`category=官方新闻`、`publishDate`（如可解析）；**幂等可重入**。新增信源表（`sparkora_source*`）另行建表。
-- **零回归基线**：未启用自建信源时，BYD 新闻同步、深度研究、`fact_sheet`、`rag_status` 行为逐位等价。
+- **零回归基线**：未启用自建信源时，BYD 新闻同步、深度研究、`fact_sheet`、`rag_status` 行为逐位等价；`mvn test` 现有 842 例全绿。
 - **新增配置默认关闭**：所有采集开关、融合开关、权威分档、新鲜度默认 off；`.env.example` 同步，URL 类键 `_BASE_URL` 结尾。
+
+## 5.5 采集信源配图接入图库（用户 2026-10-05 新增，B/E 共同约束）
+
+> 需求：采集信源（工信部/乘联会/盖世）的**正文配图**要能作为**文章配图**素材。现 BYD 新闻封面图已入图库，通用信源图片此前在 Out of Scope。
+
+**复用既有图库设施，不新建图库**：
+
+- 图库主表 `sparkora_image_asset` 已有 `source` 列（`ImageService.SOURCES` 白名单，现 `{upload, ai-text2img, ai-img2img, byd, byd-news}`）与 `source_ref` 列。
+- 转存入口：`ImageService.saveExternalImage(projectId, url, fileName, source, tags, operator, sourceRef)`（图库完全依赖图床，本地不留）。
+
+**B（转存侧）**：
+- `SiteSourceClient` 详情解析新增**正文图片抽取**（选择器来自 `parse_rules.images`，与正文选择器同样集中配置）；
+- 逐图调 `saveExternalImage(null, imgUrl, "source-<id>-<n>.<ext>", "source", tags, "system", sourceRef)`，**单图失败 warn 跳过不阻断**（照 `NewsService` 封面图容错）；
+- **关键**：现 `saveExternalImage` 的 `resolveBydUrl()` 对**相对 URL 硬编码拼 `https://www.byd.com`** → 须改为「按调用方传入的 `detail_base_url` 解析」（新增重载或参数），否则工信部/盖世的相对图链会被拼错域。`sourceRef` = 该内容对应的 `news_id`（非 BYD）或其 `sparkora_news_doc.id`，供 E 反查标题。
+- `ImageService.SOURCES` 白名单新增 `"source"`。
+
+**E（检索侧）**：
+- `ImageEmbeddingTextBuilder.build` 新增 `source` 分支：以**来源内容标题**（经 `sourceRef` 反查 `sparkora_news`）为嵌入主信号 + 标签，同 `byd-news` 模式；
+- `ImageEmbeddingService.newsTitleOf` 的反查当前硬编码仅 `byd-news` → 扩展为对 `source` 来源也反查（或统一「凡 `sourceRef` 可反查即用」）；
+- 使新来源图可被 `ImageEmbeddingService.searchImages` 命中，进入既有**文章自动配图 / 问答配图**链路。
+
+**不做**：视频入库；反盗链/水印；图片版权审核（沿用「采集公开内容供内部创作参考」定位）。零回归：无图源/未配开关时行为不变。
+
+---
 
 ## 6. 结构化内容切块（评审新增，B/E 共同约束）
 
@@ -227,11 +270,8 @@ publishDate = ISO 日期（可空）               // 新鲜度用
 ## 7. 任务边界与依赖
 
 ```
-C(crawl4ai-transport) ──┐
-                        ├→ B(source-crawl-base) → E(source-domain-retrieval) → U(source-center-ui)
-                        │                              │
-                        │                              └→ F(source-web-fusion) ← 10-04-brief-retrieval-sources
-                        └→ (B 可选使用；未就绪仅 HTTP)
+C(crawl4ai-transport) ─→ B(source-crawl-base) ─→ E(source-domain-retrieval) ─┬→ U(source-center-ui)   [U 另需 B]
+                                                                              └→ F(source-web-fusion) ← 10-04-brief-retrieval-sources
 ```
 
 - C 与 B 无依赖，可并行开工。
@@ -254,13 +294,11 @@ C(crawl4ai-transport) ──┐
 | 融合规则误判交叉/置信 | 确定性规则 + 反例单测 + 默认零回归 | 关闭融合开关 |
 | 子任务契约分叉 | 本文件 §2 共享契约 + 父任务集成评审 | 回到父任务统一 |
 
-## 9. 对姊妹任务的修正项（评审发现，须回填 `10-04-brief-retrieval-sources`）
+## 9. 对姊妹任务的修正项（评审发现；2026-10-05 已回填 `10-04-brief-retrieval-sources`）
 
-> 以下两项由本次评审发现，与本事无直接实现耦合，但影响 F（融合）的契约前提，须在 F 实现前回填。
+> 以下项已回填到 `10-04`（本文件记录追溯），F 的契约前提已满足。
 
-1. **Tavily 中转结论已过时**：`10-04-brief-retrieval-sources/prd.md` §D5 与 Out of Scope 仍写「不可用、不采用」；后续复测为「**可连通、间歇性慢失败（恒定约 16.5s）**」，且与 `TavilySearchTool` 的 15s readTimeout 冲突（客户端必先超时）。该 PRD 的实测结论应更新为「可连通但受并发限制，只作低并发 fallback」。
-2. **provider 身份 × endpoint 实例分层未落到任务产物**：仅在对话中确定——同一 provider 多 endpoint 不得提升独立来源计数（见 §2.5）。应回填到 `10-04` 的 PRD/design 契约，F 依赖该契约。
-3. **多源/多通道的 `usedProviders` 契约**：`10-04-web-fanout-merge` 定义的 `usedProvider→usedProviders` 是 F 的依赖，须确认已落地（当前仅 PRD 层）。
-4. **Tavily 双端点策略（用户 2026-10-05 指令）**：Tavily 统一为一个来源（provider 名恒 `TAVILY`），**中转优先、官方兜底、不限额度、质量门保障**；
-   这是独立子任务 `10-05-tavily-endpoint-priority`（挂在 10-04 下）。F 依赖其「provider 身份固定」契约——双端点同 URL 只算 1 源。
-   `.env:119-121` 既有注释已表明两 Tavily 端点 `name()` 同为 TAVILY、`FactSheetService` 会合并；本子任务把该注释实现化。
+1. **Tavily 中转结论已过时（已修正）**：`10-04-brief-retrieval-sources/prd.md` §D5/§Out of Scope/§Confirmed Facts 原写「不可用、不采用」；已更新为「**可连通、间歇性慢失败（恒定约 16s）**」，与 `TavilySearchTool` 15s readTimeout 冲突（客户端必先超时），故采用「中转优先 + 独立短超时 + 官方兜底」。
+2. **provider 身份 × endpoint 实例分层（已回填）**：同一 provider 多 endpoint 不得提升独立来源计数（见 §2.5）——已回填 `10-04` PRD D6 与 design §2.3（`witnessEndpoints`），F 依赖该契约。
+3. **多源/多通道的 `usedProviders` 契约**：由 `10-04-web-fanout-merge`（B）定义/实现；F 依赖。
+4. **Tavily 双端点策略（用户 2026-10-05 指令）**：独立子任务 `10-05-tavily-endpoint-priority`；F 依赖其「provider 身份固定 `TAVILY`」契约（双端点同 URL 只算 1 源）。

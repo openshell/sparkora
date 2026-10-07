@@ -5,4 +5,5 @@
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "单条失败不阻断、任务终态 SUCCESS/PARTIAL/FAILED 表达"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "多步写入失败顺序与不可逆副作用隔离"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "采集→内容契约→入库跨层，字段映射需一致"}
-{"file": "doc/汽车资讯信源调研报告-2026-10-05.md", "reason": "A/B/C 级信源清单、发布节奏、工信部路径需人工定位等实测约束"}
+{"file": "docs/汽车资讯信源调研报告-2026-10-05.md", "reason": "A/B/C 级信源清单、发布节奏、工信部路径需人工定位等实测约束"}
+{"file": "docs/spec/image.md", "reason": "图库来源值/转存入口/source_ref 语义/嵌入文本分派契约，配图转存（B-R10）须遵守"}
