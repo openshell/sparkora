@@ -2,3 +2,4 @@
 {"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对抓取契约与降级语义未被破坏"}
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对无不可逆副作用、零回归断言真实执行"}
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "核对失败/未配置状态表达一致"}
+{"file": ".trellis/tasks/10-05-crawl4ai-transport/design.md", "reason": "核对实现是否遵守实测契约（/md f 枚举）、并发≤2 非阻塞、按通道频控、降级分类"}

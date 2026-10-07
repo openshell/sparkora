@@ -312,7 +312,7 @@ graph TD
 | `DEEP_WEB_PROVIDER_ORDER` | `TAVILY,SEARXNG` | 部署级默认 provider 顺序（运行时 ADMIN 设置优先）：`TAVILY,SEARXNG`=TAVILY_FIRST / `SEARXNG,TAVILY`=SEARXNG_FIRST |
 | `TAVILY_API_KEY` / `DEEP_TAVILY_API_KEY` | 空 | Tavily 密钥（`.env`；`DEEP_` 前缀可覆盖） |
 | `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署） |
-| `CRAWL4AI_BASE_URL` | 空 | 预留：Crawl4AI 正文抓取工具未接入（正文补抓改由 Tavily `/extract` 承担，见 §4） |
+| `CRAWL4AI_BASE_URL` | 空 | **已实装**抓取通道（10-05-crawl4ai-transport）：`FetchTransport` 抽象（`HttpFetchTransport` 普通 GET / `Crawl4aiFetchTransport` 无头浏览器）。Crawl4AI 侧 `POST /md {url,f:"fit"}` 取正文、`POST /html` 取 HTML，Bearer `CRAWL4AI_API_KEY` 鉴权；资源红线并发 ≤2（`CRAWL4AI_MAX_CONCURRENCY`）、同 host ≤2/天（`CRAWL4AI_PER_HOST_DAILY_LIMIT`），到限/并发满快速返回 `limited` 不排队；HTTP 通道无日上限、仅同 host 最小间隔（`SOURCE_HTTP_MIN_INTERVAL_MS`）。未配置时 `configured()=false` 降级跳过。注：外部搜索正文补抓仍走 Tavily `/extract`，本通道暂未接入 `extract`（预留接口） |
 | `DEEP_WEB_CONTENT_MAX_CHARS` | `2000` | 背景题 WEB 正文补抓单条上限（字符）：Tavily `/extract` 取正文后工具层截断的唯一上限；参数题不补抓 |
 | `SERPER_API_KEY` / `DEEP_SERPER_API_KEY` | 空 | Serper 密钥（`.env`；`DEEP_` 前缀可覆盖）。未配置 → `toolHealth.SERPER=UNCONFIGURED`、策略路由跳过，不影响 Tavily/SearxNG |
 | `DEEP_SERPER_API_BASE_URL` | `https://google.serper.dev` | Serper 端点（URL 类键以 `_BASE_URL` 结尾）；中转为 `https://search.604020.xyz/serper`（路径前缀保留） |
@@ -353,7 +353,7 @@ graph TD
 
 ## 11. 已知限制
 
-- WEB 命中**默认仍为摘要级**（`snippet`）；**仅背景题**对 top 1–2 URL 用 Tavily `/extract` 补正文片段（工具层截断默认 2000 字），参数题不补抓、SearxNG 命中依赖 Tavily key。`CRAWL4AI_*` 仍未接入。
+- WEB 命中**默认仍为摘要级**（`snippet`）；**仅背景题**对 top 1–2 URL 用 Tavily `/extract` 补正文片段（工具层截断默认 2000 字），参数题不补抓、SearxNG 命中依赖 Tavily key。`CRAWL4AI_*` 已接入**抓取通道**（`com.sparkora.source.fetch.*`，供信源采集 B 级源用）；但外部搜索正文补抓仍走 Tavily `/extract`，本通道暂未接入 `extract`（仅预留 `FetchTransport` 接口）。
 - 低置信条目以 `warnings` 提示人工核实，不自动剔除。
 - 蓝图质量信号 `taskBriefConsistency` 只反映必要槽位（purpose/audience/mustCover）覆盖比例，**非语义一致性**（LLM 评分未采用，确定性可复现优先）。
 - 证据投影为**硬约束**：蓝图未映射的 fact/数值在写作时不可用；若某节 `coverage=MISSING`，该节只能定性陈述，必要时须由用户回到蓝图评审调整 `entryKeys`。

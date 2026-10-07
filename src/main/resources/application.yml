@@ -201,6 +201,16 @@ sparkora:
   kb:
     # 10-03 E3:知识库生效期对账——每日按当前日期重算 KB 向量 active(生效/到期自动翻转)
     effective-cron: ${KB_EFFECTIVE_CRON:0 5 0 * * ?}
+  crawl4ai:
+    # 10-05-crawl4ai-transport:抓取通道(Crawl4AI 无头浏览器,过指纹 WAF/渲染 SPA;B 级信源用)
+    # 资源红线:并发 ≤2、同 host ≤2/天(来自调研报告:无头浏览器 300-400MB、swap 偏紧,不得放宽)
+    base-url: ${CRAWL4AI_BASE_URL:}
+    api-key: ${CRAWL4AI_API_KEY:}
+    max-concurrency: ${CRAWL4AI_MAX_CONCURRENCY:2}
+    per-host-daily-limit: ${CRAWL4AI_PER_HOST_DAILY_LIMIT:2}
+    timeout-ms: ${CRAWL4AI_TIMEOUT_MS:20000}
+    # HTTP 通道无硬日上限,仅同 host 最小间隔(工信部一次公示含多条子页可一轮采完)
+    source-http-min-interval-ms: ${SOURCE_HTTP_MIN_INTERVAL_MS:2000}
   qiniu:
     enabled: ${QINIU_ENABLED:true}
     access-key: ${QINIU_ACCESS_KEY:${AK:}}    # 兼容旧裸名 AK/SK

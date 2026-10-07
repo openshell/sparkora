@@ -55,6 +55,17 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 - **契约级硬约束要有断言**：如「零副作用」用反射断言依赖不含写组件 + 逐方法 `never()`（`IllustrationSuggestionServiceTest`）。
 - 前端字段名错误（record `imageId` vs 实体 `id`）**编译与后端单测都发现不了** → 采用类链路需真机点击或用 curl 打通 API 层（09-15 P0 先例）。
 
+> **Warning（Spring 装配是 `mvn test` 的盲区，10-05-crawl4ai-transport Check 实测）**: 本仓**无 `@SpringBootTest`、无 `src/test/resources`**，
+> `mvn test` 从不启动 Spring 容器。因此凡「Spring 只在真实启动时才会报错」的缺陷——`mvn test` 与编译**双双全绿**，只在部署/`./dev.sh` 启动时才爆。
+> 最典型：一个 `@Component` 同时有「生产构造器 + 包级测试构造器」两个构造器，却**漏标 `@Autowired`** → Spring 无唯一构造器、也无默认构造器 →
+> `BeanInstantiationException: No default constructor found`，应用启动即失败。
+>
+> **规避**：`@Component` 若有多构造器（含包级测试构造器），**必须显式** `@Autowired` 标注生产构造器——先例 `SerperSearchTool`/`TavilySearchTool`。
+> 仅有一个构造器时不标注也安全；但只要为可测性加了第二个构造器，就必须补 `@Autowired`。
+>
+> **测试守卫**：为「可被容器实例化」这类装配契约补一个轻量 `AnnotationConfigApplicationContext` 探针测试（只 register 被测 bean + 其依赖），
+> 无需 `@SpringBootTest`；先例 `FetchTransportWiringTest`（`com.sparkora.source.fetch`）。新增多构造器 `@Component` 时应照此加守卫，否则该缺陷仍会静默回潮。
+
 ---
 
 ## Code Review Checklist
@@ -64,3 +75,4 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 - [ ] 多步写入的失败顺序是否安全、可回滚？
 - [ ] 前端消费的字段名是否与后端 DTO/record 完全一致（不靠类型系统兜不住的假设）？
 - [ ] 涉及不可逆操作的改动，是否记录了回滚步骤？
+- [ ] 新增/改动的 `@Component` 若有多构造器，是否显式 `@Autowired` 标注生产构造器（并加装配守卫测试）？

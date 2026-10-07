@@ -5,4 +5,5 @@
 {"file": ".trellis/spec/backend/error-handling.md", "reason": "未配置/失败/超时的降级表达与错误映射矩阵"}
 {"file": ".trellis/spec/backend/container-deployment.md", "reason": "Crawl4AI 为容器化外部服务，端口/健康检查/环境注入约定参考"}
 {"file": "docs/spec/brief-generation.md", "reason": "§8 CRAWL4AI_BASE_URL 现为预留，本任务实装后须字段级同步"}
-{"file": "doc/汽车资讯信源调研报告-2026-10-05.md", "reason": "乘联会 WAF 实测与资源红线（并发≤2/同站≤2每天）是本任务硬约束来源"}
+{"file": "docs/汽车资讯信源调研报告-2026-10-05.md", "reason": "乘联会 WAF 实测与资源红线（并发≤2/同站≤2每天）是本任务硬约束来源"}
+{"file": ".trellis/tasks/10-05-crawl4ai-transport/design.md", "reason": "本任务实测契约（Crawl4AI v0.9.3 /md 端点与 f 枚举）、并发 Semaphore≤2、按通道频控、降级分类的实现依据"}

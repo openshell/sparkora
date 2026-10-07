@@ -1,7 +1,7 @@
 # prd.md — Crawl4AI 抓取通道
 
 > 父任务：`10-05-self-hosted-sources`（需求集与设计论证持有者）
-> 调研依据：`doc/汽车资讯信源调研报告-2026-10-05.md`
+> 调研依据：`docs/汽车资讯信源调研报告-2026-10-05.md`
 > **本任务无前置依赖，可独立开工。**
 
 ## Goal
@@ -43,5 +43,5 @@
 
 ## Notes
 
-- Crawl4AI 抓取接口契约以本机实际部署版本为准，首次实现需 `curl` 探活确认请求体/响应字段。
+- **抓取接口契约已探活确认（2026-10-07，本机 Crawl4AI v0.9.3）**：`GET /health` 200；抓取主用 `POST /md`（入参 `{url, f}`，`f∈{raw,fit,bm25,llm}`），另备 `POST /html`、`POST /crawl`、`POST /crawl/job`；鉴权 `Authorization: Bearer <CRAWL4AI_API_KEY>`。**决定性验证**：乘联会 `curl` 直连 403 → Crawl4AI `/md {f:"fit"}` 200 / 7.0s / 正文含「行业新闻」。详见 `design.md` §0。
 - 资源红线来自调研报告「本机 swap 偏紧、无头浏览器 300-400MB」；不得放宽默认值。
