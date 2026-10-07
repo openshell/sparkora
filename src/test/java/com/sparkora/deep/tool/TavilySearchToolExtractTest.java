@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -130,5 +131,18 @@ class TavilySearchToolExtractTest {
         assertTrue(noKey.extract(List.of("https://x.com/a"), "q").isEmpty());
         assertTrue(tool(2000, base("/ok")).extract(List.of(), "q").isEmpty());
         assertEquals(0, calls.get(), "未配置/空 urls 不得发起 HTTP 请求");
+    }
+
+    /**
+     * 10-05-tavily-endpoint-priority T-R3/AC-T6:extract 使用独立 RestClient(默认 read 15000ms),
+     * 不被官方 search 的 30s 连带改变。
+     */
+    @Test
+    void extract超时独立_使用专属RestClient() {
+        TavilySearchTool t = tool(2000, base("/ok"));
+        assertNotSame(t.extractClient(), t.officialSearchClient(), "extract 必须独立于 official search");
+        assertNotSame(t.extractClient(), t.relaySearchClient(), "extract 必须独立于 relay search");
+        DeepProperties p = new DeepProperties();
+        assertEquals(15000L, p.effectiveTavilyExtractReadTimeoutMs(), "extract 默认 15s(零回归)");
     }
 }

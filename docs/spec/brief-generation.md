@@ -96,6 +96,7 @@ graph TD
   - `SEARXNG`/`TAVILY`/`SERPER`（10-04-serper-provider A 增量）先判 `SEARCH_WEB_ENABLED && webSearchEnabled`（false → `DISABLED`），再按 `configured()` → `UNCONFIGURED`、`lastCallOk()` → `FAILED`/`OK`。`SERPER` 未配置时 `UNCONFIGURED`（与 Tavily 同理），既有三键值域不变。
   - 优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。前端未拿到该字段时渲染 `--`（未知态，不谎报可用）。
   - `webStrategy`（09-25 增量；10-04 扩为三值）：有效策略标签 `TAVILY_FIRST`/`SEARXNG_FIRST`/`PRIMARY_FANOUT`（顺序含 `SERPER` 时回落此标签）；`webProviderOrder` 为规范化 provider 串。**配置就绪不等于已验证可用**——以 agents[].search 实际调用为准。
+- `tavilyEndpoints`（10-05-tavily-endpoint-priority T-R6 增量）：`{relay: OK|UNCONFIGURED|DISABLED, official: ...}`，展示 Tavily 双端点配置就绪态（`DISABLED` 同受 WEB 门控）。**独立键**，不改 `toolHealth` 既有 String 值域——旧前端不读不报错。
 - 权限冒烟：viewer 访问写接口 403（`hasAnyRole('ADMIN','EDITOR')`）。
 
 ### 3.4 `clarify_session` JSON（C1）
@@ -213,8 +214,15 @@ graph TD
 |---|---|---|---|
 | KB | `KnowledgeSearchTool` | 委托 `CarRagService.retrieveForGeneration` 统一检索（[knowledge/kb.md](knowledge/kb.md)，S8） | 异常 warn，不抛出 |
 | SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + `lastCallOk()=false`（仅供健康展示）；`available()` 仅判地址就绪，失败不闩锁 |
-| TAVILY | `TavilySearchTool` | POST `api.tavily.com/search` `{api_key,query,max_results,search_depth}`；09-27 增 `POST /extract` 正文补抓 | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；`extract` 失败不污染 `lastCallOk()` |
+| TAVILY | `TavilySearchTool` | **双端点**：POST `{base}/search` `{api_key,query,max_results,search_depth}`——relay(中转)优先、official(官方)兜底；09-27 增 `POST /extract` 正文补抓（**仅官方端点**） | 任一端点配置即 `configured()`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；`extract` 失败不污染 `lastCallOk()` |
 | SERPER | `SerperSearchTool`（10-04 A 新增） | POST `{SERPER_API_BASE_URL}/search` `{q,num,gl,hl}`（web）或 `/news`（news），**Header `X-API-KEY` 认证**（非 body `api_key`） | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；空响应/非法 JSON/异常 → 空列表不抛 |
+
+- **Tavily 双端点契约（10-05-tavily-endpoint-priority）**：
+  - **端点模型**：工具内部持有 `relay`（中转，`DEEP_TAVILY_API_BASE_URL` + `DEEP_TAVILY_API_KEY_HIKARI`，默认空=未配置）与 `official`（官方，`effectiveTavilyApiBase()` + `effectiveTavilyKey()`，默认 `https://api.tavily.com`）。**两者对外 `name()` 均为 `TAVILY`**——不新增 `WebProvider`，同一 URL 被两端点命中也只算 1 源（`FactSheetService` 按 `url+modelName` 去重），不抬升 `MULTI`。
+  - **failover**：`search` 按 `relay → official` 顺序，每端点每轮最多一次调用（不重试）；中转返回**有效命中**（端点级质量门通过）即采用、**不调用官方**；失败/超时/空/低质则记原因后切官方；两都不可用 → 返回空（交 `WebSearchRouter` 继续下一 provider）。
+  - **独立超时（关键）**：每端点独立 `RestClient`——relay read 默认 8s（实测中转失败恒定约 16s，短超时快速失败后切官方）、official read 默认 30s、connect 统一 5s。**`extract` 另持独立 `RestClient`（read 默认 15s，`DEEP_TAVILY_EXTRACT_READ_TIMEOUT_MS`），只走官方端点，不被官方 search 的 30s 连带改变**。
+  - **质量门（T-R5）**：端点级——至少 1 条命中满足「URL 可规范化为主流 scheme + 非噪声域（`DEEP_TAVILY_DENY_DOMAINS` 默认 `weixin.sogou.com`）+ title 与 content 不同时为空」，否则视为失败切下一端点；结果级——`content` 长度 ≥ `DEEP_TAVILY_MIN_CONTENT_CHARS`（默认 0=off，零回归）。
+  - **可观测**：`Attempt.usedEndpoint`（`relay`/`official`，可空增量）；日志 `provider=TAVILY endpoint=... reason=... latencyMs=...`（不落 key/URL/`e.getMessage()`）；`SearchTool.lastUsedEndpoint()` 供路由读取实际端点。
 
 - **Serper 字段级契约（10-04-serper-provider A）**：
   - **认证隔离**：Serper 用 **Header `X-API-KEY`**，Tavily 用 **body `api_key`**——两者不通用（把 Tavily 写法复制到 Serper 会 401），已写入 `SearchTool` 类注释。
@@ -248,13 +256,13 @@ graph TD
 - **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB → **KB 胜出**；WEB 条目降级为该条目 `alternatives`（URL 列表）去重后留证据，并写 warnings。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
 - **近似 claim 归并（09-25-fact-claim-merge）**：`FactSheetService.merge` 用 `ClaimSimilarity` 贪心聚类；数值签名硬前提（`numberValues` 集合必须完全相等）；原文 trim 相同直接同一事实；相似度阈值 `TH_NUMERIC=0.45` / `TH_TEXT=0.70`。纯本地、确定、可单测、不调 LLM。
 - `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 `modelName` 字段。
-- 密钥链：`DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.deep.tavily-api-key`；Serper 同构 `DEEP_SERPER_API_KEY` → `SERPER_API_KEY` → `sparkora.deep.serper-api-key`（`DeepProperties` 绑定前缀 `sparkora.deep`）。
+- 密钥链：官方 `DEEP_TAVILY_API_KEY`(System property/env) → `TAVILY_API_KEY` → `sparkora.deep.tavily-api-key`；中转独立链 `DEEP_TAVILY_API_KEY_HIKARI` → 字段 `sparkora.deep.tavily-relay-api-key`；Serper 同构 `DEEP_SERPER_API_KEY` → `SERPER_API_KEY` → `sparkora.deep.serper-api-key`（`DeepProperties` 绑定前缀 `sparkora.deep`）。URL 类配置以 `_BASE_URL` 结尾（避免 secret-guard 误判凭据）。
 
 ---
 
 ## 5. 研究笔记 / 事实手册结构
 
-- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, providers, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok,witnessTotal}]}`——**不含任何密钥**；`provider`=首个产出命中的 provider，`providers`（10-04 B 增量）=本轮采信的全部 provider，`attempts[].witnessTotal`=该 provider 命中中已被其他 provider 见证的条数；`webCount` 语义为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`。
+- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, providers, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok,witnessTotal,usedEndpoint?}]}`——**不含任何密钥**；`provider`=首个产出命中的 provider，`providers`（10-04 B 增量）=本轮采信的全部 provider，`attempts[].witnessTotal`=该 provider 命中中已被其他 provider 见证的条数，`attempts[].usedEndpoint`（10-05 增量，可空）=多端点 provider 实际端点（`relay`/`official`）；`webCount` 语义为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`。
 - **降级保真 snippet（R1，09-26）**：`SubAgentRunner.rawFallback` 每条降级 fact 在 `claim` 之外增 `snippet`（≤200 字，转义完整）；`FactSheetService` 透传簇内首个非空 snippet 到 entry（增量可选字段，无则不出现）；写作/简报 prompt 可见该证据。
 - **逐 agent 实时回写语义（2026-09-26 修复）**：`run()` 落 `PENDING` 占位后，`doRunAsync` 在 submit 任何子代理之前一次性把全部 N 个 agent 覆写为 `RUNNING`；每个 agent 由一个独立收集器任务驱动，完成/超时/异常后**立即回写**（天然乱序）。超时/异常仍 `cancel(true)` + `FAILED` + gap。全部收集器 join 后才执行 `FactSheetService.merge` 与自动蓝图。
   - **LLM 汇总截断/失败重试（R4，09-26）**：`SubAgentRunner.chat` 首次 `chatJson(...,2048)`；任何失败（截断/空/非法 JSON）提额 `4096` 重试一次，仅重试仍失败才抛出 → `FALLBACK`。净调用上限仍 2 次/agent。
@@ -316,7 +324,13 @@ graph TD
 |---|---|---|
 | `SEARCH_WEB_ENABLED` | `true` | WEB 搜索部署级总开关（与运行时 `webSearchEnabled` 相与） |
 | `DEEP_WEB_PROVIDER_ORDER` | `TAVILY,SEARXNG` | 部署级默认 provider 顺序（运行时 ADMIN 设置优先）：`TAVILY,SEARXNG`=TAVILY_FIRST / `SEARXNG,TAVILY`=SEARXNG_FIRST |
-| `TAVILY_API_KEY` / `DEEP_TAVILY_API_KEY` | 空 | Tavily 密钥（`.env`；`DEEP_` 前缀可覆盖） |
+| `TAVILY_API_KEY` / `DEEP_TAVILY_API_KEY` | 空 | Tavily **官方**密钥（`.env`；`DEEP_` 前缀可覆盖） |
+| `TAVILY_API_BASE_URL` | `https://api.tavily.com` | **10-05**：Tavily **官方**端点（裸名覆盖；`DEEP_TAVILY_API_BASE_URL` 已改指中转端点） |
+| `DEEP_TAVILY_API_BASE_URL` / `DEEP_TAVILY_API_KEY_HIKARI` | 空 | **10-05**：Tavily **中转**端点 base/key（URL 类键以 `_BASE_URL` 结尾）。未配置→直接走官方（零回归）；配置后中转优先、官方兜底 |
+| `DEEP_TAVILY_RELAY_READ_TIMEOUT_MS` / `DEEP_TAVILY_OFFICIAL_READ_TIMEOUT_MS` | `8000` / `30000` | **10-05**：中转/官方端点独立 read 超时（ms；connect 统一 5s）。中转短超时快速失败后切官方 |
+| `DEEP_TAVILY_EXTRACT_READ_TIMEOUT_MS` | `15000` | **10-05**：`/extract` 独立 read 超时（ms），不被官方 search 的 30s 连带改变 |
+| `DEEP_TAVILY_DENY_DOMAINS` | `weixin.sogou.com` | **10-05**：端点级质量门噪声域黑名单（逗号分隔）；命中视为无效切下一端点 |
+| `DEEP_TAVILY_MIN_CONTENT_CHARS` | `0` | **10-05**：结果级最低 content 长度；`0`=off（零回归），`>0` 时低于阈值的命中丢弃 |
 | `SEARXNG_BASE_URL` | `http://localhost:5676` | SEARXNG 实例（本机/内网部署） |
 | `CRAWL4AI_BASE_URL` | 空 | **已实装**抓取通道（10-05-crawl4ai-transport）：`FetchTransport` 抽象（`HttpFetchTransport` 普通 GET / `Crawl4aiFetchTransport` 无头浏览器）。Crawl4AI 侧 `POST /md {url,f:"fit"}` 取正文、`POST /html` 取 HTML，Bearer `CRAWL4AI_API_KEY` 鉴权；资源红线并发 ≤2（`CRAWL4AI_MAX_CONCURRENCY`）、同 host ≤2/天（`CRAWL4AI_PER_HOST_DAILY_LIMIT`），到限/并发满快速返回 `limited` 不排队；HTTP 通道无日上限、仅同 host 最小间隔（`SOURCE_HTTP_MIN_INTERVAL_MS`）。未配置时 `configured()=false` 降级跳过。注：外部搜索正文补抓仍走 Tavily `/extract`，本通道暂未接入 `extract`（预留接口） |
 | `DEEP_WEB_CONTENT_MAX_CHARS` | `2000` | 背景题 WEB 正文补抓单条上限（字符）：Tavily `/extract` 取正文后工具层截断的唯一上限；参数题不补抓 |
@@ -328,7 +342,6 @@ graph TD
 | `DEEP_WEB_PRIMARY_PROVIDERS` | `TAVILY,SERPER,SEARXNG` | **10-04 B**：PRIMARY_FANOUT 的 primary 组（逗号分隔；order ∩ 此集）；付费源互补交叉为主、SEARXNG 亦参与召回；为空/无交集 → 整体回落 `first_hit` |
 | `DEEP_WEB_DENY_DOMAINS` | `bilibili.com,weixin.sogou.com` | **10-04 B**：SearXNG 质量门域名黑名单（仅作用 SearXNG） |
 | `DEEP_WEB_ALLOW_DOMAINS` | 空 | **10-04 B**：SearXNG 质量门白名单（命中者跳过黑名单/URL 类型过滤） |
-| `DEEP_TAVILY_API_BASE_URL` | `https://api.tavily.com` | Tavily 端点（A-R6 单端点可配置；末尾斜杠归一） |
 | `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap）；目前仅由 `application.yml` 占位符 `${DEEP_RESEARCH_TIMEOUT_MS:120000}` 提供，未列入 `.env.example` |
 | `DEEP_MAX_AGENTS` | `6` | 子代理数上限（虚拟线程 per-task executor；总检索预算约 8 → `webQuota=max(1,8/n)`）。**窗口选择**：`DeepResearchService.selectResearchWindow` 预算内**优先保背景/来龙去脉型问题**（`ResearchPlannerService.isBackgroundQuestion`），其余按原序补足，最终索引升序归位（`run` 落占位与 `doRunAsync` 执行共用同一选择器，question↔toolHints 索引对齐） |
 

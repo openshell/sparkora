@@ -40,13 +40,21 @@ public record WebSearchOutcome(List<WebHit> hits, WebProvider usedProvider, List
      * @param fallbackReason 未采信原因:UNCONFIGURED/EMPTY/INVALID_URL/ERROR;成功为 null
      * @param ok            是否采信本次结果(FIRST_HIT:首个有效命中即 true 并停止后续)
      * @param witnessTotal  10-04 B-R5 增量:该 provider 命中中「已有其他 provider 见证」的条数(交叉验证观测)
+     * @param usedEndpoint  10-05-tavily-endpoint-priority 增量:多端点 provider(TAVILY relay/official)
+     *                      实际使用的端点 id;单端点 provider 或未知为 {@code null}(仅观测,不参与判定)
      */
     public record Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason,
-                          boolean ok, int witnessTotal) {
+                          boolean ok, int witnessTotal, String usedEndpoint) {
 
-        /** 兼容构造器(5 参):witnessTotal=0。 */
+        /** 兼容构造器(6 参):usedEndpoint=null(旧调用方逐位不变)。 */
+        public Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason,
+                       boolean ok, int witnessTotal) {
+            this(provider, resultCount, latencyMs, fallbackReason, ok, witnessTotal, null);
+        }
+
+        /** 兼容构造器(5 参):witnessTotal=0、usedEndpoint=null。 */
         public Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason, boolean ok) {
-            this(provider, resultCount, latencyMs, fallbackReason, ok, 0);
+            this(provider, resultCount, latencyMs, fallbackReason, ok, 0, null);
         }
     }
 

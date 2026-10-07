@@ -26,6 +26,7 @@ class DeepPropertiesEffectiveTest {
         System.clearProperty("SERPER_API_KEY");
         System.clearProperty("DEEP_TAVILY_API_BASE_URL");
         System.clearProperty("TAVILY_API_BASE_URL");
+        System.clearProperty("DEEP_TAVILY_API_KEY_HIKARI");
     }
 
     @Test
@@ -36,6 +37,65 @@ class DeepPropertiesEffectiveTest {
         assertEquals("cn", p.effectiveSerperGl());
         assertEquals("zh-cn", p.effectiveSerperHl());
         assertTrue(p.isWebVerticalNewsEnabled(), "news 垂直默认开(仅时效题走;关闭时强制 web)");
+    }
+
+    // ===== 10-05-tavily-endpoint-priority:双端点 / 独立超时 / 质量门默认值 =====
+
+    @Test
+    void tavily双端点默认_中转未配置_官方默认() {
+        DeepProperties p = new DeepProperties();
+        assertEquals("", p.effectiveTavilyRelayBase(), "中转默认未配置(空串,不回退官方)");
+        assertEquals("", p.effectiveTavilyRelayKey(), "中转密钥默认空");
+        assertEquals("https://api.tavily.com", p.effectiveTavilyApiBase(), "官方默认端点不变");
+    }
+
+    @Test
+    void tavily中转_DEEP_TAVILY_API_BASE_URL映射中转_末尾斜杠归一() {
+        System.setProperty("DEEP_TAVILY_API_BASE_URL", "https://relay.example/tavily/");
+        DeepProperties p = new DeepProperties();
+        assertEquals("https://relay.example/tavily", p.effectiveTavilyRelayBase(), "DEEP_TAVILY_API_BASE_URL 现指中转");
+        // 关键:官方端点不被中转键污染,仍为默认(否则配置中转会把官方地址误置为中转)
+        assertEquals("https://api.tavily.com", p.effectiveTavilyApiBase());
+    }
+
+    @Test
+    void tavily官方端点_裸名TAVILY_API_BASE_URL覆盖() {
+        System.setProperty("TAVILY_API_BASE_URL", "https://official.example/");
+        assertEquals("https://official.example", new DeepProperties().effectiveTavilyApiBase());
+    }
+
+    @Test
+    void tavily中转密钥_property与字段回退() {
+        DeepProperties p = new DeepProperties();
+        p.setTavilyRelayApiKey("field-relay-key");
+        assertEquals("field-relay-key", p.effectiveTavilyRelayKey(), "无 property 时用字段");
+        System.setProperty("DEEP_TAVILY_API_KEY_HIKARI", "prop-relay-key");
+        assertEquals("prop-relay-key", new DeepProperties().effectiveTavilyRelayKey(), "property 优先");
+    }
+
+    @Test
+    void tavily独立超时_默认值与零值兜底() {
+        DeepProperties p = new DeepProperties();
+        assertEquals(8000L, p.effectiveTavilyRelayReadTimeoutMs(), "中转默认短超时");
+        assertEquals(30000L, p.effectiveTavilyOfficialReadTimeoutMs(), "官方默认长超时");
+        assertEquals(15000L, p.effectiveTavilyExtractReadTimeoutMs(), "extract 独立 15s");
+        p.setTavilyRelayReadTimeoutMs(0);
+        p.setTavilyOfficialReadTimeoutMs(-1);
+        p.setTavilyExtractReadTimeoutMs(0);
+        assertEquals(8000L, p.effectiveTavilyRelayReadTimeoutMs(), "≤0 兜底默认");
+        assertEquals(30000L, p.effectiveTavilyOfficialReadTimeoutMs());
+        assertEquals(15000L, p.effectiveTavilyExtractReadTimeoutMs());
+    }
+
+    @Test
+    void tavily质量门默认_噪声域与长度阈值() {
+        DeepProperties p = new DeepProperties();
+        assertEquals(java.util.List.of("weixin.sogou.com"), p.effectiveTavilyDenyDomains());
+        assertEquals(0, p.effectiveTavilyMinContentChars(), "结果级长度门槛默认 off(零回归)");
+        p.setTavilyMinContentChars(-5);
+        assertEquals(0, p.effectiveTavilyMinContentChars());
+        p.setTavilyMinContentChars(120);
+        assertEquals(120, p.effectiveTavilyMinContentChars());
     }
 
     @Test
@@ -69,7 +129,9 @@ class DeepPropertiesEffectiveTest {
     @Test
     void tavily端点_property覆盖与末尾斜杠归一() {
         System.setProperty("DEEP_TAVILY_API_BASE_URL", "https://relay.example/tavily/");
-        assertEquals("https://relay.example/tavily", new DeepProperties().effectiveTavilyApiBase());
+        // 10-05 起 DEEP_TAVILY_API_BASE_URL 指中转端点(官方端点改由裸名 TAVILY_API_BASE_URL)
+        assertEquals("https://relay.example/tavily", new DeepProperties().effectiveTavilyRelayBase());
+        assertEquals("https://api.tavily.com", new DeepProperties().effectiveTavilyApiBase());
     }
 
     @Test

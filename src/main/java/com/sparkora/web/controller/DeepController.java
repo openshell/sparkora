@@ -292,6 +292,14 @@ public class DeepController {
             // 10-04 A-A7:Serper 增量键(未配置 → UNCONFIGURED,与 Tavily 现状一致;不破坏既有三键)
             toolHealth.put("SERPER", webHealth(webAllowed, serperTool.configured(), serperTool.lastCallOk()));
             out.put("toolHealth", toolHealth);
+            // 10-05-tavily-endpoint-priority T-R6(增量):Tavily 双端点可用性(relay/official)。
+            // 独立键,不改 toolHealth 既有 String 值域(旧前端不读不报错)。
+            Map<String, String> tavilyEndpoints = new LinkedHashMap<>();
+            tavilyEndpoints.put("relay", webAllowed
+                    ? (tavilyTool.relayConfigured() ? "OK" : "UNCONFIGURED") : "DISABLED");
+            tavilyEndpoints.put("official", webAllowed
+                    ? (tavilyTool.officialConfigured() ? "OK" : "UNCONFIGURED") : "DISABLED");
+            out.put("tavilyEndpoints", tavilyEndpoints);
             // 外部搜索策略(09-25):增量暴露有效策略(运行时设置优先 > 部署级默认),不改既有三键值域
             var snap = researchService.resolveSnapshot(b.getId());
             out.put("webStrategy", snap.strategyLabel());

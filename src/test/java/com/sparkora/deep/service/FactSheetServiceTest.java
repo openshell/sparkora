@@ -272,6 +272,28 @@ class FactSheetServiceTest {
                 "归并后 kind 取簇首条(代表 fact)的问题类型");
     }
 
+    // ==================== 10-05-tavily-endpoint-priority T-R4:双端点同 URL 只算 1 源 ====================
+
+    /**
+     * AC-T4:中转与官方命中同一 URL(provider 均为 TAVILY)→ distinctSources 按 url+modelName 去重只计 1 源,
+     * MULTI 不因双端点触发。这是「不因多端点抬升独立来源计数」的落点。
+     */
+    @Test
+    void AC_T4_双端点同URL_只计1源不触发MULTI() throws Exception {
+        // 同一 URL 被 relay 与 official 两端点命中:provider 名固定 TAVILY,url 相同
+        String notes = twoNotes(
+                "{\"facts\":[{\"claim\":\"海狮08EV起售价239900\",\"source\":{\"type\":\"WEB\",\"url\":\"https://x/1\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}",
+                "{\"facts\":[{\"claim\":\"海狮08EV起售价239,900元\",\"source\":{\"type\":\"WEB\",\"url\":\"https://x/1\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}");
+        JsonNode sheet = sheet(svc.merge(notes));
+        assertEquals(1, sheet.path("entries").size(), "近义 claim 合并");
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals(1, e.path("crossCount").asInt(), "同 URL 双端点只算 1 源");
+        assertEquals(1, e.path("sourceCount").asInt());
+        assertEquals(0.4, e.path("confidence").asDouble(), 1e-9, "不因双端点升为交叉置信");
+        assertEquals("WEB", e.path("sources").path("type").asText());
+        assertFalse(sheet.toString().contains("MULTI"), "AC-T4:双端点不得触发 MULTI");
+    }
+
     private void assertNotNullEntry(JsonNode sheet, String fragment) {
         for (JsonNode e : sheet.path("entries")) {
             if (e.path("claim").asText("").contains(fragment)) return;

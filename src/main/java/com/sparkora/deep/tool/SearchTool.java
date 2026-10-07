@@ -31,6 +31,13 @@ public interface SearchTool {
     default boolean lastCallOk() { return true; }
 
     /**
+     * 最近一次 {@link #search(String, int)} 实际使用的端点 id(10-05-tavily-endpoint-priority T-R6):
+     * 多端点 provider(如 Tavily 的 {@code relay}/{@code official})用于可观测;单端点工具返回 {@code null}。
+     * 仅供观测,不参与任何采信/健康判定。
+     */
+    default String lastUsedEndpoint() { return null; }
+
+    /**
      * 搜索。返回命中条目(不超过 maxResults);异常由实现内部捕获并返回空列表(不抛出,避免子代理整体失败)。
      */
     List<SearchHit> search(String query, int maxResults);

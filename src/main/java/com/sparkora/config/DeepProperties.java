@@ -33,11 +33,31 @@ public class DeepProperties {
      */
     private int webContentMaxChars = 2000;
     /**
-     * Tavily API 端点(10-04-serper-provider A-R6):默认官方 {@code https://api.tavily.com}。
-     * 可配置以便切换中转端点，无需改代码重编。生效值经 {@link #effectiveTavilyApiBase()}
-     * property→env→字段兜底。末尾斜杠在 effective 方法内归一(避免拼出 {@code //search})。
+     * Tavily <b>官方</b> API 端点(10-04-serper-provider A-R6;10-05-tavily-endpoint-priority 收窄为官方)：
+     * 默认 {@code https://api.tavily.com}。生效值经 {@link #effectiveTavilyApiBase()} 的
+     * property(裸名 TAVILY_API_BASE_URL)→字段兜底，末尾斜杠归一。
+     * <b>注意</b>：中转端点见 {@link #tavilyRelayApiBase}（{@code DEEP_TAVILY_API_BASE_URL}），二者独立。
      */
     private String tavilyApiBase = "https://api.tavily.com";
+    /**
+     * Tavily <b>中转</b>端点(10-05-tavily-endpoint-priority T-R1)：默认空=未配置。
+     * 配置后 Tavily 工具按 relay→official 顺序 failover；两者对外 {@code name()} 均为 {@code TAVILY}。
+     * 生效值经 {@link #effectiveTavilyRelayBase()} property(DEEP_TAVILY_API_BASE_URL)→字段兜底；
+     * 空值保持为空（<b>不回退官方</b>，避免未配置时把官方误当转端点）。
+     */
+    private String tavilyRelayApiBase = "";
+    /** Tavily 中转端点密钥(.env: DEEP_TAVILY_API_KEY_HIKARI)；空则中转端不可用。 */
+    private String tavilyRelayApiKey = "";
+    /** 中转端点读超时(ms，默认 8000)：实测中转失败恒定约 16s，短超时快速失败后切官方(T-R3)。 */
+    private long tavilyRelayReadTimeoutMs = 8000;
+    /** 官方端点读超时(ms，默认 30000)：官方稳定但可能慢，<b>独立于</b>中转超时。 */
+    private long tavilyOfficialReadTimeoutMs = 30000;
+    /** extract 读超时(ms，默认 15000)：独立 RestClient，不被官方 search 的 30s 连带改变(T-R3)。 */
+    private long tavilyExtractReadTimeoutMs = 15000;
+    /** Tavily 端点级质量门噪声域黑名单(T-R5)：逗号分隔，默认剔除已知跳转/聚合域。 */
+    private String tavilyDenyDomains = "weixin.sogou.com";
+    /** Tavily 结果级最低 content 长度(T-R5)：默认 0=off(零回归)；&gt;0 时低于阈值的命中丢弃。 */
+    private int tavilyMinContentChars = 0;
     /** Serper API 密钥(.env: DEEP_SERPER_API_KEY 或 SERPER_API_KEY);空则 Serper 不可用。 */
     private String serperApiKey = "";
     /**
@@ -133,18 +153,65 @@ public class DeepProperties {
         return tavilyApiKey;
     }
 
-    /** 生效 Tavily 端点:显式 DEEP_TAVILY_API_BASE_URL 优先,否则字段默认(官方端点)。 */
+    /**
+     * 生效 Tavily <b>官方</b>端点:显式裸名 TAVILY_API_BASE_URL 优先,否则字段默认(官方端点)。
+     *
+     * <p>10-05-tavily-endpoint-priority:<b>不再</b>读 DEEP_TAVILY_API_BASE_URL——该键已改指中转端点
+     * ({@link #effectiveTavilyRelayBase()});若此处仍读它,用户配置中转时会把官方地址误置为中转。
+     */
     public String effectiveTavilyApiBase() {
-        String v = firstNonBlank(System.getProperty("DEEP_TAVILY_API_BASE_URL"),
-                System.getenv("DEEP_TAVILY_API_BASE_URL"),
-                System.getProperty("TAVILY_API_BASE_URL"),
+        String v = firstNonBlank(System.getProperty("TAVILY_API_BASE_URL"),
                 System.getenv("TAVILY_API_BASE_URL"));
         if (v == null) v = tavilyApiBase;
         String base = v == null ? "" : v.trim();
         if (base.isEmpty()) base = "https://api.tavily.com";
-        // 末尾斜杠归一:避免拼出 //search(中转端点可能带/不带尾斜杠)
+        // 末尾斜杠归一:避免拼出 //search
         while (base.endsWith("/") && base.length() > 1) base = base.substring(0, base.length() - 1);
         return base;
+    }
+
+    /**
+     * 生效 Tavily <b>中转</b>端点(10-05 T-R1):property(DEEP_TAVILY_API_BASE_URL)→字段兜底。
+     * 未配置时返回空串(<b>不回退官方</b>,否则无法区分「未配置中转」与「中转即官方」)。
+     */
+    public String effectiveTavilyRelayBase() {
+        String v = firstNonBlank(System.getProperty("DEEP_TAVILY_API_BASE_URL"),
+                System.getenv("DEEP_TAVILY_API_BASE_URL"), tavilyRelayApiBase);
+        String base = v == null ? "" : v.trim();
+        while (base.endsWith("/") && base.length() > 1) base = base.substring(0, base.length() - 1);
+        return base;
+    }
+
+    /** 生效 Tavily 中转密钥:property(DEEP_TAVILY_API_KEY_HIKARI)→字段兜底;未配置返回空串。 */
+    public String effectiveTavilyRelayKey() {
+        String v = firstNonBlank(System.getProperty("DEEP_TAVILY_API_KEY_HIKARI"),
+                System.getenv("DEEP_TAVILY_API_KEY_HIKARI"), tavilyRelayApiKey);
+        return v == null ? "" : v;
+    }
+
+    /** 生效中转读超时(ms):≤0 视为默认 8000(快速失败后切官方,T-R3)。 */
+    public long effectiveTavilyRelayReadTimeoutMs() {
+        return tavilyRelayReadTimeoutMs > 0 ? tavilyRelayReadTimeoutMs : 8000;
+    }
+
+    /** 生效官方读超时(ms):≤0 视为默认 30000。 */
+    public long effectiveTavilyOfficialReadTimeoutMs() {
+        return tavilyOfficialReadTimeoutMs > 0 ? tavilyOfficialReadTimeoutMs : 30000;
+    }
+
+    /** 生效 extract 读超时(ms):≤0 视为默认 15000(独立于官方 search 的 30s,T-R3)。 */
+    public long effectiveTavilyExtractReadTimeoutMs() {
+        return tavilyExtractReadTimeoutMs > 0 ? tavilyExtractReadTimeoutMs : 15000;
+    }
+
+    /** 生效 Tavily 端点级质量门噪声域黑名单(逗号分隔,trim + 小写)。 */
+    public java.util.List<String> effectiveTavilyDenyDomains() {
+        return parseDomains(tavilyDenyDomains);
+    }
+
+    /** 生效结果级最低 content 长度:≤0 视为 off(零回归)。 */
+    public int effectiveTavilyMinContentChars() {
+        return tavilyMinContentChars > 0 ? tavilyMinContentChars : 0;
     }
 
     /** 生效 Serper 密钥:显式 DEEP_SERPER_API_KEY 优先,否则读环境变量 SERPER_API_KEY(.env)。 */

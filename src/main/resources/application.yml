@@ -133,9 +133,17 @@ sparkora:
     illustration-suggest-enabled: ${AI_ILLUSTRATION_SUGGEST_ENABLED:true} # 09-15 子C:配图建议生成总开关(R6 可关闭;关闭的只是「建议生成」,与「禁止自动写入」无关)
   deep:                                  # S9 深度生成模式
     search-web-enabled: ${SEARCH_WEB_ENABLED:true}   # 研究子代理外部搜索总开关
-    tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)
-    # 10-04-serper-provider A-R6:Tavily 端点可配置(默认官方;中转端点改此项,无需改代码重编)
-    tavily-api-base: ${DEEP_TAVILY_API_BASE_URL:https://api.tavily.com}
+    tavily-api-key: ${TAVILY_API_KEY:}  # Tavily 官方密钥(.env 用户自备;DEEP_TAVILY_API_KEY 可覆盖)
+    # 10-05-tavily-endpoint-priority:Tavily 官方端点(裸名可覆盖;中转端点改用下方 tavily-relay-* 项)
+    tavily-api-base: ${TAVILY_API_BASE_URL:https://api.tavily.com}
+    # 双端点:中转优先、官方兜底(relay 未配置则直接走官方,零回归);两者 name() 均为 TAVILY
+    tavily-relay-api-base: ${DEEP_TAVILY_API_BASE_URL:}          # 空=未配置中转
+    tavily-relay-api-key: ${DEEP_TAVILY_API_KEY_HIKARI:}
+    tavily-relay-read-timeout-ms: ${DEEP_TAVILY_RELAY_READ_TIMEOUT_MS:8000}       # 短超时快速失败切官方
+    tavily-official-read-timeout-ms: ${DEEP_TAVILY_OFFICIAL_READ_TIMEOUT_MS:30000} # 官方稳定但可能慢
+    tavily-extract-read-timeout-ms: ${DEEP_TAVILY_EXTRACT_READ_TIMEOUT_MS:15000}  # extract 独立超时,不被官方 30s 牵连
+    tavily-deny-domains: ${DEEP_TAVILY_DENY_DOMAINS:weixin.sogou.com}             # 端点级质量门噪声域
+    tavily-min-content-chars: ${DEEP_TAVILY_MIN_CONTENT_CHARS:0}                  # 结果级长度门槛(0=off,零回归)
     # 10-04-serper-provider A:Serper provider(Header X-API-KEY 认证;DEEP_SERPER_API_KEY 优先于 SERPER_API_KEY)
     serper-api-key: ${SERPER_API_KEY:}
     # Serper 端点可配置(默认官方;中转为 https://search.604020.xyz/serper——路径前缀必须保留)

@@ -120,21 +120,21 @@ public class WebSearchRouter {
                 // R12:异常文本可能含密钥,仅记类型化原因,不回传原始异常文本
                 log.warn("WEB 搜索 provider 异常降级 briefId={} provider={} latencyMs={}",
                         snapshot.briefId(), p, cost);
-                attempts.add(new WebSearchOutcome.Attempt(p, 0, cost, REASON_ERROR, false));
+                attempts.add(new WebSearchOutcome.Attempt(p, 0, cost, REASON_ERROR, false, 0, tool.lastUsedEndpoint()));
                 continue;
             }
             long cost = System.currentTimeMillis() - began;
             int rawCount = raw == null ? 0 : raw.size();
             List<WebHit> hits = WebResultNormalizer.normalize(raw, maxResults);
             if (!hits.isEmpty()) {
-                attempts.add(new WebSearchOutcome.Attempt(p, hits.size(), cost, null, true));
+                attempts.add(new WebSearchOutcome.Attempt(p, hits.size(), cost, null, true, 0, tool.lastUsedEndpoint()));
                 log.info("WEB 搜索命中 briefId={} strategy={} provider={} resultCount={} latencyMs={} query={}",
                         snapshot.briefId(), snapshot.strategyLabel(), p, hits.size(), cost, truncate(query));
                 return new WebSearchOutcome(hits, p, attempts);
             }
             // 空结果 与 「有结果但全部无有效 URL」 区分记录,便于定位上游异常
             String reason = rawCount == 0 ? REASON_EMPTY : REASON_INVALID_URL;
-            attempts.add(new WebSearchOutcome.Attempt(p, 0, cost, reason, false));
+            attempts.add(new WebSearchOutcome.Attempt(p, 0, cost, reason, false, 0, tool.lastUsedEndpoint()));
             log.info("WEB 搜索未产出有效命中,按策略降级 briefId={} strategy={} provider={} reason={} latencyMs={}",
                     snapshot.briefId(), snapshot.strategyLabel(), p, reason, cost);
         }
@@ -181,7 +181,7 @@ public class WebSearchRouter {
                 if (a != null) {
                     int witness = witnessTotal(perProvider, p);
                     attempts.add(new WebSearchOutcome.Attempt(p, a.resultCount(), a.latencyMs(), a.fallbackReason(),
-                            a.ok(), witness));
+                            a.ok(), witness, a.usedEndpoint()));
                     if (a.ok() && !usedProviders.contains(p)) usedProviders.add(p);
                 } else if (!usable.contains(p)) {
                     attempts.add(new WebSearchOutcome.Attempt(p, 0, 0L, REASON_UNCONFIGURED, false));
@@ -202,7 +202,7 @@ public class WebSearchRouter {
             if (primaryAttempts.containsKey(p)) {
                 WebSearchOutcome.Attempt a = primaryAttempts.get(p);
                 prefix.add(new WebSearchOutcome.Attempt(p, a.resultCount(), a.latencyMs(), a.fallbackReason(),
-                        a.ok(), 0));
+                        a.ok(), 0, a.usedEndpoint()));
             } else if (!usable.contains(p)) {
                 prefix.add(new WebSearchOutcome.Attempt(p, 0, 0L, REASON_UNCONFIGURED, false));
             }
@@ -236,7 +236,8 @@ public class WebSearchRouter {
                         log.warn("WEB 多源聚合 provider 异常降级 briefId={} provider={} latencyMs={}",
                                 snapshot.briefId(), provider, cost);
                         primaryAttempts.put(provider,
-                                new WebSearchOutcome.Attempt(provider, 0, cost, REASON_ERROR, false, 0));
+                                new WebSearchOutcome.Attempt(provider, 0, cost, REASON_ERROR, false, 0,
+                                        tools.get(provider).lastUsedEndpoint()));
                         return;
                     }
                     long cost = System.currentTimeMillis() - began;
@@ -250,12 +251,14 @@ public class WebSearchRouter {
                     if (hits.isEmpty()) {
                         String reason = rawCount == 0 ? REASON_EMPTY : REASON_INVALID_URL;
                         primaryAttempts.put(provider,
-                                new WebSearchOutcome.Attempt(provider, 0, cost, reason, false, 0));
+                                new WebSearchOutcome.Attempt(provider, 0, cost, reason, false, 0,
+                                        tools.get(provider).lastUsedEndpoint()));
                         return;
                     }
                     perProvider.put(provider, hits);
                     primaryAttempts.put(provider,
-                            new WebSearchOutcome.Attempt(provider, hits.size(), cost, null, true, 0));
+                            new WebSearchOutcome.Attempt(provider, hits.size(), cost, null, true, 0,
+                                    tools.get(provider).lastUsedEndpoint()));
                 }));
             }
             for (Future<?> f : futures) {

@@ -218,6 +218,10 @@ public class SubAgentRunner {
             m.put("ok", a.ok());
             // 10-04 B-R5:交叉验证观测(该 provider 命中中已被其他 provider 见证的条数)
             m.put("witnessTotal", a.witnessTotal());
+            // 10-05-tavily-endpoint-priority:多端点 provider 实际端点(relay/official);单端点/未知不写
+            if (a.usedEndpoint() != null && !a.usedEndpoint().isBlank()) {
+                m.put("usedEndpoint", a.usedEndpoint());
+            }
             attempts.add(m);
         }
         long latency = outcome.attempts().stream().mapToLong(WebSearchOutcome.Attempt::latencyMs).sum();

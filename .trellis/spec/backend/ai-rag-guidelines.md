@@ -218,6 +218,8 @@ public interface SearchTool {
   - `OK` | `DISABLED`（被设置门控关闭）| `UNCONFIGURED`（无 key/地址）| `FAILED`（最近一次调用失败）
   - `KB` = `SettingService.isKbEnabled() ? "OK" : "DISABLED"`（反映 DB 运行时门控，**不恒 true**）。
   - `SEARXNG`/`TAVILY`/`SERPER`：`webAllowed = DeepProperties.isSearchWebEnabled() && SettingService.isWebSearchEnabled()`；优先级 `DISABLED > UNCONFIGURED > FAILED > OK`。`SERPER` 为 10-04 A 增量键（未配置 → `UNCONFIGURED`），既有三键值域不变。
+  - `tavilyEndpoints`（10-05 增量，独立键，不改 `toolHealth` String 值域）：`{relay: OK|UNCONFIGURED|DISABLED, official: ...}`——Tavily 双端点就绪态，旧前端不读不报错。
+- **配置键语义迁移（10-05，踩坑）**：`DEEP_TAVILY_API_BASE_URL` 在 A-R6 是「官方端点覆盖」，10-05 起**改指中转端点**（`DeepProperties.tavilyRelayApiBase`）；官方端点覆盖改走**裸名 `TAVILY_API_BASE_URL`**（`effectiveTavilyApiBase()` 只读它，**不再**读 `DEEP_TAVILY_API_BASE_URL`——否则配置中转会把官方地址也误置为中转）。**迁移含义**：升级前若有人用 `DEEP_TAVILY_API_BASE_URL` 覆盖官方端点，升级后该值会变成中转端点。零回归前提是「该键此前**未启用**」（本项目 `.env` 中原值即以注释保留）；若既有部署启用过它，升级时须把值改到 `TAVILY_API_BASE_URL`。故**重命名/改语义一个已发布的 `_BASE_URL` 键时，必须同步 application.yml + .env.example + docs，并提示该键的旧值需要迁移**。
 - 前端 `ResearchProgress.vue` 未拿到 `toolHealth`（首轮前/接口异常）时渲染 `--`，**不得**乐观默认全部可用。
 
 ### 4. Validation & Error Matrix
@@ -281,7 +283,7 @@ WebSearchOutcome searchVertical(String query, int maxResults, WebSearchSnapshot 
 // 10-04 B:usedProvider 保留(首个产出命中的 provider);usedProviders 增量(本轮采信的全部 provider)
 record WebSearchOutcome(List<WebHit> hits, WebProvider usedProvider, List<Attempt> attempts)   // 保留旧 3 参
 record Attempt(WebProvider provider, int resultCount, long latencyMs, String fallbackReason, boolean ok,
-               int witnessTotal)   // 10-04 B:witnessTotal 增量,旧 5 参兼容构造器保留
+               int witnessTotal, String usedEndpoint)   // 10-04 B:witnessTotal;10-05:usedEndpoint(relay/official,可空);旧 5/6 参兼容构造器保留
 
 // 治理（纯静态,可单测）
 static List<WebHit> normalize(List<SearchHit> raw, int maxResults)   // 协议校验+规范化+去重+截断+sourceId（单源路径）
@@ -319,6 +321,8 @@ record WebHit(String sourceId, String title, String url, String snippet, String 
 ### 6. Tests Required
 - 策略解析（默认/去重/大小写/未知值拒绝）；首源命中不调后备（`verify(never())`）；失败降级；开关门控（不发起请求）；URL 协议校验/规范化/去重/截断；sourceId 后验校验（合法/未知/URL 与 provider 不匹配）；降级原因不含异常文本；`rawFallback` JSON 转义完整。
 - **设置面放开新 provider（A-R9）**：`PUT /settings` 接受含新 provider 的顺序组合（如 `SERPER,TAVILY`、`TAVILY,SERPER,SEARXNG`）并落库；非法值仍 400；默认值不变；列宽迁移可容三源串。
+- **Tavily 双端点（10-05）**：relay 有效命中 → official **零请求**（`verify(never())`）；relay 空/超时/全非法 URL/噪声域/空 title+content → 切 official；结果级 `minContentChars` 默认 0=off 不减召回；未配置 relay → 直接走官方（零回归）；`relaySearchClient`/`officialSearchClient`/`extractClient` **三者互不相同**（`assertNotSame`）；同 URL 经双端点 `FactSheetService` 只计 1 源、不触发 MULTI。
+- **Spring 多构造器 `@Component` 装配守卫（踩坑，先例 `FetchTransportWiringTest`/`TavilySearchToolWiringTest`）**：本仓无 `@SpringBootTest`，测试**从不启动 Spring 容器**——故「生产构造器 + 包级测试构造器」的 `@Component` 若漏标 `@org.springframework.beans.factory.annotation.Autowired`，`mvn test` 与 `mvn -q -DskipTests compile` **双双全绿**，只在真实启动/部署时抛 `BeanInstantiationException: No default constructor found`。**规则**：多构造器组件必须给生产构造器显式 `@Autowired`（全限定注解，因仓内 `grep "@Autowired"` 字面匹配不到），并加一个 `AnnotationConfigApplicationContext` 装配守卫测试锁定可实例化。
 - **迁移不可由单测证明（A-R9 教训）**：本仓测试**不启动 Flyway/DB**（无 `src/test/resources`、无 `@SpringBootTest`），`mvn test` 全绿**不能**证明新增 `V<n>__*.sql` 会在真实库干净应用——须另以「对真实 PG 在 `BEGIN…ROLLBACK` 内跑该 DDL」或启动后端观察 `flyway_schema_history` 佐证。新增迁移编号须确认无 `V<n>__*.sql` 占用（跨任务预留也要核对）。
 
 ### 7. Wrong vs Correct
