@@ -1504,3 +1504,41 @@ TavilySearchTool relay→official failover,三独立 RestClient,端点级+结果
 ### Next Steps
 
 - 实现 10-05-source-crawl-base(信源注册/排期/任务表)
+
+
+## Session 58: 10-05 信源采集基座：注册表/动态排期/多栏目/任务表/内容API/配图转存
+<!-- trellis-session: v=2 fp=e80d6a50fb6d3ee4 -->
+
+**Date**: 2026-10-08
+**Task**: 10-05 信源采集基座：注册表/动态排期/多栏目/任务表/内容API/配图转存
+**Branch**: `main`
+
+### Summary
+
+泛化单一 BYD 采集为多信源基座;复用 sparkora_news* 共享 NEWS 向量id空间;动态调度+发布窗口;P1 数据隔离;mvn test 978 全绿
+
+### Main Changes
+
+- V13 迁移+Source* 服务/客户端/控制器(8端点)
+- NewsService 只返回 byd-news(数据隔离)
+- ImageService source 白名单+按基址解析配图转存
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d3e7f90` | feat(10-05): 信源采集基座(注册表/动态排期/多栏目/任务表/内容API/配图转存) |
+| `249d0e4` | docs(task): 10-05-source-crawl-base AC 勾选收口(978 例全绿证据) |
+| `886d8a0` | chore(task): archive 10-05-source-crawl-base |
+
+### Testing
+
+- [OK] mvn test 978/0/0/0; 目标类 62 例
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实现 10-05-source-domain-retrieval(E 入库切块检索)
