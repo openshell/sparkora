@@ -51,14 +51,14 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-T1 中转优先**：配置中转 + 官方后，中转有有效命中时**不调用**官方（单测断言官方端点零请求）。
-- [ ] **AC-T2 官方兜底**：中转失败/超时/空/全部非法 URL 时自动调用官方并采用其命中；两都不可用时返回空且不影响其他 provider。
-- [ ] **AC-T3 独立超时**：中转端点按短超时快速失败（构造 16s 延迟端点，`readTimeout=8` 时 <9s 返回并切官方），官方不被同一超时约束。
-- [ ] **AC-T4 身份不虚高**：中转与官方命中同一 URL 时 `FactSheetService` 只计 1 源、`MULTI` 不因双端点触发；`witnessEndpoints` 可见。
-- [ ] **AC-T5 质量门**：中转返回空 `title`+空 `content` 或非法 URL 时视为无效并切官方；结果级长度阈值生效（默认 off 零回归）。
-- [ ] **AC-T6 零回归**：未配置中转端点时，Tavily 行为与现状逐位等价（走官方，provider=TAVILY）；**`extract` 超时仍为 15s、不被官方 search 的 30s 连带改变**；`mvn test` 全绿。
-- [ ] **AC-T7 密钥卫生**：两端点 key 均来自 `.env`，仓库无真实 key；URL 键 `_BASE_URL` 结尾。
-- [ ] **AC-T8 契约**：provider 名仍为 `TAVILY`（不新增枚举）；`toolHealth`/`SearchMeta` 兼容增量。
+- [x] **AC-T1 中转优先**：配置中转 + 官方后，中转有有效命中时**不调用**官方（单测断言官方端点零请求）。→ `TavilySearchToolRelayTest.AC_T1_中转有效命中_官方零请求`（`officialCalls==0`，`lastUsedEndpoint=relay`）。
+- [x] **AC-T2 官方兜底**：中转失败/超时/空/全部非法 URL 时自动调用官方并采用其命中；两都不可用时返回空且不影响其他 provider。→ `AC_T2_中转空结果/中转结果全部非法URL/中转HTTP异常_降级官方不抛`、`两端点均不可用_返回空且不抛`。
+- [x] **AC-T3 独立超时**：中转端点按短超时快速失败（构造 16s 延迟端点，`readTimeout=8` 时 <9s 返回并切官方），官方不被同一超时约束。→ `AC_T3_中转慢响应_短超时快速失败并切官方`（1500ms 延迟 + relay 200ms 超时，<1200ms 返回切官方）、`AC_T3_官方超时独立于中转_不同RestClient实例`（三客户端 `assertNotSame`）。
+- [x] **AC-T4 身份不虚高**：中转与官方命中同一 URL 时 `FactSheetService` 只计 1 源、`MULTI` 不因双端点触发；`witnessEndpoints` 可见。→ `FactSheetServiceTest.AC_T4_双端点同URL_只计1源不触发MULTI`（`crossCount=1`、无 `MULTI`）；provider 恒 `TAVILY`，`WebProvider` 枚举未改。
+- [x] **AC-T5 质量门**：中转返回空 `title`+空 `content` 或非法 URL 时视为无效并切官方；结果级长度阈值生效（默认 off 零回归）。→ `AC_T5_中转空title且空content_视为无效切官方`、`AC_T5_中转噪声域_视为无效切官方`、`AC_T5_结果级长度阈值_默认off不减召回_开启后过滤低质`。
+- [x] **AC-T6 零回归**：未配置中转端点时，Tavily 行为与现状逐位等价（走官方，provider=TAVILY）；**`extract` 超时仍为 15s、不被官方 search 的 30s 连带改变**；`mvn test` 全绿。→ `AC_T6_未配置中转_直接走官方_身份与行为等价现状`（relay 零请求）；`TavilySearchToolExtractTest.extract超时独立_使用专属RestClient`（默认 15000、三客户端互异）；`mvn test` 915/0/0/0。本项目 `.env` 该键此前以注释保留（未启用），故升级零回归。
+- [x] **AC-T7 密钥卫生**：两端点 key 均来自 `.env`，仓库无真实 key；URL 键 `_BASE_URL` 结尾。→ 密钥扫描 0 命中；`TAVILY_API_BASE_URL`/`DEEP_TAVILY_API_BASE_URL` 均以 `_BASE_URL` 结尾。
+- [x] **AC-T8 契约**：provider 名仍为 `TAVILY`（不新增枚举）；`toolHealth`/`SearchMeta` 兼容增量。→ `Attempt` 保留 5/6 参兼容构造器并增 `usedEndpoint`；`toolHealth` 四键值域不变、新增独立键 `tavilyEndpoints`；`SearchMeta.attempts[].usedEndpoint` 增量。
 
 ## Out of Scope
 
