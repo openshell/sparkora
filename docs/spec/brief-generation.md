@@ -23,7 +23,9 @@ graph TD
     D2 --> D3["③ POST /deep/plan<br/>ResearchPlannerService.plan: 基于 TaskBrief 产出纯事实 research_plan<br/>plan_status=READY（同步，8192→16384 重试）"]
     D3 --> D4["④ POST /deep/run<br/>落 PENDING 占位后后台 @Async runAsync 执行<br/>并行子代理研究（虚拟线程，≤ maxAgents）<br/>SubAgentRunner: KB 必查 + WEB（策略路由，默认 TAVILY_FIRST）<br/>启动即批量置全部 agent RUNNING，各 agent 独立收集器「完成即回写」<br/>前端 ResearchProgress 2s 轮询 /deep/status"]
     D4 --> D5["⑤ FactSheetService.merge()<br/>汇总 fact_sheet（按 claim 近似归并聚合）"]
-    D5 --> D6["⑥ 研究完成自动 BlueprintService.generate()<br/>（BriefService.generateFromFactSheet 委托）<br/>TaskBrief + research_plan.hypotheses + fact_sheet → writing_blueprint<br/>blueprint_status=REVIEWING；确定性计算 coverage/gaps/quality"]
+    D5 --> D5b["⑤ᵇ Round 2 覆盖驱动补检索（10-04 C，默认关）<br/>selectFollowupTargets(fact_sheet, maxFollowups)：检索类 gap / 低置信参数型 entry / 未被回答 keyQuestion<br/>每目标 1 次 PRIMARY_FANOUT + ≤1 次 LLM 增量抽取 → updateAgent 增量写回（不新建子代理/不重跑 plan）<br/>batch 预算 + 跨轮 seenUrls 去重 + 批次内缓存"]
+    D5b --> D5c["⑤ᶜ 再次 merge → fact_sheet（仅两轮合并后 generateFromFactSheet 调一次）"]
+    D5c --> D6["⑥ 研究完成自动 BlueprintService.generate()<br/>（BriefService.generateFromFactSheet 委托）<br/>TaskBrief + research_plan.hypotheses + fact_sheet → writing_blueprint<br/>blueprint_status=REVIEWING；确定性计算 coverage/gaps/quality"]
     D6 --> D7["⑦ 前端 BlueprintReview 结构化展示/编辑<br/>POST /deep/blueprint/confirm（可传编辑后 JSON）<br/>blueprint_status=CONFIRMED 解锁写作"]
     D6 -->|"自动蓝图失败不回滚研究产物"| D7b["POST /deep/brief 手动重试"]
     D7 --> W["POST /deep/generate（批量异步）<br/>DeepWriterService.startBatch → @Async runBatch<br/>须 writing_blueprint 非空且 CONFIRMED<br/>按 evidenceMap 逐节投影证据 + 数值白名单回查"]
@@ -240,6 +242,15 @@ graph TD
 - **SearXNG 质量门（B-R2a）**：SearXNG 进 primary 组时先过滤——域名黑名单 `DEEP_WEB_DENY_DOMAINS`（默认 `bilibili.com`/`weixin.sogou.com`）、URL 含 `/video/` 或 `link?url=` 丢弃、空 `title`+`content`/非法 URL 丢弃；`DEEP_WEB_ALLOW_DOMAINS` 命中者跳过。**只影响是否进合并池，不提升独立交叉计数**；对 non-SearXNG provider 不施加（零回归）。
 - **WEB 结果治理（R8/R9）**：`WebResultNormalizer` 在子代理/LLM 之前完成协议校验（仅 http/https 绝对 URL）、URL 规范化（去 fragment、小写 scheme/host）、按规范化 URL 去重、截断，并分配稳定 `sourceId`（`W1,W2…` 按本次输入顺序）。`SearchHit` 增量带 `sourceId`/`provider`（旧 7 参构造器保留兼容）。
 - **契约增量（B-R4/R5）**：`WebSearchOutcome` 保留 `usedProvider`（首个命中 provider），新增 `usedProviders: List<WebProvider>`；`SubAgentRunner.SearchMeta` 保留 `provider`，新增 `providers: List<String>`；`attempts[]` 每项增 `witnessTotal`（该 provider 命中中已被其他 provider 见证的条数）。均向后兼容（旧构造器保留）。
+- **Round 2 覆盖驱动多轮补检索 + 调用预算治理（10-04 C，默认关 = 零回归）**：
+  - **触发**：Round 1 `factSheet.merge` 后，`DEEP_WEB_FOLLOWUP_MAX > 0`（默认 **0=关**）且 `webAllowed` 时，执行 `DeepResearchService.selectFollowupTargets(fact_sheet, keyQuestions, maxFollowups)`（**纯函数、零 LLM、可单测**，与 `selectResearchWindow` 同构）——三类候选：a) `gaps` 中 reason 属检索类（未知/缺失 `sourceId`、URL/provider 不匹配）；b) `entries` 中 `confidence<=0.4` 且 `kind=="param"`；c) plan 的 keyQuestion **既无 entry 也无 gap**（彻底没被回答）。按 claim 相似度聚类去重、截断到 `maxFollowups`；无缺口返回空（**不发起任何额外调用**）。
+  - **执行**：每目标发 **1 次 `PRIMARY_FANOUT`**（复用 B）+ **≤1 次 LLM 增量抽取**（`SubAgentRunner.researchFollowup`：仅 WEB、query 由 `webQuery(topic, claim, lockedAnswers)` 确定性拼装、默认 `web` 垂直）。**不新建子代理、不重跑 plan**——结果经 `updateAgent` 同源增量写回对应 Round 1 Note（facts/gaps 追加、`search.attempts` 追加），**agent 数不变、`research_plan` 与 Round 1 notes 不被覆盖**。Round 2 用独立 `DEEP_FOLLOWUP_TIMEOUT_MS`（默认 30s）；超时/异常/空结果 → warning + 跳过该目标，**降级不阻断**。
+  - **三级预算（`WebCallBudget`，挂批次上下文，随批次释放）**：per-provider=`maxResults`（不变）；per-round=`DEEP_WEB_CALL_BUDGET_PER_ROUND`（默认 12，生效值取 `max(配置值, maxAgents × |计量 primary 组|)` 保护性下限）；per-brief=`DEEP_WEB_CALL_BUDGET`（默认 20，Round 1+Round 2 共享）；`maxFollowups`=2。**只计计量/限流源（付费 Tavily/Serper），免费 SearXNG 不计**。超限即停止发起新调用并置 `budgetExhausted=true`，已获证据照常入册（不报错中断）。
+  - **跨轮去重（C-R4）**：批次级 `seenUrls`（规范化 URL）——Round 1 只收集（并行子代理互不剔除证据），Round 2 `merge` 传入后命中已见 URL **直接丢弃**（不重复注入 LLM、不虚高 `sourceCount`），`dedupedCount` 计数。`WebResultNormalizer.merge(order, perProvider, maxResults, seenUrls, dedupedSink)` 增量重载；不传 `seenUrls` 时逐位等价旧行为。
+  - **批次内缓存（C-R5）**：`WebSearchCache`（进程内 `ConcurrentHashMap`，key=`provider|规范化query|vertical|maxResults`，TTL 默认 10min）。**作用域严格限定单次 research 批次**（随批次 `release()` 释放，不跨用户/请求）；不做跨批次持久缓存（时效性会返回陈旧证据）。`cacheHit` 计数进 `SearchMeta`。
+  - **可观测**：`SearchMeta` 增量 `dedupedCount`/`cacheHit`/`budgetExhausted`（B 的 `providers`/`attempts` 语义不变）；`generateFromFactSheet` 仅在**两轮合并之后调用一次**。
+  - **`extract` 缺陷修复（C-R7）**：`WebSearchRouter.extract(query, urls, snapshot)` 改按**快照 order** 遍历（不再按 `WebProvider.values()` 枚举声明序）+ **尊重 `webAllowed`**（WEB 全局关闭时不发起付费 extract）。默认 order 下行为等价；2 参重载保留兼容旧调用方。
+  - **配置**：`DEEP_WEB_FOLLOWUP_MAX`(0) / `DEEP_WEB_CALL_BUDGET`(20) / `DEEP_WEB_CALL_BUDGET_PER_ROUND`(12) / `DEEP_FOLLOWUP_TIMEOUT_MS`(30000) / `DEEP_WEB_CACHE_TTL_MS`(600000)。运行时 `sparkora_setting` **不放开** followup/budget（成本风险）。
 - **事实后验校验（R9）**：`SubAgentRunner.validateFacts` 只接受引用本次输入 `sourceId` 且 URL/provider 匹配的 WEB 事实；未知 sourceId / URL 或 provider 不匹配 → 从 facts 剔除并转为 gap（不整条 agent 失败）。**凡携带 `url` 或 `sourceId` 的事实一律按 WEB 声明校验**，通过后 `type` 归一为 `WEB`；仅缺 `type` 且无 `url`/`sourceId` 的 KB 事实沿用既有行为。
 - **WEB query 构造（R7）**：项目主题 + 研究问题 + **存量已锁定**澄清答案（旧 `clarify_answers` 中非空 `a`，去重）；未锁定答案绝不进入 query。新认知链路不再写 `clarify_answers`，此路径仅对存量数据生效。**否定答案过滤（R5，09-27-brief-writing-linkage-fix）**：语义为「放弃/无偏好」的否定值（精确匹配「不对比/不比较/无所谓/都可以/都行/不限/无偏好/随便/暂无/不需要/无/没有/不涉及/跳过」+ `不对比`/`不需要` 前缀）不注入 query。
 - **背景题正文补抓（R1/R3，09-27-tavily-extract-kind-hypotheses，机制 B）**：`SearchTool` 增 `default List<SearchHit> extract(urls, query)`（默认空，`TavilySearchTool` 覆写为 `POST /extract`：`{api_key, urls, query, chunks_per_source:3, extract_depth:"basic"}`，取 `raw_content` markdown，**工具层截断**到 `DEEP_WEB_CONTENT_MAX_CHARS` 默认 2000）。
@@ -262,7 +273,7 @@ graph TD
 
 ## 5. 研究笔记 / 事实手册结构
 
-- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, providers, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok,witnessTotal,usedEndpoint?}]}`——**不含任何密钥**；`provider`=首个产出命中的 provider，`providers`（10-04 B 增量）=本轮采信的全部 provider，`attempts[].witnessTotal`=该 provider 命中中已被其他 provider 见证的条数，`attempts[].usedEndpoint`（10-05 增量，可空）=多端点 provider 实际端点（`relay`/`official`）；`webCount` 语义为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`。
+- `research_notes`：`[{agentId, question, status(DONE/FALLBACK/FAILED), factsJson, webCount, search}]`；`factsJson`=`{facts:[{claim,value,snippet?,source:{type:"KB|WEB",sourceId,provider,url,modelName,docId},confidence}],gaps:[...]}`。`search`（09-25 增量，可空）为 `{strategy, provider, providers, query, resultCount, latencyMs, fallbackReason, attempts:[{provider,resultCount,latencyMs,fallbackReason,ok,witnessTotal,usedEndpoint?}], dedupedCount, cacheHit, budgetExhausted}`——**不含任何密钥**；`provider`=首个产出命中的 provider，`providers`（10-04 B 增量）=本轮采信的全部 provider，`attempts[].witnessTotal`=该 provider 命中中已被其他 provider 见证的条数，`attempts[].usedEndpoint`（10-05 增量，可空）=多端点 provider 实际端点（`relay`/`official`）；`dedupedCount`/`cacheHit`/`budgetExhausted`（10-04 C 增量）=跨轮去重丢弃数/批次内缓存命中数/预算耗尽标记。Round 2 补检索结果**增量并入**对应 Note（facts/gaps 追加、`search.attempts` 追加），**不新增 agent 条目**。`webCount` 语义为实际接受的 WEB 结果数。**口径一致性**：`webCount`/`search.resultCount` 描述搜索结果，LLM 汇总失败走 `rawFallback` 时**不归零**，且此时 `search.fallbackReason=LLM_FALLBACK`。
 - **降级保真 snippet（R1，09-26）**：`SubAgentRunner.rawFallback` 每条降级 fact 在 `claim` 之外增 `snippet`（≤200 字，转义完整）；`FactSheetService` 透传簇内首个非空 snippet 到 entry（增量可选字段，无则不出现）；写作/简报 prompt 可见该证据。
 - **逐 agent 实时回写语义（2026-09-26 修复）**：`run()` 落 `PENDING` 占位后，`doRunAsync` 在 submit 任何子代理之前一次性把全部 N 个 agent 覆写为 `RUNNING`；每个 agent 由一个独立收集器任务驱动，完成/超时/异常后**立即回写**（天然乱序）。超时/异常仍 `cancel(true)` + `FAILED` + gap。全部收集器 join 后才执行 `FactSheetService.merge` 与自动蓝图。
   - **LLM 汇总截断/失败重试（R4，09-26）**：`SubAgentRunner.chat` 首次 `chatJson(...,2048)`；任何失败（截断/空/非法 JSON）提额 `4096` 重试一次，仅重试仍失败才抛出 → `FALLBACK`。净调用上限仍 2 次/agent。
@@ -344,6 +355,11 @@ graph TD
 | `DEEP_WEB_ALLOW_DOMAINS` | 空 | **10-04 B**：SearXNG 质量门白名单（命中者跳过黑名单/URL 类型过滤） |
 | `DEEP_RESEARCH_TIMEOUT_MS` | `120000` | 单子代理超时（futures.get 兜底，超时→FAILED+gap）；目前仅由 `application.yml` 占位符 `${DEEP_RESEARCH_TIMEOUT_MS:120000}` 提供，未列入 `.env.example` |
 | `DEEP_MAX_AGENTS` | `6` | 子代理数上限（虚拟线程 per-task executor；总检索预算约 8 → `webQuota=max(1,8/n)`）。**窗口选择**：`DeepResearchService.selectResearchWindow` 预算内**优先保背景/来龙去脉型问题**（`ResearchPlannerService.isBackgroundQuestion`），其余按原序补足，最终索引升序归位（`run` 落占位与 `doRunAsync` 执行共用同一选择器，question↔toolHints 索引对齐） |
+| `DEEP_WEB_FOLLOWUP_MAX` | `0` | **10-04 C**：Round 2 补检索目标数上限；0=关闭多轮（默认，单轮研究零回归）。三类候选见 §4 |
+| `DEEP_WEB_CALL_BUDGET` | `20` | **10-04 C**：整个简报计量源（Tavily/Serper，免费 SearXNG 不计）调用总量上限，Round 1+Round 2 共享 |
+| `DEEP_WEB_CALL_BUDGET_PER_ROUND` | `12` | **10-04 C**：Round 1 计量源调用次数封顶；生效值取 `max(配置值, maxAgents × |计量 primary 组|)` 保护性下限 |
+| `DEEP_FOLLOWUP_TIMEOUT_MS` | `30000` | **10-04 C**：Round 2 单目标补检索独立超时；超时/异常记 warning 跳过该目标，降级不阻断 |
+| `DEEP_WEB_CACHE_TTL_MS` | `600000` | **10-04 C**：批次内搜索缓存 TTL（ms）；作用域严格限定单次 research 批次，随批次释放，不跨批次持久化 |
 
 > 本轮认知层重构**未新增环境变量**；`clarify_status`/`blueprint_status` 等为列状态，非配置。
 

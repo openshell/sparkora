@@ -78,13 +78,19 @@ public class SubAgentRunner {
      */
     public record SearchMeta(String strategy, String provider, String query, int resultCount, long latencyMs,
                              String fallbackReason, List<Map<String, Object>> attempts,
-                             List<String> providers) {
+                             List<String> providers, int dedupedCount, int cacheHit, boolean budgetExhausted) {
+
+        /** 兼容构造器(8 参,10-04 B):10-04 C 增量字段默认 0/false。 */
+        public SearchMeta(String strategy, String provider, String query, int resultCount, long latencyMs,
+                          String fallbackReason, List<Map<String, Object>> attempts, List<String> providers) {
+            this(strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts, providers, 0, 0, false);
+        }
 
         /** 兼容构造器(7 参):providers 由 provider 派生。 */
         public SearchMeta(String strategy, String provider, String query, int resultCount, long latencyMs,
                           String fallbackReason, List<Map<String, Object>> attempts) {
             this(strategy, provider, query, resultCount, latencyMs, fallbackReason, attempts,
-                    provider == null ? List.of() : List.of(provider));
+                    provider == null ? List.of() : List.of(provider), 0, 0, false);
         }
     }
 
@@ -106,6 +112,19 @@ public class SubAgentRunner {
      */
     public Note research(String question, List<String> toolsAllowed, int webQuota, List<Long> anchors, String topic,
                          String lockedAnswers, String contentDescription, WebSearchSnapshot snapshot) {
+        return researchInternal(question, toolsAllowed, webQuota, anchors, topic, lockedAnswers, contentDescription,
+                snapshot, snapshot == null ? null : snapshot.batch());
+    }
+
+    /**
+     * 执行单个研究问题(策略路由版,09-25;10-04 C 内部:批次上下文由快照携带)。
+     *
+     * <p>{@code batch} 非空时:WEB 搜索经批次预算(计量源 Tavily/Serper 限额)+ 批次内缓存 + 跨轮去重
+     * (Round 2 起启用);空时逐位等价旧行为(零回归)。
+     */
+    private Note researchInternal(String question, List<String> toolsAllowed, int webQuota, List<Long> anchors,
+                                  String topic, String lockedAnswers, String contentDescription,
+                                  WebSearchSnapshot snapshot, com.sparkora.deep.search.WebBatchContext batch) {
         List<SearchTool.SearchHit> hits = new ArrayList<>();
         // 1) 本地 KB(锚点加权,受设置门控):复合语料 = 主题(含车型名) + 研究问题
         if (toolsAllowed.contains("KB")) {
@@ -135,13 +154,16 @@ public class SubAgentRunner {
             // 10-04-serper-provider A-R3:时效题走 news 垂直(仅 Serper 支持;开关关闭时强制 web→零回归)。
             // background 参数型/参数题仍走 web:参数事实通常非时效问题(§5.1)。
             String vertical = resolveVertical(question);
+            // batch==null 走 3 参重载(既有行为/测试桩逐位等价);非空走 4 参(预算/缓存/去重)
             outcome = vertical == null
-                    ? webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot)
-                    : webRouter.searchVertical(appliedWebQuery, Math.min(5, webQuota), snapshot, vertical);
+                    ? (batch == null ? webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot)
+                    : webRouter.search(appliedWebQuery, Math.min(5, webQuota), snapshot, batch))
+                    : (batch == null ? webRouter.searchVertical(appliedWebQuery, Math.min(5, webQuota), snapshot, vertical)
+                    : webRouter.searchVertical(appliedWebQuery, Math.min(5, webQuota), snapshot, vertical, batch));
             webHits = outcome.hits();
             // R1:背景题对 top 1–2 URL 调 extract 取正文并回填(失败/空/Tavily 不可用 → 保持 null 摘要降级)
             if (background && !webHits.isEmpty()) {
-                webHits = enrichContent(question, webHits);
+                webHits = enrichContent(question, webHits, snapshot);
             }
             for (WebHit wh : webHits) hits.add(wh.toSearchHit());
         }
@@ -178,13 +200,13 @@ public class SubAgentRunner {
             String factsJson = validateFacts(chat(system, ctx.toString()), webHits);
             long webCount = webHits.size();   // R10/webCount 语义:实际接受的 WEB 结果数(非事实条数)
             return new Note(question, "DONE", factsJson, (int) webCount,
-                    searchMeta(snapshot, outcome, appliedWebQuery, webHits.size()));
+                    searchMeta(snapshot, outcome, appliedWebQuery, webHits.size(), false, batch));
         } catch (Exception e) {
             // LLM 汇总失败:降级为原始条目,但仍上报本次实际接受的 WEB 结果数(R10 口径一致:
             // webCount/resultCount 描述搜索结果,不因下游 LLM 失败而清零;降级原因改标 LLM_FALLBACK)
             log.warn("研究子代理 LLM 汇总失败,降级为原始条目 question={}: {}", question, e.getMessage());
             return new Note(question, "FALLBACK", rawFallback(hits), webHits.size(),
-                    searchMeta(snapshot, outcome, appliedWebQuery, webHits.size(), true));
+                    searchMeta(snapshot, outcome, appliedWebQuery, webHits.size(), true, batch));
         }
     }
 
@@ -194,9 +216,58 @@ public class SubAgentRunner {
                 WebSearchSnapshot.of(com.sparkora.deep.search.WebProviderOrder.defaults(), false, null, 0));
     }
 
+    /**
+     * Round 2 定向补检索(10-04-web-followup-budget C-R2):仅 WEB 多源搜索 + ≤1 次 LLM 抽取。
+     *
+     * <p>与 {@link #research} 的差异:不查 KB(补检索目标是世界事实的交叉验证/缺口);
+     * query 由调用方用 {@link #webQuery} 确定性拼装(主题 + 目标 claim + 已锁定答案);默认走 {@code web} 垂直
+     * (参数型事实通常非时效问题)。跨轮去重与预算由 {@code batch} 统一治理(Round 2 阶段已开启去重)。
+     * 异常隔离:内部捕获返回 {@code null}(调用方跳过该目标,降级不阻断)。
+     *
+     * @param targetClaim 目标 claim(用于 ctx 与事实抽取上下文)
+     * @param query       已拼装的 WEB query
+     */
+    public Note researchFollowup(String targetClaim, String query, List<Long> anchors, String topic,
+                                 String contentDescription, WebSearchSnapshot snapshot,
+                                 com.sparkora.deep.search.WebBatchContext batch) {
+        if (snapshot == null || !snapshot.webAllowed()) return null;
+        try {
+            // C-R2:补检索固定走 PRIMARY_FANOUT 多源交叉(与部署级 first_hit 无关——单源补检索无交叉价值,
+            // 白白消耗预算);primary 全空时仍按 fanout 内部逻辑回落 fallback,不降可用性。
+            WebSearchSnapshot fanoutSnap = snapshot.withStrategy(com.sparkora.deep.search.SearchStrategy.PRIMARY_FANOUT);
+            WebSearchOutcome outcome = webRouter.search(query, 5, fanoutSnap, batch);
+            List<WebHit> webHits = outcome.hits();
+            if (webHits.isEmpty()) return null;   // 空结果:跳过该目标(不写回空证据)
+            List<SearchTool.SearchHit> hits = new ArrayList<>();
+            for (WebHit wh : webHits) hits.add(wh.toSearchHit());
+            String system = com.sparkora.ai.PromptTemplateLoader.render("deep/subagent-system.st",
+                    java.util.Map.of("noSourcesRule", "",
+                            "schema", AiClient.jsonSchema(com.sparkora.ai.SubAgentFactsDto.class)));
+            StringBuilder ctx = new StringBuilder();
+            if (contentDescription != null && !contentDescription.isBlank()) {
+                ctx.append("写作意图/内容描述:").append(contentDescription).append('\n');
+            }
+            ctx.append("补检索目标:").append(targetClaim).append("\n检索结果:\n");
+            for (SearchTool.SearchHit h : hits) {
+                ctx.append("- [").append(h.type()).append("] ");
+                if (h.sourceId() != null && !h.sourceId().isBlank()) ctx.append("sourceId=").append(h.sourceId()).append(' ');
+                if (h.url() != null && !h.url().isBlank()) ctx.append(h.url()).append(" | ");
+                ctx.append(h.title()).append(" : ").append(snippet(h.snippet())).append('\n');
+            }
+            String factsJson = validateFacts(chat(system, ctx.toString()), webHits);
+            return new Note(targetClaim, "DONE", factsJson, webHits.size(),
+                    searchMeta(fanoutSnap, outcome, query, webHits.size(), false, batch));
+        } catch (Exception e) {
+            // 补检索失败降级:调用方跳过该目标,Round 1 产物不受影响
+            log.warn("Round 2 补检索子代理失败 target={}: {}", targetClaim, e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
     /** 搜索元数据组装(无 WEB 尝试时返回 null)。 */
-    private static SearchMeta searchMeta(WebSearchSnapshot snapshot, WebSearchOutcome outcome, String query, int resultCount) {
-        return searchMeta(snapshot, outcome, query, resultCount, false);
+    private static SearchMeta searchMeta(WebSearchSnapshot snapshot, WebSearchOutcome outcome, String query,
+                                         int resultCount) {
+        return searchMeta(snapshot, outcome, query, resultCount, false, null);
     }
 
     /**
@@ -204,9 +275,11 @@ public class SubAgentRunner {
      *
      * @param llmFallback 下游 LLM 汇总是否失败降级(原始条目);true 时 search 层降级原因标 {@code LLM_FALLBACK}
      *                    (provider 层 attempts 保持原样,两者失败原因不混淆)
+     * @param batch       批次上下文(10-04 C:透出 dedupedCount/cacheHit/budgetExhausted;可空)
      */
     private static SearchMeta searchMeta(WebSearchSnapshot snapshot, WebSearchOutcome outcome, String query,
-                                         int resultCount, boolean llmFallback) {
+                                         int resultCount, boolean llmFallback,
+                                         com.sparkora.deep.search.WebBatchContext batch) {
         if (outcome == null) return null;
         List<Map<String, Object>> attempts = new ArrayList<>();
         for (WebSearchOutcome.Attempt a : outcome.attempts()) {
@@ -228,9 +301,13 @@ public class SubAgentRunner {
         String reason = llmFallback ? "LLM_FALLBACK" : outcome.fallbackReason();
         List<String> providers = new ArrayList<>();
         for (WebProvider p : outcome.usedProviders()) providers.add(p.name());
+        // 10-04 C-R8:预算/去重/缓存增量观测(B 的 providers/attempts 语义不变)
+        int deduped = batch == null ? 0 : batch.dedupedCount();
+        int cacheHit = batch == null ? 0 : batch.cache().hits();
+        boolean budgetExhausted = batch != null && batch.budget().budgetExhausted();
         return new SearchMeta(snapshot == null ? null : snapshot.strategyLabel(),
                 outcome.usedProvider() == null ? null : outcome.usedProvider().name(),
-                query, resultCount, latency, reason, attempts, providers);
+                query, resultCount, latency, reason, attempts, providers, deduped, cacheHit, budgetExhausted);
     }
 
     /**
@@ -454,7 +531,7 @@ public class SubAgentRunner {
      *
      * <p>抽取失败/空/不支持 → 原样返回(命中保持 content=null = 降级回摘要),绝不抛出。
      */
-    private List<WebHit> enrichContent(String question, List<WebHit> webHits) {
+    private List<WebHit> enrichContent(String question, List<WebHit> webHits, WebSearchSnapshot snapshot) {
         try {
             List<String> urls = new ArrayList<>();
             for (WebHit wh : webHits) {
@@ -462,7 +539,12 @@ public class SubAgentRunner {
                 if (urls.size() >= 2) break;   // 仅 top 1–2,控制 credits 与体积
             }
             if (urls.isEmpty()) return webHits;
-            List<SearchTool.SearchHit> extracted = webRouter.extract(question, urls);
+            // 10-04 C-R7:批次存在时 extract 按快照 order + 尊重 webAllowed(webAllowed=false → 空 → 降级回摘要);
+            // 无批次(旧调用方/单测)时走 2 参重载,行为逐位等价旧实现(零回归)。
+            boolean batchMode = snapshot != null && snapshot.batch() != null;
+            List<SearchTool.SearchHit> extracted = batchMode
+                    ? webRouter.extract(question, urls, snapshot)
+                    : webRouter.extract(question, urls);
             if (extracted.isEmpty()) return webHits;
             Map<String, String> byUrl = new LinkedHashMap<>();
             for (SearchTool.SearchHit e : extracted) {

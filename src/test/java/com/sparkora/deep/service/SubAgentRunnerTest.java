@@ -336,6 +336,43 @@ class SubAgentRunnerTest {
         assertFalse(fact.has("content"), "无正文时不得出现 content 字段");
     }
 
+    // ===== 10-04-web-followup-budget C-R2:Round 2 补检索强制 PRIMARY_FANOUT =====
+
+    /** Round 2 补检索固定走多源交叉:即使部署级快照为 FIRST_HIT,也以 PRIMARY_FANOUT 调用路由。 */
+    @Test
+    void Round2补检索_强制PRIMARY_FANOUT() throws Exception {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        WebResultNormalizer.WebHit hit = new WebResultNormalizer.WebHit("W1", "t1", "https://x.com/a", "s", "TAVILY");
+        when(router.search(anyString(), anyInt(), any(), any())).thenReturn(new WebSearchOutcome(
+                List.of(hit), WebProvider.TAVILY,
+                List.of(new WebSearchOutcome.Attempt(WebProvider.TAVILY, 1, 10L, null, true))));
+        AiClient ai = mock(AiClient.class);
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), mock(KnowledgeSearchTool.class), router);
+        // 部署级快照为默认 FIRST_HIT(与生产默认一致)
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), true, 1L, 5);
+
+        r.researchFollowup("价格 23 万", "主题 价格 23 万", List.of(), "海狮08", null, snap, null);
+
+        org.mockito.ArgumentCaptor<WebSearchSnapshot> cap =
+                org.mockito.ArgumentCaptor.forClass(WebSearchSnapshot.class);
+        org.mockito.Mockito.verify(router).search(anyString(), anyInt(), cap.capture(), any());
+        assertEquals(com.sparkora.deep.search.SearchStrategy.PRIMARY_FANOUT, cap.getValue().strategy(),
+                "Round 2 补检索必须强制 PRIMARY_FANOUT(单源无交叉价值)");
+    }
+
+    /** webAllowed=false → Round 2 不发起任何搜索。 */
+    @Test
+    void Round2补检索_webAllowed关闭_不发起() {
+        WebSearchRouter router = mock(WebSearchRouter.class);
+        SubAgentRunner r = new SubAgentRunner(null, new ObjectMapper(), null, router);
+        WebSearchSnapshot snap = WebSearchSnapshot.of(WebProviderOrder.defaults(), false, 1L, 5);
+        assertEquals(null, r.researchFollowup("claim", "q", List.of(), "主题", null, snap, null));
+        org.mockito.Mockito.verify(router, org.mockito.Mockito.never())
+                .search(anyString(), anyInt(), any(), any());
+    }
+
     /** R1:WEB 开关关闭(webAllowed=false)时既不搜索也不补抓正文(不回归)。 */
     @Test
     void WEB关闭_不搜索也不补抓正文() throws Exception {

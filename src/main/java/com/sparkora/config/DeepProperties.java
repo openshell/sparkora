@@ -95,6 +95,23 @@ public class DeepProperties {
     private String webDenyDomains = "bilibili.com,weixin.sogou.com";
     /** SearXNG 结果质量门域名白名单(可空):命中者跳过黑名单与 URL 类型过滤(人工放行)。 */
     private String webAllowDomains = "";
+    /**
+     * 覆盖驱动多轮补检索的目标数上限(10-04 C):0 = 关闭多轮(默认,单轮研究零回归,回滚点);
+     * &gt;0(建议 2)= Round 1 汇总后按缺口/低置信定向补搜的目标数。运行时 sparkora_setting 不放开
+     * 该开关(直接决定成本)。<b>默认 0 与父设计 §6「webFollowup=off」一致</b>,现有部署零行为变化。
+     */
+    private int webFollowupMax = 0;
+    /** 整个简报的计量源(Tavily/Serper)调用总量上限(10-04 C,默认 20),Round 1 + Round 2 共享。 */
+    private int webCallBudget = 20;
+    /**
+     * Round 1 阶段计量源调用次数封顶(10-04 C,默认 12)。生效值取
+     * {@code max(配置值, maxAgents × |计量 primary 组|)}(保护性下限,避免预算掐死主流程)。
+     */
+    private int webCallBudgetPerRound = 12;
+    /** Round 2 补检索独立超时(ms,默认 30000):超时/异常记 warning + 跳过该目标,降级不阻断。 */
+    private long followupTimeoutMs = 30000;
+    /** 批次内搜索缓存 TTL(ms,默认 600000=10min):作用域严格限定单次 research 批次,随批次释放。 */
+    private long webCacheTtlMs = 600000;
 
     /** 生效正文上限(≤0 视为不截断/使用默认；防御异常配置)。 */
     public int effectiveWebContentMaxChars() {
@@ -139,6 +156,31 @@ public class DeepProperties {
             if (!d.isEmpty() && !out.contains(d)) out.add(d);
         }
         return out;
+    }
+
+    /** 生效补检索目标数上限:≤0 视为关闭多轮研究(回滚点)。 */
+    public int effectiveWebFollowupMax() {
+        return webFollowupMax > 0 ? webFollowupMax : 0;
+    }
+
+    /** 生效整个简报计量源调用总量上限:≤0 视为默认 20。 */
+    public int effectiveWebCallBudget() {
+        return webCallBudget > 0 ? webCallBudget : 20;
+    }
+
+    /** 生效 Round 1 计量源调用次数配置值(保护性下限在 {@code WebCallBudget} 内计算):≤0 视为默认 12。 */
+    public int effectiveWebCallBudgetPerRound() {
+        return webCallBudgetPerRound > 0 ? webCallBudgetPerRound : 12;
+    }
+
+    /** 生效 Round 2 补检索超时(ms):≤0 视为默认 30000。 */
+    public long effectiveFollowupTimeoutMs() {
+        return followupTimeoutMs > 0 ? followupTimeoutMs : 30000;
+    }
+
+    /** 生效批次内搜索缓存 TTL(ms):≤0 视为默认 600000(10min)。 */
+    public long effectiveWebCacheTtlMs() {
+        return webCacheTtlMs > 0 ? webCacheTtlMs : 600000;
     }
 
     /** 生效密钥:显式 DEEP_TAVILY_API_KEY 优先,否则读环境变量 TAVILY_API_KEY(.env)。 */

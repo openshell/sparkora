@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -177,5 +178,39 @@ class WebResultNormalizerMergeTest {
         assertEquals("W1", sh.sourceId());
         assertEquals("TAVILY", sh.provider());
         assertEquals("WEB", sh.type());
+    }
+
+    // ===== 10-04 C-R4:跨轮去重(seenUrls)=====
+
+    /** 跨轮去重:Round 1 已见 URL 在 Round 2 被直接丢弃,并计入 dedupedSink。 */
+    @Test
+    void 跨轮去重_已见URL丢弃并计数() {
+        Set<String> seen = new java.util.LinkedHashSet<>();
+        Map<WebProvider, List<WebHit>> round1 = group(
+                WebProvider.TAVILY, List.of(hit("TAVILY", "t1", "https://t.com/1")));
+        List<WebHit> m1 = WebResultNormalizer.merge(List.of(WebProvider.TAVILY), round1, 10, seen);
+        assertEquals(1, m1.size());
+        assertEquals(1, seen.size(), "Round 1 产出的 URL 标为已见");
+
+        java.util.concurrent.atomic.AtomicInteger deduped = new java.util.concurrent.atomic.AtomicInteger();
+        Map<WebProvider, List<WebHit>> round2 = group(
+                WebProvider.TAVILY, List.of(hit("TAVILY", "t1", "https://t.com/1"),
+                        hit("TAVILY", "t2", "https://t.com/2")));
+        List<WebHit> m2 = WebResultNormalizer.merge(List.of(WebProvider.TAVILY), round2, 10, seen, deduped::addAndGet);
+        assertEquals(1, m2.size(), "已见 URL 被丢,仅新 URL 保留");
+        assertEquals("https://t.com/2", m2.get(0).url());
+        assertEquals(1, deduped.get(), "dedupedCount 计 1");
+    }
+
+    /** seenUrls=null 等价旧行为:不去重。 */
+    @Test
+    void seenUrls为null_旧行为等价() {
+        Map<WebProvider, List<WebHit>> per = group(
+                WebProvider.TAVILY, List.of(hit("TAVILY", "t1", "https://t.com/1")));
+        List<WebHit> m1 = WebResultNormalizer.merge(List.of(WebProvider.TAVILY), per, 10, null);
+        List<WebHit> m2 = WebResultNormalizer.merge(List.of(WebProvider.TAVILY), per, 10);
+        assertEquals(1, m1.size());
+        assertEquals("W1", m2.get(0).sourceId());
+        assertEquals(m2.get(0).url(), m1.get(0).url());
     }
 }

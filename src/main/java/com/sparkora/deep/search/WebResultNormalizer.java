@@ -106,6 +106,32 @@ public final class WebResultNormalizer {
      */
     public static List<WebHit> merge(List<WebProvider> order, Map<WebProvider, List<WebHit>> perProvider,
                                      int maxResults) {
+        return merge(order, perProvider, maxResults, null);
+    }
+
+    /**
+     * 跨源合并(10-04 C-R4 增量):在 {@link #merge(List, Map, int)} 基础上增加<b>批次级跨轮去重</b>。
+     *
+     * <p>{@code seenUrls} 为批次共享集合(Round 1 收集,Round 2 传入):凡规范化 URL 已在集合中的候选
+     * <b>直接丢弃</b>(不重复注入 LLM、不让同源重复计为多来源),合并后新产出的 URL 追加进集合。传
+     * {@code null} 等价于无跨轮去重(旧行为逐位不变)。
+     *
+     * @param seenUrls 批次级已见规范化 URL 集合(可空;非空时读写共享)
+     */
+    public static List<WebHit> merge(List<WebProvider> order, Map<WebProvider, List<WebHit>> perProvider,
+                                     int maxResults, Set<String> seenUrls) {
+        return merge(order, perProvider, maxResults, seenUrls, null);
+    }
+
+    /**
+     * 跨源合并(10-04 C-R4 增量 + 去重计数)。
+     *
+     * @param dedupedSink 跨轮去重丢弃计数接收器(可空;每丢弃一条调用一次)。用于把
+     *                    {@code SearchMeta.dedupedCount} 的统计收在合并单点,避免各调用方重复实现。
+     */
+    public static List<WebHit> merge(List<WebProvider> order, Map<WebProvider, List<WebHit>> perProvider,
+                                     int maxResults, Set<String> seenUrls,
+                                     java.util.function.IntConsumer dedupedSink) {
         List<WebHit> merged = new ArrayList<>();
         if (perProvider == null || perProvider.isEmpty()) return merged;
         // 按 order 位次遍历;order 未覆盖的 provider 追加在末尾(按枚举声明序,保证确定)
@@ -126,10 +152,16 @@ public final class WebResultNormalizer {
                 if (h == null) continue;
                 String url = normalizeUrl(h.url());
                 if (url == null) continue;
+                // 10-04 C-R4:跨轮去重——Round 1 已注入过的 URL 直接丢弃(不计 witness,不重复注入 LLM)
+                if (seenUrls != null && seenUrls.contains(url)) {
+                    if (dedupedSink != null) dedupedSink.accept(1);
+                    continue;
+                }
                 Integer idx = indexByUrl.get(url);
                 if (idx == null) {
                     indexByUrl.put(url, merged.size());
                     merged.add(new WebHit(null, h.title(), url, h.snippet(), h.provider(), h.content(), 1, 1));
+                    if (seenUrls != null) seenUrls.add(url);
                 } else {
                     WebHit prev = merged.get(idx);
                     String prevProvider = prev.provider() == null ? "" : prev.provider();

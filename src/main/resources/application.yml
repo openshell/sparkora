@@ -165,6 +165,13 @@ sparkora:
     web-allow-domains: ${DEEP_WEB_ALLOW_DOMAINS:}
     # 09-27 背景题 WEB 正文补抓单条上限(字符):Tavily /extract 取正文后工具层截断的唯一上限
     web-content-max-chars: ${DEEP_WEB_CONTENT_MAX_CHARS:2000}
+    # 10-04 C:覆盖驱动多轮补检索 + 调用预算治理(默认关/保守档,零回归)。
+    # 运行时 sparkora_setting 不放开 followup/budget(直接决定成本)。
+    web-followup-max: ${DEEP_WEB_FOLLOWUP_MAX:0}                    # Round 2 目标数上限;0=关闭多轮
+    web-call-budget: ${DEEP_WEB_CALL_BUDGET:20}                     # 整个简报计量源调用总量上限(Round1+Round2)
+    web-call-budget-per-round: ${DEEP_WEB_CALL_BUDGET_PER_ROUND:12} # Round 1 计量源封顶(生效含保护性下限)
+    followup-timeout-ms: ${DEEP_FOLLOWUP_TIMEOUT_MS:30000}          # Round 2 单目标独立超时
+    web-cache-ttl-ms: ${DEEP_WEB_CACHE_TTL_MS:600000}               # 批次内搜索缓存 TTL(ms)
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}

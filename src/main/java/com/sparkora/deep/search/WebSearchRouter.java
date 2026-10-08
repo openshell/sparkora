@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -43,6 +44,8 @@ public class WebSearchRouter {
     public static final String REASON_EMPTY = "EMPTY";
     public static final String REASON_INVALID_URL = "INVALID_URL";
     public static final String REASON_ERROR = "ERROR";
+    /** 10-04 C:计量源(Tavily/Serper)预算耗尽,跳过本次调用(已获证据照常入册)。 */
+    public static final String REASON_BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED";
 
     private final Map<WebProvider, SearchTool> tools = new EnumMap<>(WebProvider.class);
 
@@ -62,7 +65,16 @@ public class WebSearchRouter {
      * @return 结果与尝试元数据(永不返回 null;开关关闭时 hits 为空)
      */
     public WebSearchOutcome search(String query, int maxResults, WebSearchSnapshot snapshot) {
-        return searchInternal(query, maxResults, snapshot, null);
+        return searchInternal(query, maxResults, snapshot, null, null);
+    }
+
+    /**
+     * 按策略搜索(10-04 C:带批次上下文——计量源预算 + 批次内缓存 + 跨轮去重)。
+     *
+     * @param batch 研究批次上下文(可空;空时等价旧行为,零回归)
+     */
+    public WebSearchOutcome search(String query, int maxResults, WebSearchSnapshot snapshot, WebBatchContext batch) {
+        return searchInternal(query, maxResults, snapshot, null, batch);
     }
 
     /**
@@ -72,7 +84,13 @@ public class WebSearchRouter {
      * 用于 SubAgentRunner 的时效题路由。不支持垂直的工具经默认实现回落 {@code search},行为等价。
      */
     public WebSearchOutcome searchVertical(String query, int maxResults, WebSearchSnapshot snapshot, String vertical) {
-        return searchInternal(query, maxResults, snapshot, vertical);
+        return searchInternal(query, maxResults, snapshot, vertical, null);
+    }
+
+    /** 按垂直搜索(10-04 C:带批次上下文)。 */
+    public WebSearchOutcome searchVertical(String query, int maxResults, WebSearchSnapshot snapshot, String vertical,
+                                           WebBatchContext batch) {
+        return searchInternal(query, maxResults, snapshot, vertical, batch);
     }
 
     /**
@@ -80,17 +98,19 @@ public class WebSearchRouter {
      *
      * @param vertical {@code null} 表示走既有 {@link SearchTool#search}(零回归路径);
      *                 非空时走 {@link SearchTool#searchVertical}(news 垂直)
+     * @param batch    批次上下文(计量预算/缓存/跨轮去重;可空)
      */
-    private WebSearchOutcome searchInternal(String query, int maxResults, WebSearchSnapshot snapshot, String vertical) {
+    private WebSearchOutcome searchInternal(String query, int maxResults, WebSearchSnapshot snapshot, String vertical,
+                                            WebBatchContext batch) {
         if (snapshot == null || !snapshot.webAllowed()) {
             // R4:任一部署级/运行时 WEB 开关关闭时不发起任何请求
             return WebSearchOutcome.empty(snapshot == null ? null : snapshot.order(), REASON_DISABLED);
         }
         List<WebProvider> order = snapshot.providers();
         if (snapshot.strategy() != SearchStrategy.PRIMARY_FANOUT) {
-            return firstHit(query, maxResults, snapshot, vertical, order, null);
+            return firstHit(query, maxResults, snapshot, vertical, order, null, batch);
         }
-        return primaryFanout(query, maxResults, snapshot, vertical, order);
+        return primaryFanout(query, maxResults, snapshot, vertical, order, batch);
     }
 
     /**
@@ -101,7 +121,8 @@ public class WebSearchRouter {
      * @param prefix    已有 attempts(fanout fallback 场景);null 时新建
      */
     private WebSearchOutcome firstHit(String query, int maxResults, WebSearchSnapshot snapshot, String vertical,
-                                      List<WebProvider> providers, List<WebSearchOutcome.Attempt> prefix) {
+                                      List<WebProvider> providers, List<WebSearchOutcome.Attempt> prefix,
+                                      WebBatchContext batch) {
         List<WebSearchOutcome.Attempt> attempts = prefix == null ? new ArrayList<>() : prefix;
         for (WebProvider p : providers) {
             SearchTool tool = tools.get(p);
@@ -110,11 +131,23 @@ public class WebSearchRouter {
                 attempts.add(new WebSearchOutcome.Attempt(p, 0, 0L, REASON_UNCONFIGURED, false));
                 continue;
             }
+            // 10-04 C-R5:批次内缓存命中优先(不消耗预算);未命中才申请预算
+            List<SearchTool.SearchHit> cached = batch == null ? null
+                    : batch.cache().get(p, query, vertical, maxResults);
+            if (cached == null) {
+                // 10-04 C-R3:计量源预算申请失败 → 跳过并记 BUDGET_EXHAUSTED(已获证据照常入册)
+                if (batch != null && !batch.budget().tryAcquire(p)) {
+                    attempts.add(new WebSearchOutcome.Attempt(p, 0, 0L, REASON_BUDGET_EXHAUSTED, false));
+                    log.info("WEB 搜索预算耗尽,跳过 provider briefId={} provider={}", snapshot.briefId(), p);
+                    continue;
+                }
+            }
             long began = System.currentTimeMillis();
             List<SearchTool.SearchHit> raw;
             try {
-                raw = vertical == null ? tool.search(query, maxResults)
-                        : tool.searchVertical(query, vertical, maxResults);
+                raw = cached != null ? cached
+                        : (vertical == null ? tool.search(query, maxResults)
+                        : tool.searchVertical(query, vertical, maxResults));
             } catch (Exception e) {
                 long cost = System.currentTimeMillis() - began;
                 // R12:异常文本可能含密钥,仅记类型化原因,不回传原始异常文本
@@ -123,9 +156,18 @@ public class WebSearchRouter {
                 attempts.add(new WebSearchOutcome.Attempt(p, 0, cost, REASON_ERROR, false, 0, tool.lastUsedEndpoint()));
                 continue;
             }
+            if (batch != null && cached == null) batch.cache().put(p, query, vertical, maxResults, raw);
             long cost = System.currentTimeMillis() - began;
             int rawCount = raw == null ? 0 : raw.size();
             List<WebHit> hits = WebResultNormalizer.normalize(raw, maxResults);
+            // 10-04 C-R4:批次存在时经 merge 统一分配 sourceId;Round 1 只收集已见 URL(Round 2 起启用去重,
+            // 避免并行子代理互相剔除证据)。batch==null 时逐位等价旧行为。
+            if (batch != null) {
+                Set<String> seen = batch.dedupSeenUrls();
+                hits = WebResultNormalizer.merge(List.of(p), Map.of(p, hits), maxResults, seen,
+                        batch::addDeduped);
+                if (!batch.dedupEnabled()) batch.markSeen(hits);
+            }
             if (!hits.isEmpty()) {
                 attempts.add(new WebSearchOutcome.Attempt(p, hits.size(), cost, null, true, 0, tool.lastUsedEndpoint()));
                 log.info("WEB 搜索命中 briefId={} strategy={} provider={} resultCount={} latencyMs={} query={}",
@@ -148,7 +190,7 @@ public class WebSearchRouter {
      * PRIMARY_FANOUT(10-04 B-R2/B-R3):primary 组并行调用 → 跨源合并 → 全空时 fallback 组短路兜底。
      */
     private WebSearchOutcome primaryFanout(String query, int maxResults, WebSearchSnapshot snapshot,
-                                           String vertical, List<WebProvider> order) {
+                                           String vertical, List<WebProvider> order, WebBatchContext batch) {
         List<WebProvider> usable = new ArrayList<>();
         for (WebProvider p : order) {
             SearchTool tool = tools.get(p);
@@ -160,17 +202,20 @@ public class WebSearchRouter {
         }
         if (primary.isEmpty()) {
             // primary 为空(未配置/配置集合与 order 无交集)→ 整体回落 FIRST_HIT(SearxNG-only 逐位不变)
-            return firstHit(query, maxResults, snapshot, vertical, order, null);
+            return firstHit(query, maxResults, snapshot, vertical, order, null, batch);
         }
 
         // 并行调用 primary 组(虚拟线程,各取满 maxResults;异常/超时隔离,不回传异常文本)
         // 并发写入:用 ConcurrentHashMap 承载,合并时按 order 稳定遍历保证结果确定
         Map<WebProvider, List<WebHit>> perProvider = new java.util.concurrent.ConcurrentHashMap<>();
         Map<WebProvider, WebSearchOutcome.Attempt> primaryAttempts = new java.util.concurrent.ConcurrentHashMap<>();
-        callPrimaryParallel(query, maxResults, snapshot, vertical, primary, perProvider, primaryAttempts);
+        callPrimaryParallel(query, maxResults, snapshot, vertical, primary, perProvider, primaryAttempts, batch);
 
-        // 跨源合并(去重/见证累加/order 位次排序/截断/sourceId 统一分配)
-        List<WebHit> merged = WebResultNormalizer.merge(order, perProvider, maxResults);
+        // 跨源合并(去重/见证累加/order 位次排序/截断/sourceId 统一分配 + 跨轮去重)
+        Set<String> seen = batch == null ? null : batch.dedupSeenUrls();
+        List<WebHit> merged = WebResultNormalizer.merge(order, perProvider, maxResults, seen,
+                batch == null ? null : batch::addDeduped);
+        if (batch != null && !batch.dedupEnabled()) batch.markSeen(merged);
         if (!merged.isEmpty()) {
             // attempts 严格按 order 重建:primary 用实测结果(含 witnessTotal),其余未配置记 UNCONFIGURED,
             // fallback 组本轮未调用故不记录(与 FIRST_HIT「只记到首次命中为止」语义一致)。
@@ -207,29 +252,42 @@ public class WebSearchRouter {
                 prefix.add(new WebSearchOutcome.Attempt(p, 0, 0L, REASON_UNCONFIGURED, false));
             }
         }
-        WebSearchOutcome fb = firstHit(query, maxResults, snapshot, vertical, new ArrayList<>(fallback), prefix);
+        WebSearchOutcome fb = firstHit(query, maxResults, snapshot, vertical, new ArrayList<>(fallback), prefix,
+                batch);
         log.info("WEB 多源聚合 primary 全空,回落 fallback briefId={} primary={} fallback={} used={}",
                 snapshot.briefId(), primary, fallback, fb.usedProvider());
         return new WebSearchOutcome(fb.hits(), fb.usedProvider(), fb.attempts(), fb.usedProviders());
     }
 
-    /** 并行调用 primary 组:每个 provider 独立治理(含 SearXNG 质量门),异常隔离。 */
+    /** 并行调用 primary 组:每个 provider 独立治理(含 SearXNG 质量门 + 缓存 + 预算),异常隔离。 */
     private void callPrimaryParallel(String query, int maxResults, WebSearchSnapshot snapshot, String vertical,
                                      List<WebProvider> primary,
                                      Map<WebProvider, List<WebHit>> perProvider,
-                                     Map<WebProvider, WebSearchOutcome.Attempt> primaryAttempts) {
+                                     Map<WebProvider, WebSearchOutcome.Attempt> primaryAttempts,
+                                     WebBatchContext batch) {
         ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
         try {
             List<Future<?>> futures = new ArrayList<>();
             for (WebProvider p : primary) {
                 final WebProvider provider = p;
                 futures.add(pool.submit(() -> {
+                    // 10-04 C-R5:缓存命中优先;未命中才申请预算
+                    List<SearchTool.SearchHit> cached = batch == null ? null
+                            : batch.cache().get(provider, query, vertical, maxResults);
+                    if (cached == null && batch != null && !batch.budget().tryAcquire(provider)) {
+                        // 预算耗尽:跳过(已获证据照常入册),不发起付费调用
+                        primaryAttempts.put(provider,
+                                new WebSearchOutcome.Attempt(provider, 0, 0L, REASON_BUDGET_EXHAUSTED, false, 0,
+                                        tools.get(provider).lastUsedEndpoint()));
+                        return;
+                    }
                     long began = System.currentTimeMillis();
                     List<SearchTool.SearchHit> raw;
                     try {
                         SearchTool tool = tools.get(provider);
-                        raw = vertical == null ? tool.search(query, maxResults)
-                                : tool.searchVertical(query, vertical, maxResults);
+                        raw = cached != null ? cached
+                                : (vertical == null ? tool.search(query, maxResults)
+                                : tool.searchVertical(query, vertical, maxResults));
                     } catch (Exception e) {
                         long cost = System.currentTimeMillis() - began;
                         // 异常文本可能含密钥,仅记类型化原因
@@ -240,6 +298,7 @@ public class WebSearchRouter {
                                         tools.get(provider).lastUsedEndpoint()));
                         return;
                     }
+                    if (batch != null && cached == null) batch.cache().put(provider, query, vertical, maxResults, raw);
                     long cost = System.currentTimeMillis() - began;
                     int rawCount = raw == null ? 0 : raw.size();
                     List<WebHit> hits = WebResultNormalizer.normalize(raw, maxResults);
@@ -310,9 +369,38 @@ public class WebSearchRouter {
      * 不支持的工具默认返回空列表(零成本跳过)。未配置/异常/空 → 继续尝试后备;全部无 → 返回空列表
      * (调用方降级回摘要,绝不抛出)。provider 与密钥不落日志。
      */
+    /**
+     * 按 URL 抽取正文片段(09-27-tavily-extract-kind-hypotheses R1,机制 B:search 拿摘要 + 按需 extract 补正文)。
+     *
+     * <p>保持工具抽象:按 provider 顺序尝试支持 {@link SearchTool#extract} 的工具,首个产出非空即采信并停止;
+     * 不支持的工具默认返回空列表(零成本跳过)。未配置/异常/空 → 继续尝试后备;全部无 → 返回空列表
+     * (调用方降级回摘要,绝不抛出)。provider 与密钥不落日志。
+     *
+     * <p>10-04 C-R7:签名保留 2 参重载(默认 order=TAVILY,SEARXNG、webAllowed=true)以兼容既有调用方;
+     * 新调用方应传快照,见 {@link #extract(String, List, WebSearchSnapshot)}。
+     */
     public List<SearchTool.SearchHit> extract(String query, List<String> urls) {
+        // 10-04 C-R7 缺陷修复:旧实现按 WebProvider.values() 枚举声明序遍历且不受 webAllowed 约束。
+        // 兼容重载以「默认 order + 放行」构造等价快照:默认 order(TAVILY,SEARXNG)下行为逐位等价,
+        // 但 SERPER(无 extract 实现)已从默认遍历中移除,不再可能被误排序。
+        return extract(query, urls, WebSearchSnapshot.of(
+                WebProviderOrder.defaults(), true, null, 0));
+    }
+
+    /**
+     * 按 URL 抽取正文(10-04 C-R7):按<b>快照 order</b> 遍历 + 尊重 {@code webAllowed}。
+     *
+     * <ul>
+     *   <li>{@code webAllowed=false} → 不发起任何请求(修复旧实现 WEB 全局关闭仍付费 extract 的缺陷);</li>
+     *   <li>按 {@code snapshot.providers()} 顺序遍历(与 search 策略序一致,而非枚举声明序);</li>
+     *   <li>快照为 null 时回退默认 order 且放行(零回归)。</li>
+     * </ul>
+     */
+    public List<SearchTool.SearchHit> extract(String query, List<String> urls, WebSearchSnapshot snapshot) {
         if (urls == null || urls.isEmpty()) return List.of();
-        for (WebProvider p : WebProvider.values()) {
+        if (snapshot != null && !snapshot.webAllowed()) return List.of();   // C-R7:WEB 关闭时不发起付费 extract
+        List<WebProvider> order = snapshot == null ? WebProviderOrder.defaults().providers() : snapshot.providers();
+        for (WebProvider p : order) {
             SearchTool tool = tools.get(p);
             if (tool == null || !tool.available()) continue;
             try {
