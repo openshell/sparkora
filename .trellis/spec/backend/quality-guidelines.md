@@ -66,6 +66,18 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 > **测试守卫**：为「可被容器实例化」这类装配契约补一个轻量 `AnnotationConfigApplicationContext` 探针测试（只 register 被测 bean + 其依赖），
 > 无需 `@SpringBootTest`；先例 `FetchTransportWiringTest`（`com.sparkora.source.fetch`）。新增多构造器 `@Component` 时应照此加守卫，否则该缺陷仍会静默回潮。
 
+### Convention: 同一逻辑值分散在「数据库列」与「JSONB metadata」两处时必须同源写入（10-05 U Check 实测）
+
+**What**：当同一语义值（如内容分类 `category`）既存于实体的**普通列**（供 SQL 筛选 `WHERE category=?`）又写进 `vector_store.metadata`（供向量检索过滤）时，两条写入路径**必须同步**，否则会出现「检索能命中、按列筛选却查不到」的静默不一致。
+
+**Problem（10-05-source-center-ui Check 真事故）**：`category='官方新闻'` 早期只写进 `vector_store.metadata` JSONB（并回填 metadata），但 `sparkora_news.category` 列始终为 NULL →
+`GET /api/source-contents?category=官方新闻` 用 `eq("category", ...)` 查列 → **BYD 新闻全部漏掉**；而向量检索按 metadata 过滤又能命中。单测（只测写 metadata 的分支）与 `npm run build` 全绿，缺陷只在按列筛选的真实查询里暴露。
+
+**规避**：
+- 写入侧：凡「列 + metadata 双载体」的字段，在**同一 upsert 路径**同时写两处——先例 `SourceCollectService`（列）与 `SourceDocService`（metadata）；BYD 侧原先只写 metadata，已补 `NewsService.upsertOne` 写列。
+- 迁移侧：回填脚本要**同时**覆盖列与 JSONB——先例 `V14`（回填 metadata）遗漏了列，须由 `V15` 补回填 `sparkora_news.category`。
+- 排查口径：出现「检索有、列表筛选无」时，先比对该字段在**列**与 **metadata** 两处是否都存在。
+
 ---
 
 ## Code Review Checklist

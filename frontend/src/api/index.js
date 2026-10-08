@@ -137,6 +137,37 @@ export const newsApi = {
   retryJob: (id) => http.post(`/news/sync/jobs/${id}/retry`)
 }
 
+// 10-05-source-center-ui：信源注册/采集（B 后端契约）；内容查询（B-R9）。
+// 读（list/get/contentList/contentGet）三角色；写（update/collect/rebuildContent）ADMIN/EDITOR，
+// 后端 @PreAuthorize 兜底，前端按钮按角色显隐。页面禁止直调 http，一律经此具名导出。
+export const sourceApi = {
+  // 信源列表：R<List<SourceEntity>>（含 channels[]/channelCount/enabled）
+  list: () => http.get('/sources'),
+  // 信源详情（含 channels[]）
+  get: (id) => http.get(`/sources/${id}`),
+  // 编辑源级字段（部分更新，触发调度重注册）；body=SourceUpdateDTO，返回 R<SourceEntity>
+  update: (id, data) => http.put(`/sources/${id}`, data),
+  // 手动触发采集；channelId 可空=整源。返回 R<{jobId}>
+  collect: (id, channelId) =>
+    http.post(`/sources/${id}/collect`, channelId == null ? {} : { channelId }),
+  // 信源内容分页列表：?page&size&keyword&category&sourceId → R<PageResult<SourceContentDTO>>（列表不含正文）
+  contentList: (params) => http.get('/source-contents', { params }),
+  // 内容详情（含正文 content / 切块数 chunkCount / 原文 url）
+  contentGet: (id) => http.get(`/source-contents/${id}`),
+  // 重建单条通用信源内容的切块+向量（幂等先清后建）；返回 R<{total,success,failed}>
+  rebuildContent: (id) => http.post(`/source-contents/${id}/rebuild`)
+}
+
+// 10-05-source-center-ui：信源采集任务监控。读三角色；retry ADMIN/EDITOR。
+export const sourceJobApi = {
+  // 任务历史/进度：?sourceId 可选 → R<List<SourceJobEntity>>（按 id 倒序）
+  list: (params) => http.get('/source-jobs', { params }),
+  // 任务进度
+  get: (id) => http.get(`/source-jobs/${id}`),
+  // 重试失败项，返回新任务 R<{jobId}>
+  retry: (id) => http.post(`/source-jobs/${id}/retry`)
+}
+
 // S7 通用汽车知识库（KbLibrary 换封装用；行为与原先直调 http 完全一致）
 export const kbApi = {
   // 受控领域词表（10-03 E3）：data 为有序字符串数组，供 domain 下拉

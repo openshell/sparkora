@@ -11,8 +11,8 @@
       <el-tab-pane label="知识库" name="kb">
         <KbLibraryPanel v-if="loadedTabs.kb" />
       </el-tab-pane>
-      <el-tab-pane label="新闻" name="news">
-        <NewsKnowledgePanel v-if="loadedTabs.news" />
+      <el-tab-pane label="信源" name="sources">
+        <SourceTab v-if="loadedTabs.sources" />
       </el-tab-pane>
       <el-tab-pane label="检索问答" name="qa">
         <QaChatPanel v-if="loadedTabs.qa" />
@@ -25,12 +25,12 @@
 import { ref, reactive, watch, onMounted } from 'vue'
 import CarKnowledgePanel from './knowledge/CarKnowledgePanel.vue'
 import KbLibraryPanel from './knowledge/KbLibraryPanel.vue'
-import NewsKnowledgePanel from './knowledge/NewsKnowledgePanel.vue'
+import SourceTab from './knowledge/SourceTab.vue'
 import QaChatPanel from './knowledge/QaChatPanel.vue'
 
 const activeTab = ref('car')
 // 懒挂载：首次切入某 Tab 才挂载对应面板（避免无谓请求），挂载后保留状态
-const loadedTabs = reactive({ car: false, kb: false, news: false, qa: false })
+const loadedTabs = reactive({ car: false, kb: false, sources: false, qa: false })
 
 const markLoaded = (name) => { if (loadedTabs[name] !== undefined) loadedTabs[name] = true }
 

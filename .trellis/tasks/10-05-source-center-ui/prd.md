@@ -27,15 +27,16 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-U1 管理可用**：可新建/编辑/启停信源、手动触发采集并看到任务进度与失败明细，失败可重试。
-- [ ] **AC-U2 内容可浏览且并入**：信源内容列表可分页/筛选/查看详情；**BYD 新闻在信源内容视图中可访问**，且其专属能力（同步按钮/切块数/官方原文链接/同步轮询）对 `source=byd` 条目仍可用；「新闻」Tab 已移除，「信源」Tab 承载原能力。
-- [ ] **AC-U3 权限正确**：viewer 只读、写接口 403；按钮按角色显隐。
-- [ ] **AC-U4 API 分层**：所有调用经 `src/api/index.js`；`npm run build` 通过。
-- [ ] **AC-U5 零回归**：车型/知识库/问答既有 Tab 不回归；`/knowledge`、`/car`、`/car/:id` 路由不变；BYD 新闻能力未丢失。
+- [x] **AC-U1 管理可用**（PARTIAL，受后端契约所限）：编辑源级字段/启停/手动触发采集（整源或单 `channelId`）/任务进度与 `failedItems` 明细/失败重试**全部可用**。**「新建信源」与「栏目选择器 CRUD」不可达**——B 的 `SourceController` 无 `POST /api/sources`、无 channel 增删改端点（权威 `docs/spec/knowledge/sources.md §6`），U 声明纯前端不新增后端接口，故正确省略并在 `center.md §6`、本 PRD Out of Scope 登记；栏目列表以只读展示 + 单栏目触发交付。
+- [x] **AC-U2 内容可浏览且并入**：信源内容列表分页/关键词/`category`/`sourceId` 筛选 + 详情；BYD 新闻作为 `source=byd-news` 并入并**可访问**，其专属能力（同步 FULL/INCREMENT + 2s 轮询、切块数、官方原文相对 URL 补 `https://www.byd.com`、封面/主题经 `newsApi.get` 补充）对 `source=byd-news` 条件保留；「新闻」Tab 已移除、「信源」Tab 承载原能力。**修复（check 发现的连通缺口）**：BYD 写入侧原先未落 `sparkora_news.category`（仅写 `vector_store.metadata`），导致按 `category=官方新闻` 筛选漏 BYD；已补 `NewsService.upsertOne` 写 `category='官方新闻'` + 迁移 `V15` 幂等回填存量行。
+- [x] **AC-U3 权限正确**：写按钮按 `useUserStore().isEditorOrAbove` 显隐（编辑/启停/采集/重试/重建 共 10 处）；读三角色；后端 `@PreAuthorize` 兜底。
+- [x] **AC-U4 API 分层**：所有调用经 `src/api/index.js`（新增 `sourceApi`/`sourceJobApi`，路径与 `SourceController` 逐条对齐）；`grep` 确认 `views/knowledge` + `KnowledgeCenter.vue` 无直调 `http`；`npm run build` 通过。
+- [x] **AC-U5 零回归**：车型/知识库/问答三面板代码与懒加载零改动；`router/index.js`、`AppShell.vue` 零 diff；`npm run build` + `mvn test` 全绿。
 
 ## Out of Scope
 
 - 采集/解析/调度后端（→ 前置任务）。
+- **新建信源（`POST /api/sources`）与栏目选择器 CRUD**：B 未提供这两类接口，本任务不放宽后端边界；信源/栏目注册由后端预置或直接写库，U 只做查看 + 源级编辑 + 单栏目触发采集。
 - 信源内容的人工编辑/审核。
 - 采集内容的**视频**浏览；采集图片的独立浏览（正文配图已由 B/E 转入既有**图库**，经既有图库 UI/配图链路消费，不在「信源内容」页另做图片区）。
 - 移动端适配（PC-only 桌面工作台）。

@@ -220,6 +220,8 @@ public class NewsService {
         n.setTagNames(tagNames);
         n.setContent(content);
         n.setSource("byd-news");
+        // 10-05 U-R3:BYD 新闻分类落 news.category(通用信源由 SourceCollectService 写;此处补 BYD,供 /api/source-contents 的 category 筛选)
+        n.setCategory("官方新闻");
         n.setSyncStatus("SUCCESS");
         n.setLastSyncAt(LocalDateTime.now());
         n.setLastSyncError(null);

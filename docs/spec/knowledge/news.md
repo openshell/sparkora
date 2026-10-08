@@ -99,8 +99,13 @@
 
 ## 8. 前端
 
-- `views/knowledge/NewsKnowledgePanel.vue`（知识中心新闻 Tab）：分页列表 + 详情抽屉（正文 pre-wrap / 官方原文 `https://www.byd.com`+`url` / 切块数）；`tagNames` JSON 容错；`content` 空显示图片型提示；EDITOR 及以上 FULL/INCREMENT 同步 + 2s 轮询。
-- 封面与主题标签（09-15 img-classify）：封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退）；卡片/详情展示 `themes`，**点标签跳图库并按 `主题/<名>` 筛选**（见 [image.md §8](../image.md)）。
+> **10-05-source-center-ui（2026-10-05）**：知识中心「新闻」Tab 已移除，**BYD 新闻能力迁入信源 Tab 的
+> `views/knowledge/SourceContentPanel.vue`**（对 `source=byd-news` 条目条件保留：同步 FULL/INCREMENT + 2s 轮询、
+> 切块数、官方原文相对 URL 补 `https://www.byd.com`）。`views/knowledge/NewsKnowledgePanel.vue` 留档、不再被引用。
+> 新闻内容作为 `source=byd-news` 来源并入 `GET /api/source-contents` 浏览；`/api/news*` 接口与 `newsApi` 保留不变。
+
+- `views/knowledge/SourceContentPanel.vue`（信源 Tab 内容区）：分页列表 + 详情抽屉；`source=byd-news` 时条件渲染 BYD 专属能力（同步/切块数/官方原文/轮询），其余来源走「信源管理」手动采集 + 通用原文链接。
+- 封面与主题标签（09-15 img-classify）：BYD 新闻的封面/主题标签不在 `SourceContentDTO` 内，`SourceContentPanel` 打开 BYD 详情时另调 `newsApi.get` 补充 `coverImageUrl`/`themes`/`tagNames` 后展示（点标签跳图库见 [image.md §8](../image.md)）；通用信源内容无此补充。
 
 ---
 
