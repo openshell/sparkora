@@ -1578,3 +1578,40 @@ Round 2 selectFollowupTargets(纯函数)+三级预算+跨轮去重+批次内缓�
 ### Next Steps
 
 - 剩余: 10-05-source-domain-retrieval(E)→source-center-ui(U)→source-web-fusion(F)
+
+
+## Session 60: 10-05 E 信源入库与检索接入：NEWS 域泛化+二级隔离+V14
+<!-- trellis-session: v=2 fp=cdec4ade4a594c98 -->
+
+**Date**: 2026-10-08
+**Task**: 10-05 E 信源入库与检索接入：NEWS 域泛化+二级隔离+V14
+**Branch**: `main`
+
+### Summary
+
+SourceDocService 切块嵌入、UnifiedHit/Citation 透传 sourceType、NEWS 域内二级隔离保护 BYD、V14 metadata 回填;check 通过
+
+### Main Changes
+
+- 新增 SourceDocService/SourceCatalog + TextChunker preserveNewlines 重载
+- CarRagService 域内二分独立配额 + 字段贯通 + category 标注;NewsDocService 写 byd-news
+- V14 幂等回填 NEWS metadata(不动 id)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a30b193` | feat(10-05): 信源入库与检索接入(NEWS 域泛化+byd-news/user-source 二级隔离+metadata 回填 V14) |
+| `8982a58` | chore(task): archive 10-05-source-domain-retrieval |
+
+### Testing
+
+- [OK] mvn test 1042/0/0/0; npm run build OK
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实现 10-05-source-center-ui(信源管理+采集运维面板) 或 10-05-source-web-fusion
