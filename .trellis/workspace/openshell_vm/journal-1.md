@@ -1542,3 +1542,39 @@ TavilySearchTool relay→official failover,三独立 RestClient,端点级+结果
 ### Next Steps
 
 - 实现 10-05-source-domain-retrieval(E 入库切块检索)
+
+
+## Session 59: 10-04 C 覆盖驱动多轮补检索 + 预算治理：实现/复核/归档
+<!-- trellis-session: v=2 fp=677e6966e7e2bb13 -->
+
+**Date**: 2026-10-08
+**Task**: 10-04 C 覆盖驱动多轮补检索 + 预算治理：实现/复核/归档
+**Branch**: `main`
+
+### Summary
+
+Round 2 selectFollowupTargets(纯函数)+三级预算+跨轮去重+批次内缓存+extract 缺陷修复;默认关零回归
+
+### Main Changes
+
+- 新增 WebCallBudget/WebSearchCache/WebBatchContext
+- DeepResearchService Round 2 编排 + SubAgentRunner.researchFollowup + SearchMeta 三增量字段
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4483021` | feat(10-04): 覆盖驱动多轮补检索(Round 2) + 三级调用预算/跨轮去重/批次内缓存(默认关) |
+| `6019579` | chore(task): archive 10-04-web-followup-budget |
+
+### Testing
+
+- [OK] 实现/复核均跑 mvn test 1014/0/0/0; npm run build ✓
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 剩余: 10-05-source-domain-retrieval(E)→source-center-ui(U)→source-web-fusion(F)
