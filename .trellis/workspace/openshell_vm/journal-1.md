@@ -1615,3 +1615,39 @@ SourceDocService 切块嵌入、UnifiedHit/Citation 透传 sourceType、NEWS 域
 ### Next Steps
 
 - 实现 10-05-source-center-ui(信源管理+采集运维面板) 或 10-05-source-web-fusion
+
+
+## Session 61: 10-05 U 知识中心信源管理重构：信源Tab+采集监控+BYD能力保留
+<!-- trellis-session: v=2 fp=dbb0cc35ba23b96d -->
+
+**Date**: 2026-10-08
+**Task**: 10-05 U 知识中心信源管理重构：信源Tab+采集监控+BYD能力保留
+**Branch**: `main`
+
+### Summary
+
+信源Tab替换新闻Tab;信源管理/采集任务监控/内容浏览三面板;修复BYD category未落列(V15)
+
+### Main Changes
+
+- 信源Tab替换新闻Tab,三面板(管理/任务/内容)+sourceApi/sourceJobApi
+- 修复BYD news.category未写致category筛选漏BYD(NewsService+V15回填)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `42aec7b` | feat(10-05): 知识中心信源管理重构(信源Tab替换新闻Tab+采集任务监控+BYD能力条件保留) |
+| `aeec889` | chore(task): archive 10-05-source-center-ui |
+
+### Testing
+
+- [OK] mvn test 1042/0/0/0; frontend npm run build 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实现 10-05-source-web-fusion(F)
