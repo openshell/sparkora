@@ -33,16 +33,16 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-E1 采集内容可检索**：工信部/乘联会/盖世采集内容切块嵌入后，统一检索能命中，来源标注正确，citations 带 `source` 与标题/publishDate。
-- [ ] **AC-E2 域隔离**：新增信源块后，复现 `news.md` §5 验证口径——CAR/KB 候选窗口不被信源块挤占（构造 BYD 类 query，CAR 候选数不因信源块增加而下降）；**且 NEWS 域内 BYD 官方新闻不被用户采集源挤占**（构造 BYD 新闻 + 采集源并发命中，验证二级隔离）。
-- [ ] **AC-E3 BYD 等价**：BYD 新闻标注为 `sourceType=byd-news`、`domain=NEWS` 不变后，检索命中/来源标注/配额/前端展示与改造前**逐位等价**（回归对拍）；**存量向量 id 不失配、无需重嵌**；**持续 BYD 同步后新入库块仍带 `byd-news`**（`NewsDocService` 同步写入 metadata，不能只有 V14 回填存量）。
-- [ ] **AC-E8 结构化内容**：乘联会销量表等表格类内容切块后行列表数值不丢、可被检索命中；不被 `TextChunker` 段内换行转空格压平。
-- [ ] **AC-E9 字段贯通（P0）**：user-source 的 NEWS 命中，其 `sourceType`/`category` 能经 `UnifiedHit`→`Citation`→`KnowledgeSearchTool` 完整传到位（断言 `Citation.sourceType()=="user-source"`），下游 F 可据此判 SOURCE；BYD 命中仍为 `byd-news`。
-- [ ] **AC-E4 迁移幂等**：Flyway 迁移 + 回填可重入；存量 NEWS 向量行回填后检索不丢；`mvn test` 全绿。
-- [ ] **AC-E5 四态不变**：`rag_status` `OK/LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE/DISABLED` 语义与判定口径不变（门槛 `ragMinScore`/`ragRejectScore` 仍作用于原分）。
-- [ ] **AC-E6 降级不阻断**：信源切块/嵌入失败不阻断生成；生成链路可正常跑通。
-- [ ] **AC-E7 零回归**：未接入自建信源时行为与现状等价；`npm run build` 通过。
-- [ ] **AC-E10 采集配图可检索**：`source=source` 的图经 `ImageEmbeddingService.searchImages` 命中（嵌入文本含来源标题）；`byd-news`/AI/upload 图行为不变；`domain=IMAGE` 向量写入无新迁移。
+- [x] **AC-E1 采集内容可检索**：工信部/乘联会/盖世采集内容切块嵌入后，统一检索能命中，来源标注正确，citations 带 `source` 与标题/publishDate。→ `SourceCollectService.upsertOne` best-effort 调 `SourceDocService.rebuildForNews`（:201-209）；`SourceDocService` 写 `upsert(domain=NEWS, refId=news_doc.id, metadata{sourceType,category,publishDate})`；`SourceDocServiceTest` 断言 refId/metadata；新增 `POST /api/source-contents/{id}/rebuild`。
+- [x] **AC-E2 域隔离**：CAR/KB 候选窗口不被信源块挤占；NEWS 域内 BYD 不被用户采集源挤占。→ `CarRagService.retrieveUnified` 两次 `searchDomains` 保持域窗隔离；NEWS 候选按 sourceType 二分 + 独立配额；`CarRagServiceTest.E2_信源块激增_CAR候选不被挤占`、`E2_二级隔离_user子集塞满不改BYD子集`。（已知边界：生产规模窗口挤占见 design §4.3，默认 off 零风险。）
+- [x] **AC-E3 BYD 等价**：BYD 标注逐位等价、存量向量 id 不失配、持续同步新块带 `byd-news`。→ `NewsDocService.persistNewsDoc` 写 `sourceType=byd-news`/`category=官方新闻`（:115-118）；`isBydNews` 对 `null` 兜底（含 V14 前旧块）；`sourceAnnotation` BYD 分支逐字「【官方新闻：name】」；`NewsDocTransactionTest` 断言 byd-news；V14 真实库 `BEGIN…ROLLBACK` 验证 `id` 不变。
+- [x] **AC-E8 结构化内容**：表格类内容切块后数值不丢。→ `TextChunker` 新增 7 参 `preserveNewlines` 重载（旧 5/6 参委托 false，逐字等价）；`preservedBodies` 按行合并不压平；`TextChunkerTest.preserveNewlines_true_保留表格行结构`/`超长表格按行合并_整行不截断`；`SourceDocServiceTest.结构化分类_保留换行_数值行不丢`。
+- [x] **AC-E9 字段贯通（P0）**：`sourceType`/`category` 经 `UnifiedHit`→`Citation`→`KnowledgeSearchTool` 完整传到位。→ `UnifiedHit`（:71-78）与 `Citation`（:98-108）两级均加可空字段 + 兼容构造器；`toUnified` 读 metadata（:541-545）；组 `cites` 透传（:454-456）；锚点加权重建同步（:321-322）；`CarRagServiceTest.E9_字段贯通_Citation带sourceType与category`。（下游 `SearchHit`/`SOURCE` 类型属 F 范围。）
+- [x] **AC-E4 迁移幂等**：迁移可重入；存量回填后检索不丢；`mvn test` 全绿。→ `V14__news_source_metadata.sql` 仅 `metadata` 缺键守卫、不引用 `id`；check 以 `BEGIN…ROLLBACK` 复现幂等（二次 pass `UPDATE 0`）；V1–V13 未改；`mvn test` 1042 全绿。
+- [x] **AC-E5 四态不变**：`rag_status` 语义与门槛判定不变。→ `RagStatus` 枚举与 `minScore`/`rejectScore` 判定逻辑未动；四态既有用例全通过。
+- [x] **AC-E6 降级不阻断**：切块/嵌入失败不阻断生成。→ `SourceCollectService` try/catch warn；`SourceDocServiceTest.embedding失败_不抛出_失败计数`；`REQUIRES_NEW` 隔离。
+- [x] **AC-E7 零回归**：未接入信源时行为等价；`npm run build` 通过。→ `AiProperties.ragSourceTopk=0` + `application.yml` + `.env.example` 默认 0；`sourceType==null` 兜底 byd；`E_sourceTopK默认0_用户源不注入_BYD不受影响`；`npm run build` ✓。
+- [x] **AC-E10 采集配图可检索**：`source=source` 图经反查标题嵌入并可检索；旧来源不变；无新迁移。→ B 已实现 `ImageEmbeddingTextBuilder.build` `case "byd-news","source"` 与 `ImageEmbeddingService.newsTitleOf` 对 `source` 反查；`domain=IMAGE` 不变、无新迁移；`ImageEmbeddingTextBuilderTest.通用信源图_与新闻图同分派`。
 
 ## Out of Scope
 

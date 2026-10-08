@@ -41,10 +41,11 @@
 `sparkora_article_brief.rag_citations`、`sparkora_article_version.rag_citations` — `TEXT`（JSON 数组）：
 
 ```
-[{source:"CAR|KB|NEWS", modelName, chunkType, score, chunkText, docId}]
+[{source:"CAR|KB|NEWS", modelName, chunkType, score, chunkText, docId, sourceType?, category?}]
 ```
 
 - `docId` 为 09-15 qa-auto-illustrate 起的可空域内块 id：`CAR=car_chunk.id` / `KB=kb_chunk.id` / `NEWS=news_doc.id`。
+- **10-05 E 增量**：`sourceType`/`category` 为可空的 NEWS 域内来源细化字段（BYD 命中 `byd-news`/`官方新闻`；用户采集源 `user-source`/`销量数据`…）。**同时贯通 `UnifiedHit` 与 `Citation` 两级 record**——`Citation` 是送到 `KnowledgeSearchTool` 的实际载体，供下游 F 判 SOURCE。旧前端/调用方不读不报错（纯增量兼容）。
 - 检索 `OK` 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。**版本链路由 `VersionService` 写入；`brief.rag_citations` 的写入方（FAST 简报 `BriefService.generate`）已于 2026-09-26（R6）删除，深度简报链路不写该列（引用面板改由 `fact_sheet` 派生，见下条）**。
 - 前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 `ragStatus` 显示降级文案（**前端不读 `docId`，纯增量不影响展示**）。
 - **WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 `fact_sheet`，行为不变（**2026-09-09 注：快速模式已下线，本句仅存量语义**）。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
@@ -100,6 +101,7 @@ provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全
 | `AI_RAG_KB_ENABLED` | `true` | 通用知识库总开关，false 时统一检索排除 KB 块（见 [knowledge/kb.md](knowledge/kb.md)） |
 | `AI_RAG_ANCHOR_BOOST` | `1.15` | 统一检索锚点车型块分数加权系数（见 [knowledge/kb.md](knowledge/kb.md)） |
 | `AI_RAG_NEWS_TOPK` | `4` | 新闻域生成注入块数上限（`0` 关闭 NEWS 注入；不受 KB 开关控制；见 [knowledge/news.md](knowledge/news.md)） |
+| `AI_RAG_SOURCE_TOPK` | `0` | **10-05 E**：NEWS 域内用户采集源（`sourceType=user-source`）独立注入块数上限（`0`=关闭，零回归；BYD 官方新闻走 `AI_RAG_NEWS_TOPK`） |
 | `AI_RAG_RERANK_ENABLED` | `false` | **A rerank（10-03-a-rerank）**：LLM 重排总开关；关闭时检索行为与现状逐条一致（零回归） |
 | `AI_RAG_RERANK_TOPN` | `20` | 参与 LLM 重排的候选数上限（按原始相似度取前 N，其余原序追加） |
 | `AI_RAG_RERANK_TIMEOUT_MS` | `10000` | 单次重排超时预算（ms，超时回退原序；比 `AI_TIMEOUT_MS` 短） |
@@ -122,7 +124,7 @@ provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全
 > 迁移子任务 E1（`.trellis/tasks/10-03-e1-pgstore-migrate`）。旧 4 表**已于 10-03 E6 删除**（见 §11）。
 
 - **拓扑**：单张 `vector_store`（Flyway `V5__pgvector_store.sql`；`id uuid / content text / metadata json / embedding vector(1024)`；HNSW cosine + metadata GIN）。`initialize-schema=false`（由 Flyway 建表）；维度/距离/索引由 `spring.ai.vectorstore.pgvector.*` 约定（1024 / cosine / hnsw）。
-- **metadata 契约**：`{domain(CAR|KB|NEWS|IMAGE), refId(域内 id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`；`content` = `chunk_text`（IMAGE 域 = 旧 `source_text`）。
+- **metadata 契约**：`{domain(CAR|KB|NEWS|IMAGE), refId(域内 id), modelId(仅 CAR), chunkType, name, active, embeddingModel}`；`content` = `chunk_text`（IMAGE 域 = 旧 `source_text`）。**10-05 E 增量**：NEWS 域行另带 `sourceType`（`byd-news`/`user-source`/`gasgoo-*`）、`category`（官方新闻/销量数据/…）、`publishDate`（ISO，可空）；由 `NewsDocService`（BYD，写 `byd-news`）与 `SourceDocService`（通用信源）写入，V14 回填存量（仅补缺键、**不动 id**）。
 - **id 确定性**：`UUID.nameUUIDFromBytes(domain+":"+refId)`，供 upsert/delete/setActive 按 id 定位（store 无按 metadata 更新 API）。
 - **读路径**：`CarRagService` 经 `ai.vector.SearchStore`；候选窗按域隔离复现——CAR+KB 合并一次 `similaritySearch` + NEWS 独立一次（`domain in [...] && active && embeddingModel`）+ Java 合并；`similarityThreshold=0`，门槛仍在 Java 侧用 `ragMinScore`/`ragRejectScore` 判定。`ImageEmbeddingService.searchImages` 走 IMAGE 域（可选 `refId ∈ 白名单`）。
 - **活表同步层**：`active` 由写路径 `VectorStoreService.upsert/setActive/deleteByRef` 维护（软删/停用/重建/删父联动）；`CarChunkService`/`KbDocService`/`NewsDocService`/`ImageEmbeddingService` 的 persist/delete 同步单表。
@@ -221,3 +223,9 @@ provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全
   - `ImageEmbeddingService.rebuildMissing`：差集 = 图库 id 全集 − `VectorStoreService.refIdsByDomain("IMAGE", 当前模型)`，语义与原旧表 `LEFT JOIN` 差集一致；store 未注入（单测）时视为无缺失。
 - **删除件**：`CarDocEmbeddingMapper`/`KbChunkEmbeddingMapper`/`NewsDocEmbeddingMapper`/`ImageEmbeddingMapper`/`EmbeddingModelStatsMapper`/`VectorStoreBackfillMapper` + `VectorStoreBackfillRunner`（E1 回填已完成）全部删除。
 - **兼容/回退**：对拍前旧表与 store 逐字节等价（E1 阶段 A 已证）。DROP 不可逆，回退 = 由 store 重建旧表（向量逐字节可复现）或 `git revert` V9 + 从备份/重嵌恢复。
+
+### 11.1 NEWS 域 metadata 回填（10-05 E，`V14__news_source_metadata.sql`）
+
+- **不改 `domain` 名**（仍 `NEWS`）：`docId=UUID(domain+":"+refId)` 确定性主键，改名会使全部存量 NEWS 向量 id 失配、须全量重嵌。V14 **只补 metadata 缺键**（`sourceType=byd-news`/`category=官方新闻`/`publishDate` 由 `news_doc→news.publish_date` 派生），**`id` 列与 `embedding` 不动 → 零重嵌**。
+- **幂等可重入**：每条 UPDATE 带 `(metadata->'key') IS NULL` 条件，重复执行仅第一次生效；不用 `DO $$`。
+- **新增写入侧同步**：`NewsDocService`（BYD）与 `SourceDocService`（通用信源）都在 `upsert` 时写这些键，不能只靠 V14 回填存量；检索层对 `sourceType==null` 兜底为 `byd-news`。

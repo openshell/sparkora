@@ -87,9 +87,12 @@ aiClient.chatWithMemory(sessionId, systemPrompt, question, historyWindow, 2048);
 ```java
 CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long> anchorModelIds)
 // RagResult{status, context, hitCount, maxScore, coveredText, citations}
-// Citation{source, modelName, chunkType, score, chunkText, docId}; source∈{CAR,KB,NEWS}
+// Citation{source, modelName, chunkType, score, chunkText, docId, sourceType?, category?}; source∈{CAR,KB,NEWS}
 //   docId 可空（09-15 qa-auto-illustrate 补读；CAR=car_chunk.id/KB=kb_chunk.id/NEWS=news_doc.id）；
 //   保留 5 参兼容构造器（docId=null），既有调用方不受影响；详见本文「问答答案配图」Scenario
+//   sourceType/category 可空（10-05 E：NEWS 域内来源细化，见下条）；保留 6 参兼容构造器。
+// UnifiedHit{chunkText, chunkType, score, source, modelId, modelName, docId, sourceType?, category?}
+//   —— 与 Citation 同步加 sourceType/category；两级都要加，否则 UnifiedHit→Citation 映射丢字段。
 // RagStatus{OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE}
 ```
 
@@ -97,6 +100,10 @@ CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long>
 - **来源标注**：`context` 首行 `知识来源：…`；块内 `【车型数据：name】/【通用知识：title】/【官方新闻：title】`。
 - **配额**：CAR 核心块 `carQuota`；KB 独立 `ragKbTopk`（受 `ragKbEnabled`）；NEWS 独立 `ragNewsTopk`（**不受** `ragKbEnabled` 控制，0=关闭）。
 - **NEWS 域泛化（10-05 起）**：NEWS 域同为「通用信源采集」承载域（复用 `sparkora_news*`，见 database-guidelines.md「复用既有域的向量 id 空间」）。BYD 官方新闻 = `sourceType=byd-news`/`category=官方新闻` 的**特例**，其标注/配额/前端行为逐字等价；用户采集源在同一域内以 metadata `sourceType` 二级隔离（E 实现）。**`/api/news` 只返回 BYD**，通用信源走 `/api/source-contents`。
+  - **域内二级隔离（10-05 E，保护 BYD）**：NEWS 候选按 `sourceType` **二分**——`byd-news`（**含 `sourceType==null` 的旧/未打标块兜底**，兼容 V14 前数据）用原 `AI_RAG_NEWS_TOPK`（行为锁）；`user-source` 用新 `AI_RAG_SOURCE_TOPK`（**默认 0=off，零回归**）。选择层隔离 → BYD 配额只从 byd 子集取，用户源取不到 BYD 份额。**已知边界**：当前仅在选择层隔离，NEWS 过采样窗（`max(topK*4,32)`）仍为单一窗；生产规模下大量高分 user 源可能在窗口内挤掉 BYD 子集——默认 `AI_RAG_SOURCE_TOPK=0` 时零风险，灰度开启前须按实际数据验证；必要时升级为对 NEWS 域按 sourceType 两次 `searchDomains`（需 Store 加 metadata 过滤）。
+  - **字段贯通（P0）**：`sourceType`/`category` 经 store metadata → `toUnified` → `UnifiedHit` → 组 `cites` → `Citation`（含锚点加权重建）逐级透传；`Citation` 是 `KnowledgeSearchTool` 的实际读取载体。`KnowledgeSearchTool` 仍映射 `SearchHit.kb(...)`（把 NEWS 来源细化为 `SOURCE` 类型属 F 任务 `10-05-source-web-fusion` 范围）。
+  - **标注细分**：BYD 逐字「【官方新闻：name】」；user-source 按 category「【销量数据/投诉榜/政策公示：name】」、其外「【信源：name】」。
+  - **写入侧**：BYD 走 `NewsDocService`（写 `byd-news`）、通用信源走 `SourceDocService`（写 `user-source`/category/publishDate），均 `upsert(domain="NEWS", refId=sparkora_news_doc.id)`；V14 仅幂等回填存量 metadata、不动 `id`（零重嵌）。
 - **锚点加权**：仅 `source=CAR` 且 `modelId∈anchorModelIds` 乘 `ragAnchorBoost`；KB/NEWS 不受影响。
 - **候选窗口按域隔离**：见 database-guidelines.md「多域统一检索」。调用方 `limit` 用 `max(topK*4,32)`。
 
@@ -113,6 +120,7 @@ CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long>
 
 ### 6. Tests Required
 - `status` 四态分支；`citations` 与 `context` 同源；NEWS 独立配额生效、不受 KB 开关影响；锚点仅作用 CAR。
+- **10-05 E**：`sourceType==null` 兜底为 `byd-news`（BYD 逐字等价）；`AI_RAG_SOURCE_TOPK=0` 零回归；NEWS 域内二级隔离（user 子集塞满不改 BYD 子集）；`sourceType`/`category` 经 `UnifiedHit`→`Citation`（含锚点加权重建）贯通；结构化分类 `preserveNewlines=true` 表格数值行不丢。
 
 ### 7. Wrong vs Correct
 #### Wrong

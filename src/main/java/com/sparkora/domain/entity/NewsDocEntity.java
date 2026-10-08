@@ -30,4 +30,13 @@ public class NewsDocEntity {
     /** 非持久化:新闻标题(构建期填充,写 vector_store metadata.name 用,不落 sparkora_news_doc)。 */
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String newsTitle;
+    /** 非持久化:发布日期(构建期填充,写 vector_store metadata.publishDate 用,不落 sparkora_news_doc;10-05 E)。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private LocalDateTime publishDate;
+    /** 非持久化:NEWS 域内来源类型(构建期填充,写 store metadata.sourceType 用;10-05 E)。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String sourceType;
+    /** 非持久化:NEWS 域内来源分类(构建期填充,写 store metadata.category 用;10-05 E)。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String category;
 }

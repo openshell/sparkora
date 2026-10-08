@@ -65,9 +65,17 @@ public class CarRagService {
      * @param docId 域内文档块 id（09-15 qa-auto-illustrate 补读；语义随 source 变化：
      *              CAR=sparkora_car_chunk.id / KB=sparkora_kb_chunk.id / NEWS=sparkora_news_doc.id；可空）。
      *              供消费方定位来源实体（如 NEWS 反查来源新闻封面图），检索 SQL 本已 SELECT，此前读行时丢弃。
+     * @param sourceType 10-05 E：NEWS 域内来源类型（byd-news / user-source / ...；可空，null 视为 byd-news）。
+     * @param category   10-05 E：NEWS 域内来源分类（官方新闻/销量数据/投诉榜/政策公示/行业资讯；可空）。
      */
     public record UnifiedHit(String chunkText, String chunkType, double score,
-                             String source, Long modelId, String modelName, Long docId) {
+                             String source, Long modelId, String modelName, Long docId,
+                             String sourceType, String category) {
+        /** 兼容构造器（无 sourceType/category）：既有调用方（锚点加权重建/单测）字段为空。 */
+        public UnifiedHit(String chunkText, String chunkType, double score,
+                          String source, Long modelId, String modelName, Long docId) {
+            this(chunkText, chunkType, score, source, modelId, modelName, docId, null, null);
+        }
         TypedHit toTyped() { return new TypedHit(chunkText, chunkType, score); }
     }
 
@@ -83,12 +91,20 @@ public class CarRagService {
      * @param chunkText  块文本摘要(截断,详见 CITE_TEXT_MAX)
      * @param docId      域内文档块 id（09-15 qa-auto-illustrate；随 source 变化，可空；供问答配图定位来源）。
      *                   保留 5 参构造器以兼容既有调用方（简报/深度检索/测试），既有代码不受影响。
+     * @param sourceType 10-05 E（P0 字段贯通）：NEWS 域内来源类型（byd-news/user-source；可空）。
+     *                   **本字段是送到 KnowledgeSearchTool 的实际载体**——只加在 UnifiedHit 会在映射时丢弃。
+     * @param category   10-05 E：NEWS 域内来源分类（官方新闻/销量数据/...；可空）。
      */
     public record Citation(String source, String modelName, String chunkType, double score,
-                           String chunkText, Long docId) {
+                           String chunkText, Long docId, String sourceType, String category) {
         /** 兼容构造器（docId=null）：既有 5 参调用方（BriefService/KnowledgeSearchTool/测试）编译与行为不变。 */
         public Citation(String source, String modelName, String chunkType, double score, String chunkText) {
-            this(source, modelName, chunkType, score, chunkText, null);
+            this(source, modelName, chunkType, score, chunkText, null, null, null);
+        }
+        /** 兼容构造器（docId 给定、sourceType/category 为空）：09-15 起既有 6 参调用方不受影响。 */
+        public Citation(String source, String modelName, String chunkType, double score,
+                        String chunkText, Long docId) {
+            this(source, modelName, chunkType, score, chunkText, docId, null, null);
         }
     }
 
@@ -300,9 +316,10 @@ public class CarRagService {
         List<UnifiedHit> boosted = new ArrayList<>();
         for (UnifiedHit h : merged) {
             if ("CAR".equals(h.source()) && anchors.contains(h.modelId())) {
-                // 注意:重建 UnifiedHit 时必须透传 docId(NEWS 不走此分支,但漏传会让域内 id 在加权后丢失)
+                // 注意:重建 UnifiedHit 时必须透传 docId(NEWS 不走此分支,但漏传会让域内 id 在加权后丢失),
+                // 10-05 E 起 sourceType/category 同样必须透传(字段贯通 P0,漏传会让下游 F 拿不到来源类型)
                 boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), Math.min(1.0, h.score() * boost),
-                        h.source(), h.modelId(), h.modelName(), h.docId()));
+                        h.source(), h.modelId(), h.modelName(), h.docId(), h.sourceType(), h.category()));
             } else {
                 boosted.add(h);
             }
@@ -337,14 +354,22 @@ public class CarRagService {
         List<UnifiedHit> softCandidates = new ArrayList<>();
         List<UnifiedHit> kbCandidates = new ArrayList<>();
         List<UnifiedHit> newsCandidates = new ArrayList<>();
+        List<UnifiedHit> sourceCandidates = new ArrayList<>();
         int newsQuota = Math.max(0, aiProps.getRagNewsTopk());
+        int sourceQuota = Math.max(0, aiProps.getRagSourceTopk());
         for (UnifiedHit h : boosted) {
             if (h.score() < minScore) continue;
             if (isHeaderChunk(h.toTyped())) continue;
             if ("KB".equals(h.source())) {
                 if (kbEnabled) coreCandidates.add(h);   // KB 块并入核心候选池,配额阶段独立截取
             } else if ("NEWS".equals(h.source())) {
-                if (newsQuota > 0) newsCandidates.add(h);   // C2 新闻域独立配额,不受 ragKbEnabled 控制
+                // 10-05 E:NEWS 域内按 sourceType 二级隔离 —— byd-news(含 sourceType==null 兜底)用原配额,
+                // user-source 用独立配额(默认 0=off),防止用户采集源挤占 BYD(AC-E3)
+                if (isBydNews(h)) {
+                    if (newsQuota > 0) newsCandidates.add(h);
+                } else {
+                    if (sourceQuota > 0) sourceCandidates.add(h);
+                }
             } else if ("RIGHTS".equals(h.chunkType()) || "FEATURE".equals(h.chunkType())) {
                 softCandidates.add(h);
             } else {
@@ -354,6 +379,7 @@ public class CarRagService {
         coreCandidates.sort(orderCmp);
         softCandidates.sort(orderCmp);
         newsCandidates.sort(orderCmp);
+        sourceCandidates.sort(orderCmp);
         // 核心块配额:carTopK 给车型核心块(锚点车型数×topK,至少 topK),KB/新闻独立配额不挤占
         int carQuota = Math.max(topK, topK * Math.max(1, anchors.size()));
         List<UnifiedHit> carSelected = coreCandidates.stream()
@@ -362,21 +388,27 @@ public class CarRagService {
         List<UnifiedHit> kbSelected = coreCandidates.stream()
                 .filter(h -> "KB".equals(h.source())).limit(kbQuota).toList();
         List<UnifiedHit> newsSelected = newsCandidates.stream().limit(newsQuota).toList();
+        List<UnifiedHit> sourceSelected = sourceCandidates.stream().limit(sourceQuota).toList();
         int softCap = Math.max(1, carQuota / 3);
         List<UnifiedHit> softSelected = softCandidates.stream().limit(Math.min(softCap, Math.max(0, carQuota - carSelected.size()))).toList();
         List<UnifiedHit> selected = new ArrayList<>(carSelected);
         selected.addAll(softSelected);
         selected.addAll(kbSelected);
         selected.addAll(newsSelected);
+        selected.addAll(sourceSelected);
         selected.sort(orderCmp);
-        // 来源构成(C2:三域组合)
+        // 来源构成(C2:三域组合;10-05 E:NEWS 域内按 category 细分追加)
         boolean hasCar = selected.stream().anyMatch(h -> "CAR".equals(h.source()));
         boolean hasKb = selected.stream().anyMatch(h -> "KB".equals(h.source()));
-        boolean hasNews = selected.stream().anyMatch(h -> "NEWS".equals(h.source()));
+        boolean hasNews = selected.stream().anyMatch(h -> "NEWS".equals(h.source()) && isBydNews(h));
         List<String> sourceParts = new ArrayList<>();
         if (hasCar) sourceParts.add("车型数据");
         if (hasKb) sourceParts.add("通用知识库");
         if (hasNews) sourceParts.add("官方新闻");
+        // 10-05 E:用户采集源按 category 追加其分类名(存在才追加,保序去重)
+        for (String cat : sourceCategories(selected)) {
+            if (!sourceParts.contains(cat)) sourceParts.add(cat);
+        }
         String sourceLine = "知识来源：" + (sourceParts.isEmpty() ? "车型数据" : String.join(" + ", sourceParts));
         StringBuilder sb = new StringBuilder();
         StringBuilder covered = new StringBuilder();
@@ -389,9 +421,10 @@ public class CarRagService {
                   .append(h.chunkText()).append("\n---\n");
                 extraCoverage.add(coverageSegment("通用知识", h.modelName(), h.chunkText()));
             } else if ("NEWS".equals(h.source())) {
-                sb.append("【官方新闻：").append(h.modelName() == null ? "" : h.modelName()).append("】")
+                // 10-05 E:BYD 保持「【官方新闻：<title>】」逐字等价;用户采集源按 category 细分标注
+                sb.append(sourceAnnotation(h))
                   .append(h.chunkText()).append("\n---\n");
-                extraCoverage.add(coverageSegment("官方新闻", h.modelName(), h.chunkText()));
+                extraCoverage.add(coverageSegment(sourceLabel(h), h.modelName(), h.chunkText()));
             } else {
                 sb.append("【车型数据：").append(h.modelName() == null ? "" : h.modelName()).append("】")
                   .append(h.chunkText()).append("\n---\n");
@@ -405,8 +438,9 @@ public class CarRagService {
             if (covered.length() > 0) covered.append("；");
             covered.append(extra);
         }
-        log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={} news={}) maxScore={}",
-                anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(), newsSelected.size(), maxScore);
+        log.info("统一检索完成 anchors={} raw={} selected={} (car={} kb={} news={} source={}) maxScore={}",
+                anchors, rawHit, selected.size(), carSelected.size(), kbSelected.size(),
+                newsSelected.size(), sourceSelected.size(), maxScore);
         // R3 知识引用明细(RagResult 附带,与注入 context 同源):仅 OK 时非空;截断防超列。
 
         java.util.List<Citation> cites = new ArrayList<>(Math.min(selected.size(), CITE_MAX));
@@ -415,10 +449,43 @@ public class CarRagService {
             if (cites.size() >= CITE_MAX) break;
             String text = h.chunkText();
             if (text != null && text.length() > CITE_TEXT_MAX) text = text.substring(0, CITE_TEXT_MAX) + "…";
+            // 10-05 E(P0 字段贯通):sourceType/category 必须随 Citation 传到 KnowledgeSearchTool,
+            // 否则下游 F 拿不到来源类型判 SOURCE
             cites.add(new Citation(h.source(), h.modelName() == null ? "" : h.modelName(),
-                    h.chunkType(), h.score(), text == null ? "" : text, h.docId()));
+                    h.chunkType(), h.score(), text == null ? "" : text, h.docId(),
+                    h.sourceType(), h.category()));
         }
         return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString(), cites);
+    }
+
+    /** NEWS 域内是否 BYD 官方新闻({@code sourceType==null} 兜底为 byd-news,兼容未回填/未打标块)。 */
+    static boolean isBydNews(UnifiedHit h) {
+        return h.sourceType() == null || h.sourceType().isBlank() || "byd-news".equals(h.sourceType());
+    }
+
+    /** 用户采集源在「知识来源」行内追加的分类名(按 category;无分类归「信源」;保序去重)。 */
+    static List<String> sourceCategories(List<UnifiedHit> selected) {
+        List<String> out = new ArrayList<>();
+        for (UnifiedHit h : selected) {
+            if (!"NEWS".equals(h.source()) || isBydNews(h)) continue;
+            String cat = (h.category() == null || h.category().isBlank()) ? "信源" : h.category().trim();
+            if (!out.contains(cat)) out.add(cat);
+        }
+        return out;
+    }
+
+    /** NEWS 来源标注名：BYD 固定「官方新闻」；用户采集源按 category 细分（无分类归「信源」）。 */
+    static String sourceLabel(UnifiedHit h) {
+        if (isBydNews(h)) return "官方新闻";
+        return (h.category() == null || h.category().isBlank()) ? "信源" : h.category().trim();
+    }
+
+    /**
+     * NEWS 块行内来源标注(10-05 E):BYD 逐字保持「【官方新闻：&lt;name&gt;】」;
+     * 用户采集源按 category 细分「【销量数据：…】/【投诉榜：…】/【政策公示：…】/其他「【信源：…】」。
+     */
+    static String sourceAnnotation(UnifiedHit h) {
+        return "【" + sourceLabel(h) + "：" + (h.modelName() == null ? "" : h.modelName()) + "】";
     }
 
     /** 旧签名(S7 兼容委托):modelIds 语义变为锚点车型。 */
@@ -470,9 +537,12 @@ public class CarRagService {
         String modelName = metaString(doc, "name");
         Long docId = metaLong(doc, "refId");
         String type = metaString(doc, "chunkType");
+        // 10-05 E:NEWS 域内来源类型/分类透传(P0 字段贯通起点)
+        String sourceType = metaString(doc, "sourceType");
+        String category = metaString(doc, "category");
         double score = doc.getScore() == null ? 0 : doc.getScore();
         return new UnifiedHit(text(doc), type == null ? "PARAM_GROUP" : type, score,
-                source, modelId, modelName == null ? "" : modelName, docId);
+                source, modelId, modelName == null ? "" : modelName, docId, sourceType, category);
     }
 
     private static String text(Document doc) {

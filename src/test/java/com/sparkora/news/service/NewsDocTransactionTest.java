@@ -111,8 +111,13 @@ class NewsDocTransactionTest {
 
         var inOrder = inOrder(docMapper, store);
         inOrder.verify(docMapper).insert(doc);
+        // 10-05 E:BYD 路径必须写 sourceType=byd-news / category=官方新闻 扩展 metadata(AC-E3)
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> meta =
+                org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
         inOrder.verify(store).upsert(eq("NEWS"), eq(123L), eq(null), eq(null),
-                eq("标题"), eq(true), eq("test-embed"), anyString(), eq("[0.1,0.2]"));
+                eq("标题"), eq(true), eq("test-embed"), anyString(), eq("[0.1,0.2]"), meta.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("byd-news", meta.getValue().get("sourceType"));
+        org.junit.jupiter.api.Assertions.assertEquals("官方新闻", meta.getValue().get("category"));
     }
 
     @Test
@@ -135,6 +140,7 @@ class NewsDocTransactionTest {
 
         verify(client, never()).embed(anyString());
         verify(store, never()).upsert(anyString(), any(), any(), anyString(), anyString(),
-                org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyString(), anyString());
+                org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.any());
     }
 }

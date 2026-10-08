@@ -73,6 +73,7 @@
 | 覆盖度声明 | `coveredText` 仅统计 CAR 域 `PARAM_GROUP` 块 |
 
 - **候选窗口按域隔离（C2 check 修复）**：CAR+KB 合并取 top-`limit`（与 C2 前完全一致），NEWS 单独取 top-`limit`；不可三者共用一个全局 `LIMIT`——新闻块（≈1300+）与车型/KB 同向量空间且语义邻近时会占满整个窗口，把 CAR/KB 完全挤出候选（实测 BYD 新闻类 query CAR 候选从 32 掉到 0），使下游独立配额失效。详见 [news.md §5](news.md)。
+- **NEWS 域内二级隔离（10-05 E）**：NEWS 泛化为通用信源域后，`CarRagService` 在**选择层**再按 `sourceType` 二分（`byd-news`/兜底 vs `user-source`），两套独立配额（`AI_RAG_NEWS_TOPK` / `AI_RAG_SOURCE_TOPK` 默认 0），防用户采集源挤占 BYD；窗口仍为 NEWS 单一过采样窗（选择层隔离已足够，无需扩展 `searchDomains` metadata 过滤）。
 - **图片域（第四域）是同空间但独立检索**：store 中 `domain=IMAGE` 与三域同模型同维度，但**不并入统一检索**（图片查询是独立入口 `POST /api/images/search`）。
 
 **配置**：`AI_RAG_KB_TOPK`（默认 4）/ `AI_RAG_KB_ENABLED`（默认 true），见总览[配置总览](../../README.md)与 [retrieval.md §4](../retrieval.md)。

@@ -87,6 +87,8 @@ class CarRagServiceTest {
             if (r.get("modelId") != null) meta.put("modelId", ((Number) r.get("modelId")).longValue());
             if (r.get("chunkType") != null) meta.put("chunkType", String.valueOf(r.get("chunkType")));
             if (r.get("modelName") != null) meta.put("name", String.valueOf(r.get("modelName")));
+            if (r.get("sourceType") != null) meta.put("sourceType", String.valueOf(r.get("sourceType")));
+            if (r.get("category") != null) meta.put("category", String.valueOf(r.get("category")));
             if (r.get("score") != null) meta.put("score", ((Number) r.get("score")).doubleValue());
             Document.Builder b = Document.builder()
                     .id(String.valueOf(r.getOrDefault("refId", r.getOrDefault("docId", 0))))
@@ -116,6 +118,15 @@ class CarRagServiceTest {
                                                String chunkType, String text, double score, Long docId) {
         Map<String, Object> m = urow(source, modelId, modelName, chunkType, text, score);
         if (docId == null) m.remove("docId"); else m.put("docId", docId);
+        return m;
+    }
+
+    /** 10-05 E：NEWS 行带 sourceType/category（域内二级隔离用）。 */
+    private static Map<String, Object> newsRow(String modelName, String chunkType, String text,
+                                               double score, String sourceType, String category) {
+        Map<String, Object> m = urow("NEWS", null, modelName, chunkType, text, score);
+        if (sourceType != null) m.put("sourceType", sourceType);
+        if (category != null) m.put("category", category);
         return m;
     }
 
@@ -703,5 +714,218 @@ class CarRagServiceTest {
 
         assertEquals(CarRagService.RagStatus.OK, r.status(), "重排异常必须降级原序,不阻断生成");
         assertTrue(r.context().contains("AAA"));
+    }
+
+    // ==================== 10-05 E：NEWS 域内二级隔离 + 字段贯通 ====================
+
+    /** sourceType==null（未回填/未打标的 BYD 块）兜底为 byd-news，走原配额，与改造前逐位等价。 */
+    @Test
+    void E_sourceType为空_兜底byd_标注逐字等价() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("官方新闻标题", "NEWS_BODY", "新闻：官方新闻标题（2026-09-01）\n正文", 0.8, null, null));
+        CarRagService svc = newService(store);
+        CarRagService.RagResult r = svc.retrieveForGeneration("新闻查询", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("【官方新闻：官方新闻标题】"), "BYD/未打标块标注逐字等价");
+        assertEquals("知识来源：官方新闻", r.context().split("\n---\n")[0]);
+    }
+
+    /** byd-news 显式标注同样逐字等价（V14 回填后 / NewsDocService 新写的块）。 */
+    @Test
+    void E_bydNews显式标注_与旧逐字等价() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("比亚迪发布新车型", "NEWS_BODY", "新闻：比亚迪发布新车型（2026-09-01）\n正文",
+                        0.8, "byd-news", "官方新闻"));
+        CarRagService svc = newService(store);
+        CarRagService.RagResult r = svc.retrieveForGeneration("比亚迪 新车型", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("【官方新闻：比亚迪发布新车型】"));
+        assertEquals("知识来源：官方新闻", r.context().split("\n---\n")[0]);
+    }
+
+    /** user-source 默认配额 0：不注入（零回归），BYD 仍照常注入。 */
+    @Test
+    void E_sourceTopK默认0_用户源不注入_BYD不受影响() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("比亚迪官方新闻", "NEWS_BODY", "新闻：比亚迪官方新闻（2026-09-01）\n正文", 0.9, "byd-news", "官方新闻"),
+                newsRow("乘联会销量", "NEWS_BODY", "信源：乘联会销量（2026-10-08）\n销量 12000", 0.85, "user-source", "销量数据"));
+        CarRagService svc = newService(store);   // ragSourceTopk 默认 0
+        CarRagService.RagResult r = svc.retrieveForGeneration("比亚迪销量", 8, List.of());
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("【官方新闻：比亚迪官方新闻】"), "BYD 仍注入");
+        assertTrue(!r.context().contains("乘联会销量"), "user-source 默认 off 不注入");
+        assertEquals("知识来源：官方新闻", r.context().split("\n---\n")[0]);
+    }
+
+    /** 开启 sourceTopK 后：user-source 按 category 细分标注，且不挤占 BYD（二级隔离）。 */
+    @Test
+    void E_开启sourceTopK_用户源按category标注_不挤占BYD() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                // BYD 排在 user 源后仍应被 BYD 配额取到
+                newsRow("乘联会销量", "NEWS_BODY", "信源：乘联会销量（2026-10-08）\n销量 12000", 0.95, "user-source", "销量数据"),
+                newsRow("投诉榜TOP10", "NEWS_BODY", "信源：投诉榜TOP10（2026-10-08）\n投诉 300", 0.90, "user-source", "投诉榜"),
+                newsRow("比亚迪官方新闻", "NEWS_BODY", "新闻：比亚迪官方新闻（2026-09-01）\n正文", 0.80, "byd-news", "官方新闻"));
+        AiProperties props = new AiProperties();
+        props.setRagNewsTopk(2);
+        props.setRagSourceTopk(2);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("比亚迪销量投诉", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("【官方新闻：比亚迪官方新闻】"), "BYD 不被高分的用户源挤占(二级隔离)");
+        assertTrue(r.context().contains("【销量数据：乘联会销量】"), "user-source 按 category 细分标注");
+        assertTrue(r.context().contains("【投诉榜：投诉榜TOP10】"));
+        String sourceLine = r.context().split("\n---\n")[0];
+        assertTrue(sourceLine.contains("销量数据"), () -> "来源行含 category: " + sourceLine);
+        assertTrue(sourceLine.contains("投诉榜"), () -> "来源行含 category: " + sourceLine);
+        assertTrue(sourceLine.contains("官方新闻"), () -> "来源行含官方新闻: " + sourceLine);
+    }
+
+    /** 二级隔离：BYD 配额只从 byd 子集取，即使 user 源分数更高且窗口充足也不改 BYD 选择。 */
+    @Test
+    void E_BYD配额仅从byd子集取_user源不改BYD选择() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("用户源A", "NEWS_BODY", "信源：用户源A\n内容", 0.98, "user-source", "行业资讯"),
+                newsRow("用户源B", "NEWS_BODY", "信源：用户源B\n内容", 0.97, "user-source", "行业资讯"),
+                newsRow("BYD新闻", "NEWS_BODY", "新闻：BYD新闻（2026-09-01）\n内容", 0.70, "byd-news", "官方新闻"));
+        AiProperties props = new AiProperties();
+        props.setRagNewsTopk(1);
+        props.setRagSourceTopk(0);   // user 关闭
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of());
+
+        assertTrue(r.context().contains("【官方新闻：BYD新闻】"), "BYD 配额独立于 user 源");
+        assertTrue(!r.context().contains("用户源A"));
+    }
+
+    /** P0 字段贯通：user-source 的 sourceType/category 经 UnifiedHit→Citation 完整到位。 */
+    @Test
+    void E9_字段贯通_Citation带sourceType与category() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("乘联会销量", "NEWS_BODY", "信源：乘联会销量（2026-10-08）\n销量 12000", 0.9, "user-source", "销量数据"));
+        AiProperties props = new AiProperties();
+        props.setRagSourceTopk(2);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("销量", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        CarRagService.Citation c = r.citations().stream()
+                .filter(x -> "NEWS".equals(x.source())).findFirst().orElseThrow();
+        assertEquals("user-source", c.sourceType(), "sourceType 必须贯通到 Citation(否则 F 拿不到)");
+        assertEquals("销量数据", c.category());
+    }
+
+    /** P0 字段贯通：BYD 命中仍为 byd-news。 */
+    @Test
+    void E9_字段贯通_BYD命中为bydNews() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("BYD新闻", "NEWS_BODY", "新闻：BYD新闻（2026-09-01）\n正文", 0.8, "byd-news", "官方新闻"));
+        CarRagService svc = newService(store);
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of());
+        CarRagService.Citation c = r.citations().stream()
+                .filter(x -> "NEWS".equals(x.source())).findFirst().orElseThrow();
+        assertEquals("byd-news", c.sourceType());
+        assertEquals("官方新闻", c.category());
+    }
+
+    /** 锚点加权重建 UnifiedHit 时 sourceType/category 必须透传（NPE/丢字段回归锁）。 */
+    @Test
+    void E9_锚点加权重建_透传sourceType() {
+        FakeSearchStore store = new FakeSearchStore();
+        Map<String, Object> car = urowDoc("CAR", 55L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200", 0.60, 777L);
+        store.unifiedRows = List.of(car);
+        AiProperties props = new AiProperties();
+        props.setRagAnchorBoost(1.5);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+        // 不应因重建缺 sourceType/category 参数而编译失败或抛异常
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力", 4, List.of(55L));
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+    }
+
+    /** Citation 兼容构造器：5 参与 6 参均 sourceType/category 为 null。 */
+    @Test
+    void E9_Citation兼容构造器_新字段为null() {
+        CarRagService.Citation c5 = new CarRagService.Citation("CAR", "比亚迪", "PARAM_GROUP", 0.9, "块");
+        assertNull(c5.docId());
+        assertNull(c5.sourceType());
+        assertNull(c5.category());
+        CarRagService.Citation c6 = new CarRagService.Citation("NEWS", "标题", "NEWS_BODY", 0.9, "块", 5L);
+        assertEquals(5L, c6.docId());
+        assertNull(c6.sourceType());
+    }
+
+    /** 结构化来源：NEWS 域内 user-source 表格块数值可被检索命中（行结构保留）。 */
+    @Test
+    void E8_结构化用户源_数值不丢且可命中() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("乘联会10月销量", "NEWS_BODY",
+                        "信源：乘联会10月销量（2026-10-08）\n车型 | 销量 | 同比\n海狮08 | 12000 | +15%",
+                        0.9, "user-source", "销量数据"));
+        AiProperties props = new AiProperties();
+        props.setRagSourceTopk(2);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("销量", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("海狮08 | 12000 | +15%"), "表格行数值在注入文本中不丢");
+    }
+
+    // ==================== AC-E2：域窗口隔离（信源块不挤占 CAR/KB） ====================
+
+    /**
+     * AC-E2 域隔离：大量高分信源块（NEWS 独立窗）不得把 CAR 候选挤出——CAR+KB 候选窗在
+     * {@code retrieveUnified} 中与 NEWS 分开检索（searchDomains 两次调用），故 CAR 命中数不下降。
+     */
+    @Test
+    void E2_信源块激增_CAR候选不被挤占() {
+        FakeSearchStore store = new FakeSearchStore();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        // CAR 一条中等分
+        rows.add(urow("CAR", 55L, "海狮08EV", "PARAM_GROUP", "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200", 0.70));
+        // 大量高分用户采集源块（若共用全局窗会挤掉 CAR）
+        for (int i = 0; i < 40; i++) {
+            rows.add(newsRow("用户源" + i, "NEWS_BODY", "信源：用户源" + i + "\n内容", 0.99 - i * 0.001, "user-source", "行业资讯"));
+        }
+        store.unifiedRows = rows;
+        AiProperties props = new AiProperties();
+        props.setRagSourceTopk(2);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        assertTrue(r.context().contains("前电机最大功率（kW）：200"), "CAR 候选不被 NEWS 域信源块挤出(域窗口隔离)");
+    }
+
+    /** AC-E2 二级隔离补充：NEWS 域内 BYD 子集与 user 子集配额独立，user 塞满不改 BYD 子集选择。 */
+    @Test
+    void E2_二级隔离_user子集塞满不改BYD子集() {
+        FakeSearchStore store = new FakeSearchStore();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            rows.add(newsRow("用户源" + i, "NEWS_BODY", "信源：用户源" + i + "\n内容", 0.99 - i * 0.001, "user-source", "行业资讯"));
+        }
+        rows.add(newsRow("BYD新闻", "NEWS_BODY", "新闻：BYD新闻（2026-09-01）\n正文", 0.65, "byd-news", "官方新闻"));
+        store.unifiedRows = rows;
+        AiProperties props = new AiProperties();
+        props.setRagNewsTopk(2);
+        props.setRagSourceTopk(8);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("查询", 8, List.of());
+
+        assertTrue(r.context().contains("【官方新闻：BYD新闻】"), "user 子集塞满仍保留 BYD 配额");
     }
 }

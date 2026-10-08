@@ -49,6 +49,12 @@ public class SourceCollectService {
     private final Map<FetchTransport.Kind, FetchTransport> transports = new HashMap<>();
     private final Map<String, SourceClient> clients = new HashMap<>();
     private final SourceImageService imageService;
+    /**
+     * 10-05 E（检索侧）:采集内容 upsert 后切块+嵌入（best-effort，失败仅 warn 不阻断采集）。
+     * 字段注入可选：B 的单测直接 new 时为 null（降级为「只落原始内容、不嵌入」）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SourceDocService sourceDocService;
 
     public SourceCollectService(SourceMapper sourceMapper, SourceChannelMapper channelMapper, NewsMapper newsMapper,
                                List<FetchTransport> transportList, List<SourceClient> clientList,
@@ -191,6 +197,15 @@ public class SourceCollectService {
             newsMapper.insert(n);
         } else {
             newsMapper.updateById(n);
+        }
+        // 10-05 E:采集内容切块+嵌入到单表 store(domain=NEWS,refId=news_doc.id),供统一检索命中。
+        // best-effort:失败仅 warn 不阻断采集(可由 POST /api/source-contents/rebuild 补齐)。
+        if (sourceDocService != null) {
+            try {
+                sourceDocService.rebuildForNews(n.getId());
+            } catch (Exception e) {
+                log.warn("信源内容切块/嵌入失败(不影响采集) newsId={}: {}", n.getId(), e.getClass().getSimpleName());
+            }
         }
     }
 

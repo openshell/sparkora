@@ -111,6 +111,29 @@ class VectorStoreServiceTest {
         assertTrue(!json.contains("tags"), json);
     }
 
+    /** 10-05 E：NEWS 域写 sourceType/category/publishDate 扩展 metadata；id 仍由 domain:refId 决定（不改名）。 */
+    @Test
+    void upsert_NEWS域写来源细化metadata_id不变() {
+        JdbcTemplate jt = mock(JdbcTemplate.class);
+        VectorStoreService svc = new VectorStoreService(mockStore(jt), new ObjectMapper());
+        java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
+        extra.put("sourceType", "user-source");
+        extra.put("category", "销量数据");
+        extra.put("publishDate", "2026-10-08");
+        svc.upsert("NEWS", 99L, null, "NEWS_BODY", "乘联会销量", true, "m1", "信源：x", "[0.1]", extra);
+
+        org.mockito.ArgumentCaptor<Object> meta = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(jt).update(anyString(), eq(VectorStoreService.docId("NEWS", 99L).toString()),
+                any(), meta.capture(), any());
+        String json = (String) meta.getValue();
+        assertTrue(json.contains("\"sourceType\":\"user-source\""), json);
+        assertTrue(json.contains("\"category\":\"销量数据\""), json);
+        assertTrue(json.contains("\"publishDate\":\"2026-10-08\""), json);
+        assertTrue(json.contains("\"domain\":\"NEWS\""), json);
+        // id 只由 domain:refId 决定——V14 回填 metadata 不会改变 id（零重嵌）
+        assertEquals(VectorStoreService.docId("NEWS", 99L), VectorStoreService.docId("NEWS", 99L));
+    }
+
     @Test
     void setActive_用jdbctemplate直更jsonb() {
         JdbcTemplate jt = mock(JdbcTemplate.class);

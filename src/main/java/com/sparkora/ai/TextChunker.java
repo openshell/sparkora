@@ -23,6 +23,10 @@ import java.util.List;
  *   <li>每块首行追加 {@code header}；正文全为符号等极端情况兜底 header 块。</li>
  * </ol>
  *
+ * <p><b>结构化内容保留换行（10-05 E）</b>：新增 7 参重载的 {@code preserveNewlines} 开关，
+ * {@code true} 时用 {@link #preservedBodies} 按行合并（不转空格、整行不截断），供信源表格内容
+ * 保留「列1 | 列2」行/列结构；默认 false 走 {@link #collapsedBodies}（旧行为逐字不变）。
+ *
  * <p><b>句读集合按域参数化（09-27，保 AC4 逐块一致）</b>：KB 与 NEWS 原实现的句读集合并不相同——
  * KB 实际只切 {@code 。；!?}，NEWS 另含全角 {@code ！？} 与半角 {@code ;}（KB 侧历史笔误）。统一时若取
  * 二者超集，会改变 KB 的切块边界（违反「改造后产出逐块不变」），故把集合作为参数由调用方传入，
@@ -87,6 +91,22 @@ public final class TextChunker {
     public static List<String> chunk(String header, String content,
                                      boolean titlePresent, boolean keepTitleWhenEmpty,
                                      String sentenceSeparators, int overlapChars) {
+        return chunk(header, content, titlePresent, keepTitleWhenEmpty, sentenceSeparators, overlapChars, false);
+    }
+
+    /**
+     * 切块（可选滑动重叠 + 可选保留段内换行）——10-05 E 结构化内容专用。
+     *
+     * <p>{@code preserveNewlines=false} 与旧 6 参重载**逐字等价**（段内换行转空格，回归锁）。
+     * {@code preserveNewlines=true} 用于 B 侧 {@code SourceTableParser} 产出的「列1 | 列2」表格行文本：
+     * 段内 {@code \n} **不转空格**，短段整段成块（保留行结构），超长段**按行贪心合并**成 ≤{@link #MAX_BODY_LEN}
+     * 的块（保证整行不被截断），单行超限才硬切。表格数值/行列对应关系因此不丢。
+     *
+     * @param preserveNewlines 是否保留段内换行（默认重载传 false = 旧行为）
+     */
+    public static List<String> chunk(String header, String content,
+                                     boolean titlePresent, boolean keepTitleWhenEmpty,
+                                     String sentenceSeparators, int overlapChars, boolean preserveNewlines) {
         List<String> out = new ArrayList<>();
         // 兜底:正文无有效字符(全空白)时按各域空正文语义处理
         if (content == null || content.strip().isEmpty()) {
@@ -94,11 +114,33 @@ public final class TextChunker {
             return out;
         }
         int overlap = Math.max(0, Math.min(overlapChars, MAX_BODY_LEN / 2));
-        // 空行分段
-        String[] paragraphs = content.split("\\n\\s*\\n");
+        List<String> bodies = preserveNewlines
+                ? preservedBodies(content)     // 10-05 E:结构化内容保留行结构
+                : collapsedBodies(content, sentenceSeparators);
+        // 滑动重叠:给每个非首块注入「上一块尾部片段」作为前缀(所有相邻块，含短段落分块与超长段合并块)
+        String prev = null;
+        for (String b : bodies) {
+            String body = b;
+            if (overlap > 0 && prev != null) {
+                String seed = overlapTail(prev, sentenceSeparators, overlap);
+                // 前缀 + 本块仍须 ≤ 上限；放不下则本边界不重叠（保守，不破块体约束）
+                if (!seed.isEmpty() && seed.length() + b.length() <= MAX_BODY_LEN) body = seed + b;
+            }
+            out.add(header + "\n" + body);
+            prev = b;
+        }
+        if (out.isEmpty()) out.add(header);   // 双保险:正文全为符号等极端情况
+        return out;
+    }
+
+    /**
+     * 默认切块路径（段内换行转空格）：逐字搬自旧 6 参实现，保证 {@code preserveNewlines=false} 零回归。
+     * 空行分段 → 短段直接成块 → 超长段按句读切分合并至 ≤{@link #MAX_BODY_LEN}。
+     */
+    static List<String> collapsedBodies(String content, String sentenceSeparators) {
         List<String> bodies = new ArrayList<>();
         StringBuilder carry = null;   // 超长段切分后的合并中转
-        for (String pRaw : paragraphs) {
+        for (String pRaw : content.split("\\n\\s*\\n")) {
             String p = pRaw.replaceAll("\\s*\\n\\s*", " ").trim();   // 段内换行转空格
             if (p.isEmpty()) continue;
             if (p.length() <= MAX_BODY_LEN) {
@@ -119,20 +161,55 @@ public final class TextChunker {
             }
         }
         if (carry != null) bodies.add(carry.toString());
-        // 滑动重叠:给每个非首块注入「上一块尾部片段」作为前缀(所有相邻块，含短段落分块与超长段合并块)
-        String prev = null;
-        for (String b : bodies) {
-            String body = b;
-            if (overlap > 0 && prev != null) {
-                String seed = overlapTail(prev, sentenceSeparators, overlap);
-                // 前缀 + 本块仍须 ≤ 上限；放不下则本边界不重叠（保守，不破块体约束）
-                if (!seed.isEmpty() && seed.length() + b.length() <= MAX_BODY_LEN) body = seed + b;
+        return bodies;
+    }
+
+    /**
+     * 结构化内容切块路径（10-05 E，父 design §6）：**保留段内换行**，保证表格「列1 | 列2」的行/列对应不丢。
+     *
+     * <p>规则：
+     * <ul>
+     *   <li>按空行分段（表格块与正文块分隔）；</li>
+     *   <li>段内 {@code \n} 保留（不转空格）；</li>
+     *   <li>短段（≤{@link #MAX_BODY_LEN}）整段成块；</li>
+     *   <li>超长段**按行贪心合并**：逐行累积至再加一行会超限则封块（整行不被截断）；单行本身超限才硬切；</li>
+     *   <li>不做句读切分——表格行不含句读，按句读切会破坏行结构。</li>
+     * </ul>
+     */
+    static List<String> preservedBodies(String content) {
+        List<String> bodies = new ArrayList<>();
+        for (String pRaw : content.split("\\n\\s*\\n")) {
+            String p = pRaw.strip();                 // 段首尾空白去除,段内换行原样保留
+            if (p.isEmpty()) continue;
+            if (p.length() <= MAX_BODY_LEN) {
+                bodies.add(p);
+                continue;
             }
-            out.add(header + "\n" + body);
-            prev = b;
+            // 超长段:按行贪心合并,整行不被截断
+            StringBuilder carry = null;
+            for (String line : p.split("\\n")) {
+                String l = line.stripTrailing();
+                if (l.isEmpty() && carry == null) continue;
+                if (l.length() > MAX_BODY_LEN) {
+                    // 单行本身超限:先封当前块,再按 MAX_BODY_LEN 硬切该行
+                    if (carry != null) { bodies.add(carry.toString()); carry = null; }
+                    for (int i = 0; i < l.length(); i += MAX_BODY_LEN) {
+                        bodies.add(l.substring(i, Math.min(l.length(), i + MAX_BODY_LEN)));
+                    }
+                    continue;
+                }
+                if (carry == null) {
+                    carry = new StringBuilder(l);
+                } else if (carry.length() + 1 + l.length() <= MAX_BODY_LEN) {
+                    carry.append('\n').append(l);
+                } else {
+                    bodies.add(carry.toString());
+                    carry = new StringBuilder(l);
+                }
+            }
+            if (carry != null) bodies.add(carry.toString());
         }
-        if (out.isEmpty()) out.add(header);   // 双保险:正文全为符号等极端情况
-        return out;
+        return bodies;
     }
 
     /**

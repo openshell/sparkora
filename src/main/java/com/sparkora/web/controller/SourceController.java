@@ -30,6 +30,12 @@ public class SourceController {
     private final SourceService sourceService;
     private final SourceJobService jobService;
     private final SourceContentService contentService;
+    /**
+     * 10-05 E：通用信源内容的切块/向量重建（对存量已采集内容补嵌入）。字段注入可选，
+     * 保持既有 3 参构造器与契约测试不变。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sparkora.source.service.SourceDocService sourceDocService;
 
     public SourceController(SourceService sourceService, SourceJobService jobService,
                             SourceContentService contentService) {
@@ -140,6 +146,24 @@ public class SourceController {
             return R.ok(contentService.get(id));
         } catch (IllegalArgumentException e) {
             return R.fail(404, e.getMessage());
+        }
+    }
+
+    /**
+     * 重建单条通用信源内容的切块+向量（10-05 E；对存量已采集内容补嵌入，幂等先清后建）。
+     * 返回 {@code {total,success,failed}}；源文档不存在（非通用信源）→ 400。开关关闭时不阻断生成。
+     */
+    @PostMapping("/source-contents/{id}/rebuild")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> rebuildContent(@PathVariable Long id) {
+        if (sourceDocService == null) return R.fail(500, "向量重建服务不可用");
+        try {
+            com.sparkora.ai.EmbedStats s = sourceDocService.rebuildForNews(id);
+            return R.ok(Map.of("total", s.total(), "success", s.success(), "failed", s.failed()));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "操作失败: " + e.getMessage());
         }
     }
 }

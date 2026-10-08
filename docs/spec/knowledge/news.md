@@ -54,10 +54,17 @@
 
 ---
 
-## 5. 统一检索接入（C2 跨层关键改动）
+## 5. 统一检索接入（C2 跨层关键改动；10-05 E 泛化为通用信源域）
+
+> **10-05-source-domain-retrieval E（2026-10-08）**：NEWS 域泛化为**通用信源域**——`domain` 名**不变**（仍 `NEWS`，
+> 改名会使 `docId=UUID(domain+":"+refId)` 失配须全量重嵌），用 store metadata `sourceType`/`category` 细化来源。
+> BYD 官方新闻 = `sourceType=byd-news`/`category=官方新闻` 特例（检索/标注/配额逐位等价）；通用信源 = `user-source`。
 
 - NEWS 作为第三域接入检索（`source='NEWS'`、`modelId=NULL`、`modelName=n.title`，仅未逻辑删除的 `news_doc`/`news`）。**10-03 E1 起读路径走单表 store**：`CarRagService` 用 `searchDomains([CAR,KB])` + `searchDomains([NEWS])` 两次调用复现「候选窗口按域隔离」——CAR+KB 合并窗、NEWS 独立窗；不可共用一个全局 `LIMIT`（新闻块 ≈1300+ 与车型/KB 同向量空间且语义邻近时会占满窗口，把 CAR/KB 挤出，实测 BYD 新闻类 query CAR 候选从 32 掉到 0）。**10-03 E6 起旧 `searchTopKUnified`（`CarDocEmbeddingMapper`）随旧表一并删除**。
-- `CarRagService.retrieveForGeneration`：新增 NEWS 候选池 + 独立配额 `AI_RAG_NEWS_TOPK`（默认 4，`0` 关闭 NEWS 注入）；**NEWS 不受 `AI_RAG_KB_ENABLED` 控制**；行内标注「【官方新闻：<title>】」；首行 `sourceLine` 支持三域组合（车型数据 / 通用知识库 / 官方新闻）；**锚点加权仅对 `source=CAR` 生效**（NEWS/KB 不变）；`coveredText` 仅统计 CAR 参数块；citations 纳入 NEWS（`source=NEWS`）。**不改 `RagStatus` 四态语义与既有 CAR/KB 行为**；主查询过采样沿用 C2 前口径 `max(topK*4,32)`（候选窗口隔离由 mapper 负责，无需额外余量）。
+- `CarRagService.retrieveForGeneration`：新增 NEWS 候选池 + 独立配额 `AI_RAG_NEWS_TOPK`（默认 4，`0` 关闭 NEWS 注入）；**NEWS 不受 `AI_RAG_KB_ENABLED` 控制**；**锚点加权仅对 `source=CAR` 生效**（NEWS/KB 不变）；`coveredText` 仅统计 CAR 参数块；citations 纳入 NEWS（`source=NEWS`）。**不改 `RagStatus` 四态语义与既有 CAR/KB 行为**；主查询过采样沿用 C2 前口径 `max(topK*4,32)`。
+- **10-05 E 域内二级隔离（保护 BYD）**：NEWS 候选按 `sourceType` **二分**——`byd-news`（**含 `sourceType==null` 的旧/未打标块兜底**，兼容 V14 前数据）用原 `AI_RAG_NEWS_TOPK`（行为锁）；`user-source` 用新 `AI_RAG_SOURCE_TOPK`（**默认 0=off**，零回归）。选择层隔离 → BYD 配额只从 byd 子集取，用户采集源取不到 BYD 份额（AC-E2/E3）。
+- **行内来源标注**：BYD 逐字保持「【官方新闻：<title>】」；user-source 按 `category` 细分「【销量数据：…】/【投诉榜：…】/【政策公示：…】/其他「【信源：…】」。`sourceLine` 三域组合 + user 源 category 名；citations `source=NEWS` 并新增可空 `sourceType`/`category`（字段贯通 `UnifiedHit`→`Citation`→`KnowledgeSearchTool`，P0）。
+- **切块写入（10-05 E）**：BYD 走 `NewsDocService`（首行「新闻：…」）；通用信源走 `SourceDocService`（首行「信源：<title>（<publishDate>）」），两者 `upsert(domain=NEWS, refId=news_doc.id, metadata{sourceType,category,publishDate})` 共享同一 id 空间，**零撞号**。结构化分类（销量数据/投诉榜/政策公示）用 `TextChunker` `preserveNewlines=true` 保留表格行/列。BYD 持续同步新块由 `NewsDocService` 写入 `byd-news`（不只靠 V14 回填存量）。
 
 ---
 
@@ -86,6 +93,7 @@
 | `NEWS_SYNC_ENABLED` | `false` | 定时增量开关 |
 | `NEWS_SYNC_CRON` | `0 30 3 * * ?` | 定时 cron |
 | `AI_RAG_NEWS_TOPK` | `4` | 新闻域生成注入块数上限（0=关闭 NEWS 注入） |
+| `AI_RAG_SOURCE_TOPK` | `0` | **10-05 E**：NEWS 域内用户采集源（`sourceType=user-source`）独立注入块数上限（0=关闭，零回归；BYD 走上方 `AI_RAG_NEWS_TOPK`） |
 
 ---
 

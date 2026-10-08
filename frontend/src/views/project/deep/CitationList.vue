@@ -79,6 +79,12 @@ const hostOf = (url) => {
 
 function safeParse(s) { try { return JSON.parse(s) } catch { return {} } }
 
+/** 10-05 E:NEWS 域内来源细化——user-source 用 category 标注(BYD 保持「官方新闻」逐字等价);旧数据无这些字段时回退。 */
+const newsLabel = (c) => {
+  if (c.sourceType && c.sourceType !== 'byd-news') return c.category || '信源'
+  return '官方新闻'
+}
+
 const tagType = (c) => {
   if (c.source === 'KB') return 'success'
   if (c.source === 'WEB') return 'warning'
@@ -91,7 +97,7 @@ const sourceLabel = (c) => {
   if (c.source === 'KB') return '通用知识'
   if (c.source === 'WEB') return 'WEB 搜索'
   if (c.source === 'MULTI') return '多源交叉'
-  if (c.source === 'NEWS') return '官方新闻'   // C4:官方新闻域
+  if (c.source === 'NEWS') return newsLabel(c)   // C4:官方新闻域;10-05 E 用户采集源按 category
   return '车型数据'
 }
 

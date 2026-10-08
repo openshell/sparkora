@@ -347,4 +347,70 @@ class TextChunkerTest {
         assertTrue(tm.startsWith("甲"), () -> "应从片段内句读之后开始: " + tm);
         assertEquals(30, tm.length());
     }
+
+    // ==================== 10-05 E：结构化内容保留换行 ====================
+
+    /** preserveNewlines=false（新 7 参重载）必须与旧 6 参重载逐块等价（回归锁）。 */
+    @Test
+    void preserveNewlines_false_与旧6参逐块等价() {
+        String content = "第一行\n第二行\n\n第三段。\n第四段。";
+        List<String> old6 = TextChunker.chunk(KB_HEADER, content, true, true,
+                TextChunker.KB_SEPARATORS, TextChunker.DEFAULT_OVERLAP_CHARS);
+        List<String> new7 = TextChunker.chunk(KB_HEADER, content, true, true,
+                TextChunker.KB_SEPARATORS, TextChunker.DEFAULT_OVERLAP_CHARS, false);
+        assertEquals(old6, new7, "preserveNewlines=false 必须逐块等价旧行为");
+    }
+
+    /** preserveNewlines=true：表格行文本的段内换行不被压成空格，行/列结构保留。 */
+    @Test
+    void preserveNewlines_true_保留表格行结构() {
+        String table = "车型 | 销量 | 同比\n海狮08 | 12000 | +15%\n大唐 | 9000 | -3%";
+        List<String> chunks = TextChunker.chunk("信源：乘联会（2026-10-08）", table, true, false,
+                TextChunker.NEWS_SEPARATORS, 0, true);
+        assertEquals(1, chunks.size(), "短表格整段成块");
+        String body = chunks.get(0).substring(chunks.get(0).indexOf('\n') + 1);
+        assertTrue(body.contains("\n"), "段内换行必须保留: " + body);
+        assertTrue(body.contains("车型 | 销量 | 同比"), body);
+        assertTrue(body.contains("海狮08 | 12000 | +15%"), body);
+        assertTrue(body.contains("大唐 | 9000 | -3%"), body);
+    }
+
+    /** 默认 false 时同一表格会被压平（对照,证明 preserve 生效）。 */
+    @Test
+    void 同一表格_默认压平_保留模式下不压平() {
+        String table = "车型 | 销量\n海狮08 | 12000";
+        String flat = bodyOf(TextChunker.chunk(KB_HEADER, table, true, true,
+                TextChunker.KB_SEPARATORS, 0, false).get(0));
+        String preserved = bodyOf(TextChunker.chunk(KB_HEADER, table, true, true,
+                TextChunker.KB_SEPARATORS, 0, true).get(0));
+        assertTrue(!flat.contains("\n"), "默认模式段内换行转空格: " + flat);
+        assertTrue(preserved.contains("\n"), "保留模式段内换行不转: " + preserved);
+    }
+
+    /** 超长表格按行贪心合并：整行不被截断，块体 ≤ 上限。 */
+    @Test
+    void preserveNewlines_true_超长表格按行合并_整行不截断() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 200; i++) sb.append("车型").append(i).append(" | ").append(1000 + i).append(" | +").append(i).append("%\n");
+        List<String> chunks = TextChunker.chunk("信源：T", sb.toString(), true, false,
+                TextChunker.NEWS_SEPARATORS, 0, true);
+        assertTrue(chunks.size() > 1, "超长表格应多块");
+        for (String c : chunks) {
+            String body = bodyOf(c);
+            assertTrue(body.length() <= TextChunker.MAX_BODY_LEN, () -> "块体超限: " + body.length());
+            for (String line : body.split("\\n")) {
+                assertTrue(line.startsWith("车型"), () -> "行不得被截断: " + line);
+                assertTrue(line.contains("|"), () -> "行结构保留: " + line);
+            }
+        }
+    }
+
+    /** 空正文 + preserveNewlines=true 语义与默认一致（标题块兜底）。 */
+    @Test
+    void preserveNewlines_true_空正文语义不变() {
+        assertEquals(List.of(NEWS_HEADER), TextChunker.chunk(NEWS_HEADER, "  \n ", true, false,
+                TextChunker.NEWS_SEPARATORS, 0, true));
+        assertTrue(TextChunker.chunk(NEWS_HEADER, "", false, false,
+                TextChunker.NEWS_SEPARATORS, 0, true).isEmpty());
+    }
 }

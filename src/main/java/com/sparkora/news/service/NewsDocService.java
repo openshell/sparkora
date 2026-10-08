@@ -74,6 +74,7 @@ public class NewsDocService {
             d.setChunkType(chunkTypeOf(chunks));
             d.setChunkText(chunks.get(i));
             d.setNewsTitle(n.getTitle());   // 10-03 E1:store metadata.name
+            d.setPublishDate(n.getPublishDate());   // 10-05 E:store metadata.publishDate(新鲜度用)
             docs.add(d);
         }
         // embedding 并发化(固定小线程池,不随新闻数膨胀)+ 单块失败重试 1 次
@@ -99,6 +100,10 @@ public class NewsDocService {
     /**
      * 持久化文档块 + 向量(先插 doc 拿 id,再插 embedding)——独立事务边界,
      * 见类注释的事务隔离说明。失败则 doc 与向量一并回滚(不留孤儿块)。
+     *
+     * <p>10-05 E:BYD 新闻块写入 {@code sourceType=byd-news}/{@code category=官方新闻} 扩展 metadata——
+     * 不能只靠 V14 回填存量,否则上线后新增/更新的 BYD 块无 sourceType,检索二分会把它们误归 user-source
+     * 窗口(AC-E3)。{@code sourceType==null} 在检索层兜底为 byd-news,双保险零回归。
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void persistNewsDoc(NewsDocEntity doc, String vec) {
@@ -107,9 +112,13 @@ public class NewsDocService {
         docMapper.insert(doc);
         // 10-03 E6:旧向量表已退役,只写单表 store
         if (vectorStoreService != null) {
+            java.util.Map<String, Object> meta = new java.util.LinkedHashMap<>();
+            meta.put("sourceType", "byd-news");
+            meta.put("category", "官方新闻");
+            if (doc.getPublishDate() != null) meta.put("publishDate", doc.getPublishDate().toLocalDate().toString());
             vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.NEWS.name(), doc.getId(), null,
                     doc.getChunkType(), doc.getNewsTitle(), true, embeddingClient.modelName(),
-                    doc.getChunkText(), vec);
+                    doc.getChunkText(), vec, meta);
         }
     }
 

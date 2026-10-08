@@ -210,6 +210,7 @@ class SourceControllerContractTest {
         assertRoles(pa("update", Long.class, SourceUpdateDTO.class), false);
         assertRoles(pa("collect", Long.class, java.util.Map.class), false);
         assertRoles(pa("retryJob", Long.class), false);
+        assertRoles(pa("rebuildContent", Long.class), false);   // 10-05 E 向量重建(写端点)
     }
 
     private static void assertRoles(PreAuthorize p, boolean viewerAllowed) {

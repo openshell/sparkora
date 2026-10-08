@@ -50,6 +50,13 @@ public class AiProperties {
     /** 官方新闻域(NEWS)生成检索:单次注入新闻块数上限(C2;默认 4,与车型/KB 配额独立互不挤占;0=关闭 NEWS 注入)。 */
     private int ragNewsTopk = 4;
 
+    /**
+     * 通用信源(10-05-source-domain-retrieval E)生成检索:NEWS 域内 {@code sourceType=user-source} 的
+     * 独立注入块数上限。默认 **0 = 关闭**——零回归:BYD 官方新闻走原 {@link #ragNewsTopk} 不受影响,
+     * 用户采集源默认不注入;须显式开启灰度(design §10 Rollout)。
+     */
+    private int ragSourceTopk = 0;
+
     // ==================== A rerank(10-03-a-rerank,design §3.1) ====================
     /** LLM 重排总开关:false(默认)时 CarRagService 不调用 Reranker,检索行为与现状逐条一致(零回归)。 */
     private boolean ragRerankEnabled = false;

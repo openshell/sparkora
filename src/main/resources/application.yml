@@ -124,6 +124,7 @@ sparkora:
     rag-kb-enabled: ${AI_RAG_KB_ENABLED:true}   # S7:通用知识库总开关(false 回退 S6.2 纯车型域)
     rag-anchor-boost: ${AI_RAG_ANCHOR_BOOST:1.15} # S8:锚点车型块分数加权系数(统一检索重排)
     rag-news-topk: ${AI_RAG_NEWS_TOPK:4}        # C2:官方新闻域生成检索注入块数上限(与车型/KB 配额独立;0=关闭 NEWS 注入)
+    rag-source-topk: ${AI_RAG_SOURCE_TOPK:0}    # 10-05 E:NEWS 域内用户采集源(sourceType=user-source)独立配额;默认 0=关闭(零回归)
     rag-rerank-enabled: ${AI_RAG_RERANK_ENABLED:false} # A:LLM 重排总开关(false 默认,行为与现状逐条一致)
     rag-rerank-topn: ${AI_RAG_RERANK_TOPN:20}  # A:参与重排的候选数上限(按原分取前 N,控制 token)
     rag-rerank-timeout-ms: ${AI_RAG_RERANK_TIMEOUT_MS:10000} # A:重排单次超时预算(ms,超时回退原序)
