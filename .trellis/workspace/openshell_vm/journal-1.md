@@ -1651,3 +1651,39 @@ SourceDocService 切块嵌入、UnifiedHit/Citation 透传 sourceType、NEWS 域
 ### Next Steps
 
 - 实现 10-05-source-web-fusion(F)
+
+
+## Session 62: 10-05 F 本地信源与外部搜索融合：实现/复核/归档
+<!-- trellis-session: v=2 fp=1c61cc9a2574fd6a -->
+
+**Date**: 2026-10-09
+**Task**: 10-05 F 本地信源与外部搜索融合：实现/复核/归档
+**Branch**: `main`
+
+### Summary
+
+SOURCE 类型+本地优先+同URL去重+权威分档(默认关);check 修 Spring 装配守卫;暴露 2 跨任务接线缺口并登记收尾任务
+
+### Main Changes
+
+- SearchHit SOURCE 类型 + KnowledgeSearchTool 分流 + validateFacts KB|WEB|SOURCE
+- FactSheetService SOURCE 分支/去重/权威档 + 可观测 + 前端徽标
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d623b95` | feat(10-05): 本地信源与外部搜索融合(SOURCE 类型+本地优先+同URL去重+权威分档,默认零回归) |
+| `758f31c` | chore(task): archive 10-05-source-web-fusion |
+
+### Testing
+
+- [OK] mvn test 1062/0/0/0; npm run build 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 新建并实现 10-05-source-metadata-completion 补 Citation.url/authorityTier 透传
