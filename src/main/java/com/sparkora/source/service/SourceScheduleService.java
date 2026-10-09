@@ -7,10 +7,12 @@ import com.sparkora.mapper.SourceMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,11 +39,15 @@ public class SourceScheduleService {
     /** 发布窗口源使用的每日 cron(03:30,与新闻同步错峰)。 */
     static final String DAILY_CRON = "0 30 3 * * ?";
 
+    /** 每日触发时刻(与 {@link #DAILY_CRON} 对齐,用于下次运行时间计算)。 */
+    static final java.time.LocalTime DAILY_TIME = java.time.LocalTime.of(3, 30);
+
     private final SourceMapper sourceMapper;
     private final SourceJobService jobService;
     private final SourceProperties props;
     private final TaskScheduler taskScheduler;
     private final Supplier<LocalDate> dateSupplier;
+    private final Supplier<LocalDateTime> nowSupplier;
 
     /** sourceId -> 调度句柄(改 cron/停用先 cancel 再重注册)。 */
     private final Map<Long, ScheduledFuture<?>> tasks = new ConcurrentHashMap<>();
@@ -49,17 +55,25 @@ public class SourceScheduleService {
     @Autowired
     public SourceScheduleService(SourceMapper sourceMapper, SourceJobService jobService,
                                  SourceProperties props, TaskScheduler taskScheduler) {
-        this(sourceMapper, jobService, props, taskScheduler, LocalDate::now);
+        this(sourceMapper, jobService, props, taskScheduler, LocalDate::now, LocalDateTime::now);
     }
 
     /** 测试可注入日期(包级可见)。 */
     SourceScheduleService(SourceMapper sourceMapper, SourceJobService jobService, SourceProperties props,
                           TaskScheduler taskScheduler, Supplier<LocalDate> dateSupplier) {
+        this(sourceMapper, jobService, props, taskScheduler, dateSupplier, LocalDateTime::now);
+    }
+
+    /** 测试可注入日期与当前时刻(包级可见;G6 nextRunAt 计算需可控 now)。 */
+    SourceScheduleService(SourceMapper sourceMapper, SourceJobService jobService, SourceProperties props,
+                          TaskScheduler taskScheduler, Supplier<LocalDate> dateSupplier,
+                          Supplier<LocalDateTime> nowSupplier) {
         this.sourceMapper = sourceMapper;
         this.jobService = jobService;
         this.props = props;
         this.taskScheduler = taskScheduler;
         this.dateSupplier = dateSupplier;
+        this.nowSupplier = nowSupplier;
     }
 
     /** 启动/信源变更后:按注册表逐条注册(先清后建)。 */
@@ -152,6 +166,50 @@ public class SourceScheduleService {
     /** 调度 cron:发布窗口源用每日 cron;否则用源自身 cron。 */
     static String cronFor(SourceEntity src) {
         return hasWindow(src) ? DAILY_CRON : src.getCron();
+    }
+
+    /**
+     * 计算某源下次运行时间(G6/R11,只读;不改调度注册)。
+     *
+     * <ul>
+     *   <li>总开关关闭({@code collectEnabled=false})或源停用 → {@code null}(面板显示「已停用」/「未启用调度」);</li>
+     *   <li>有发布窗口:今日在窗口内、本批未完成且当前早于每日 03:30 → 今日 03:30;否则下一个窗口起始日 03:30;</li>
+     *   <li>无窗口:用 {@link CronExpression#parse} 计算 {@code next(now)}。</li>
+     * </ul>
+     *
+     * <p>异常(非法 cron 等)降级为 {@code null}(面板显示「—」),不阻断列表。
+     */
+    public LocalDateTime nextRunAt(SourceEntity src) {
+        if (src == null || !Boolean.TRUE.equals(src.getEnabled())) return null;
+        if (!props.isCollectEnabled()) return null;
+        try {
+            LocalDate today = dateSupplier.get();
+            if (hasWindow(src)) {
+                LocalDateTime todayRun = today.atTime(DAILY_TIME);
+                boolean batchDone = src.getLastBatchKey() != null
+                        && src.getLastBatchKey().equals(batchKey(src.getId(), YearMonth.from(today)));
+                if (inWindow(src, today.getDayOfMonth()) && !batchDone) {
+                    // 窗口内、本批未完成:今日 03:30 未到 → 今日;已过 → 次日 03:30(仍在窗口内则次日,否则下月窗口起始日)
+                    if (nowSupplier.get().isBefore(todayRun)) return todayRun;
+                    LocalDate tomorrow = today.plusDays(1);
+                    if (inWindow(src, tomorrow.getDayOfMonth())
+                            && YearMonth.from(tomorrow).equals(YearMonth.from(today))) {
+                        return tomorrow.atTime(DAILY_TIME);
+                    }
+                }
+                // 下一个窗口起始日:今日窗口尚未开始 → 本月窗口起始日;否则 → 下月窗口起始日
+                int startDay = Math.min(src.getWindowStartDay(), src.getWindowEndDay());
+                LocalDate thisMonthStart = today.withDayOfMonth(1).plusDays(Math.max(1, startDay) - 1L);
+                LocalDate start = today.isBefore(thisMonthStart) ? thisMonthStart : thisMonthStart.plusMonths(1);
+                return start.atTime(DAILY_TIME);
+            }
+            String cron = src.getCron();
+            if (cron == null || cron.isBlank()) return null;
+            return CronExpression.parse(cron).next(nowSupplier.get());
+        } catch (Exception e) {
+            log.warn("信源 {} 下次运行时间计算失败(降级 null): {}", src.getId(), e.getClass().getSimpleName());
+            return null;
+        }
     }
 
     /** 是否配置发布窗口(起止日均非空)。 */

@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-09-cpca-gasgoo-collection/design.md", "reason": "本任务技术设计：G1 渲染HTML路径/G2 容器正文/G3 非table结构化/G4 注册闭环/G5 配图过滤/种子V17"}
+{"file": "docs/spec/knowledge/sources.md", "reason": "信源采集契约：源/栏目表、parse_rules、任务表、内容API、配图转存；本任务字段级扩展的权威文档"}
+{"file": "docs/spec/knowledge/news.md", "reason": "NEWS 域泛化与 source=byd-news 特例；采集内容复用 sparkora_news 的契约"}
+{"file": "docs/spec/image.md", "reason": "图库来源白名单/语义检索/嵌入文本构造：海报入图库须遵此契约"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索 + 外部搜索策略路由 + Spring 装配守卫等仓库硬规则"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "部分更新/字段置空/原子抢占/向量id空间复用（V17 幂等种子与 channel 写路径遵循）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试要求与 Spring 装配盲区（多构造器 @Autowired + 装配守卫）"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端约定：Vue3 script setup/Element Plus 自动引入/PC-only/API 层 R<T> 拆包（G6 面板改动遵循）"}

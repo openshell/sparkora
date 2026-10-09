@@ -33,13 +33,19 @@
   "date":   ".date",           // 条目内日期选择器（可选）
   "detail": ".article-content",// 详情正文容器选择器
   "tables": "table",           // 正文内表格选择器（转保留行列文本）
+  "listRows": "div.data ul li", // 正文内列表型结构化行选择器（10-09；如盖世 /qcxl 排行，无 <table>）
+  "rowCells": "span",          // 列表行内单元格选择器（10-09；缺省整行取文本）
   "images": "img",             // 正文内图片选择器（配图转存）
+  "imageDeny":  "/common/,qrcode", // 图片 URL 子串黑名单（10-09；逗号分隔，叠加内置默认 deny）
+  "imageAllow": "moblogo/News/UEditor", // 图片 URL 子串白名单（10-09；非空则须命中其一）
   "bydOnly": false             // true=只保留标题/链接含 BYD/比亚迪的条目（工信部申报等）
 }
 ```
 
 - 解析规则类 `com.sparkora.source.client.SourceParseRules`；**非法/缺失 JSON 降级为空规则，不抛**。
+  记录含既有 8 参构造器（新增 4 字段默认 null，行为不变，零回归）。
 - 站点改版只改一条 channel 记录的选择器，**不做通用智能抽取**。
+
 
 ---
 
@@ -48,8 +54,13 @@
 - `com.sparkora.source.client.SourceClient`：`list(html, channel) → List<SourceItem{externalId,title,url,publishDate,tags}>`；`detail(html, channel, item) → SourceContent{text,html,imageUrls}`。**按栏目驱动**（每 channel 用各自 `parse_rules`/`category`）。
 - `RssSourceClient`（`type=RSS`）：jsoup `Parser.xmlParser()` 解析 RSS 2.0（`item`/`guid`/`pubDate`）与 Atom（`entry`/`id`/`published`/`link href`），**不新增依赖**；`pubDate` 缺失/格式异常容错为 null。
 - `SiteSourceClient`（`type=SITE`）：列表页选择器定位条目、详情选择器抽正文；**BYD 优先过滤**（`parse_rules.bydOnly=true` 只保留标题/链接含 BYD/比亚迪的条目，其他车企仅按需保留字段，不做通用 NLP 判定）。
-- `SourceTableParser`（`source/service`）：**HTML 表格 → 保留行列语义的逐行文本**（`列1 | 列2 | 列3`，空单元格保留占位），先于 `TextChunker` 的「段内换行转空格」处理，避免数据型源（乘联会销量表等）数值/行列被压平丢失（父 design §6）。
+  - **容器优先正文（10-09 G2）**：`detail` 命中 `parse_rules.detail` 容器时**只在该容器内**取正文（不再回退 `body`，避免吞入导航/相关阅读）；容器内 `<p>` 段落拼接达阈值（`PARAGRAPH_MIN_CHARS=60`）用段落，否则取容器整段文本按块拆分——修复 `section>span` 型站点（乘联会）只认 `<p>` 取空。**无 `detail` 选择器时保持旧行为（body + `<p>`，零回归）**。
+  - **结构化先行**：正文内 `<table>`（`tables`）与列表型行（`listRows`/`rowCells`，见 `SourceTableParser.parseListRows`）均先转保留行列的逐行文本，并入正文块序列（表格在前、列表行次之）。
+  - **配图过滤（10-09 G5）**：图片在**正文容器内**按 `images` 选择器抽取，叠加**内置默认 deny 常量**（`/common/`、`companylogo`、`/logo/`、`qrcode`、`160_110`；**不用裸 `logo`**——盖世海报 CDN 为 `moblogo`，裸 `logo` 会误杀手绘海报）与栏目 `imageDeny`（子串叠加）/`imageAllow`（非空须命中其一）。命中过滤即丢弃，单图失败 warn 跳过不阻断。
+- `SourceTableParser`（`source/service`）：**HTML 表格 → 保留行列语义的逐行文本**（`列1 | 列2 | 列3`，空单元格保留占位），先于 `TextChunker` 的「段内换行转空格」处理，避免数据型源（乘联会销量表等）数值/行列被压平丢失（父 design §6）。**10-09** 新增 `parseListRows(root, listRows, rowCells)`：无 `<table>` 的排行/榜单（盖世 `/qcxl` 的 `div.data ul li`）逐行取 `rowCells` 单元格文本用 `CELL_SEP`（`" | "`）拼成一行，`\n` 连接；未配置 `listRows` 时返回空列表（零回归）。
 - 抓取经 C 的 `FetchTransport`（`com.sparkora.source.fetch`）：A 级源走 `HttpFetchTransport`；`need_crawl4ai` 栏目走 `Crawl4aiFetchTransport`，**未配置时降级跳过并记原因**（`degraded`），不 fallback 到 HTTP 硬闯。
+  - **渲染 HTML（10-09 G1）**：`Crawl4aiClient.fetchHtml(url)` 改走 `POST /crawl {urls:[url]}`，取 `results[0].cleaned_html`（回退 `html`）——JS 渲染列表页（乘联会）链接才可见；`success=false`/`results` 空 → `EMPTY`。**`/crawl` 失败 best-effort 回退旧 `/html`**（保证不劣化现状）；`fetchMarkdown` 仍走 `/md`；未配置 `CRAWL4AI_BASE_URL` → `UNCONFIGURED`。
+
 
 ---
 
@@ -86,8 +97,12 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| GET | `/api/sources` | 三角色 | 信源列表（含 `enabled`/`channelCount`） |
-| GET | `/api/sources/{id}` | 三角色 | 详情（含 **`channels[]`**）；不存在 `R.fail(404)` |
+| GET | `/api/sources` | 三角色 | 信源列表（含 `enabled`/`channelCount`/**`nextRunAt`（10-09 G6，可空）**） |
+| GET | `/api/sources/{id}` | 三角色 | 详情（含 **`channels[]`** 与 `nextRunAt`）；不存在 `R.fail(404)` |
+| POST | `/api/sources` | ADMIN/EDITOR | **10-09 G4 新建信源**（body `SourceCreateDTO{name,type,vertical,cron,windowStartDay,windowEndDay,authorityTier,needCrawl4ai,enabled,channels:[ChannelDTO]}`）；事务内插 source + channels，返回详情；校验名/类型（`RSS\|SITE`）/栏目 `listUrl`/`parseRules` 合法 JSON，非法 `R.fail(400)` |
+| POST | `/api/sources/{id}/channels` | ADMIN/EDITOR | **10-09 G4 新增栏目**（body `ChannelDTO`）；改后调度重注册 |
+| PUT | `/api/channels/{id}` | ADMIN/EDITOR | **10-09 G4 编辑栏目**（部分更新，`listUrl` 置空非法）；改后调度重注册 |
+| DELETE | `/api/channels/{id}` | ADMIN/EDITOR | **10-09 G4 删除栏目**（逻辑删）；返回 `{ok:true}` |
 | PUT | `/api/sources/{id}` | ADMIN/EDITOR | 编辑源级字段（`@Valid SourceUpdateDTO`；触发调度重注册） |
 | POST | `/api/sources/{id}/collect` | ADMIN/EDITOR | 手动触发采集（body `{channelId?}`），返回 `{jobId}` |
 | GET | `/api/source-jobs` | 三角色 | 任务历史/进度（`?sourceId` 可选） |
@@ -98,7 +113,10 @@
 
 `SourceContentDTO` 字段：`{id, sourceId, channelId, title, url, publishDate, category, source, chunkCount, content?}`。
 **`source=byd-news` 条目**（`/api/news` 的存量）同样可经本接口读取，携带 U 条件渲染所需字段（`chunkCount`、`url`）。
-**数据隔离**：`/api/news` 只返回 `source='byd-news'`（或 `source_id IS NULL`）的内容；通用信源内容仅经本接口暴露（不泄漏进「新闻=BYD」语义）。
+**数据隔离**：`/api/news` 只返回 `source='byd-news'`（或 `source_id NULL`）的内容；通用信源内容仅经本接口暴露（不泄漏进「新闻=BYD」语义）。
+
+**`nextRunAt`（10-09 G6/R11）**：`GET /api/sources`、`GET /api/sources/{id}` 返回体新增非持久化字段 `nextRunAt`（`LocalDateTime`，可空，向后兼容）。由 `SourceScheduleService.nextRunAt(src)` 只读计算：源停用/总开关 `SOURCE_COLLECT_ENABLED=false` → null（面板显示「已停用」/「—」）；有发布窗口 → 窗口内且本批未完成且当前早于每日 03:30 取今日 03:30，否则下一个窗口起始日 03:30；无窗口 → `CronExpression.parse(cron).next(now)`；异常降级 null。**只读计算，不改调度注册**。
+
 
 ---
 
@@ -109,6 +127,28 @@
 - **相对 URL 按栏目 `detail_base_url` 解析**（`ImageService` 新增可传基址的重载；`resolveBydUrl` 保留给 BYD 旧路径，零回归）——否则跨源相对图链会被拼成 `www.byd.com` 域而下载失败。
 - **单图失败 warn 跳过、不阻断本条/本任务**（照 `NewsService` 封面图容错）；不做视频入库/反盗链/水印/版权审核。
 - 图片嵌入文本分派（E 侧）：`source` 与 `byd-news` 同模式（来源标题 + 标签），见 [image.md](../image.md)。
+
+---
+
+## 7.5 乘联会 / 盖世采集契约（10-09-cpca-gasgoo-collection）
+
+两真实站点经既有基座端到端采集；V17 迁移（`V17__seed_cpca_gasgoo_sources.sql`）幂等预置两源 + 4 栏目（**默认 `enabled=false`**，`INSERT ... WHERE NOT EXISTS`，不改表结构）。
+
+| 源 | type | need_crawl4ai | 栏目 | listUrl | category | fetchMode |
+|---|---|---|---|---|---|---|
+| 乘联会 | SITE | true | 车市解读 | `https://www.cpcaauto.com/news.php?types=csjd` | 销量数据 | CRAWL4AI |
+| 乘联会 | SITE | true | 乘联分会论坛 | `https://www.cpcaauto.com/news.php?types=yjsy` | 行业资讯 | CRAWL4AI |
+| 盖世汽车 | SITE | false | 销量资讯 | `https://auto.gasgoo.com/auto-news/C-110` | 官方新闻 | HTTP |
+
+> **盖世「销量排行」栏目已退役（`V18__retire_unreachable_gasgoo_ranking_channel.sql`，2026-10-09）**：V17 曾预置 `/qcxl` 排行栏目，但实测其详情页（`/qcxl/article/*`、`/qcxl/cqph`、`/qcxl/xlph`）由**腾讯 WAF 验证码**拦截（HTTP 200 / 1543B 挑战页，需人工交互；Crawl4AI 亦无法渲染），且 `i.gasgoo.com/data/ranking` 为 JS 壳（真实数据走 `.aspx`，同样不可直取）→ 真机不可采。故 V18 逻辑删除该栏目。**`SourceTableParser.parseListRows` 的 `listRows`/`rowCells` 能力保留**（已单测覆盖，零回归），未来接入可达排行源可直接复用。
+
+- **乘联会**（直连 403，走 Crawl4AI 渲染）：`parse_rules` = `{"list":".list_d li.q","link":"a","title":"a","date":"span","detail":"div.read_content","tables":"","images":""}`；排期用发布窗口（`window_start_day=8,window_end_day=11`）。列表须经 G1 `/crawl` 渲染后才有 `<a href>`；详情正文在 `div.read_content`（`section>span` 型，G2 容器优先）；销量数值不丢。
+- **盖世销量资讯**（直连 200，HTTP）：`parse_rules` = `{"list":"div.contentList dl","link":"a","title":"h2 a","date":"span.time","detail":"#ArticleContent","images":"#ArticleContent img","imageDeny":"160_110"}`；54 个 `<p>` 段落型正文；正文海报经 G5 过滤（deny 图标/logo/二维码/缩略图）后转存图库。
+- **盖世销量排行**（`/qcxl` 首页文章列表；排行正文为 `div.data ul li` 行结构，非 `<table>`）：`parse_rules` = `{"list":"div.frontlist ul.newslist li","link":"a","title":"a","detail":"div.data","listRows":"div.data ul li","rowCells":"span"}`；G3 `parseListRows` 在 `div.data` 容器内逐行取 `span` 单元格，`CELL_SEP` 拼接，数值可检索命中。
+- **销量全收**：`parse_rules.bydOnly=false`（default），R1/R2 不做 BYD 过滤（`accept()` 直接放行）。
+- **排期**：乘联会月度窗口（复用 B 的发布窗口语义，成功才标 batch）；盖世 `cron=0 30 3 * * ?`（每日）。
+- **端到端**：`POST /api/sources`（或 V17 种子）→ `POST /api/sources/{id}/collect` → 幂等 upsert `sparkora_news(source="source", source_id, channel_id, category)` → `SourceDocService.rebuildForNews`（domain=NEWS）→ `CarRagService` 检索命中 → 盖世海报 `ImageEmbeddingService.searchImages` 命中。
+- **回滚**：删除 V17 预置行 / `enabled=false` + `SOURCE_COLLECT_ENABLED=false` → 等价现状；G1–G6 均向后兼容扩展。
 
 ---
 
@@ -127,9 +167,10 @@
 
 ## 9. 关键实现路径
 
-- 后端：`com.sparkora.source.client.{SourceClient,RssSourceClient,SiteSourceClient,SourceParseRules,SourceItem,SourceContent}`、`source.service.{SourceTableParser,SourceCollectService,SourceJobService,SourceScheduleService,SourceScheduleRunner,SourceImageService,SourceService,SourceContentService}`、`web.controller.SourceController`、`config.SourceProperties`、`domain.entity.{SourceEntity,SourceChannelEntity,SourceJobEntity}`。
+- 后端：`com.sparkora.source.client.{SourceClient,RssSourceClient,SiteSourceClient,SourceParseRules,SourceItem,SourceContent}`、`source.service.{SourceTableParser,SourceCollectService,SourceJobService,SourceScheduleService,SourceScheduleRunner,SourceImageService,SourceService,SourceContentService}`、`web.controller.SourceController`、`config.SourceProperties`、`domain.entity.{SourceEntity,SourceChannelEntity,SourceJobEntity}`、`domain.dto.{SourceCreateDTO,ChannelDTO}`。
 - 复用：`com.sparkora.source.fetch.FetchTransport`（C）、`com.sparkora.service.ImageService`（图库转存）、`com.sparkora.news.service.NewsDocService`（E 的切块入口）。
 - 表：`sparkora_source` / `sparkora_source_channel` / `sparkora_source_job`；采集产物落 `sparkora_news`（+ `sparkora_news_doc`）。
+- 迁移：`V17__seed_cpca_gasgoo_sources.sql`（预置两源 + 4 栏目，幂等，默认停用）。
 
 ---
 
@@ -146,6 +187,14 @@
 - [x] AC-B4 容错：单条失败记 `failed_items` 其余继续；正文空仍入库；陈旧 RUNNING 超 60 分钟自动 FAILED
 - [x] AC-B5 任务可见：`/api/source-jobs` 查进度/失败明细，失败项可重试
 - [x] AC-B6 零回归：不改 `sparkora_news*` 表语义；BYD 同步不变；`/api/news` 只返回 `source=byd-news`；`mvn test` 全绿（978；2026-10-08 check 复验）
+- [x] **AC-4 渲染 HTML 通道（10-09 G1）**：`/crawl` 取 `cleaned_html`（回退 `html`）；空 results/`success=false` → `EMPTY`；`/crawl` 失败回退 `/html`；未配置 → `UNCONFIGURED`（`Crawl4aiClientTest`）
+- [x] **AC-5 容器优先正文（10-09 G2）**：`section>span` 型（乘联会）容器内正文非空且不吞导航；多 `<p>` 型（盖世）与现状等价；无选择器零回归（`SourceChannelTest`）
+- [x] **AC-3 排行榜结构化（10-09 G3）**：`div.data li`（`span` 单元格）行文本 `CELL_SEP` 分隔、数值不丢；未配置 `listRows` 零回归（`SourceChannelTest`/`SourceTableParserTest`）。**注：能力已交付并单测通过；盖世 `/qcxl` 排行真机受腾讯 WAF 拦截（`V18` 已退役该栏目），本条按「能力级」交付，非真机端到端。**
+- [x] **AC-7 海报入图库过滤（10-09 G5）**：图标/logo/二维码/缩略图被内置默认 deny + 配置 deny/allow 过滤，仅海报保留；无图源不变（`SourceChannelTest`）
+- [x] **AC-6 注册闭环（10-09 G4）**：`POST /api/sources` 携带 `channels[]` 创建/回读；栏目 add/update/delete；校验 type/listUrl/parseRules；viewer 写 403（`SourceControllerContractTest`/`SourceServiceTest`）
+- [x] **AC-11 运维面板计划可视化（10-09 G6/R11）**：`GET /api/sources`/`{id}` 返回 `nextRunAt`（启用且有排期非空、停用/无排期为空，含窗口语义）；前端「下次运行」列展示（`SourceManagePanel.vue`），停用显示「已停用」（`SourceScheduleServiceTest`/`SourceControllerContractTest`）
+- [ ] **AC-1/AC-2/AC-8/AC-9 端到端真实采集**：以真实站点手动采集验证（集成/手工，非 CI；Crawl4AI 可达 + `SOURCE_COLLECT_ENABLED=true`），见 implement.md §9。
+
 
 ---
 

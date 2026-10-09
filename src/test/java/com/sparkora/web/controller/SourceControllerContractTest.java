@@ -1,8 +1,10 @@
 package com.sparkora.web.controller;
 
 import com.sparkora.common.R;
+import com.sparkora.domain.dto.ChannelDTO;
 import com.sparkora.domain.dto.PageResult;
 import com.sparkora.domain.dto.SourceContentDTO;
+import com.sparkora.domain.dto.SourceCreateDTO;
 import com.sparkora.domain.dto.SourceUpdateDTO;
 import com.sparkora.domain.entity.SourceChannelEntity;
 import com.sparkora.domain.entity.SourceEntity;
@@ -174,6 +176,111 @@ class SourceControllerContractTest {
                 .andExpect(jsonPath("$.data.enabled").value(false));
     }
 
+    // ==================== G4 信源注册闭环(10-09) ====================
+
+    @Test
+    void 新建信源_携带channels_创建并回读channels数组() throws Exception {
+        SourceEntity created = new SourceEntity();
+        created.setId(20L);
+        created.setName("乘联会");
+        created.setType("SITE");
+        SourceChannelEntity c1 = new SourceChannelEntity();
+        c1.setId(30L);
+        c1.setName("车市解读");
+        c1.setCategory("销量数据");
+        created.setChannels(List.of(c1));
+        when(sourceService.create(any(SourceCreateDTO.class))).thenReturn(created);
+
+        mvc.perform(post("/api/sources")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"乘联会\",\"type\":\"SITE\","
+                                + "\"channels\":[{\"name\":\"车市解读\",\"listUrl\":\"https://www.cpcaauto.com/news.php?types=csjd\","
+                                + "\"detailBaseUrl\":\"https://www.cpcaauto.com\",\"category\":\"销量数据\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.id").value(20))
+                .andExpect(jsonPath("$.data.channels.length()").value(1))
+                .andExpect(jsonPath("$.data.channels[0].name").value("车市解读"));
+    }
+
+    @Test
+    void 新建信源_type非法_400() throws Exception {
+        when(sourceService.create(any(SourceCreateDTO.class)))
+                .thenThrow(new IllegalArgumentException("类型必须是 RSS 或 SITE"));
+
+        mvc.perform(post("/api/sources")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"type\":\"BAD\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
+    }
+
+    @Test
+    void 新增栏目_返回栏目() throws Exception {
+        SourceChannelEntity c = new SourceChannelEntity();
+        c.setId(31L);
+        c.setName("销量排行");
+        c.setSourceId(20L);
+        when(sourceService.addChannel(eq(20L), any(ChannelDTO.class))).thenReturn(c);
+
+        mvc.perform(post("/api/sources/20/channels")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"销量排行\",\"listUrl\":\"https://auto.gasgoo.com/qcxl\","
+                                + "\"parseRules\":\"{\\\"listRows\\\":\\\"div.data ul li\\\"}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.id").value(31))
+                .andExpect(jsonPath("$.data.name").value("销量排行"));
+    }
+
+    @Test
+    void 编辑栏目_200() throws Exception {
+        SourceChannelEntity c = new SourceChannelEntity();
+        c.setId(31L);
+        c.setEnabled(false);
+        when(sourceService.updateChannel(eq(31L), any(ChannelDTO.class))).thenReturn(c);
+
+        mvc.perform(put("/api/channels/31")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
+    @Test
+    void 删除栏目_返回ok() throws Exception {
+        when(sourceService.deleteChannel(31L)).thenReturn(true);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/channels/31"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.ok").value(true));
+    }
+
+    @Test
+    void 删除栏目_不存在404() throws Exception {
+        when(sourceService.deleteChannel(999L)).thenThrow(new IllegalArgumentException("栏目不存在"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/channels/999"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400));
+    }
+
+    // ==================== G6 计划可视化(10-09,R11/AC-11) ====================
+
+    @Test
+    void 信源列表_含nextRunAt字段() throws Exception {
+        SourceEntity s = new SourceEntity();
+        s.setId(5L);
+        s.setName("乘联会");
+        s.setEnabled(true);
+        s.setNextRunAt(LocalDateTime.of(2026, 11, 8, 3, 30));
+        when(sourceService.list()).thenReturn(List.of(s));
+
+        mvc.perform(get("/api/sources"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].nextRunAt").value("2026-11-08T03:30:00"));
+    }
+
     @Test
     void 重试任务_无失败项400() throws Exception {
         when(jobService.retry(9L)).thenThrow(new IllegalArgumentException("该任务没有可重试的失败项"));
@@ -211,6 +318,11 @@ class SourceControllerContractTest {
         assertRoles(pa("collect", Long.class, java.util.Map.class), false);
         assertRoles(pa("retryJob", Long.class), false);
         assertRoles(pa("rebuildContent", Long.class), false);   // 10-05 E 向量重建(写端点)
+        // 10-09 G4 注册闭环(写端点)
+        assertRoles(pa("create", SourceCreateDTO.class), false);
+        assertRoles(pa("addChannel", Long.class, ChannelDTO.class), false);
+        assertRoles(pa("updateChannel", Long.class, ChannelDTO.class), false);
+        assertRoles(pa("deleteChannel", Long.class), false);
     }
 
     private static void assertRoles(PreAuthorize p, boolean viewerAllowed) {

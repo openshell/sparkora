@@ -1,9 +1,12 @@
 package com.sparkora.web.controller;
 
 import com.sparkora.common.R;
+import com.sparkora.domain.dto.ChannelDTO;
 import com.sparkora.domain.dto.PageResult;
 import com.sparkora.domain.dto.SourceContentDTO;
+import com.sparkora.domain.dto.SourceCreateDTO;
 import com.sparkora.domain.dto.SourceUpdateDTO;
+import com.sparkora.domain.entity.SourceChannelEntity;
 import com.sparkora.domain.entity.SourceEntity;
 import com.sparkora.domain.entity.SourceJobEntity;
 import com.sparkora.source.service.SourceContentService;
@@ -70,6 +73,59 @@ public class SourceController {
     public R<SourceEntity> update(@PathVariable Long id, @Valid @RequestBody SourceUpdateDTO dto) {
         try {
             return R.ok(sourceService.update(id, dto));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "操作失败: " + e.getMessage());
+        }
+    }
+
+    /** 新建信源(含 channels[]);G4 注册闭环。 */
+    @PostMapping("/sources")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<SourceEntity> create(@Valid @RequestBody SourceCreateDTO dto) {
+        try {
+            return R.ok(sourceService.create(dto));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "操作失败: " + e.getMessage());
+        }
+    }
+
+    /** 新增栏目(G4);改后调度重注册。 */
+    @PostMapping("/sources/{id}/channels")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<SourceChannelEntity> addChannel(@PathVariable Long id, @Valid @RequestBody ChannelDTO dto) {
+        try {
+            return R.ok(sourceService.addChannel(id, dto));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "操作失败: " + e.getMessage());
+        }
+    }
+
+    /** 编辑栏目(G4,部分更新);改后调度重注册。 */
+    @PutMapping("/channels/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<SourceChannelEntity> updateChannel(@PathVariable Long id, @Valid @RequestBody ChannelDTO dto) {
+        try {
+            return R.ok(sourceService.updateChannel(id, dto));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            return R.fail(500, "操作失败: " + e.getMessage());
+        }
+    }
+
+    /** 删除栏目(G4,逻辑删);改后调度重注册。 */
+    @DeleteMapping("/channels/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> deleteChannel(@PathVariable Long id) {
+        try {
+            sourceService.deleteChannel(id);
+            return R.ok(Map.of("ok", true));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
         } catch (Exception e) {

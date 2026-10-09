@@ -56,6 +56,10 @@ class SourceScheduleServiceTest {
         return new SourceScheduleService(sourceMapper, jobService, props, taskScheduler, () -> today);
     }
 
+    private SourceScheduleService newService(LocalDate today, java.time.LocalDateTime now) {
+        return new SourceScheduleService(sourceMapper, jobService, props, taskScheduler, () -> today, () -> now);
+    }
+
     private static SourceEntity source(Long id, boolean enabled, String cron) {
         SourceEntity s = new SourceEntity();
         s.setId(id);
@@ -178,5 +182,95 @@ class SourceScheduleServiceTest {
     @Test
     void 批次键含源与年月() {
         assertEquals("7-2026-10", SourceScheduleService.batchKey(7L, YearMonth.of(2026, 10)));
+    }
+
+    // ==================== G6 nextRunAt(10-09-cpca-gasgoo-collection,R11/AC-11) ====================
+
+    @Test
+    void nextRunAt_停用源返回null() {
+        SourceEntity s = source(1L, false, "0 0 3 * * ?");
+        assertEquals(null, newService(LocalDate.of(2026, 10, 8),
+                java.time.LocalDateTime.of(2026, 10, 8, 1, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_总开关关闭返回null() {
+        props.setCollectEnabled(false);
+        SourceEntity s = source(1L, true, "0 0 3 * * ?");
+        assertEquals(null, newService(LocalDate.of(2026, 10, 8),
+                java.time.LocalDateTime.of(2026, 10, 8, 1, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_无窗口用cron次日() {
+        SourceEntity s = source(1L, true, "0 0 3 * * ?");   // 每日 03:00
+        java.time.LocalDateTime now = java.time.LocalDateTime.of(2026, 10, 8, 5, 0);
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 9, 3, 0),
+                newService(LocalDate.of(2026, 10, 8), now).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_无窗口非法cron降级null() {
+        SourceEntity s = source(1L, true, "not-a-cron");
+        assertEquals(null, newService(LocalDate.of(2026, 10, 8),
+                java.time.LocalDateTime.of(2026, 10, 8, 1, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_无cron返回null() {
+        SourceEntity s = source(1L, true, null);
+        assertEquals(null, newService(LocalDate.of(2026, 10, 8),
+                java.time.LocalDateTime.of(2026, 10, 8, 1, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_窗口内且未到今日触发_返回今日0330() {
+        SourceEntity s = source(5L, true, null);
+        s.setWindowStartDay(8);
+        s.setWindowEndDay(11);
+        // 10-09 在窗口内,当前 01:00 早于 03:30 → 今日 03:30
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 9, 3, 30),
+                newService(LocalDate.of(2026, 10, 9), java.time.LocalDateTime.of(2026, 10, 9, 1, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_窗口内已过今日触发_返回次日0330() {
+        SourceEntity s = source(5L, true, null);
+        s.setWindowStartDay(8);
+        s.setWindowEndDay(11);
+        // 10-09 已过 03:30 且次日 10-10 仍在窗口内 → 次日 03:30
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 10, 3, 30),
+                newService(LocalDate.of(2026, 10, 9), java.time.LocalDateTime.of(2026, 10, 9, 5, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_窗口内最后一日已过触发_返回下月窗口起始日() {
+        SourceEntity s = source(5L, true, null);
+        s.setWindowStartDay(8);
+        s.setWindowEndDay(11);
+        // 10-11 已过 03:30,次日 10-12 出窗口 → 下月 11-08 03:30
+        assertEquals(java.time.LocalDateTime.of(2026, 11, 8, 3, 30),
+                newService(LocalDate.of(2026, 10, 11), java.time.LocalDateTime.of(2026, 10, 11, 5, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_窗口未开始_返回本月窗口起始日() {
+        SourceEntity s = source(5L, true, null);
+        s.setWindowStartDay(8);
+        s.setWindowEndDay(11);
+        // 10-05 尚未进入窗口 → 本月 10-08 03:30
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 8, 3, 30),
+                newService(LocalDate.of(2026, 10, 5), java.time.LocalDateTime.of(2026, 10, 5, 9, 0)).nextRunAt(s));
+    }
+
+    @Test
+    void nextRunAt_本批已完成_窗口内跳过返回下月起始日() {
+        SourceEntity s = source(5L, true, null);
+        s.setWindowStartDay(8);
+        s.setWindowEndDay(11);
+        s.setLastBatchKey("5-2026-10");
+        // 10-09 本批已完成 → 跳过本月窗口 → 下月 11-08 03:30
+        assertEquals(java.time.LocalDateTime.of(2026, 11, 8, 3, 30),
+                newService(LocalDate.of(2026, 10, 9), java.time.LocalDateTime.of(2026, 10, 9, 1, 0)).nextRunAt(s));
     }
 }

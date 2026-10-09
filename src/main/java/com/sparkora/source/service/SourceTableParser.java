@@ -42,6 +42,46 @@ public final class SourceTableParser {
         return out;
     }
 
+    /**
+     * 列表型结构化抽取(10-09-cpca-gasgoo-collection,design §4):把 {@code listRows} 命中的每个行元素
+     * 内的 {@code rowCells} 单元格文本用 {@link #CELL_SEP} 拼成一行,{@code \n} 连接。
+     *
+     * <p>用于无 {@code <table>} 的排行/榜单(如盖世 {@code /qcxl} 的 {@code div.data ul li});
+     * 与 {@link #parseTables} 并列,先转表格再转列表行,均并入正文块序列,保留行/列语义以免下游
+     * {@code TextChunker} 压平数值。{@code rowCells} 缺省取整行文本(单格)。
+     *
+     * @param root        正文容器(或整页)
+     * @param listRows    行元素选择器(空/空白则不处理,返回空列表=零回归)
+     * @param rowCells    行内单元格选择器(空/空白则整行取文本)
+     * @return 所有行合成的一段文本;无命中返回空列表
+     */
+    public static List<String> parseListRows(Element root, String listRows, String rowCells) {
+        if (root == null) return List.of();
+        if (listRows == null || listRows.isBlank()) return List.of();
+        Elements rows = root.select(listRows);
+        StringBuilder sb = new StringBuilder();
+        for (Element row : rows) {
+            List<String> cells = new ArrayList<>();
+            if (rowCells != null && !rowCells.isBlank()) {
+                for (Element cell : row.select(rowCells)) {
+                    cells.add(normalize(cell.text()));
+                }
+            } else {
+                cells.add(normalize(row.text()));
+            }
+            if (cells.isEmpty()) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(String.join(CELL_SEP, cells));
+        }
+        return sb.length() == 0 ? List.of() : List.of(sb.toString());
+    }
+
+    /** 单元格文本归一(NBSP→空格、连续空白压成单个、trim)。 */
+    private static String normalize(String raw) {
+        if (raw == null) return "";
+        return raw.replace('\u00a0', ' ').replaceAll("\\s+", " ").trim();
+    }
+
     /** 单张表格 → 行文本(每行 {@code \n},空表返回空串)。 */
     public static String tableToText(Element table) {
         if (table == null) return "";

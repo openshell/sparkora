@@ -78,6 +78,21 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 - 迁移侧：回填脚本要**同时**覆盖列与 JSONB——先例 `V14`（回填 metadata）遗漏了列，须由 `V15` 补回填 `sparkora_news.category`。
 - 排查口径：出现「检索有、列表筛选无」时，先比对该字段在**列**与 **metadata** 两处是否都存在。
 
+### Convention: 接入外部站点采集前必须真机验证「可达性」，HTTP 200 不等于可采（10-09-cpca-gasgoo-collection 实测）
+
+**What**：为站点写采集配置（`sparkora_source_channel.parse_rules`）前，先对**目标 URL 真机拉一次**，判定三件事，再定选择器与通道。
+
+**Problem（10-09 实测）**：
+- **JS 渲染站点**：乘联会列表页原始 `/html` 的 `<a>` **无 href**（链接由 JS 注入）；只有 Crawl4AI **`/crawl` 的 `cleaned_html`** 才有真实链接。即 `SiteSourceClient.list` 靠 `href` 取条目时，必须走「渲染后 HTML」通道，否则静默 0 条。
+- **WAF 验证码站点**：盖世 `/qcxl/article/*` 等返回 **HTTP 200 + 1543B「腾讯验证码挑战页」**——状态码是 200，但正文是验证码脚本（`TencentCaptcha`/`ssl.captcha.qq.com/TCaptcha.js`），**无业务数据**；Crawl4AI 也无法过（需人工交互）。若只按「直连 200」判定可达，会写出一个永远采不到数据的源。
+- **图片过滤裸词误杀**：盖世海报 CDN 是 `moblogo/News/UEditor/…`，若 deny 用裸子串 `logo` 会**误杀全部海报**；须用精确子串（`companylogo`、`/logo/`）。
+
+**规避**：
+- 判定可达性看**正文特征**而非状态码：抓回后检查是否含预期选择器/关键字段；含 `captcha`/`TencentCaptcha` 即视为不可采。
+- JS 渲染站点列表：用 `Crawl4AI /crawl` 的 `cleaned_html`（`Crawl4aiClient.fetchHtml` 已改走此路径）。
+- 站点确实不可采时：**不要保留一个永远失败的信源栏目**（运维面板会误导）；退役该栏目并如实记录限制（先例 `V18` 退役盖世排行）。
+- 图片 deny/allow 用足够精确的子串，避免误杀（先例 `SiteSourceClient` 默认 deny）。
+
 ---
 
 ## Code Review Checklist
@@ -88,3 +103,4 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 - [ ] 前端消费的字段名是否与后端 DTO/record 完全一致（不靠类型系统兜不住的假设）？
 - [ ] 涉及不可逆操作的改动，是否记录了回滚步骤？
 - [ ] 新增/改动的 `@Component` 若有多构造器，是否显式 `@Autowired` 标注生产构造器（并加装配守卫测试）？
+- [ ] 新增外部站点采集配置前，是否真机验证可达（非仅凭 HTTP 200；JS 站点走渲染 HTML `cleaned_html`；WAF 验证码站点不保留死栏目）？

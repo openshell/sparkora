@@ -2,7 +2,7 @@
   <div class="source-manage">
     <div class="panel-toolbar">
       <span class="panel-title">信源管理</span>
-      <span class="toolbar-hint">信源注册表由后端预置；此处可编辑源级字段、启停、触发采集，并查看各栏目。</span>
+      <span class="toolbar-hint">信源由后端预置（或经 API 注册）；此处可编辑源级字段、启停、触发采集，并查看各栏目与下次运行时间。</span>
       <el-button class="refresh-btn" :loading="loading" @click="load">
         <el-icon class="btn-icon"><Refresh /></el-icon>刷新
       </el-button>
@@ -33,6 +33,12 @@
       </el-table-column>
       <el-table-column label="排期" min-width="140">
         <template #default="{ row }">{{ scheduleText(row) }}</template>
+      </el-table-column>
+      <el-table-column label="下次运行" min-width="120">
+        <template #default="{ row }">
+          <span v-if="!row.enabled" class="muted">已停用</span>
+          <span v-else>{{ nextRunText(row) }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="最近采集" min-width="150">
         <template #default="{ row }">
@@ -219,6 +225,15 @@ const scheduleText = (row) => {
     return `每月 ${row.windowStartDay}-${row.windowEndDay} 日`
   }
   return row.cron || '未排期'
+}
+
+// G6/R11：计划可视化——后端计算的 nextRunAt（含发布窗口语义）；ISO 串 MM-dd HH:mm
+const nextRunText = (row) => {
+  if (row.nextRunAt == null) return '—'
+  const s = String(row.nextRunAt).replace('T', ' ')
+  // "yyyy-MM-dd HH:mm[:ss]" → "MM-dd HH:mm"
+  const m = s.match(/^\d{4}-(\d{2}-\d{2}) (\d{2}:\d{2})/)
+  return m ? `${m[1]} ${m[2]}` : s
 }
 
 const statusText = (s) => ({ RUNNING: '采集中', SUCCESS: '成功', PARTIAL: '部分成功', FAILED: '失败' }[s] || s)

@@ -1,6 +1,7 @@
 package com.sparkora.source.client;
 
 import com.sparkora.domain.entity.SourceChannelEntity;
+import com.sparkora.source.service.SourceTableParser;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Element;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -100,6 +102,125 @@ class SourceChannelTest {
         SourceChannelEntity ch = channel("{\"detail\":\".article\",\"images\":\"img\"}", "行业资讯");
         SourceContent c = client.detail(html, ch, new SourceItem("e1", "t", "u", null, List.of()));
         assertEquals(List.of("/uploads/a.jpg", "https://cdn.x.com/b.png"), c.imageUrls());
+    }
+
+    // ==================== G2 容器优先正文(10-09) ====================
+
+    @Test
+    void G2_section_span型详情_容器优先正文非空() {
+        // 乘联会型:div.read_content > div.text > section > span,全页仅 1 个 <p>(标题类),正文无 <p>
+        String html = """
+                <html><body>
+                  <div class="nav">导航不应入正文</div>
+                  <div class="read_content">
+                    <div class="tit">2026年9月新能源乘用车厂商批发销量快讯</div>
+                    <div class="text">
+                      <section><span><span>9月新能源乘用车厂商批发销量预估达到167万辆，同比增长12%。</span></span></section>
+                      <section><span>比亚迪继续领跑，销量超过40万辆，市场份额进一步提升。</span></section>
+                    </div>
+                  </div>
+                  <div class="related">相关阅读不应入正文</div>
+                </body></html>
+                """;
+        SourceChannelEntity ch = channel("{\"detail\":\"div.read_content\",\"tables\":\"\"}", "销量数据");
+        SourceContent c = client.detail(html, ch, new SourceItem("e1", "t", "u", null, List.of()));
+
+        assertTrue(c.text().contains("167万辆"), "容器内 section>span 正文应取到: " + c.text());
+        assertTrue(c.text().contains("比亚迪"), "容器内第二段应取到");
+        assertFalse(c.text().contains("导航不应入正文"), "容器选择器命中时不得回退 body 吞入导航");
+        assertFalse(c.text().contains("相关阅读不应入正文"), "不得吞入相关阅读");
+    }
+
+    @Test
+    void G2_多段落型详情_与现状等价() {
+        String html = """
+                <div class="article">
+                  <p>第一段，长度足够，用于验证段落优先路径按段落拼接。</p>
+                  <p>第二段，同样足够长，保证段落拼接总长超过阈值不会走整段兜底。</p>
+                  <p>第三段，收尾。</p>
+                </div>
+                """;
+        SourceChannelEntity ch = channel("{\"detail\":\".article\"}", "官方新闻");
+        SourceContent c = client.detail(html, ch, new SourceItem("e1", "t", "u", null, List.of()));
+
+        assertTrue(c.text().contains("第一段"), c.text());
+        assertTrue(c.text().contains("第二段"), c.text());
+        assertTrue(c.text().contains("第三段"), c.text());
+        assertTrue(c.text().contains("\n\n"), "段落应以空行分隔");
+    }
+
+    @Test
+    void G2_无容器选择器_保持旧行为零回归() {
+        // 无 detail 选择器:容器=body,段落优先
+        String html = "<html><body><div class=\"a\"><p>正文段落一</p></div></body></html>";
+        SourceChannelEntity ch = channel(null, "行业资讯");
+        SourceContent c = client.detail(html, ch, new SourceItem("e1", "t", "u", null, List.of()));
+        assertTrue(c.text().contains("正文段落一"), c.text());
+    }
+
+    // ==================== G3 列表型结构化(10-09) ====================
+
+    @Test
+    void G3_listRows行结构_逐行单元格拼接含数值() {
+        String html = """
+                <div class="data">
+                  <ul>
+                    <li><span>1</span><span>比亚迪宋</span><span>52123</span></li>
+                    <li><span>2</span><span>比亚迪秦</span><span>41008</span></li>
+                  </ul>
+                </div>
+                """;
+        SourceChannelEntity ch = channel("{\"detail\":\"div.data\",\"listRows\":\"div.data ul li\",\"rowCells\":\"span\"}", "销量数据");
+        SourceContent c = client.detail(html, ch, new SourceItem("e1", "t", "u", null, List.of()));
+
+        assertTrue(c.text().contains("1 | 比亚迪宋 | 52123"), "行文本应以 | 分隔: " + c.text());
+        assertTrue(c.text().contains("2 | 比亚迪秦 | 41008"), "第二行数值不丢: " + c.text());
+    }
+
+    @Test
+    void parseListRows_未配置选择器_零回归返回空() {
+        org.jsoup.nodes.Element root = Jsoup.parse("<div class='data'><ul><li>1</li></ul></div>").selectFirst(".data");
+        assertTrue(SourceTableParser.parseListRows(root, null, null).isEmpty());
+        assertTrue(SourceTableParser.parseListRows(root, "", "span").isEmpty());
+    }
+
+    // ==================== G5 配图过滤(10-09) ====================
+
+    @Test
+    void G5_图标logo二维码被过滤_仅海报保留() {
+        String html = """
+                <div id="ArticleContent" class="contentDetailed">
+                  <p>通用汽车第三季度在华销量超35.8万辆，新能源占比突破60%。</p>
+                  <img src="https://imagecn.gasgoo.com/moblogo/News/UEditor/20261009/poster1.jpg">
+                  <img src="https://imagecn.gasgoo.com/moblogo/news/qrcode/7047/4346.jpg">
+                  <img src="https://c1.gasgoo.com/upload/companyLogo/0000/3521/0745.jpg">
+                  <img src="https://c2.gasgoo.com/auto2019/images/common/APP@2x.png">
+                  <img src="https://imagecn.gasgoo.com/moblogo/News/160_110/2026/10/0902432803.jpg">
+                  <img src="https://imagecn.gasgoo.com/moblogo/News/UEditor/20261009/poster2.jpg">
+                </div>
+                """;
+        SourceChannelEntity ch = channel("{\"detail\":\"#ArticleContent\",\"images\":\"#ArticleContent img\"}", "官方新闻");
+        SourceContent c = client.detail(html, ch, new SourceItem("e1", "t", "u", null, List.of()));
+
+        assertEquals(2, c.imageUrls().size(), "仅两张海报应保留: " + c.imageUrls());
+        assertEquals("https://imagecn.gasgoo.com/moblogo/News/UEditor/20261009/poster1.jpg", c.imageUrls().get(0));
+        assertEquals("https://imagecn.gasgoo.com/moblogo/News/UEditor/20261009/poster2.jpg", c.imageUrls().get(1));
+    }
+
+    @Test
+    void G5_自定义imageDeny叠加默认规则() {
+        SourceParseRules rules = SourceParseRules.parse("{\"imageDeny\":\"sponsorAD,thumb\"}");
+        assertFalse(SiteSourceClient.imageAllowed("https://x.com/sponsorAD/a.jpg", rules), "配置 deny 命中");
+        assertFalse(SiteSourceClient.imageAllowed("https://x.com/thumb/a.jpg", rules), "配置 deny 命中");
+        assertFalse(SiteSourceClient.imageAllowed("https://x.com/common/a.jpg", rules), "内置默认 deny 命中");
+        assertTrue(SiteSourceClient.imageAllowed("https://x.com/UEditor/poster.jpg", rules), "正常海报放行");
+    }
+
+    @Test
+    void G5_imageAllow非空_须命中其一() {
+        SourceParseRules rules = SourceParseRules.parse("{\"imageAllow\":\"moblogo/News/UEditor\"}");
+        assertTrue(SiteSourceClient.imageAllowed("https://imagecn.gasgoo.com/moblogo/News/UEditor/a.jpg", rules));
+        assertFalse(SiteSourceClient.imageAllowed("https://imagecn.gasgoo.com/other/b.jpg", rules));
     }
 
     @Test

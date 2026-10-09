@@ -42,4 +42,10 @@ public class SourceEntity {
     /** 非持久化派生字段:栏目数(列表接口填充)。 */
     @TableField(exist = false)
     private Long channelCount;
+    /**
+     * 非持久化派生字段:下次运行时间(G6/R11 运维面板计划可视化;由 {@code SourceScheduleService} 只读计算,
+     * 停用/总开关关闭/无排期时为 null)。
+     */
+    @TableField(exist = false)
+    private LocalDateTime nextRunAt;
 }

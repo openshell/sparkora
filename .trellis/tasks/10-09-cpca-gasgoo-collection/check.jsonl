@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/10-09-cpca-gasgoo-collection/prd.md", "reason": "验收标准 AC-1..AC-10：两站采集/排行榜结构化/渲染通道/容器正文/注册闭环/海报入图库/排期/端到端/零回归"}
+{"file": ".trellis/tasks/10-09-cpca-gasgoo-collection/design.md", "reason": "核对实现是否符合 G1-G5 设计与零回归边界"}
+{"file": "docs/spec/knowledge/sources.md", "reason": "对照信源采集字段级契约核对 parse_rules/任务/内容API/配图"}
+{"file": "docs/spec/image.md", "reason": "核对海报入图库（source 白名单/嵌入文本/语义检索）契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试与 Spring 装配守卫硬规则"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 V17 幂等/部分更新/字段置空约定"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端面板改动是否符合 Vue3/Element Plus/R<T> 拆包约定"}

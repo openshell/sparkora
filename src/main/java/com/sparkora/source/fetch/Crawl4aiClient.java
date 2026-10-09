@@ -13,14 +13,17 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
- * Crawl4AI 客户端(10-05-crawl4ai-transport,design §0/§4)。封装 v0.9.3 探活确认的端点:
+ * Crawl4AI 客户端(10-05-crawl4ai-transport,design §0/§4;10-09-cpca-gasgoo-collection G1 扩展)。封装端点:
  *
  * <ul>
  *   <li>{@code POST /md} body {@code {url, f:"fit"}} → {@code {url,filter,query,cache,markdown,success}};</li>
- *   <li>{@code POST /html} body {@code {url}} → {@code {html,url,success}}。</li>
+ *   <li>{@code POST /crawl} body {@code {urls:[url]}} → {@code {results:[{success,cleaned_html,html,...}]}}
+ *       —— 返回<b>渲染后</b> DOM(G1:JS 站点列表链接在 {@code /html} 里缺失);</li>
+ *   <li>{@code POST /html} body {@code {url}} → {@code {html,url,success}}(旧路径,仅作 /crawl 失败兜底)。</li>
  * </ul>
  *
  * <p>鉴权 {@code Authorization: Bearer <CRAWL4AI_API_KEY>}。失败(超时/非 2xx/空正文)以结果态
@@ -60,7 +63,7 @@ public class Crawl4aiClient {
         return lastCallOk;
     }
 
-    /** /md(fit)抓取正文;wantHtml=true 时改调 /html。 */
+    /** /md(fit)抓取正文;wantHtml=true 时抓取渲染后 HTML(/crawl)。 */
     public Result fetch(String url, boolean wantHtml) {
         if (!configured()) return Result.failure(0L, "UNCONFIGURED");
         return wantHtml ? fetchHtml(url) : fetchMarkdown(url);
@@ -74,21 +77,65 @@ public class Crawl4aiClient {
         return post("/md", body, "markdown");
     }
 
-    /** {@code POST /html {url}} → HTML。 */
+    /**
+     * {@code POST /crawl {urls:[url]}} → 渲染后 HTML(取 {@code results[0].cleaned_html},回退 {@code html})。
+     *
+     * <p>G1:乘联会等 JS 渲染列表页 {@code /html} 拿不到 {@code <a href>};{@code /crawl} 返回渲染后 DOM。
+     * {@code /crawl} 失败/空 → best-effort 回退 {@link #fetchHtmlLegacy}({@code /html}),保证不劣化现状;
+     * 两者皆失败时返回 {@code /crawl} 的失败态便于定位。
+     */
     public Result fetchHtml(String url) {
+        if (!configured()) return Result.failure(0L, "UNCONFIGURED");
+        Result crawl = postCrawl(url);
+        if (crawl.ok()) return crawl;
+        Result legacy = fetchHtmlLegacy(url);
+        return legacy.ok() ? legacy : crawl;
+    }
+
+    /** 旧 {@code POST /html {url}} → 原始(未渲染)HTML;仅作 {@link #fetchHtml} 的兼容兜底。 */
+    Result fetchHtmlLegacy(String url) {
         return post("/html", Map.of("url", url), "html");
+    }
+
+    /** {@code POST /crawl {urls:[url]}} 解析渲染后 HTML。 */
+    private Result postCrawl(String url) {
+        long start = System.currentTimeMillis();
+        try {
+            String resp = execute("/crawl", Map.of("urls", List.of(url)));
+            long latency = System.currentTimeMillis() - start;
+            JsonNode root = json.readTree(resp);
+            if (root.has("success") && !root.path("success").asBoolean(true)) {
+                lastCallOk = false;
+                return Result.failure(latency, "EMPTY");
+            }
+            JsonNode results = root.path("results");
+            if (!results.isArray() || results.isEmpty()) {
+                lastCallOk = false;
+                return Result.failure(latency, "EMPTY");
+            }
+            JsonNode first = results.get(0);
+            if (first.has("success") && !first.path("success").asBoolean(true)) {
+                lastCallOk = false;
+                return Result.failure(latency, "EMPTY");
+            }
+            String text = first.path("cleaned_html").asText("");
+            if (text.isBlank()) text = first.path("html").asText("");
+            if (text.isBlank()) {
+                lastCallOk = false;
+                return Result.failure(latency, "EMPTY");
+            }
+            lastCallOk = true;
+            return new Result(200, text, latency, null);
+        } catch (Exception e) {
+            lastCallOk = false;
+            return failureFor(System.currentTimeMillis() - start, e);
+        }
     }
 
     private Result post(String path, Map<String, Object> body, String field) {
         long start = System.currentTimeMillis();
         try {
-            String resp = rest.post()
-                    .uri(stripTrailingSlash(props.getBaseUrl()) + path)
-                    .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + safeKey())
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
+            String resp = execute(path, body);
             long latency = System.currentTimeMillis() - start;
             JsonNode root = json.readTree(resp);
             // success=false 视为失败态(不误判空正文)
@@ -105,14 +152,28 @@ public class Crawl4aiClient {
             return new Result(200, text, latency, null);
         } catch (Exception e) {
             lastCallOk = false;
-            long latency = System.currentTimeMillis() - start;
-            // 非 2xx:RestClient 默认抛 RestClientResponseException,取状态码分类
-            if (e instanceof org.springframework.web.client.RestClientResponseException rre) {
-                int status = rre.getStatusCode().value();
-                return new Result(status, null, latency, "HTTP_" + status);
-            }
-            return Result.failure(latency, classify(e));
+            return failureFor(System.currentTimeMillis() - start, e);
         }
+    }
+
+    /** 统一 POST(url/鉴权/JSON body → String)。 */
+    private String execute(String path, Map<String, Object> body) {
+        return rest.post()
+                .uri(stripTrailingSlash(props.getBaseUrl()) + path)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + safeKey())
+                .body(body)
+                .retrieve()
+                .body(String.class);
+    }
+
+    /** 异常 → 结果态:非 2xx 取状态码分类,超时优先,否则只记类名(不写 message/key/url)。 */
+    private static Result failureFor(long latency, Exception e) {
+        if (e instanceof org.springframework.web.client.RestClientResponseException rre) {
+            int status = rre.getStatusCode().value();
+            return new Result(status, null, latency, "HTTP_" + status);
+        }
+        return Result.failure(latency, classify(e));
     }
 
     /** 异常归因:超时优先(遍历 cause 链),否则只记类名(不写 message/key/url)。 */
