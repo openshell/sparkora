@@ -1724,3 +1724,39 @@ SOURCE 类型+本地优先+同URL去重+权威分档(默认关);check 修 Spring
 ### Next Steps
 
 - 重建容器并验证(用户要求)
+
+
+## Session 64: 10-09 乘联会与盖世信源采集计划：实现/复核/收口
+<!-- trellis-session: v=2 fp=50c978d53ae2d4f9 -->
+
+**Date**: 2026-10-10
+**Task**: 10-09 乘联会与盖世信源采集计划：实现/复核/收口
+**Branch**: `main`
+
+### Summary
+
+打通乘联会(渲染HTML)+盖世(HTTP)采集:G1-G6;V17种子;收口盖世排行WAF不可采(V18退役)
+
+### Main Changes
+
+- G1 渲染HTML(/crawl cleaned_html);G2 容器优先正文;G3 非table结构化;G4 注册API;G5 海报过滤;G6 nextRunAt
+- V17 预置两源+栏目(默认停用);V18 退役不可达盖世排行栏目
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2809f70` | feat(10-09): 乘联会与盖世信源采集计划(渲染HTML通道+容器正文+结构化列表+注册API+配图过滤+下次运行) |
+| `9ebf947` | chore(task): archive 10-09-cpca-gasgoo-collection |
+
+### Testing
+
+- [OK] mvn test 1117/0/0/0;npm run build 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 可选:重新构建容器应用 V13-V18;或按需启用信源 + SOURCE_COLLECT_ENABLED
