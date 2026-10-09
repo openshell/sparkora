@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -145,17 +146,20 @@ class SourceDocServiceTest {
         n.setCategory("政策公示");
         n.setPublishDate(LocalDateTime.of(2026, 10, 1, 0, 0));
         n.setContent("公示正文。");
+        n.setUrl("/gzdt/2026/a.html");   // 相对路径,由栏目 detail_base_url 补全
         when(newsMapper.selectById(500L)).thenReturn(n);
 
         SourceEntity src = new SourceEntity();
         src.setId(1L);
         src.setName("工信部");
+        src.setAuthorityTier("official");
         when(sourceMapper.selectById(1L)).thenReturn(src);
         SourceChannelEntity ch = new SourceChannelEntity();
         ch.setId(10L);
         ch.setSourceId(1L);
         ch.setName("公示");
         ch.setCategory("政策公示");
+        ch.setDetailBaseUrl("https://www.miit.gov.cn");
         when(channelMapper.selectById(10L)).thenReturn(ch);
 
         // 模拟 MyBatis-Plus 回填自增 id → refId 必须是这个 id
@@ -172,6 +176,10 @@ class SourceDocServiceTest {
         assertEquals("user-source", meta.getValue().get("sourceType"));
         assertEquals("政策公示", meta.getValue().get("category"));
         assertEquals("2026-10-01", meta.getValue().get("publishDate"));
+        // 10-09 M:url 按栏目 detail_base_url 补全为绝对链;authorityTier 从 SourceEntity 取
+        assertEquals("https://www.miit.gov.cn/gzdt/2026/a.html", meta.getValue().get("url"),
+                "相对 URL 须按 detail_base_url 补全为绝对(供 F-R3 跨源同 URL 去重)");
+        assertEquals("official", meta.getValue().get("authorityTier"));
     }
 
     @Test
@@ -255,6 +263,38 @@ class SourceDocServiceTest {
         service.rebuildForNews(500L);
 
         verify(spySelf).persistSourceDoc(any(NewsDocEntity.class), eq("[0.1,0.2]"));
+    }
+
+    // ==================== 10-09 M：url / authorityTier 透传 ====================
+
+    @Test
+    void absoluteUrl_按基址补全_已绝对原样_无基址原值() {
+        assertEquals("https://www.miit.gov.cn/gzdt/a.html",
+                SourceDocService.absoluteUrl("/gzdt/a.html", "https://www.miit.gov.cn/"));
+        assertEquals("https://www.miit.gov.cn/gzdt/a.html",
+                SourceDocService.absoluteUrl("gzdt/a.html", "https://www.miit.gov.cn"));
+        assertEquals("https://news.example/a", SourceDocService.absoluteUrl("https://news.example/a", "https://x"));
+        assertEquals("https://news.example/a", SourceDocService.absoluteUrl("//news.example/a", "https://x"));
+        // 无基址 → 原值返回（F-R3 normalizeUrl 对相对链返回 null → 跳过去重，不报错）
+        assertEquals("/gzdt/a.html", SourceDocService.absoluteUrl("/gzdt/a.html", null));
+        assertNull(SourceDocService.absoluteUrl(null, "https://x"));
+    }
+
+    @Test
+    void sourceMeta_有则写url与authorityTier_无则不写() {
+        NewsDocEntity full = new NewsDocEntity();
+        full.setSourceType("user-source");
+        full.setCategory("销量数据");
+        full.setUrl("https://news.example/a");
+        full.setAuthorityTier("industry");
+        java.util.Map<String, Object> m = SourceDocService.sourceMeta(full);
+        assertEquals("https://news.example/a", m.get("url"));
+        assertEquals("industry", m.get("authorityTier"));
+
+        NewsDocEntity empty = new NewsDocEntity();
+        java.util.Map<String, Object> m2 = SourceDocService.sourceMeta(empty);
+        assertTrue(!m2.containsKey("url"), "url 为空不写键");
+        assertTrue(!m2.containsKey("authorityTier"), "authorityTier 为空不写键");
     }
 
     // ==================== 降级：embedding 失败不阻断 ====================

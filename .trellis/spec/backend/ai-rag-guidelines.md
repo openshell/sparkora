@@ -87,12 +87,13 @@ aiClient.chatWithMemory(sessionId, systemPrompt, question, historyWindow, 2048);
 ```java
 CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long> anchorModelIds)
 // RagResult{status, context, hitCount, maxScore, coveredText, citations}
-// Citation{source, modelName, chunkType, score, chunkText, docId, sourceType?, category?}; source∈{CAR,KB,NEWS}
+// Citation{source, modelName, chunkType, score, chunkText, docId, sourceType?, category?, url?, authorityTier?}; source∈{CAR,KB,NEWS}
 //   docId 可空（09-15 qa-auto-illustrate 补读；CAR=car_chunk.id/KB=kb_chunk.id/NEWS=news_doc.id）；
 //   保留 5 参兼容构造器（docId=null），既有调用方不受影响；详见本文「问答答案配图」Scenario
 //   sourceType/category 可空（10-05 E：NEWS 域内来源细化，见下条）；保留 6 参兼容构造器。
-// UnifiedHit{chunkText, chunkType, score, source, modelId, modelName, docId, sourceType?, category?}
-//   —— 与 Citation 同步加 sourceType/category；两级都要加，否则 UnifiedHit→Citation 映射丢字段。
+//   url/authorityTier 可空（10-09 M：本地自建信源原文 URL / 权威档，供 F-R3/F-R4）；保留 8 参兼容构造器。
+// UnifiedHit{chunkText, chunkType, score, source, modelId, modelName, docId, sourceType?, category?, url?, authorityTier?}
+//   —— 与 Citation 同步加 sourceType/category（10-05 E）与 url/authorityTier（10-09 M）；两级都要加，否则 UnifiedHit→Citation 映射丢字段。
 // RagStatus{OK, LOW_CONFIDENCE, FAILED, NO_KNOWLEDGE}
 ```
 
@@ -101,13 +102,13 @@ CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long>
 - **配额**：CAR 核心块 `carQuota`；KB 独立 `ragKbTopk`（受 `ragKbEnabled`）；NEWS 独立 `ragNewsTopk`（**不受** `ragKbEnabled` 控制，0=关闭）。
 - **NEWS 域泛化（10-05 起）**：NEWS 域同为「通用信源采集」承载域（复用 `sparkora_news*`，见 database-guidelines.md「复用既有域的向量 id 空间」）。BYD 官方新闻 = `sourceType=byd-news`/`category=官方新闻` 的**特例**，其标注/配额/前端行为逐字等价；用户采集源在同一域内以 metadata `sourceType` 二级隔离（E 实现）。**`/api/news` 只返回 BYD**，通用信源走 `/api/source-contents`。
   - **域内二级隔离（10-05 E，保护 BYD）**：NEWS 候选按 `sourceType` **二分**——`byd-news`（**含 `sourceType==null` 的旧/未打标块兜底**，兼容 V14 前数据）用原 `AI_RAG_NEWS_TOPK`（行为锁）；`user-source` 用新 `AI_RAG_SOURCE_TOPK`（**默认 0=off，零回归**）。选择层隔离 → BYD 配额只从 byd 子集取，用户源取不到 BYD 份额。**已知边界**：当前仅在选择层隔离，NEWS 过采样窗（`max(topK*4,32)`）仍为单一窗；生产规模下大量高分 user 源可能在窗口内挤掉 BYD 子集——默认 `AI_RAG_SOURCE_TOPK=0` 时零风险，灰度开启前须按实际数据验证；必要时升级为对 NEWS 域按 sourceType 两次 `searchDomains`（需 Store 加 metadata 过滤）。
-  - **字段贯通（P0）**：`sourceType`/`category` 经 store metadata → `toUnified` → `UnifiedHit` → 组 `cites` → `Citation`（含锚点加权重建）逐级透传；`Citation` 是 `KnowledgeSearchTool` 的实际读取载体。
-  - **SOURCE 类型分流（10-05 F）**：`KnowledgeSearchTool` 按 `Citation.sourceType` 分流——NEWS 域且 `sourceType` 非空且非 `byd-news` → `SearchHit.source(...)`（`type=SOURCE`，携 `sourceType` 与 `crossCounted`）；`byd-news`/`sourceType` 缺省/非 NEWS 域 → `SearchHit.kb(...)`（BYD 逐字等价）。`crossCounted` 由纯静态 `SourceCatalog.crossCounted(sourceType)` 推导，随 `fact.source` 透传到 `FactSheetService`（F-R8），**不新增 `FactSheetService` 对注册表的依赖**；`distinctSources` 计算前剔除 `crossCounted=false` 的来源。
+  - **字段贯通（P0；10-09 M 补 url/authorityTier）**：`sourceType`/`category`（10-05 E）与 `url`/`authorityTier`（10-09 M）经 store metadata → `toUnified` → `UnifiedHit` → 组 `cites` → `Citation`（含锚点加权重建）逐级透传；`Citation` 是 `KnowledgeSearchTool` 的实际读取载体。两字段可空（旧数据/无 URL 来源/缺档），下游 F 走既有兜底。
+  - **SOURCE 类型分流（10-05 F / 10-09 M）**：`KnowledgeSearchTool` 按 `Citation.sourceType` 分流——NEWS 域且 `sourceType` 非空且非 `byd-news` → `SearchHit.source(...)`（`type=SOURCE`，携 `sourceType`/`crossCounted`/`url`/`authorityTier`）；`byd-news`/`sourceType` 缺省/非 NEWS 域 → `SearchHit.kb(...)`（BYD 逐字等价）。`crossCounted` 由纯静态 `SourceCatalog.crossCounted(sourceType)` 推导，随 `fact.source` 透传到 `FactSheetService`（F-R8），**不新增 `FactSheetService` 对注册表的依赖**；`distinctSources` 计算前剔除 `crossCounted=false` 的来源。
   - **权威分档（10-05 F，默认 off）**：`DEEP_SOURCE_AUTHORITY_ENABLED=false` 时全部 SOURCE 走保守档 0.7；true 时按 `authorityTier` official 0.9/industry 0.7/media·ugc 0.5、缺档 0.7。
   - **融合优先级（10-05 F）**：`SOURCE` 胜普通 `WEB`（WEB 降 `alternatives`+warning）；`KB` 仍胜 `SOURCE`；跨 type 同 URL 去重（`sourceCount` 不虚高）；纯 SOURCE → 权威档置信。可观测增量 `localSourceCount`/`webSourceCount`/`dedupedSameUrl`/`authorityTierCounts`（无 SOURCE 时不出现，零回归）。
-  - **已知接线缺口（→ `10-05-source-metadata-completion`）**：`Citation` 现无 `url` 字段、NEWS metadata 未写 `authorityTier`，故 F-R3 跨源同 URL 去重与权威分档的**非默认档**在当前生产链路不生效（仅构造输入可触发）；须由该收尾任务补 `Citation.url`+`authorityTier` 透传。
+  - **生产侧字段供给已补齐（10-09 M，原接线缺口收口）**：`Citation`/`UnifiedHit` 增可空 `url`/`authorityTier`；写路径（`SourceDocService.sourceMeta` / `NewsDocService`）补 `url`（相对链按 `detail_base_url` 补全为绝对链；BYD 固定 `official` 档）与 `authorityTier`（通用信源取 `SourceEntity.authorityTier`，缺省不写）；存量由 Flyway `V16__news_source_metadata_url_tier.sql` 幂等回填（只 `metadata || jsonb`，`id`/`embedding` 不动 → 零重嵌）；`KnowledgeSearchTool` 把 `c.url()`/`c.authorityTier()` 传给 `SearchHit.source(...)`。F-R3 跨源同 URL 去重与 F-R4 非默认档**端到端生效**（AC-M1/M2）。无 URL（相对链无法补全）→ 字段空 → F 跳过去重、缺档走 0.7（降级不报错）。
   - **标注细分**：BYD 逐字「【官方新闻：name】」；user-source 按 category「【销量数据/投诉榜/政策公示：name】」、其外「【信源：name】」。
-  - **写入侧**：BYD 走 `NewsDocService`（写 `byd-news`）、通用信源走 `SourceDocService`（写 `user-source`/category/publishDate），均 `upsert(domain="NEWS", refId=sparkora_news_doc.id)`；V14 仅幂等回填存量 metadata、不动 `id`（零重嵌）。
+  - **写入侧**：BYD 走 `NewsDocService`（写 `byd-news`/`official` 档）、通用信源走 `SourceDocService`（写 `user-source`/category/publishDate/url/authorityTier），均 `upsert(domain="NEWS", refId=sparkora_news_doc.id)`；V14/V16 仅幂等回填存量 metadata、不动 `id`/`embedding`（零重嵌）。
 - **锚点加权**：仅 `source=CAR` 且 `modelId∈anchorModelIds` 乘 `ragAnchorBoost`；KB/NEWS 不受影响。
 - **候选窗口按域隔离**：见 database-guidelines.md「多域统一检索」。调用方 `limit` 用 `max(topK*4,32)`。
 
@@ -126,6 +127,7 @@ CarRagService.RagResult retrieveForGeneration(String query, int topK, List<Long>
 - `status` 四态分支；`citations` 与 `context` 同源；NEWS 独立配额生效、不受 KB 开关影响；锚点仅作用 CAR。
 - **10-05 E**：`sourceType==null` 兜底为 `byd-news`（BYD 逐字等价）；`AI_RAG_SOURCE_TOPK=0` 零回归；NEWS 域内二级隔离（user 子集塞满不改 BYD 子集）；`sourceType`/`category` 经 `UnifiedHit`→`Citation`（含锚点加权重建）贯通；结构化分类 `preserveNewlines=true` 表格数值行不丢。
 - **10-05 F**：`user-source` 命中 → `SOURCE`、`byd-news`/缺省 → `KB`（BYD 等价）；`validateFacts` 白名单 `KB|WEB|SOURCE`（SOURCE 无 url/sourceId 直收、带 url/sourceId 按 WEB 严格核验拒自造 URL）；SOURCE 胜 WEB 降 `alternatives`、KB 胜 SOURCE；跨 type 同 URL 去重 `sourceCount==1`；`gasgoo-ranking`（`crossCounted=false`）不构成独立交叉、`gasgoo-announce` 可构成；权威档 0.9/0.7/0.5 与默认 off 保守 0.7；无 SOURCE 零回归；`FactSheetService` 多构造器须有 Spring 装配守卫（先例 `FactSheetServiceTest`）。
+- **10-09 M**：`toUnified` 读 metadata `url`/`authorityTier`（缺键为 null 不 NPE）；`Citation`/`UnifiedHit` 各兼容构造器（5/6/8 参与 7/9 参）新字段为 null；锚点加权重建透传 `url`/`authorityTier`；`SourceDocService.sourceMeta` 有则写、无则不写；`absoluteUrl`/`absoluteBydUrl` 相对链补全与无基址原值；`KnowledgeSearchTool` SOURCE 命中 `SearchHit.url`/`authorityTier` 非空、BYD 走 KB 不泄露；`NewsDocService` 生产构造器（5 参）Spring 装配守卫；AC-M1 用真实链路字段（`rawFallback` 产出的 SOURCE.url）触发跨 type 同 URL 去重、AC-M2 `authorityTier=official` 取 0.9。
 
 ### 7. Wrong vs Correct
 #### Wrong

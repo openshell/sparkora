@@ -89,6 +89,8 @@ class CarRagServiceTest {
             if (r.get("modelName") != null) meta.put("name", String.valueOf(r.get("modelName")));
             if (r.get("sourceType") != null) meta.put("sourceType", String.valueOf(r.get("sourceType")));
             if (r.get("category") != null) meta.put("category", String.valueOf(r.get("category")));
+            if (r.get("url") != null) meta.put("url", String.valueOf(r.get("url")));
+            if (r.get("authorityTier") != null) meta.put("authorityTier", String.valueOf(r.get("authorityTier")));
             if (r.get("score") != null) meta.put("score", ((Number) r.get("score")).doubleValue());
             Document.Builder b = Document.builder()
                     .id(String.valueOf(r.getOrDefault("refId", r.getOrDefault("docId", 0))))
@@ -862,6 +864,119 @@ class CarRagServiceTest {
         CarRagService.Citation c6 = new CarRagService.Citation("NEWS", "标题", "NEWS_BODY", 0.9, "块", 5L);
         assertEquals(5L, c6.docId());
         assertNull(c6.sourceType());
+    }
+
+    // ==================== 10-09 M：url / authorityTier 字段贯通 ====================
+
+    /** 10-09 M：NEWS 行带 url/authorityTier（供 F-R3 去重 / F-R4 分档）。 */
+    private static Map<String, Object> newsRowMeta(String modelName, String chunkType, String text,
+                                                   double score, String sourceType, String category,
+                                                   String url, String authorityTier) {
+        Map<String, Object> m = newsRow(modelName, chunkType, text, score, sourceType, category);
+        if (url != null) m.put("url", url);
+        if (authorityTier != null) m.put("authorityTier", authorityTier);
+        return m;
+    }
+
+    /** toUnified 必须从 store metadata 读入 url/authorityTier（否则 F-R3/F-R4 空转）。 */
+    @Test
+    void M_toUnified读入url与authorityTier() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRowMeta("乘联会销量", "NEWS_BODY", "信源：乘联会销量\n销量 12000", 0.9,
+                        "user-source", "销量数据", "https://news.example/a", "official"));
+        CarRagService svc = newService(store);
+
+        List<CarRagService.UnifiedHit> hits = svc.retrieveUnified("销量", 32);
+
+        assertEquals(1, hits.size());
+        assertEquals("https://news.example/a", hits.get(0).url(), "url 必须从 metadata 读入");
+        assertEquals("official", hits.get(0).authorityTier(), "authorityTier 必须从 metadata 读入");
+    }
+
+    /** 缺键（旧数据）→ url/authorityTier 为 null，不 NPE（降级走 F 既有兜底）。 */
+    @Test
+    void M_缺url与authorityTier_为null不NPE() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRow("官方新闻", "NEWS_BODY", "新闻：官方新闻（2026-09-01）\n正文", 0.8, "byd-news", "官方新闻"));
+        CarRagService svc = newService(store);
+
+        List<CarRagService.UnifiedHit> hits = svc.retrieveUnified("新闻", 32);
+
+        assertNull(hits.get(0).url());
+        assertNull(hits.get(0).authorityTier());
+    }
+
+    /** 贯通：user-source 命中 → Citation 带 url/authorityTier（F 的实际读取载体）。 */
+    @Test
+    void M_字段贯通_Citation带url与authorityTier() {
+        FakeSearchStore store = new FakeSearchStore();
+        store.unifiedRows = List.of(
+                newsRowMeta("盖世官宣", "NEWS_BODY", "信源：盖世官宣\n销量 12000", 0.9,
+                        "gasgoo-announce", "销量数据", "https://gasgoo.example/announce", "industry"));
+        AiProperties props = new AiProperties();
+        props.setRagSourceTopk(2);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("销量", 8, List.of());
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        CarRagService.Citation c = r.citations().stream()
+                .filter(x -> "NEWS".equals(x.source())).findFirst().orElseThrow();
+        assertEquals("https://gasgoo.example/announce", c.url(), "url 必须贯通到 Citation(否则 F-R3 去重空转)");
+        assertEquals("industry", c.authorityTier(), "authorityTier 必须贯通到 Citation(否则 F-R4 分档空转)");
+    }
+
+    /** 锚点加权重建 UnifiedHit 时 url/authorityTier 必须透传（CAR 走该分支，字段不得丢）。 */
+    @Test
+    void M_锚点加权重建_透传url与authorityTier() {
+        FakeSearchStore store = new FakeSearchStore();
+        Map<String, Object> car = urowDoc("CAR", 55L, "海狮08EV", "PARAM_GROUP",
+                "车型：海狮08EV\n参数分组：动力\n前电机最大功率（kW）：200", 0.60, 777L);
+        car.put("url", "https://byd.example/param");
+        car.put("authorityTier", "official");
+        store.unifiedRows = List.of(car);
+        AiProperties props = new AiProperties();
+        props.setRagAnchorBoost(1.5);
+        CarRagService svc = new CarRagService(store, new FakeEmbeddingClient(), props);
+
+        CarRagService.RagResult r = svc.retrieveForGeneration("动力", 4, List.of(55L));
+
+        assertEquals(CarRagService.RagStatus.OK, r.status());
+        CarRagService.Citation c = r.citations().stream()
+                .filter(x -> "CAR".equals(x.source())).findFirst().orElseThrow();
+        assertEquals("https://byd.example/param", c.url());
+        assertEquals("official", c.authorityTier());
+    }
+
+    /** Citation 兼容构造器：5/6/8 参均 url/authorityTier 为 null（既有调用方零改动）。 */
+    @Test
+    void M_Citation兼容构造器_url与authorityTier为null() {
+        CarRagService.Citation c5 = new CarRagService.Citation("CAR", "比亚迪", "PARAM_GROUP", 0.9, "块");
+        assertNull(c5.url());
+        assertNull(c5.authorityTier());
+        CarRagService.Citation c6 = new CarRagService.Citation("NEWS", "标题", "NEWS_BODY", 0.9, "块", 5L);
+        assertNull(c6.url());
+        assertNull(c6.authorityTier());
+        CarRagService.Citation c8 = new CarRagService.Citation("NEWS", "标题", "NEWS_BODY", 0.9, "块", 5L,
+                "user-source", "销量数据");
+        assertEquals("user-source", c8.sourceType());
+        assertNull(c8.url());
+        assertNull(c8.authorityTier());
+    }
+
+    /** UnifiedHit 兼容构造器：7/9 参均 url/authorityTier 为 null。 */
+    @Test
+    void M_UnifiedHit兼容构造器_url与authorityTier为null() {
+        CarRagService.UnifiedHit h7 = new CarRagService.UnifiedHit("块", "PARAM_GROUP", 0.9, "CAR", 1L, "车型", 5L);
+        assertNull(h7.url());
+        assertNull(h7.authorityTier());
+        CarRagService.UnifiedHit h9 = new CarRagService.UnifiedHit("块", "NEWS_BODY", 0.9, "NEWS", null, "标题", 5L,
+                "user-source", "销量数据");
+        assertEquals("user-source", h9.sourceType());
+        assertNull(h9.url());
+        assertNull(h9.authorityTier());
     }
 
     /** 结构化来源：NEWS 域内 user-source 表格块数值可被检索命中（行结构保留）。 */

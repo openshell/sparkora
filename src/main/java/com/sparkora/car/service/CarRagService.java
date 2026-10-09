@@ -67,14 +67,24 @@ public class CarRagService {
      *              供消费方定位来源实体（如 NEWS 反查来源新闻封面图），检索 SQL 本已 SELECT，此前读行时丢弃。
      * @param sourceType 10-05 E：NEWS 域内来源类型（byd-news / user-source / ...；可空，null 视为 byd-news）。
      * @param category   10-05 E：NEWS 域内来源分类（官方新闻/销量数据/投诉榜/政策公示/行业资讯；可空）。
+     * @param url        10-09 M：来源内容原文 URL（本地自建信源；可空——旧数据/无 URL 来源不写）。
+     *                   供 F-R3 跨源同 URL 去重与 F-R2 本地优先裁决（透传链 metadata→UnifiedHit→Citation）。
+     * @param authorityTier 10-09 M：信源权威档（official/industry/media/ugc；可空——BYD/旧数据不写）。
+     *                   供 F-R4 权威分档（透传链 metadata→UnifiedHit→Citation→SearchHit）。
      */
     public record UnifiedHit(String chunkText, String chunkType, double score,
                              String source, Long modelId, String modelName, Long docId,
-                             String sourceType, String category) {
-        /** 兼容构造器（无 sourceType/category）：既有调用方（锚点加权重建/单测）字段为空。 */
+                             String sourceType, String category, String url, String authorityTier) {
+        /** 兼容构造器（无 sourceType/category/url/authorityTier）：既有调用方（锚点加权重建/单测）字段为空。 */
         public UnifiedHit(String chunkText, String chunkType, double score,
                           String source, Long modelId, String modelName, Long docId) {
-            this(chunkText, chunkType, score, source, modelId, modelName, docId, null, null);
+            this(chunkText, chunkType, score, source, modelId, modelName, docId, null, null, null, null);
+        }
+        /** 兼容构造器（10-05 E 的 9 参，无 url/authorityTier）：既有调用方字段为空（零回归）。 */
+        public UnifiedHit(String chunkText, String chunkType, double score,
+                          String source, Long modelId, String modelName, Long docId,
+                          String sourceType, String category) {
+            this(chunkText, chunkType, score, source, modelId, modelName, docId, sourceType, category, null, null);
         }
         TypedHit toTyped() { return new TypedHit(chunkText, chunkType, score); }
     }
@@ -94,17 +104,25 @@ public class CarRagService {
      * @param sourceType 10-05 E（P0 字段贯通）：NEWS 域内来源类型（byd-news/user-source；可空）。
      *                   **本字段是送到 KnowledgeSearchTool 的实际载体**——只加在 UnifiedHit 会在映射时丢弃。
      * @param category   10-05 E：NEWS 域内来源分类（官方新闻/销量数据/...；可空）。
+     * @param url        10-09 M：来源内容原文 URL（本地自建信源；可空）。F-R3 跨源同 URL 去重依赖此字段。
+     * @param authorityTier 10-09 M：信源权威档（official/industry/media/ugc；可空）。F-R4 分档依赖此字段。
      */
     public record Citation(String source, String modelName, String chunkType, double score,
-                           String chunkText, Long docId, String sourceType, String category) {
+                           String chunkText, Long docId, String sourceType, String category,
+                           String url, String authorityTier) {
         /** 兼容构造器（docId=null）：既有 5 参调用方（BriefService/KnowledgeSearchTool/测试）编译与行为不变。 */
         public Citation(String source, String modelName, String chunkType, double score, String chunkText) {
-            this(source, modelName, chunkType, score, chunkText, null, null, null);
+            this(source, modelName, chunkType, score, chunkText, null, null, null, null, null);
         }
         /** 兼容构造器（docId 给定、sourceType/category 为空）：09-15 起既有 6 参调用方不受影响。 */
         public Citation(String source, String modelName, String chunkType, double score,
                         String chunkText, Long docId) {
-            this(source, modelName, chunkType, score, chunkText, docId, null, null);
+            this(source, modelName, chunkType, score, chunkText, docId, null, null, null, null);
+        }
+        /** 兼容构造器（10-05 E 的 8 参，无 url/authorityTier）：既有调用方字段为空（零回归）。 */
+        public Citation(String source, String modelName, String chunkType, double score,
+                        String chunkText, Long docId, String sourceType, String category) {
+            this(source, modelName, chunkType, score, chunkText, docId, sourceType, category, null, null);
         }
     }
 
@@ -317,9 +335,11 @@ public class CarRagService {
         for (UnifiedHit h : merged) {
             if ("CAR".equals(h.source()) && anchors.contains(h.modelId())) {
                 // 注意:重建 UnifiedHit 时必须透传 docId(NEWS 不走此分支,但漏传会让域内 id 在加权后丢失),
-                // 10-05 E 起 sourceType/category 同样必须透传(字段贯通 P0,漏传会让下游 F 拿不到来源类型)
+                // 10-05 E 起 sourceType/category 同样必须透传(字段贯通 P0,漏传会让下游 F 拿不到来源类型);
+                // 10-09 M 起 url/authorityTier 也必须透传(否则 F-R3 去重/F-R4 分档在真实链路空转)。
                 boosted.add(new UnifiedHit(h.chunkText(), h.chunkType(), Math.min(1.0, h.score() * boost),
-                        h.source(), h.modelId(), h.modelName(), h.docId(), h.sourceType(), h.category()));
+                        h.source(), h.modelId(), h.modelName(), h.docId(), h.sourceType(), h.category(),
+                        h.url(), h.authorityTier()));
             } else {
                 boosted.add(h);
             }
@@ -450,10 +470,11 @@ public class CarRagService {
             String text = h.chunkText();
             if (text != null && text.length() > CITE_TEXT_MAX) text = text.substring(0, CITE_TEXT_MAX) + "…";
             // 10-05 E(P0 字段贯通):sourceType/category 必须随 Citation 传到 KnowledgeSearchTool,
-            // 否则下游 F 拿不到来源类型判 SOURCE
+            // 否则下游 F 拿不到来源类型判 SOURCE;
+            // 10-09 M:url/authorityTier 同样必须随 Citation 透传(F-R3 同 URL 去重 / F-R4 权威分档)。
             cites.add(new Citation(h.source(), h.modelName() == null ? "" : h.modelName(),
                     h.chunkType(), h.score(), text == null ? "" : text, h.docId(),
-                    h.sourceType(), h.category()));
+                    h.sourceType(), h.category(), h.url(), h.authorityTier()));
         }
         return new RagResult(RagStatus.OK, sb.toString(), rawHit, maxScore, covered.toString(), cites);
     }
@@ -540,9 +561,13 @@ public class CarRagService {
         // 10-05 E:NEWS 域内来源类型/分类透传(P0 字段贯通起点)
         String sourceType = metaString(doc, "sourceType");
         String category = metaString(doc, "category");
+        // 10-09 M:来源原文 URL / 权威档透传(供 F-R3 去重 / F-R4 分档;旧数据缺键为 null)
+        String url = metaString(doc, "url");
+        String authorityTier = metaString(doc, "authorityTier");
         double score = doc.getScore() == null ? 0 : doc.getScore();
         return new UnifiedHit(text(doc), type == null ? "PARAM_GROUP" : type, score,
-                source, modelId, modelName == null ? "" : modelName, docId, sourceType, category);
+                source, modelId, modelName == null ? "" : modelName, docId, sourceType, category,
+                url, authorityTier);
     }
 
     private static String text(Document doc) {

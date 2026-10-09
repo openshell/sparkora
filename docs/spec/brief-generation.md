@@ -214,7 +214,7 @@ graph TD
 
 | 工具 | 实现 | 来源 | 降级语义 |
 |---|---|---|---|
-| KB | `KnowledgeSearchTool` | 委托 `CarRagService.retrieveForGeneration` 统一检索（[knowledge/kb.md](knowledge/kb.md)，S8）；**10-05 F**：NEWS 域用户采集源（`sourceType` 非空且非 `byd-news`）按 `SOURCE` 输出、`byd-news`/缺省仍 `KB` | 异常 warn，不抛出 |
+| KB | `KnowledgeSearchTool` | 委托 `CarRagService.retrieveForGeneration` 统一检索（[knowledge/kb.md](knowledge/kb.md)，S8）；**10-05 F**：NEWS 域用户采集源（`sourceType` 非空且非 `byd-news`）按 `SOURCE` 输出、`byd-news`/缺省仍 `KB`；**10-09 M**：`SOURCE` 命中同时把 `Citation.url`/`authorityTier` 透传到 `SearchHit`（F-R3/F-R4 生产侧接线已补齐） | 异常 warn，不抛出 |
 | SEARXNG | `SearxngSearchTool` | GET `{SEARXNG_BASE_URL}/search?q=&format=json&language=zh-CN` | 超时/空结果静默空列表 + `lastCallOk()=false`（仅供健康展示）；`available()` 仅判地址就绪，失败不闩锁 |
 | TAVILY | `TavilySearchTool` | **双端点**：POST `{base}/search` `{api_key,query,max_results,search_depth}`——relay(中转)优先、official(官方)兜底；09-27 增 `POST /extract` 正文补抓（**仅官方端点**） | 任一端点配置即 `configured()`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；`extract` 失败不污染 `lastCallOk()` |
 | SERPER | `SerperSearchTool`（10-04 A 新增） | POST `{SERPER_API_BASE_URL}/search` `{q,num,gl,hl}`（web）或 `/news`（news），**Header `X-API-KEY` 认证**（非 body `api_key`） | 密钥未配置 → `available()/configured()=false`；调用失败仅置 `lastCallOk()=false`，下次研究自动重试；空响应/非法 JSON/异常 → 空列表不抛 |
@@ -265,12 +265,13 @@ graph TD
 - **内容描述注入研究（R4b/Q4=A，10-02）**：`DeepResearchService.resolveContentDescription` 解析一次并传入 `SubAgentRunner.research`，子代理 `ctx` 开头加「写作意图/内容描述: …」（非空才加，置于「研究问题:」之前）；**不改 `compositeQuery`（KB）与 `webQuery`（WEB）**。
 - **WEB gap 驱动（R1 同批）**：KB 已命中车型域权威块时跳过 WEB 补查——**仅对参数型问题生效（R2）**：命中权威块且问题非背景型（`ResearchPlannerService.isBackgroundQuestion`）才跳过；**背景题永不因 KB 命中 MODEL_INFO 跳过 WEB**。
 - **同 claim 冲突裁决（R2，2026-09-06）**：`FactSheetService.merge` 聚合时同 claim 同时含 KB 与 WEB → **KB 胜出**；WEB 条目降级为该条目 `alternatives`（URL 列表）去重后留证据，并写 warnings。纯 KB / 纯 WEB 条目维持原置信规则（KB 0.9 / 多源交叉 0.85 / 单一 WEB 0.4 + 待核实）。
-- **本地信源 × 外部 WEB 融合（10-05 F，F-R2/R3/R4/R8）**：`FactSheetService.merge` 增量插入 `SOURCE` 分支——
+- **本地信源 × 外部 WEB 融合（10-05 F，F-R2/R3/R4/R8；10-09 M 补齐生产侧字段）**：`FactSheetService.merge` 增量插入 `SOURCE` 分支——
   - **本地优先**：同 claim `SOURCE`+`WEB` → 本地胜出、WEB 降 `alternatives` + 警告「以本地信源为准」；`KB`+`SOURCE` → **KB 仍胜**（SOURCE 保留为来源之一）；纯 `SOURCE` → 按权威档取置信。
   - **权威分档（F-R4）**：`DEEP_SOURCE_AUTHORITY_ENABLED=false`（默认，零回归）时全部 `SOURCE` 走单一保守档 **0.7**；开启后按信源 `authorityTier`（official 0.9 / industry 0.7 / media·ugc 0.5；缺档 0.7）。
   - **跨源同 URL 去重（F-R3）**：`distinctSources` 在既有 `url+modelName` 去重外，补「同一规范化 URL 跨 type 合并」（末尾斜杠归一）——本地 `SOURCE` 与外部 `WEB` 命中同一篇（BYD 官网/工信部原文）只保留一条，`sourceCount` 不虚高、LLM 不重复注入。
   - **独立交叉标志（F-R8）**：`fact.source.crossCounted=false`（如盖世排行页 `gasgoo-ranking`）的来源在 `distinctSources` 计算前剔除，不与乘联会等构成独立交叉；`gasgoo-announce` 仍可交叉。标志随 `sourceType` 同一条链（`UnifiedHit→Citation→SearchHit→fact.source`）透传，`FactSheetService` **不新增信源注册表依赖**。
     - **LLM 主路径**：`SearchHit` 的 `sourceType/authorityTier/crossCounted` 由 `SubAgentRunner` 以 `[SOURCE] … (sourceType=… authorityTier=… crossCounted=…)` 追加进研究 ctx；`SubAgentFactsDto.Source` 新增同名字段（`{{schema}}` 单一派生）与提示词回填规则，使 LLM 原样带回；`rawFallback` 降级路径同样透传。二者是这些元数据到达 `FactSheetService` 的两条通路（降级不丢）。
+  - **生产侧字段供给（10-09 M，接线缺口已补齐）**：`Citation`/`UnifiedHit` 增可空 `url`/`authorityTier`；向量 metadata 由写路径补 `url`（通用信源按栏目 `detail_base_url` 补全为绝对链；BYD 按 `NewsProperties.detail_base_url` 补全）与 `authorityTier`（BYD 固定 `official`；通用信源取 `SourceEntity.authorityTier`，缺省不写）；存量由 Flyway `V16` 幂等回填。`KnowledgeSearchTool` 把 `c.url()`/`c.authorityTier()` 传给 `SearchHit.source(...)`。**此前 `Citation.url` 恒空、`authorityTier` 恒 null，F-R3 去重与 F-R4 非默认档仅在构造输入下成立；现端到端生效（AC-M1/M2）。** `SOURCE` 无 URL（相对链无法补全）时字段为空 → F 跳过 URL 去重、权威档缺省走 0.7（降级不报错）。
   - **可观测（F-R5）**：`fact_sheet.sourceMeta`（**仅存在本地 `SOURCE` 时出现**，保零回归）= `{localSourceCount, webSourceCount, dedupedSameUrl, authorityTierCounts:{official,industry,media,ugc}}`；前端 `FactSheetSummary`/`CitationList` 增「本地信源」徽标（增量，旧前端不读不报错）。
 - **近似 claim 归并（09-25-fact-claim-merge）**：`FactSheetService.merge` 用 `ClaimSimilarity` 贪心聚类；数值签名硬前提（`numberValues` 集合必须完全相等）；原文 trim 相同直接同一事实；相似度阈值 `TH_NUMERIC=0.45` / `TH_TEXT=0.70`。纯本地、确定、可单测、不调 LLM。
 - `SearchHit.web(type=工具名→展示源)`：type 统一为 `WEB`（计数依据），工具名记 `modelName` 字段。

@@ -39,6 +39,8 @@ public class NewsDocService {
     private final NewsDocMapper         docMapper;
     private final EmbeddingClient       embeddingClient;
     private final EmbeddingBatchRunner batchRunner;
+    /** 新闻配置（10-09 M：BYD 相对 URL 补全为绝对链，供 F-R3 跨源同 URL 去重）。 */
+    private final com.sparkora.config.NewsProperties newsProps;
     /** 自注入代理（@Lazy）：让 {@link #persistNewsDoc} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
     @Autowired
     @Lazy
@@ -50,10 +52,20 @@ public class NewsDocService {
     public NewsDocService(NewsMapper newsMapper, NewsDocMapper docMapper,
                           EmbeddingClient embeddingClient,
                           EmbeddingBatchRunner batchRunner) {
+        this(newsMapper, docMapper, embeddingClient, batchRunner, null);
+    }
+
+    /** 生产构造器（10-09 M：注入 {@link com.sparkora.config.NewsProperties} 以补全 BYD 绝对 URL）。 */
+    @Autowired
+    public NewsDocService(NewsMapper newsMapper, NewsDocMapper docMapper,
+                          EmbeddingClient embeddingClient,
+                          EmbeddingBatchRunner batchRunner,
+                          com.sparkora.config.NewsProperties newsProps) {
         this.newsMapper = newsMapper;
         this.docMapper = docMapper;
         this.embeddingClient = embeddingClient;
         this.batchRunner = batchRunner;
+        this.newsProps = newsProps;
     }
 
     /** 重建某新闻的全部切块 + 向量(先清后建,幂等)。返回 total/success/failed 计数(R6 手动重建端点用)。 */
@@ -66,6 +78,8 @@ public class NewsDocService {
             log.info("新闻无正文且无标题,跳过切块 newsId={}", newsId);
             return new EmbedStats(0, 0, 0);
         }
+        // 10-09 M:BYD 官方新闻原文 URL 补全为绝对链 + 权威档固定 official
+        String url = absoluteBydUrl(n.getUrl());
         List<NewsDocEntity> docs = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
             NewsDocEntity d = new NewsDocEntity();
@@ -75,12 +89,29 @@ public class NewsDocService {
             d.setChunkText(chunks.get(i));
             d.setNewsTitle(n.getTitle());   // 10-03 E1:store metadata.name
             d.setPublishDate(n.getPublishDate());   // 10-05 E:store metadata.publishDate(新鲜度用)
+            d.setUrl(url);                          // 10-09 M:store metadata.url(F-R3 去重用)
+            d.setAuthorityTier("official");         // 10-09 M:BYD 官方新闻权威档固定 official(F-R4 分档)
             docs.add(d);
         }
         // embedding 并发化(固定小线程池,不随新闻数膨胀)+ 单块失败重试 1 次
         return batchRunner.run(docs, NewsDocEntity::getChunkText,
                 (d, vec) -> (self == null ? this : self).persistNewsDoc(d, vec),
                 "newsId=" + newsId, 4, 1);
+    }
+
+    /**
+     * BYD 官方新闻 URL 补全（10-09 M）：已是 http(s) 原样返回；否则按 {@code NewsProperties.detailBaseUrl}
+     * 补全为绝对链。{@code newsProps} 为 null（旧测试直 new）或基址为空时返回原值/原样（降级不去重，不报错）。
+     */
+    String absoluteBydUrl(String url) {
+        if (url == null || url.isBlank()) return url;
+        String u = url.trim();
+        String lower = u.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return u;
+        String base = newsProps == null ? null : newsProps.getDetailBaseUrl();
+        if (base == null || base.isBlank()) return u;
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + (u.startsWith("/") ? u : "/" + u);
     }
 
     /** 物理清块与向量(重建/删除共用)。10-03 E1:同步删除单表 store 行(先读块 id 再删)。 */
@@ -115,6 +146,8 @@ public class NewsDocService {
             java.util.Map<String, Object> meta = new java.util.LinkedHashMap<>();
             meta.put("sourceType", "byd-news");
             meta.put("category", "官方新闻");
+            meta.put("authorityTier", "official");   // 10-09 M:BYD 官方新闻权威档固定 official(F-R4 分档)
+            if (doc.getUrl() != null && !doc.getUrl().isBlank()) meta.put("url", doc.getUrl());   // 10-09 M:F-R3 去重
             if (doc.getPublishDate() != null) meta.put("publishDate", doc.getPublishDate().toLocalDate().toString());
             vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.NEWS.name(), doc.getId(), null,
                     doc.getChunkType(), doc.getNewsTitle(), true, embeddingClient.modelName(),

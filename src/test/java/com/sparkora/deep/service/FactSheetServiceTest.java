@@ -485,4 +485,64 @@ class FactSheetServiceTest {
                     "FactSheetService 应可装配");
         }
     }
+
+    // ==================== 10-09 M：生产链路 url / authorityTier 端到端 ====================
+
+    /**
+     * AC-M1：用**真实生产链路字段**触发 F-R3——Citation(带 url) → KnowledgeSearchTool 出 SOURCE(带 url)
+     * → SubAgentRunner.rawFallback 产 factsJson → FactSheetService.merge 与外部 WEB 同 URL 去重。
+     * 此前 Citation.url 恒空，该去重仅在构造输入下成立。
+     */
+    @Test
+    void AC_M1_生产链路SOURCE_url触发跨源同URL去重() throws Exception {
+        com.sparkora.car.service.CarRagService rag = org.mockito.Mockito.mock(
+                com.sparkora.car.service.CarRagService.class);
+        com.sparkora.car.service.CarRagService.Citation cite =
+                new com.sparkora.car.service.CarRagService.Citation("NEWS", "信源", "NEWS_BODY", 0.8,
+                "信源：工信部公示 新车公示", null, "user-source", "政策公示",
+                "https://news.example/a", "official");
+        org.mockito.Mockito.when(rag.retrieveForGeneration(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.sparkora.car.service.CarRagService.RagResult(
+                        com.sparkora.car.service.CarRagService.RagStatus.OK, "ctx", 1, 0.8, "",
+                        java.util.List.of(cite)));
+        java.util.List<com.sparkora.deep.tool.SearchTool.SearchHit> hits =
+                new com.sparkora.deep.tool.KnowledgeSearchTool(rag).search("q", 8);
+        assertEquals("SOURCE", hits.get(0).type());
+        assertEquals("https://news.example/a", hits.get(0).url(), "生产链路 SOURCE.url 必须非空");
+
+        // rawFallback 是 SOURCE 元数据到达 FactSheet 的降级通路(字段原样透传)
+        String srcFactsJson = SubAgentRunner.rawFallback(hits);
+        String claim = hits.get(0).title();   // rawFallback 产出的 claim(=引用标题),外部 WEB 用同 claim 归簇
+        String webSameUrl =
+                "{\"facts\":[{\"claim\":\"" + claim + "\",\"source\":{\"type\":\"WEB\","
+                + "\"url\":\"https://news.example/a/\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}";
+        JsonNode sheet = sheet(svc.merge(twoNotes(srcFactsJson, webSameUrl)));
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals(1, e.path("crossCount").asInt(), "跨 type 同 URL 只算 1 源(真实链路字段)");
+        assertEquals(1, e.path("sourceCount").asInt());
+        assertTrue(sheet.path("sourceMeta").path("dedupedSameUrl").asInt() >= 1, "去重计数可见");
+    }
+
+    /** AC-M2：生产链路 authorityTier 贯通后，启用分档按 official 取 0.9。 */
+    @Test
+    void AC_M2_生产链路authorityTier触发分档() throws Exception {
+        com.sparkora.car.service.CarRagService rag = org.mockito.Mockito.mock(
+                com.sparkora.car.service.CarRagService.class);
+        com.sparkora.car.service.CarRagService.Citation cite =
+                new com.sparkora.car.service.CarRagService.Citation("NEWS", "乘联会", "NEWS_BODY", 0.8,
+                "信源：乘联会销量 销量 12000", null, "user-source", "销量数据",
+                "https://news.example/b", "official");
+        org.mockito.Mockito.when(rag.retrieveForGeneration(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.sparkora.car.service.CarRagService.RagResult(
+                        com.sparkora.car.service.CarRagService.RagStatus.OK, "ctx", 1, 0.8, "",
+                        java.util.List.of(cite)));
+        java.util.List<com.sparkora.deep.tool.SearchTool.SearchHit> hits =
+                new com.sparkora.deep.tool.KnowledgeSearchTool(rag).search("q", 8);
+        assertEquals("official", hits.get(0).authorityTier(), "生产链路 SOURCE.authorityTier 必须非空");
+
+        JsonNode e = sheet(svcTiered.merge(notes(SubAgentRunner.rawFallback(hits)))).path("entries").get(0);
+        assertEquals(0.9, e.path("confidence").asDouble(), 1e-9, "official 分档须取到 0.9");
+    }
 }

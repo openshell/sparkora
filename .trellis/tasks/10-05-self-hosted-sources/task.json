@@ -23,7 +23,8 @@
     "10-05-crawl4ai-transport",
     "10-05-source-domain-retrieval",
     "10-05-source-center-ui",
-    "10-05-source-web-fusion"
+    "10-05-source-web-fusion",
+    "10-09-source-metadata-completion"
   ],
   "parent": null,
   "relatedFiles": [],

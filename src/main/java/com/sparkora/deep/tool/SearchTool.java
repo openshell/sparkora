@@ -140,7 +140,18 @@ public interface SearchTool {
         /** SOURCE 命中(带 crossCounted 透传,F-R8):crossCounted=false 的来源在事实手册不计独立交叉。 */
         public static SearchHit source(String title, String modelName, Long docId, String snippet, double score,
                                        String sourceType, String authorityTier, Boolean crossCounted) {
-            return new SearchHit("SOURCE", title, null, snippet, modelName, docId, score, null, null, null,
+            return source(title, modelName, docId, snippet, score, sourceType, authorityTier, crossCounted, null);
+        }
+
+        /**
+         * SOURCE 命中(带 url 承载,10-09 M):url 非空时随事实进入事实手册,使 F-R3 跨源同 URL 去重、
+         * F-R2 本地优先裁决在真实链路可触发(此前 url 恒 null,去重永不命中)。
+         *
+         * @param url 来源内容原文 URL(本地自建信源绝对链;可空——无 URL/旧数据不传)。
+         */
+        public static SearchHit source(String title, String modelName, Long docId, String snippet, double score,
+                                       String sourceType, String authorityTier, Boolean crossCounted, String url) {
+            return new SearchHit("SOURCE", title, url, snippet, modelName, docId, score, null, null, null,
                     sourceType, authorityTier, crossCounted);
         }
         /** WEB 命中统一 type=WEB(来源工具名记入 title 前缀由调用方处理);tool 单独字段。 */

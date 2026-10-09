@@ -118,6 +118,8 @@ class NewsDocTransactionTest {
                 eq("标题"), eq(true), eq("test-embed"), anyString(), eq("[0.1,0.2]"), meta.capture());
         org.junit.jupiter.api.Assertions.assertEquals("byd-news", meta.getValue().get("sourceType"));
         org.junit.jupiter.api.Assertions.assertEquals("官方新闻", meta.getValue().get("category"));
+        // 10-09 M:BYD 路径必须写 authorityTier=official(供 F-R4 分档),url 非空时写入(供 F-R3 去重)
+        org.junit.jupiter.api.Assertions.assertEquals("official", meta.getValue().get("authorityTier"));
     }
 
     @Test
@@ -142,5 +144,46 @@ class NewsDocTransactionTest {
         verify(store, never()).upsert(anyString(), any(), any(), anyString(), anyString(),
                 org.mockito.ArgumentMatchers.anyBoolean(), anyString(), anyString(), anyString(),
                 org.mockito.ArgumentMatchers.any());
+    }
+
+    // ==================== 10-09 M：BYD url 绝对化 + Spring 装配 ====================
+
+    /** BYD 相对 URL 按 NewsProperties.detail_base_url 补全；已绝对原样；基址缺失返回原值（降级不去重）。 */
+    @Test
+    void absoluteBydUrl_按详情基址补全() {
+        com.sparkora.config.NewsProperties props = new com.sparkora.config.NewsProperties();
+        props.setDetailBaseUrl("https://www.byd.com/");
+        NewsDocService svc = new NewsDocService(null, null, null, null, props);
+        org.junit.jupiter.api.Assertions.assertEquals("https://www.byd.com/cn/detail634",
+                svc.absoluteBydUrl("/cn/detail634"));
+        org.junit.jupiter.api.Assertions.assertEquals("https://www.byd.com/cn/detail634",
+                svc.absoluteBydUrl("cn/detail634"));
+        org.junit.jupiter.api.Assertions.assertEquals("https://news.example/a", svc.absoluteBydUrl("https://news.example/a"));
+
+        // newsProps=null（旧测试直 new 4 参）→ 原值返回，不 NPE
+        NewsDocService legacy = new NewsDocService(null, null, null, null);
+        org.junit.jupiter.api.Assertions.assertEquals("/cn/detail634", legacy.absoluteBydUrl("/cn/detail634"));
+        org.junit.jupiter.api.Assertions.assertNull(legacy.absoluteBydUrl(null));
+    }
+
+    /**
+     * Spring 装配回归（10-09 M）：NewsDocService 新增生产构造器（5 参，注入 NewsProperties）后，
+     * 多构造器 {@code @Service} 须显式 {@code @Autowired}，否则应用启动失败但 mvn test 全绿
+     * （先例 TavilySearchToolWiringTest / FactSheetServiceTest）。
+     */
+    @Test
+    void NewsDocService可被Spring装配_多构造器须显式Autowired() {
+        try (org.springframework.context.annotation.AnnotationConfigApplicationContext ctx =
+                     new org.springframework.context.annotation.AnnotationConfigApplicationContext()) {
+            ctx.registerBean(NewsMapper.class, () -> mock(NewsMapper.class));
+            ctx.registerBean(NewsDocMapper.class, () -> mock(NewsDocMapper.class));
+            ctx.registerBean(EmbeddingClient.class, () -> new FakeEmbeddingClient());
+            ctx.registerBean(com.sparkora.config.NewsProperties.class);
+            ctx.registerBean(EmbeddingBatchRunner.class);
+            ctx.register(NewsDocService.class);
+            ctx.refresh();
+            org.junit.jupiter.api.Assertions.assertNotNull(ctx.getBean(NewsDocService.class),
+                    "NewsDocService 应可装配");
+        }
     }
 }

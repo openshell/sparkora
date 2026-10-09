@@ -34,6 +34,11 @@
 - `V9__drop_legacy_embedding_tables.sql`（10-03 E6）：**物理删除**旧 4 张向量表 `sparkora_{car_doc,kb_chunk,news_doc,image}_embedding`（单一只真源 = `vector_store`）。**不可逆**，仅在 E1–E5 + E6 代码退役全绿后执行。注意 `sparkora_car_doc_embedding` 表名未随 E4 重命名（E4 只改主表），按旧名删除。
 - `V10__cognitive_layer.sql`（10-03-gen-cognitive-redesign C1）：brief 表新增 `clarify_session TEXT`（多轮澄清会话 JSON）、`task_brief TEXT`（结构化意图契约 JSON）、`clarify_status VARCHAR(20)`（ASKING/CONVERGED/ABORTED）；部分唯一索引 `uq_brief_clarify_asking` 约束同项目至多一条 ASKING 会话。
 - `V11__writing_blueprint.sql`（10-03-gen-cognitive-redesign C3）：brief 表新增 `writing_blueprint TEXT`（写作蓝图 JSON：thesis/argumentStructure/evidenceMap/narrativeArc/constraints/gaps）、`blueprint_status VARCHAR(20)`（人工评审门 REVIEWING/CONFIRMED）、`blueprint_quality TEXT`（质量信号 JSON）。评审门不新增项目状态位，用 brief 侧 `blueprint_status` 表达。
-- 后续结构变更一律新增 `V12+` 脚本，不再触碰 V1~V11。
+- `V12__widen_web_provider_order.sql`（10-04-serper-provider A）：`sparkora_setting.web_provider_order VARCHAR(20)→VARCHAR(50)`（三源串 `TAVILY,SERPER,SEARXNG`=21 字符超原宽）。
+- `V13__source_registry.sql`（10-05-source-crawl-base B）：建信源注册表 `sparkora_source` + 栏目 `sparkora_source_channel` + 采集任务 `sparkora_source_job`；`sparkora_news` 增可空 `source_id`/`channel_id`/`category`（通用信源复用 `sparkora_news*` id 空间，见父 design §2.5.1）。
+- `V14__news_source_metadata.sql`（10-05-source-domain-retrieval E）：`vector_store` 中 `domain=NEWS` 行幂等补 `sourceType=byd-news`/`category=官方新闻`/`publishDate`（只补缺键、`id`/`embedding` 不动 → 零重嵌）。
+- `V15__news_byd_category_backfill.sql`（10-05-source-center-ui）：把存量 BYD 行（`source='byd-news'` 或 `source_id IS NULL`）补 `sparkora_news.category='官方新闻'`（幂等，仅回填列值）。
+- `V16__news_source_metadata_url_tier.sql`（10-09-source-metadata-completion M）：`vector_store` 中 `domain=NEWS` 行幂等补 `url`（经 `refId→sparkora_news_doc.news_id→sparkora_news.url` 派生）与 `authorityTier`（byd-news 固定 `official`；通用信源经 `news.source_id→sparkora_source.authority_tier` 派生）；只 `metadata || jsonb`、`id`/`embedding` 不动 → 零重嵌；补全 F-R3 跨源同 URL 去重 / F-R4 权威分档的生产侧数据。
+- 后续结构变更一律新增 `V17+` 脚本，不再触碰 V1~V11。
 - **JSON 存 TEXT 为有意约定**（P1-⑦ 复核裁定，不转 JSONB），理由见 `.trellis/spec/backend/database-guidelines.md`「JSON 存 TEXT 是有意约定」。
 - **Boot 4 注意**：Flyway 自动配置已从 `spring-boot-autoconfigure` 拆到独立 `spring-boot-flyway` 模块，pom 必须引 `spring-boot-starter-flyway`（+ 显式 `flyway-database-postgresql`），否则迁移**静默不执行**（详见 database-guidelines.md「Boot 4 下只引 flyway-core」）。

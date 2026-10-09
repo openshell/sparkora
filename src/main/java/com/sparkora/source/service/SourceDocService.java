@@ -37,7 +37,8 @@ import java.util.Map;
  *   <li>首行锚点「信源：&lt;title&gt;（&lt;publishDate&gt;）」；</li>
  *   <li>结构化分类（销量数据/投诉榜/政策公示）用 {@link TextChunker} 的 {@code preserveNewlines=true}
  *       保留表格行/列结构（父 design §6）；</li>
- *   <li>store metadata 写 {@code sourceType}/{@code category}/{@code publishDate}（NEWS 域内二级隔离依据）。</li>
+ *   <li>store metadata 写 {@code sourceType}/{@code category}/{@code publishDate}（NEWS 域内二级隔离依据）
+ *       + {@code url}/{@code authorityTier}（10-09 M：供 F-R3 跨源同 URL 去重 / F-R4 权威分档）。</li>
  * </ul>
  *
  * <p><b>不改 {@code domain} 名</b>（仍 {@code NEWS}）——{@code VectorStoreService.docId} 用
@@ -97,6 +98,9 @@ public class SourceDocService {
                 channel == null ? null : channel.getName());
         String category = n.getCategory() != null ? n.getCategory()
                 : (channel == null ? null : channel.getCategory());
+        // 10-09 M:原文 URL 按栏目 detail_base_url 补全为绝对链(供 F-R3 跨源同 URL 去重);无基址写原值(降级不去重)
+        String url = absoluteUrl(n.getUrl(), channel == null ? null : channel.getDetailBaseUrl());
+        String authorityTier = source == null ? null : source.getAuthorityTier();
         List<String> chunks = chunkContent(n.getTitle(), n.getPublishDate(), n.getContent(), category);
         if (chunks.isEmpty()) {
             log.info("通用信源无正文且无标题,跳过切块 newsId={}", newsId);
@@ -113,6 +117,8 @@ public class SourceDocService {
             d.setPublishDate(n.getPublishDate());
             d.setSourceType(sourceType);
             d.setCategory(category);
+            d.setUrl(url);
+            d.setAuthorityTier(authorityTier);
             docs.add(d);
         }
         return batchRunner.run(docs, NewsDocEntity::getChunkText,
@@ -155,7 +161,26 @@ public class SourceDocService {
         if (doc.getSourceType() != null) m.put("sourceType", doc.getSourceType());
         if (doc.getCategory() != null) m.put("category", doc.getCategory());
         if (doc.getPublishDate() != null) m.put("publishDate", doc.getPublishDate().toLocalDate().toString());
+        // 10-09 M:url/authorityTier 空值不写(旧数据/缺档 → F 侧走既有兜底,零回归)
+        if (doc.getUrl() != null && !doc.getUrl().isBlank()) m.put("url", doc.getUrl());
+        if (doc.getAuthorityTier() != null && !doc.getAuthorityTier().isBlank()) m.put("authorityTier", doc.getAuthorityTier());
         return m;
+    }
+
+    /**
+     * 相对 URL 补全为绝对链（10-09 M）：已是 http(s)/协议相对则原样返回；否则按栏目 {@code detailBaseUrl}
+     * 补全；基址缺失时返回原值（降级：F-R3 的 {@code normalizeUrl} 对相对链返回 null → 跳过去重，不报错）。
+     */
+    static String absoluteUrl(String url, String detailBaseUrl) {
+        if (url == null || url.isBlank()) return url;
+        String u = url.trim();
+        String lower = u.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return u;
+        if (u.startsWith("//")) return "https:" + u;
+        if (detailBaseUrl == null || detailBaseUrl.isBlank()) return u;
+        String base = detailBaseUrl.trim();
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + (u.startsWith("/") ? u : "/" + u);
     }
 
     /**

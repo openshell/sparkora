@@ -245,6 +245,25 @@ UPDATE sparkora_x SET new_col = old_col WHERE new_col IS NULL;
 ALTER TABLE sparkora_x DROP COLUMN IF EXISTS old_col;
 ```
 
+### `UPDATE ... FROM` 回填：必须显式关联目标行（否则交叉连接写错数据）
+
+用 `UPDATE t SET ... FROM other JOIN ...` 回填时，**目标表 `t` 与 `FROM` 集合之间必须显式写连接条件**（如 `AND (t.metadata->>'refId') = d.id::text`）。漏掉会退化成**交叉连接**：对每个满足 `WHERE` 的目标行，`FROM` 子查询的**任意一行**都会被选中，`SET` 取到不相关的值——且结果非确定（取决于连接顺序），是静默数据损坏。尤其当同一脚本有多条 `UPDATE`，其中一条写了关联、另一条漏写时最难发现。
+
+```sql
+-- 正确：补 refId 关联，把元数据行精确锚到其来源
+UPDATE vector_store v
+SET metadata = jsonb_set((v.metadata)::jsonb, '{authorityTier}', to_jsonb(s.authority_tier), true)::json
+FROM sparkora_news_doc d
+JOIN sparkora_news n ON n.id = d.news_id
+JOIN sparkora_source s ON s.id = n.source_id
+WHERE (v.metadata->>'domain') = 'NEWS'
+  AND (v.metadata->>'refId') = d.id::text   -- 关键：漏掉即交叉连接
+  AND s.authority_tier IS NOT NULL AND s.authority_tier <> '';
+```
+
+- 先例（10-09-source-metadata-completion V16，check 阶段抓到 P0）：`vector_store.metadata` 的 JSONB 回填缺该关联，把「无档应走 0.7 兜底」的行错写成别的源的 `official`（0.9），违反零回归。
+- 自查：迁移里 `UPDATE ... FROM` 数一数目标表别名是否出现在 `FROM`/`JOIN` 的连接条件里；无 `refId`/`id` 类锚点即高危。
+
 ### 索引切换（版本化脚本中改索引类型/名字）
 
 迁移脚本按版本**只执行一次**，不存在「每次启动重建」问题；切换索引类型直接用 `DROP INDEX IF EXISTS 旧名` + `CREATE INDEX 新名`（09-11 先例：KB 向量索引 IVFFLAT → HNSW）。**换新名**，不要复用旧名：

@@ -1,0 +1,5 @@
+{"file": "docs/spec/retrieval.md", "reason": "核对 rag_citations / NEWS 域 metadata 字段与 url/authorityTier 契约是否同步"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对三域检索 Scenario 的 Citation 字段贯通与接线缺口是否更新"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "核对 NEWS metadata 契约与权威分档定义"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移幂等/复用 id 空间约束"}
+{"file": "docs/spec/brief-generation.md", "reason": "核对工具层 SOURCE/事实手册字段契约同步"}

@@ -52,8 +52,10 @@ public class KnowledgeSearchTool implements SearchTool {
                 String title = citeTitle(c);
                 // F-R1:NEWS 域自建信源(用户采集源)按 SOURCE 输出;byd-news/非 NEWS 域保持 KB(零回归)
                 if (isUserSource(c)) {
+                    // 10-09 M:url/authorityTier 随 Citation 透传,使 F-R3 同 URL 去重 / F-R4 权威分档生效
                     out.add(SearchHit.source(title, c.modelName(), c.docId(), c.chunkText(), c.score(),
-                            c.sourceType(), null, SourceCatalog.crossCounted(c.sourceType())));
+                            c.sourceType(), c.authorityTier(), SourceCatalog.crossCounted(c.sourceType()),
+                            c.url()));
                 } else {
                     out.add(SearchHit.kb(title, c.modelName(), null, c.chunkText(), c.score()));
                 }

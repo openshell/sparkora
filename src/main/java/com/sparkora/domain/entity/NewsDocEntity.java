@@ -39,4 +39,10 @@ public class NewsDocEntity {
     /** 非持久化:NEWS 域内来源分类(构建期填充,写 store metadata.category 用;10-05 E)。 */
     @com.baomidou.mybatisplus.annotation.TableField(exist = false)
     private String category;
+    /** 非持久化:来源内容原文 URL(构建期填充,写 store metadata.url 用;10-09 M,供 F-R3 跨源同 URL 去重)。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String url;
+    /** 非持久化:信源权威档 official|industry|media|ugc(构建期填充,写 store metadata.authorityTier 用;10-09 M,供 F-R4 分档)。 */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String authorityTier;
 }

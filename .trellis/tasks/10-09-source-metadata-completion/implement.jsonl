@@ -1,0 +1,6 @@
+{"file": "docs/spec/brief-generation.md", "reason": "工具层/事实手册字段级契约：SOURCE 类型、本地优先、权威分档、Citation 字段"}
+{"file": "docs/spec/retrieval.md", "reason": "rag_citations 明细字段(sourceType/category)与 NEWS 域泛化契约；本任务补 url/authorityTier"}
+{"file": ".trellis/tasks/10-05-self-hosted-sources/design.md", "reason": "父设计 §2.4/§2.5/§2.6：NEWS 域 metadata 契约、SOURCE 类型与权威分档"}
+{"file": ".trellis/tasks/archive/2026-10/10-05-source-web-fusion/design.md", "reason": "F 设计：FactSheetService 消费侧已读 url/authorityTier/crossCounted，界定本任务只补生产侧"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索 Scenario：Citation 字段贯通、SOURCE 分流、已知接线缺口登记"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "复用既有域向量 id 空间 / NEWS metadata 回填幂等范式（V14 先例）"}
