@@ -155,6 +155,82 @@ class SubAgentRunnerTest {
         assertTrue(out.contains("0.9"));
     }
 
+    // ===== 10-05-source-web-fusion F-R1/F-R8:SOURCE 白名单扩展与核验 =====
+
+    /** SOURCE 无 url 且无 sourceId(本地信源命中)→ 直接接受(同 KB 路径,不被白名单拒绝)。 */
+    @Test
+    void SOURCE事实_无url无sourceId_直接接受() {
+        String facts = "{\"facts\":[{\"claim\":\"工信部公示新车\",\"source\":{\"type\":\"SOURCE\","
+                + "\"sourceType\":\"user-source\",\"docId\":7},\"confidence\":0.7}],\"gaps\":[]}";
+        String out = runner.validateFacts(facts, List.of());
+        assertTrue(out.contains("工信部公示新车"), "SOURCE 事实不得被白名单拒绝");
+        assertFalse(out.contains("已剔除无可靠来源"), "不得转 gap");
+        assertTrue(out.contains("\"type\":\"SOURCE\""), "type 仍为 SOURCE(不归一为 KB)");
+    }
+
+    /** SOURCE 带自造 URL / 未知 sourceId → 按 WEB 严格核验拒绝(杜绝借 SOURCE 绕校验)。 */
+    @Test
+    void SOURCE带自造URL_按WEB校验拒绝() {
+        String facts = "{\"facts\":[{\"claim\":\"编造SOURCE\",\"source\":{\"type\":\"SOURCE\","
+                + "\"sourceId\":\"W9\",\"url\":\"https://fake.com\"},\"confidence\":0.9}],\"gaps\":[]}";
+        String out = runner.validateFacts(facts, List.of(hit("W1", "https://x.com/a", "TAVILY")));
+        assertFalse(out.contains("\"claim\":\"编造SOURCE\""), "自造 URL 的 SOURCE 不得进入 facts");
+        assertTrue(out.contains("已剔除无可靠来源"), "转 gap");
+    }
+
+    /** SOURCE 带合法 sourceId + URL → 通过并归一为 WEB(回填权威 URL)。 */
+    @Test
+    void SOURCE带合法sourceId_归一为WEB() {
+        String facts = "{\"facts\":[{\"claim\":\"可溯源SOURCE\",\"source\":{\"type\":\"SOURCE\","
+                + "\"sourceId\":\"W1\",\"url\":\"https://x.com/a\"},\"confidence\":0.9}],\"gaps\":[]}";
+        String out = runner.validateFacts(facts, List.of(hit("W1", "https://x.com/a", "TAVILY")));
+        assertTrue(out.contains("可溯源SOURCE"));
+        assertTrue(out.contains("\"type\":\"WEB\""), "带 URL 的 SOURCE 归一为 WEB,避免按本地权威采信");
+        assertTrue(out.contains("TAVILY"), "provider 回填");
+    }
+
+    /** rawFallback 透传 SOURCE 的 sourceType/authorityTier/crossCounted 供降级路径融合(F-R8)。 */
+    @Test
+    void rawFallback_透传SOURCE字段() throws Exception {
+        SearchTool.SearchHit h = SearchTool.SearchHit.source("工信部公示", "信源", 7L, "snippet", 0.7,
+                "gasgoo-ranking", "industry", Boolean.FALSE);
+        var fact = new ObjectMapper().readTree(SubAgentRunner.rawFallback(List.of(h))).path("facts").get(0);
+        assertEquals("SOURCE", fact.path("source").path("type").asText());
+        assertEquals("gasgoo-ranking", fact.path("source").path("sourceType").asText());
+        assertEquals("industry", fact.path("source").path("authorityTier").asText());
+        assertFalse(fact.path("source").path("crossCounted").asBoolean(true), "crossCounted 应透传 false");
+    }
+
+    /**
+     * F-R4/F-R8 主路径:本地信源(SOURCE)命中经 KB 工具注入研究 ctx 时,须把
+     * sourceType/authorityTier/crossCounted 一并透出,供 LLM 回填到 fact.source——
+     * 这是除 rawFallback 降级外的唯一通路。KB/WEB 命中不得出现该元数据(零回归)。
+     */
+    @Test
+    void SOURCE命中_ctx透出来源元数据供LLM回填() throws Exception {
+        KnowledgeSearchTool kb = mock(KnowledgeSearchTool.class);
+        when(kb.search(anyString(), anyInt(), any())).thenReturn(List.of(
+                SearchTool.SearchHit.source("盖世排行", "信源", 9L, "排行摘要", 0.7,
+                        "gasgoo-ranking", "industry", Boolean.FALSE),
+                SearchTool.SearchHit.kb("车型数据", "海狮08", 1L, "kb 摘要", 0.9)));
+        AiClient ai = mock(AiClient.class);
+        when(ai.structured(anyString(), anyString(), anyInt(), eq(SubAgentFactsDto.class)))
+                .thenReturn(typed("{\"facts\":[],\"gaps\":[]}", "m", 1));
+        SubAgentRunner r = new SubAgentRunner(ai, new ObjectMapper(), kb, null);
+
+        r.research("问题", List.of("KB"), 0, List.of(), "海狮08", null, null,
+                WebSearchSnapshot.of(WebProviderOrder.defaults(), false, null, 0));
+
+        org.mockito.ArgumentCaptor<String> user = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(ai).structured(anyString(), user.capture(), anyInt(), eq(SubAgentFactsDto.class));
+        String ctx = user.getValue();
+        assertTrue(ctx.contains("sourceType=gasgoo-ranking"), "SOURCE 命中须透出 sourceType 供回填");
+        assertTrue(ctx.contains("authorityTier=industry"), "SOURCE 命中须透出 authorityTier 供回填");
+        assertTrue(ctx.contains("crossCounted=false"), "SOURCE 命中须透出 crossCounted 供回填");
+        // 仅 SOURCE 行带元数据:KB 行不追加(零回归)
+        assertEquals(1, count(ctx, "sourceType="), "仅 SOURCE 命中透出元数据");
+    }
+
     @Test
     void 既有gaps保留_新拒项追加() {
         String facts = "{\"facts\":[{\"claim\":\"x\",\"source\":{\"type\":\"WEB\",\"sourceId\":\"W9\"},\"confidence\":0.6}],"

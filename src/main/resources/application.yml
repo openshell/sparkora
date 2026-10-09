@@ -173,6 +173,9 @@ sparkora:
     web-call-budget-per-round: ${DEEP_WEB_CALL_BUDGET_PER_ROUND:12} # Round 1 计量源封顶(生效含保护性下限)
     followup-timeout-ms: ${DEEP_FOLLOWUP_TIMEOUT_MS:30000}          # Round 2 单目标独立超时
     web-cache-ttl-ms: ${DEEP_WEB_CACHE_TTL_MS:600000}               # 批次内搜索缓存 TTL(ms)
+    # 10-05 F:本地自建信源权威分档(默认 false=全部 SOURCE 走单一保守档 0.7,零回归);
+    # 开启后按信源 authority_tier 取置信(official 0.9 / industry 0.7 / media·ugc 0.5;缺档 0.7)。
+    source-authority-enabled: ${DEEP_SOURCE_AUTHORITY_ENABLED:false}
   wechat:
     enabled: ${WECHAT_MP_ENABLED:false}
     app-id: ${WECHAT_APP_ID:}

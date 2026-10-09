@@ -28,13 +28,13 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC-F1 本地优先**：同 claim 本地信源 + 外部 WEB 同时存在时，本地胜出、外部进 `alternatives` 并告警；纯本地/纯外部条目置信规则正确。
-- [ ] **AC-F2 同 URL 去重**：本地与外部命中同一 URL 时 `sourceCount` 不虚高、LLM 不重复注入。
-- [ ] **AC-F3 独立交叉判定**：同源多通道不被计为 `MULTI` 独立交叉（构造「本地 BYD 新闻 + 外部搜到同篇」反例单测）；同 provider 多 endpoint 亦不提升计数；**盖世 `ranking`（`crossCounted=false`）不与乘联会构成独立交叉，而 `gasgoo-announce` 可与乘联会构成独立交叉**（两反例单测）。
-- [ ] **AC-F7 SOURCE 类型可用**：自建信源事实以 `SOURCE` 类型进入 `fact_sheet`——`validateFacts` **不拒绝**、**不误标 KB（0.9）**；权威分档按信源档位取置信（官方 0.9/行业 0.7/自媒体 0.5），默认不分档时零回归。构造「产出 SOURCE」与「误标 KB」两反例单测。
-- [ ] **AC-F4 可观测**：融合前后可读出本地/外部来源占比与去重数；前端徽标正确展示。
-- [ ] **AC-F5 零回归**：未启用任何自建信源时，`fact_sheet` 与现有行为逐位等价；`mvn test` 全绿 + `npm run build` 通过。
-- [ ] **AC-F6 降级不阻断**：融合规则异常/字段缺失时降级为现有行为，不阻断研究。
+- [x] **AC-F1 本地优先**：同 claim 本地信源 + 外部 WEB 同时存在时，本地胜出、外部进 `alternatives` 并告警；纯本地/纯外部条目置信规则正确。→ `FactSheetServiceTest.AC_F1_本地信源胜外部WEB_降alternatives与警告`、`KB仍胜SOURCE_不误伤`。
+- [x] **AC-F2 同 URL 去重**：本地与外部命中同一 URL 时 `sourceCount` 不虚高、LLM 不重复注入。→ `AC_F2_跨type同URL去重_sourceCount不虚高`（crossCount/sourceCount=1，`dedupedSameUrl>=1`）。**注：真实链路本地 SOURCE 命中无 url（`Citation` 无 url 字段），该去重当前仅在构造输入下成立；端到端接线缺口登记为 `10-05-source-metadata-completion`。**
+- [x] **AC-F3 独立交叉判定**：同源多通道不被计为 `MULTI` 独立交叉（构造「本地 BYD 新闻 + 外部搜到同篇」反例单测）；同 provider 多 endpoint 亦不提升计数；**盖世 `ranking`（`crossCounted=false`）不与乘联会构成独立交叉，而 `gasgoo-announce` 可与乘联会构成独立交叉**（两反例单测）。→ `AC_F3_gasgooRanking不计独立交叉`（crossCounted=false 剔除）、`AC_F3_gasgooAnnounce可构成独立交叉`（crossCount=2,MULTI 0.85）；双端点见既有 `AC_T4`。
+- [x] **AC-F7 SOURCE 类型可用**：自建信源事实以 `SOURCE` 类型进入 `fact_sheet`——`validateFacts` **不拒绝**、**不误标 KB（0.9）**；权威分档按信源档位取置信（官方 0.9/行业 0.7/自媒体 0.5），默认不分档时零回归。构造「产出 SOURCE」与「误标 KB」两反例单测。→ `SubAgentRunnerTest.SOURCE事实_无url无sourceId_直接接受`、`SOURCE带自造URL_按WEB校验拒绝`、`SOURCE带合法sourceId_归一为WEB`；`KnowledgeSearchToolTest.userSource命中_返回SOURCE类型`/`bydNews命中_保持KB类型`；分档 official 0.9/industry 0.7/media·ugc 0.5/缺档 0.7。**注：`authorityTier` 上游未透传，开启分档时生产数据全落保守档 0.7；接线缺口登记为 `10-05-source-metadata-completion`。**
+- [x] **AC-F4 可观测**：融合前后可读出本地/外部来源占比与去重数；前端徽标正确展示。→ `AC_F4_融合可观测`（localSourceCount/webSourceCount/authorityTierCounts）；`FactSheetSummary.vue`/`CitationList.vue` 增量徽标。
+- [x] **AC-F5 零回归**：未启用任何自建信源时，`fact_sheet` 与现有行为逐位等价；`mvn test` 全绿 + `npm run build` 通过。→ `AC_F5_无SOURCE_零回归`；`mvn test` **1062/0/0/0**、`npm run build` ✓ 40.33s。
+- [x] **AC-F6 降级不阻断**：融合规则异常/字段缺失时降级为现有行为，不阻断研究。→ `rawFallback_透传SOURCE字段`；`validateFacts` catch 原样返回；`KnowledgeSearchTool` catch 返回空。
 
 ## Out of Scope
 

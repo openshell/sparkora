@@ -46,9 +46,10 @@
 
 - `docId` 为 09-15 qa-auto-illustrate 起的可空域内块 id：`CAR=car_chunk.id` / `KB=kb_chunk.id` / `NEWS=news_doc.id`。
 - **10-05 E 增量**：`sourceType`/`category` 为可空的 NEWS 域内来源细化字段（BYD 命中 `byd-news`/`官方新闻`；用户采集源 `user-source`/`销量数据`…）。**同时贯通 `UnifiedHit` 与 `Citation` 两级 record**——`Citation` 是送到 `KnowledgeSearchTool` 的实际载体，供下游 F 判 SOURCE。旧前端/调用方不读不报错（纯增量兼容）。
+- **10-05 F 增量（F-R1）**：`KnowledgeSearchTool` 按 `Citation.sourceType` 分流——NEWS 域 `sourceType` 非空且非 `byd-news`（用户采集源）输出 `SearchHit.type=SOURCE`（携 `sourceType`/`crossCounted`，权威分档由 fact 层 `FactSheetService` 处理）；`byd-news`/缺省仍 `KB`（BYD 逐位等价）。事实手册融合（本地优先/同 URL 去重/独立交叉）见 [brief-generation.md §5](brief-generation.md)。
 - 检索 `OK` 且有命中时随生成落库（与注入 prompt 的 context 同源，上限 24 条、单条文本截断 120 字符，序列化超 8000 字符整体置 null）；`LOW_CONFIDENCE/FAILED/NO_KNOWLEDGE` 为 null。**版本链路由 `VersionService` 写入；`brief.rag_citations` 的写入方（FAST 简报 `BriefService.generate`）已于 2026-09-26（R6）删除，深度简报链路不写该列（引用面板改由 `fact_sheet` 派生，见下条）**。
 - 前端简报页「知识库引用」区（`CitationList` 组件）与版本卡片「引用 N」标签（点击展开）展示；空态按 `ragStatus` 显示降级文案（**前端不读 `docId`，纯增量不影响展示**）。
-- **WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI，2026-09-06 修订）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉；上限 24 条。快速模式无 `fact_sheet`，行为不变（**2026-09-09 注：快速模式已下线，本句仅存量语义**）。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
+- **WEB 搜索来源并入（2026-09-05 增补）**：深度模式简报页的引用面板另将 `brief.fact_sheet.entries` 中条目派生为引用条目并入展示——**全部类型（KB/WEB/MULTI/SOURCE，2026-09-06 增 MULTI/10-05 F 增 SOURCE）**：KB 条目（置信 0.9/0.6）与本地 `rag_citations` 同款「通用知识」标签展示（修复「深度模式内容引用了知识库、页面却显示未引用」的展示断链，项目 29 实测）；WEB 带域名、MULTI 标多源交叉、SOURCE 标「本地信源」；上限 24 条。快速模式无 `fact_sheet`，行为不变（**2026-09-09 注：快速模式已下线，本句仅存量语义**）。版本卡片保持「本版生成时的本地知识库检索」语义，不重复展示 WEB 引用。
 
 ---
 
@@ -87,7 +88,7 @@ provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全
 - **Serper 认证与端点**：Header `X-API-KEY`（**非** body `api_key`，与 Tavily 不同）；端点 `DEEP_SERPER_API_BASE_URL` 可配置（官方 `https://google.serper.dev` / 中转 `https://search.604020.xyz/serper`，路径前缀保留）。垂直 `web`→`/search`、`news`→`/news`（`news` 才有 `date`/`source`）见 [brief-generation.md §4](brief-generation.md)。
 - **降级链位置**：`SERPER` 未配置时 `toolHealth.SERPER=UNCONFIGURED` 且被路由跳过，Tavily/SearxNG 行为不受影响；顺序含 SERPER 但不配置 key 时，等价于该 provider 不存在。
 - **Tavily 双端点 failover（10-05-tavily-endpoint-priority）**：`TavilySearchTool` 内部持 `relay`(中转)与 `official`(官方)两个端点，**对外 `name()` 均为 `TAVILY`**——同一 URL 被两端点命中也只算 1 源（`FactSheetService` 按 `url+modelName` 去重），不抬升 `MULTI`。`search` 按 `relay → official` 顺序、每端点每轮一次；中转有效命中即采用、不调官方；失败/超时/空/低质则切官方；两都不可用返回空。**端点独立 `RestClient`**：relay read 默认 8s / official read 默认 30s / connect 统一 5s；`extract` 独立 read 默认 15s（只走官方，不被 search 超时牵连）。端点级质量门（非法 URL / 噪声域 `DEEP_TAVILY_DENY_DOMAINS` / 空 title+content）决定是否切端点；结果级 `DEEP_TAVILY_MIN_CONTENT_CHARS`（默认 0=off）过滤低质。`Attempt.usedEndpoint` 观测实际端点。
-- **配置项**：`SERPER_API_KEY`/`DEEP_SERPER_API_KEY`、`DEEP_SERPER_API_BASE_URL`、`DEEP_SERPER_GL`/`DEEP_SERPER_HL`、`DEEP_WEB_VERTICAL_NEWS`、`TAVILY_API_BASE_URL`（官方）、`DEEP_TAVILY_API_BASE_URL`/`DEEP_TAVILY_API_KEY_HIKARI`（中转）、`DEEP_TAVILY_RELAY_READ_TIMEOUT_MS`/`DEEP_TAVILY_OFFICIAL_READ_TIMEOUT_MS`/`DEEP_TAVILY_EXTRACT_READ_TIMEOUT_MS`、`DEEP_TAVILY_DENY_DOMAINS`/`DEEP_TAVILY_MIN_CONTENT_CHARS`、`DEEP_WEB_FANOUT`/`DEEP_WEB_PRIMARY_PROVIDERS`/`DEEP_WEB_DENY_DOMAINS`/`DEEP_WEB_ALLOW_DOMAINS`（字段级见 [brief-generation.md §8](brief-generation.md)）。
+- **配置项**：`SERPER_API_KEY`/`DEEP_SERPER_API_KEY`、`DEEP_SERPER_API_BASE_URL`、`DEEP_SERPER_GL`/`DEEP_SERPER_HL`、`DEEP_WEB_VERTICAL_NEWS`、`TAVILY_API_BASE_URL`（官方）、`DEEP_TAVILY_API_BASE_URL`/`DEEP_TAVILY_API_KEY_HIKARI`（中转）、`DEEP_TAVILY_RELAY_READ_TIMEOUT_MS`/`DEEP_TAVILY_OFFICIAL_READ_TIMEOUT_MS`/`DEEP_TAVILY_EXTRACT_READ_TIMEOUT_MS`、`DEEP_TAVILY_DENY_DOMAINS`/`DEEP_TAVILY_MIN_CONTENT_CHARS`、`DEEP_WEB_FANOUT`/`DEEP_WEB_PRIMARY_PROVIDERS`/`DEEP_WEB_DENY_DOMAINS`/`DEEP_WEB_ALLOW_DOMAINS`、`DEEP_SOURCE_AUTHORITY_ENABLED`（10-05 F:本地信源权威分档,默认 false=保守档 0.7）（字段级见 [brief-generation.md §8](brief-generation.md)）。
 
 ---
 

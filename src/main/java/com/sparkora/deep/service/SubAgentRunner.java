@@ -189,7 +189,12 @@ public class SubAgentRunner {
                 ctx.append("- [").append(h.type()).append("] ");
                 if (h.sourceId() != null && !h.sourceId().isBlank()) ctx.append("sourceId=").append(h.sourceId()).append(' ');
                 if (h.url() != null && !h.url().isBlank()) ctx.append(h.url()).append(" | ");
-                ctx.append(h.title()).append(" : ").append(snippet(h.snippet())).append('\n');
+                ctx.append(h.title()).append(" : ").append(snippet(h.snippet()));
+                // 10-05-source-web-fusion F-R4/F-R8:本地自建信源(SOURCE)把 sourceType/authorityTier/crossCounted
+                // 原样透出到 ctx,供 LLM 回填 fact.source——这是本地信源元数据到达 FactSheetService 的主路径
+                // (rawFallback 仅在 LLM 降级时兜底)。非 SOURCE/字段为空时不追加(零回归)。
+                appendSourceMeta(ctx, h);
+                ctx.append('\n');
                 // R3(09-27-tavily-extract-kind-hypotheses):仅背景型问题注入正文片段(参数题只用摘要);
                 // 正文已在工具层按 DEEP_WEB_CONTENT_MAX_CHARS 截断(唯一上限、单点化),此处不再二次截断。
                 if (background && h.content() != null && !h.content().isBlank()) {
@@ -378,16 +383,19 @@ public class SubAgentRunner {
             for (JsonNode f : root.path("facts")) {
                 JsonNode src = f.path("source");
                 String type = src.isObject() ? src.path("type").asText("") : "";
-                // R9:显式标注的 source.type 只能是 KB 或 WEB;其他值不可核验,拒绝并转 gap。
-                if (!type.isBlank() && !"WEB".equalsIgnoreCase(type) && !"KB".equalsIgnoreCase(type)) {
-                    rejected.add(gapOf(f, "来源类型不可核验(type 必须为 KB 或 WEB)"));
+                // R9:显式标注的 source.type 只能是 KB / WEB / SOURCE;其他值不可核验,拒绝并转 gap。
+                // 10-05-source-web-fusion F-R1:白名单扩 SOURCE(本地自建信源);核验语义见下。
+                if (!type.isBlank() && !"WEB".equalsIgnoreCase(type)
+                        && !"KB".equalsIgnoreCase(type) && !"SOURCE".equalsIgnoreCase(type)) {
+                    rejected.add(gapOf(f, "来源类型不可核验(type 必须为 KB/WEB/SOURCE)"));
                     continue;
                 }
                 String declaredUrl = src.isObject() ? src.path("url").asText("").trim() : "";
                 String declaredSid = src.isObject() ? src.path("sourceId").asText("").trim() : "";
                 // R9/AC-08:携带 url 或 sourceId 的事实一律按 WEB 声明校验(sourceId 必须命中本次输入)——
-                // 即使模型漏标 type 或误标 KB,其自造 URL 也不得作为可信证据进入手册。
-                // KB 命中既无 url 也无 sourceId(SearchHit.kb),故缺 type+无 url/sourceId 的既有行为不受影响。
+                // 即使模型漏标 type 或误标 KB/SOURCE,其自造 URL 也不得作为可信证据进入手册。
+                // KB/SOURCE 本地命中既无 url 也无 sourceId(SearchHit.kb/source),故缺 type+无 url/sourceId
+                // 的既有行为不受影响;SOURCE 无 url 且无 sourceId 时直接接受(与 KB 事实同一路径)。
                 boolean webClaim = "WEB".equalsIgnoreCase(type) || !declaredUrl.isBlank() || !declaredSid.isBlank();
                 if (webClaim) {
                     WebHit hit = byId.get(declaredSid);
@@ -407,7 +415,8 @@ public class SubAgentRunner {
                         continue;
                     }
                     // 规范化:回填权威 url/provider,保证手册来源可回溯到真实命中。
-                    // 同时把 type 归一为 WEB:漏标/误标 KB 的 URL 事实按 WEB 计,避免 FactSheet 默认当 KB(0.9)采信。
+                    // 同时把 type 归一为 WEB:漏标或误标 KB/SOURCE 的 URL 事实按 WEB 计,
+                    // 避免 FactSheet 默认当 KB(0.9)或 SOURCE(本地权威)采信其自造 URL。
                     ObjectNode fixed = (ObjectNode) f.deepCopy();
                     ObjectNode fixedSrc = (ObjectNode) fixed.path("source");
                     fixedSrc.put("type", "WEB");
@@ -495,6 +504,31 @@ public class SubAgentRunner {
         }
     }
 
+    /**
+     * 10-05-source-web-fusion F-R4/F-R8:把本地自建信源(SOURCE)的 {@code sourceType/authorityTier/crossCounted}
+     * 以稳定文本追加到研究 ctx,供 LLM 按提示词原样回填到 {@code fact.source}——这是这些元数据到达
+     * {@code FactSheetService} 的主路径({@link #rawFallback} 只在 LLM 降级时兜底)。
+     *
+     * <p>仅 {@code SOURCE} 命中且字段非空时追加;KB/WEB 或字段缺失不追加(旧 ctx 逐字等价,零回归)。
+     * 格式:{@code sourceType=user-source crossCounted=false}(值经 JSON 转义,防注入畸形输出)。
+     */
+    private static void appendSourceMeta(StringBuilder ctx, SearchTool.SearchHit h) {
+        if (h == null || !"SOURCE".equalsIgnoreCase(h.type())) return;
+        StringBuilder meta = new StringBuilder();
+        if (h.sourceType() != null && !h.sourceType().isBlank()) {
+            meta.append("sourceType=").append(esc(h.sourceType()));
+        }
+        if (h.authorityTier() != null && !h.authorityTier().isBlank()) {
+            if (meta.length() > 0) meta.append(' ');
+            meta.append("authorityTier=").append(esc(h.authorityTier()));
+        }
+        if (h.crossCounted() != null) {
+            if (meta.length() > 0) meta.append(' ');
+            meta.append("crossCounted=").append(h.crossCounted());
+        }
+        if (meta.length() > 0) ctx.append(" (").append(meta).append(')');
+    }
+
     /** 降级:检索命中直转原始条目(不经 LLM);JSON 转义完整(WEB 带 sourceId/provider)。 */
     static String rawFallback(List<SearchTool.SearchHit> hits) {
         StringBuilder raw = new StringBuilder("{\"facts\":[");
@@ -511,8 +545,19 @@ public class SubAgentRunner {
                .append("\",\"url\":\"").append(esc(h.url()))
                .append("\",\"provider\":\"").append(esc(h.provider()))
                .append("\",\"modelName\":\"").append(esc(h.modelName() == null ? "" : h.modelName()))
-               .append("\",\"docId\":").append(h.docId() == null ? 0 : h.docId())
-               .append("},\"confidence\":").append("KB".equals(h.type()) ? "0.6" : "0.4");
+               .append("\",\"docId\":").append(h.docId() == null ? 0 : h.docId());
+            // 10-05-source-web-fusion F-R8:SOURCE 命中透传 sourceType/authorityTier/crossCounted,
+            // 供降级路径下 FactSheetService 仍能判来源身份/权威档/独立交叉;非空才写(旧契约零回归)。
+            if (h.sourceType() != null && !h.sourceType().isBlank()) {
+                raw.append(",\"sourceType\":\"").append(esc(h.sourceType())).append("\"");
+            }
+            if (h.authorityTier() != null && !h.authorityTier().isBlank()) {
+                raw.append(",\"authorityTier\":\"").append(esc(h.authorityTier())).append("\"");
+            }
+            if (h.crossCounted() != null) {
+                raw.append(",\"crossCounted\":").append(h.crossCounted());
+            }
+            raw.append("},\"confidence\":").append("KB".equals(h.type()) ? "0.6" : "0.4");
             // R2(09-27-tavily-extract-kind-hypotheses 增量):正文片段仅非空时写入(转义完整),
             // 与 snippet 语义区分;不写时不出现该字段(旧契约零回归)。正文已由工具层截断,不再二次截断。
             if (h.content() != null && !h.content().isBlank()) {

@@ -77,15 +77,29 @@ public interface SearchTool {
     }
 
     /**
-     * 单条搜索命中。type: KB/WEB;url 仅 WEB 有;modelName 复用为 WEB 工具名(TAVILY/SEARXNG)。
+     * 单条搜索命中。type: KB/WEB/SOURCE;url 仅 WEB 有;modelName 复用为 WEB 工具名(TAVILY/SEARXNG)。
      * 09-25-brief-web-search 增量:WEB 命中带稳定 {@code sourceId}(W1/W2…)与 {@code provider}(来源工具名),
      * 供 LLM 事实引用与后验校验;KB 命中两者为空。
      * 09-27-tavily-extract-kind-hypotheses 增量:{@code content}=正文片段(nullable,仅供研究注入与降级留证),
      * 与 {@code snippet}(摘要,引用/预览语义)严格区分。
+     * 10-05-source-web-fusion 增量:{@code sourceType}/{@code authorityTier}/{@code crossCounted} 为
+     * 本地自建信源(SOURCE)透传字段(nullable,KB/WEB 保持 null)——供 {@code FactSheetService} 判来源身份、
+     * 权威分档与独立交叉计数,旧构造器保留向后兼容。
      */
     record SearchHit(String type, String title, String url, String snippet,
                      String modelName, Long docId, double score,
-                     String sourceId, String provider, String content) {
+                     String sourceId, String provider, String content,
+                     String sourceType, String authorityTier, Boolean crossCounted) {
+
+        /**
+         * 兼容构造器(10 参,sourceType/authorityTier/crossCounted=null):既有调用方
+         * (工具实现/WebResultNormalizer/测试)不受影响。
+         */
+        public SearchHit(String type, String title, String url, String snippet,
+                         String modelName, Long docId, double score,
+                         String sourceId, String provider, String content) {
+            this(type, title, url, snippet, modelName, docId, score, sourceId, provider, content, null, null, null);
+        }
 
         /**
          * 兼容构造器(9 参,content=null):既有调用方(工具实现/WebResultNormalizer/测试)不受影响。
@@ -106,6 +120,28 @@ public interface SearchTool {
 
         public static SearchHit kb(String title, String modelName, Long docId, String snippet, double score) {
             return new SearchHit("KB", title, null, snippet, modelName, docId, score);
+        }
+
+        /**
+         * 本地自建信源命中(10-05-source-web-fusion F-R1):type=SOURCE。
+         *
+         * <p>与 {@link #kb} 的区别是来源类型:自建信源的网络内容(用户采集)按 SOURCE 走权威分档,
+         * 不再误当手写知识库拿 0.9;`sourceType` 供下游 F 判来源身份(如 gasgoo-ranking 不计独立交叉),
+         * `authorityTier` 供权威分档(official/industry/media/ugc,可空——默认不启用分档时走保守档)。
+         *
+         * @param sourceType 信源来源类型(如 user-source/gasgoo-announce;可空)。
+         * @param authorityTier 权威档(official/industry/media/ugc;可空)。
+         */
+        public static SearchHit source(String title, String modelName, Long docId, String snippet, double score,
+                                       String sourceType, String authorityTier) {
+            return source(title, modelName, docId, snippet, score, sourceType, authorityTier, null);
+        }
+
+        /** SOURCE 命中(带 crossCounted 透传,F-R8):crossCounted=false 的来源在事实手册不计独立交叉。 */
+        public static SearchHit source(String title, String modelName, Long docId, String snippet, double score,
+                                       String sourceType, String authorityTier, Boolean crossCounted) {
+            return new SearchHit("SOURCE", title, null, snippet, modelName, docId, score, null, null, null,
+                    sourceType, authorityTier, crossCounted);
         }
         /** WEB 命中统一 type=WEB(来源工具名记入 title 前缀由调用方处理);tool 单独字段。 */
         public static SearchHit web(String toolName, String title, String url, String snippet) {

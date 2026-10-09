@@ -112,6 +112,12 @@ public class DeepProperties {
     private long followupTimeoutMs = 30000;
     /** 批次内搜索缓存 TTL(ms,默认 600000=10min):作用域严格限定单次 research 批次,随批次释放。 */
     private long webCacheTtlMs = 600000;
+    /**
+     * 本地自建信源权威分档开关(10-05-source-web-fusion F-R4):默认 {@code false} =
+     * 全部 SOURCE 事实走单一保守档 0.7(零回归);开启后按信源 {@code authorityTier} 取置信
+     * (official 0.9 / industry 0.7 / media·ugc 0.5;缺档 0.7)。
+     */
+    private boolean sourceAuthorityEnabled = false;
 
     /** 生效正文上限(≤0 视为不截断/使用默认；防御异常配置)。 */
     public int effectiveWebContentMaxChars() {

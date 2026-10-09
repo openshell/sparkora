@@ -48,11 +48,15 @@ const sheetEntries = computed(() => {
   for (const e of entries) {
     if (out.length >= SHEET_ENTRY_MAX) break
     const t = e?.sources?.type || ''
-    if (t !== 'KB' && t !== 'WEB' && t !== 'MULTI') continue
+    // 10-05 F:SOURCE(本地自建信源)并入展示(增量,旧逻辑不受影响)
+    if (t !== 'KB' && t !== 'WEB' && t !== 'MULTI' && t !== 'SOURCE') continue
     out.push({
       source: t,
-      // KB:条目名(车型/知识标题);WEB:provider · 域名(provider 缺失回退域名);MULTI:多源交叉
-      modelName: t === 'WEB' ? webName(e) : (t === 'MULTI' ? '多源交叉' : (e?.sources?.modelName || '（未标注）') ),
+      // KB:条目名(车型/知识标题);WEB:provider · 域名(provider 缺失回退域名);MULTI:多源交叉;
+      // SOURCE:本地信源(来源身份 sourceType 或信源名)
+      modelName: t === 'WEB' ? webName(e)
+        : (t === 'MULTI' ? '多源交叉'
+        : (t === 'SOURCE' ? sourceName(e) : (e?.sources?.modelName || '（未标注）'))),
       chunkType: t,
       score: typeof e?.confidence === 'number' ? e.confidence : 0,
       confidence: true,  // score 为置信度(区别于本地知识库的相似度)
@@ -61,6 +65,13 @@ const sheetEntries = computed(() => {
   }
   return out
 })
+
+/** 本地信源条目名:来源身份(sourceType)优先,缺失回退信源名(modelName)。 */
+const sourceName = (e) => {
+  const st = e?.sources?.sourceType
+  if (st && String(st).trim()) return `本地信源 · ${String(st).trim()}`
+  return e?.sources?.modelName || '本地信源'
+}
 
 /** WEB 条目名:provider · 域名(如 Tavily · stnn.cc);provider 缺失/空白回退纯域名(旧文案)。 */
 const webName = (e) => {
@@ -89,6 +100,7 @@ const tagType = (c) => {
   if (c.source === 'KB') return 'success'
   if (c.source === 'WEB') return 'warning'
   if (c.source === 'MULTI') return 'success'
+  if (c.source === 'SOURCE') return 'danger'   // 10-05 F:本地自建信源
   if (c.source === 'NEWS') return 'danger'   // C4:官方新闻域
   return 'primary'
 }
@@ -97,6 +109,7 @@ const sourceLabel = (c) => {
   if (c.source === 'KB') return '通用知识'
   if (c.source === 'WEB') return 'WEB 搜索'
   if (c.source === 'MULTI') return '多源交叉'
+  if (c.source === 'SOURCE') return '本地信源'   // 10-05 F
   if (c.source === 'NEWS') return newsLabel(c)   // C4:官方新闻域;10-05 E 用户采集源按 category
   return '车型数据'
 }

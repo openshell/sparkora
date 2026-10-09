@@ -37,7 +37,8 @@ const highConf = computed(() => entries.value.filter(e => (e.confidence || 0) >=
 const pending = computed(() => entries.value.filter(e => (e.confidence || 0) < 0.5).length)
 const srcType = (e) => {
   const s = e.sources || {}; const t = s.type || 'KB'
-  return t === 'WEB' ? 'warning' : t === 'MULTI' ? 'success' : 'primary'
+  // 10-05 F:SOURCE=本地自建信源(增量,旧逻辑不受影响)
+  return t === 'WEB' ? 'warning' : t === 'MULTI' ? 'success' : t === 'SOURCE' ? 'danger' : 'primary'
 }
 const srcLabel = (e) => { const s = e.sources || {}; const t = s.type || 'KB'
   if (t === 'WEB') {
@@ -45,6 +46,11 @@ const srcLabel = (e) => { const s = e.sources || {}; const t = s.type || 'KB'
     // provider(09-25 增量字段)缺失/空白时回退旧文案「WEB·域名」
     const provider = s.provider && String(s.provider).trim()
     return provider ? `WEB·${provider}·${host}` : 'WEB·' + host
+  }
+  // 10-05 F:本地信源徽标(来源身份缺失时回退「本地信源」)
+  if (t === 'SOURCE') {
+    const st = s.sourceType && String(s.sourceType).trim()
+    return st ? `本地信源·${st}` : '本地信源'
   }
   return t === 'MULTI' ? '多源交叉' : '知识库' }
 const confBar = (e) => '▮'.repeat(Math.round((e.confidence || 0) * 5)).padEnd(5, '▯')

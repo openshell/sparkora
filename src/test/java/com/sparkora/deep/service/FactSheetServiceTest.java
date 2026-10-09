@@ -300,4 +300,189 @@ class FactSheetServiceTest {
         }
         throw new AssertionError("未找到条目: " + fragment + " in " + sheet);
     }
+
+    // ==================== 10-05-source-web-fusion F:本地信源融合 ====================
+
+    /** 权威分档开启的 svc(默认构造器 = 不启用分档)。 */
+    private final FactSheetService svcTiered = new FactSheetService(json, true);
+
+    private static final String SRC_FACT =
+            "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"value\":\"300000\",\"source\":{\"type\":\"SOURCE\","
+            + "\"modelName\":\"乘联会\",\"sourceType\":\"user-source\",\"authorityTier\":\"official\","
+            + "\"crossCounted\":true},\"confidence\":0.7}],\"gaps\":[]}";
+    private static final String WEB_FACT =
+            "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"value\":\"300000\",\"source\":{\"type\":\"WEB\","
+            + "\"url\":\"https://auto.example/1\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}";
+    private static final String KB_FACT =
+            "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"value\":\"300000\",\"source\":{\"type\":\"KB\","
+            + "\"modelName\":\"比亚迪\"},\"confidence\":0.9}],\"gaps\":[]}";
+
+    /** AC-F1:同 claim SOURCE + WEB → 本地信源胜出,WEB 降 alternatives + 警告「以本地信源为准」。 */
+    @Test
+    void AC_F1_本地信源胜外部WEB_降alternatives与警告() throws Exception {
+        JsonNode sheet = sheet(svc.merge(twoNotes(SRC_FACT, WEB_FACT)));
+        assertEquals(1, sheet.path("entries").size(), "同 claim 应合并为一条");
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals("SOURCE", e.path("sources").path("type").asText(), "本地信源胜出");
+        assertEquals("user-source", e.path("sources").path("sourceType").asText());
+        assertTrue(e.path("alternatives").toString().contains("https://auto.example/1"), "WEB 进 alternatives");
+        assertTrue(sheet.toString().contains("以本地信源为准"), "本地优先警告");
+        assertFalse(sheet.toString().contains("待核实"), "本地信源在场不标待核实");
+    }
+
+    /** AC-F7/KB 兜底:同 claim KB + SOURCE → KB 仍胜,不误伤知识库。 */
+    @Test
+    void KB仍胜SOURCE_不误伤() throws Exception {
+        JsonNode sheet = sheet(svc.merge(twoNotes(KB_FACT, SRC_FACT)));
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals("KB", e.path("sources").path("type").asText(), "KB 优先于 SOURCE");
+        assertEquals(0.9, e.path("confidence").asDouble(), 1e-9);
+        assertFalse(sheet.toString().contains("以本地信源为准"), "KB 胜出不应写本地优先警告");
+    }
+
+    /** AC-F2:本地 SOURCE 与外部 WEB 命中同一 URL → 去重,sourceCount 不虚高。 */
+    @Test
+    void AC_F2_跨type同URL去重_sourceCount不虚高() throws Exception {
+        String srcSameUrl =
+                "{\"facts\":[{\"claim\":\"比亚迪第2000座闪充站落成\",\"source\":{\"type\":\"SOURCE\","
+                + "\"url\":\"https://news.example/a\",\"modelName\":\"信源\",\"sourceType\":\"user-source\","
+                + "\"crossCounted\":true},\"confidence\":0.7}],\"gaps\":[]}";
+        String webSameUrl =
+                "{\"facts\":[{\"claim\":\"比亚迪第2000座闪充站落成\",\"source\":{\"type\":\"WEB\","
+                + "\"url\":\"https://news.example/a/\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}";
+        JsonNode sheet = sheet(svc.merge(twoNotes(srcSameUrl, webSameUrl)));
+        assertEquals(1, sheet.path("entries").size(), "同 URL 近义 claim 合并");
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals(1, e.path("crossCount").asInt(), "跨 type 同 URL 只算 1 源");
+        assertEquals(1, e.path("sourceCount").asInt());
+        assertTrue(sheet.path("sourceMeta").path("dedupedSameUrl").asInt() >= 1, "去重计数可见");
+    }
+
+    /** AC-F3:本地 BYD 新闻(KB)+ 外部搜到同篇(同 URL)不触发 MULTI。 */
+    @Test
+    void AC_F3_本地BYD新闻与外部同篇_不触发MULTI() throws Exception {
+        String kbNews =
+                "{\"facts\":[{\"claim\":\"比亚迪第2000座闪充站落成\",\"source\":{\"type\":\"KB\","
+                + "\"url\":\"https://news.example/byd\",\"modelName\":\"官方新闻\"},\"confidence\":0.9}],\"gaps\":[]}";
+        String webSame =
+                "{\"facts\":[{\"claim\":\"比亚迪第2000座闪充站落成\",\"source\":{\"type\":\"WEB\","
+                + "\"url\":\"https://news.example/byd\",\"provider\":\"TAVILY\"},\"confidence\":0.4}],\"gaps\":[]}";
+        JsonNode sheet = sheet(svc.merge(twoNotes(kbNews, webSame)));
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals(1, e.path("crossCount").asInt(), "同 URL 只算 1 源");
+        assertFalse(sheet.toString().contains("MULTI"), "同源多通道不得触发 MULTI");
+    }
+
+    /** AC-F3:盖世 ranking(crossCounted=false)不计独立交叉,与乘联会不构成 MULTI。 */
+    @Test
+    void AC_F3_gasgooRanking不计独立交叉() throws Exception {
+        String cpca =
+                "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"source\":{\"type\":\"SOURCE\","
+                + "\"modelName\":\"乘联会\",\"sourceType\":\"user-source\",\"crossCounted\":true},\"confidence\":0.7}],\"gaps\":[]}";
+        String ranking =
+                "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"source\":{\"type\":\"SOURCE\","
+                + "\"url\":\"https://gasgoo.example/rank\",\"modelName\":\"盖世排行\","
+                + "\"sourceType\":\"gasgoo-ranking\",\"crossCounted\":false},\"confidence\":0.7}],\"gaps\":[]}";
+        JsonNode sheet = sheet(svc.merge(twoNotes(cpca, ranking)));
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals(1, e.path("crossCount").asInt(), "ranking 被剔除,只剩 1 源");
+        assertFalse(sheet.toString().contains("MULTI"), "ranking 不与乘联会构成独立交叉");
+    }
+
+    /** AC-F3:盖世 announce(crossCounted=true)可与乘联会构成独立交叉(反例)。 */
+    @Test
+    void AC_F3_gasgooAnnounce可构成独立交叉() throws Exception {
+        String cpca =
+                "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"source\":{\"type\":\"SOURCE\","
+                + "\"modelName\":\"乘联会\",\"sourceType\":\"user-source\",\"crossCounted\":true},\"confidence\":0.7}],\"gaps\":[]}";
+        String announce =
+                "{\"facts\":[{\"claim\":\"比亚迪10月销量30万辆\",\"source\":{\"type\":\"SOURCE\","
+                + "\"url\":\"https://gasgoo.example/announce\",\"modelName\":\"盖世官宣\","
+                + "\"sourceType\":\"gasgoo-announce\",\"crossCounted\":true},\"confidence\":0.7}],\"gaps\":[]}";
+        JsonNode sheet = sheet(svc.merge(twoNotes(cpca, announce)));
+        JsonNode e = sheet.path("entries").get(0);
+        assertEquals(2, e.path("crossCount").asInt());
+        assertEquals(0.85, e.path("confidence").asDouble(), 1e-9, "announce 与乘联会独立交叉 0.85");
+        assertEquals("MULTI", e.path("sources").path("type").asText());
+    }
+
+    /** AC-F7:权威分档 official 0.9 / industry 0.7 / ugc 0.5(启用分档构造器)。 */
+    @Test
+    void AC_F7_权威分档_按档取置信() throws Exception {
+        assertTierConfidence("official", 0.9);
+        assertTierConfidence("industry", 0.7);
+        assertTierConfidence("media", 0.5);
+        assertTierConfidence("ugc", 0.5);
+        assertTierConfidence(null, 0.7);   // 缺档回退保守档
+    }
+
+    private void assertTierConfidence(String tier, double expected) throws Exception {
+        String tierField = tier == null ? "" : ",\"authorityTier\":\"" + tier + "\"";
+        String facts = "{\"facts\":[{\"claim\":\"纯本地信源事实\",\"source\":{\"type\":\"SOURCE\","
+                + "\"modelName\":\"信源\",\"sourceType\":\"user-source\",\"crossCounted\":true"
+                + tierField + "},\"confidence\":0.7}],\"gaps\":[]}";
+        JsonNode e = sheet(svcTiered.merge(notes(facts))).path("entries").get(0);
+        assertEquals(expected, e.path("confidence").asDouble(), 1e-9, "tier=" + tier);
+    }
+
+    /** AC-F7/AC-F5:默认不启用分档 → 纯 SOURCE 统一保守档 0.7(零回归)。 */
+    @Test
+    void AC_F7_默认不分档_统一保守档07() throws Exception {
+        String official =
+                "{\"facts\":[{\"claim\":\"纯本地信源事实\",\"source\":{\"type\":\"SOURCE\","
+                + "\"sourceType\":\"user-source\",\"authorityTier\":\"official\",\"crossCounted\":true},"
+                + "\"confidence\":0.7}],\"gaps\":[]}";
+        JsonNode e = sheet(svc.merge(notes(official))).path("entries").get(0);
+        assertEquals(0.7, e.path("confidence").asDouble(), 1e-9, "默认不分档应走保守档 0.7");
+        assertEquals("SOURCE", e.path("sources").path("type").asText());
+    }
+
+    /** AC-F5:未启用自建信源(无 SOURCE)时,既有 KB/WEB/MULTI 分支逐位等价。 */
+    @Test
+    void AC_F5_无SOURCE_零回归() throws Exception {
+        // KB+WEB 冲突仍 KB 胜
+        JsonNode s1 = sheet(svc.merge(twoNotes(
+                "{\"facts\":[{\"claim\":\"海狮08起售价239900\",\"source\":{\"type\":\"KB\"},\"confidence\":0.9}],\"gaps\":[]}",
+                "{\"facts\":[{\"claim\":\"海狮08起售价239900\",\"source\":{\"type\":\"WEB\",\"url\":\"https://a\"},\"confidence\":0.4}],\"gaps\":[]}")));
+        assertEquals("KB", s1.path("entries").get(0).path("sources").path("type").asText());
+        assertEquals(0.9, s1.path("entries").get(0).path("confidence").asDouble(), 1e-9);
+        // 无任何本地/WEB 来源时 sourceMeta 增量字段不出现
+        assertFalse(s1.has("sourceMeta"), "无来源时 sourceMeta 不应出现");
+        // 纯 WEB 仍 0.4 + 待核实
+        JsonNode s2 = sheet(svc.merge(notes(
+                "{\"facts\":[{\"claim\":\"竞品价格\",\"source\":{\"type\":\"WEB\",\"url\":\"https://x\"},\"confidence\":0.6}],\"gaps\":[]}")));
+        assertEquals(0.4, s2.path("entries").get(0).path("confidence").asDouble(), 1e-9);
+    }
+
+    /** AC-F4:融合可观测——本地/外部来源数与权威档计数可读。 */
+    @Test
+    void AC_F4_融合可观测_本地外部占比与档位计数() throws Exception {
+        JsonNode sheet = sheet(svc.merge(notes(
+                "{\"facts\":[{\"claim\":\"本地事实一\",\"source\":{\"type\":\"SOURCE\","
+                + "\"modelName\":\"乘联会\",\"sourceType\":\"user-source\",\"authorityTier\":\"official\","
+                + "\"crossCounted\":true},\"confidence\":0.7}],\"gaps\":[]}")));
+        JsonNode meta = sheet.path("sourceMeta");
+        assertEquals(1, meta.path("localSourceCount").asInt());
+        assertEquals(0, meta.path("webSourceCount").asInt());
+        assertEquals(1, meta.path("authorityTierCounts").path("official").asInt());
+    }
+
+    /**
+     * Spring 装配回归(10-05-source-web-fusion):本仓无 {@code @SpringBootTest},多构造器
+     * {@code @Service} 若漏 {@code @Autowired} 会导致应用启动失败但 {@code mvn test} 全绿
+     * (先例 {@code FetchTransportWiringTest}/{@code SourceWiringTest})。此探针锁定
+     * {@code FactSheetService} 生产构造器(ObjectMapper, DeepProperties)可被容器实例化。
+     */
+    @Test
+    void FactSheetService可被Spring装配_多构造器须显式Autowired() {
+        try (org.springframework.context.annotation.AnnotationConfigApplicationContext ctx =
+                     new org.springframework.context.annotation.AnnotationConfigApplicationContext()) {
+            ctx.registerBean(com.fasterxml.jackson.databind.ObjectMapper.class);
+            ctx.registerBean(com.sparkora.config.DeepProperties.class);
+            ctx.register(FactSheetService.class);
+            ctx.refresh();
+            org.junit.jupiter.api.Assertions.assertNotNull(ctx.getBean(FactSheetService.class),
+                    "FactSheetService 应可装配");
+        }
+    }
 }

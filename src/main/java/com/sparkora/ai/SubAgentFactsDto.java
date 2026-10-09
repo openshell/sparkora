@@ -46,11 +46,14 @@ public class SubAgentFactsDto {
         private Double confidence;
     }
 
-    /** 来源。KB 来源仅 type/docId；WEB 来源必须带 sourceId 与 url。 */
+    /**
+     * 来源。KB 来源仅 type/docId；WEB 来源必须带 sourceId 与 url；
+     * 本地自建信源（SOURCE）为本地命中，无 url/sourceId（10-05-source-web-fusion F-R1）。
+     */
     @Data
     public static class Source {
         @JsonProperty(required = false)
-        @JsonPropertyDescription("KB|WEB")
+        @JsonPropertyDescription("KB|WEB|SOURCE(本地自建信源;检索结果中标 [SOURCE] 的条目必须原样回填)")
         private String type;
 
         @JsonProperty(required = false)
@@ -68,5 +71,27 @@ public class SubAgentFactsDto {
         @JsonProperty(required = false)
         @JsonPropertyDescription("KB 来源文档 id")
         private Long docId;
+
+        /**
+         * 本地自建信源来源类型（10-05 F-R1；仅 SOURCE 命中透传，KB/WEB 为空）。
+         * 检索结果行末给出该字段时须<b>原样回填</b>，供事实手册判来源身份（如 gasgoo-ranking 不计独立交叉）。
+         */
+        @JsonProperty(required = false)
+        @JsonPropertyDescription("SOURCE 来源的 sourceType(如 user-source/gasgoo-ranking);检索结果给出时原样回填")
+        private String sourceType;
+
+        /** 本地自建信源权威档（10-05 F-R4；official/industry/media/ugc，仅 SOURCE 命中透传，可空）。 */
+        @JsonProperty(required = false)
+        @JsonPropertyDescription("SOURCE 来源的 authorityTier(official/industry/media/ugc);检索结果给出时原样回填")
+        private String authorityTier;
+
+        /**
+         * 本地自建信源是否可计独立交叉（10-05 F-R8；仅 SOURCE 命中透传，可空）。
+         * {@code false} 表示该来源派生自其他来源（如盖世排行页），不得与乘联会等构成独立交叉；
+         * 检索结果给出时须<b>原样回填</b>，缺失时按可计交叉处理（不误删证据）。
+         */
+        @JsonProperty(required = false)
+        @JsonPropertyDescription("SOURCE 来源是否可计独立交叉(true/false);检索结果给出时原样回填")
+        private Boolean crossCounted;
     }
 }
