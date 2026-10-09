@@ -1687,3 +1687,40 @@ SOURCE 类型+本地优先+同URL去重+权威分档(默认关);check 修 Spring
 ### Next Steps
 
 - 新建并实现 10-05-source-metadata-completion 补 Citation.url/authorityTier 透传
+
+
+## Session 63: 10-09 信源 metadata 补全(URL+权威档透传)收口
+<!-- trellis-session: v=2 fp=8e965a84206720f8 -->
+
+**Date**: 2026-10-09
+**Task**: 10-09 信源 metadata 补全(URL+权威档透传)收口
+**Branch**: `main`
+
+### Summary
+
+补 Citation.url/authorityTier 生产侧供数+V16 幂等回填;check 抓 P0 交叉连接写错权威档并修
+
+### Main Changes
+
+- Citation/UnifiedHit 增 url/authorityTier;写路径+迁移+取数贯通
+- V16 幂等回填 NEWS metadata(url/authorityTier),id/embedding 不动
+- 修复 V16 UPDATE...FROM 缺 refId 关联的交叉连接 P0
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f5860b` | feat(10-09): 信源 metadata 补全(URL+权威档透传,V16 幂等回填) |
+| `54d5c66` | chore(task): archive 10-09-source-metadata-completion |
+
+### Testing
+
+- [OK] mvn test 1076/0/0/0;npm run build 通过;TEMP 表 BEGIN...ROLLBACK 验证 V16 幂等
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 重建容器并验证(用户要求)
