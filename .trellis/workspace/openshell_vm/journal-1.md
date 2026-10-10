@@ -1760,3 +1760,39 @@ SOURCE 类型+本地优先+同URL去重+权威分档(默认关);check 修 Spring
 ### Next Steps
 
 - 可选:重新构建容器应用 V13-V18;或按需启用信源 + SOURCE_COLLECT_ENABLED
+
+
+## Session 65: 10-10 盖世车企销量采集通道：C-110 端到端验证 + V19 正名
+<!-- trellis-session: v=2 fp=7b9e6b50d79ba212 -->
+
+**Date**: 2026-10-10
+**Task**: 10-10 盖世车企销量采集通道：C-110 端到端验证 + V19 正名
+**Branch**: `main`
+
+### Summary
+
+盖世 C-110 车企销量稿采集端到端验证(20/20、19非BYD、188切块向量、49海报);V19 正名 车企销量/销量数据;真机验证后清理数据、源仍 disabled
+
+### Main Changes
+
+- 新增 V19__align_gasgoo_sales_channel.sql 正名 + 分类对齐
+- docs/spec/knowledge/sources.md 盖世车企销量栏目契约(C-110/持续增量/sourceType)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d3b914b` | feat(10-10): 盖世车企销量采集通道(C-110 端到端验证 + V19 正名) |
+| `f7da964` | chore(task): archive 10-10-gasgoo-sales-channel |
+
+### Testing
+
+- [OK] mvn test 1117/0/0/0; 真机采集 20/20 + 检索命中; V19 幂等 UPDATE 1→0
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 如需启用:面板启用盖世源 + SOURCE_COLLECT_ENABLED=true
