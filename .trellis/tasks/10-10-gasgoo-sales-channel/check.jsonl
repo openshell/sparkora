@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-10-gasgoo-sales-channel/prd.md", "reason": "核对 AC-1..AC-6：栏目指向/增量采集/入库切块/检索命中/零回归/文档"}
+{"file": "docs/spec/knowledge/sources.md", "reason": "对照信源采集契约核对盖世车企销量栏目配置"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对真机可达性与零回归"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对 NEWS 域检索与来源类型映射"}

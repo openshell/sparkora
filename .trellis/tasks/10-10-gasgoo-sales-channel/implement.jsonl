@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-10-gasgoo-sales-channel/prd.md", "reason": "本任务需求与验收：盖世车企销量 C-110 持续增量采集、端到端、零回归"}
+{"file": "docs/spec/knowledge/sources.md", "reason": "信源采集字段级契约：源/栏目表、parse_rules、任务表、内容API、来源类型；本任务栏目配置与文档同步的权威依据"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "三域检索 + 外部来源类型（gasgoo-announce）与 NEWS 域契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "接入外部站点采集前必须真机验证可达性（HTTP 200≠可采）；本次复用既有通道"}
+{"file": "docs/spec/knowledge/news.md", "reason": "采集内容复用 sparkora_news 的契约与 source=byd-news 隔离"}

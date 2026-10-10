@@ -41,6 +41,7 @@
 - `V16__news_source_metadata_url_tier.sql`（10-09-source-metadata-completion M）：`vector_store` 中 `domain=NEWS` 行幂等补 `url`（经 `refId→sparkora_news_doc.news_id→sparkora_news.url` 派生）与 `authorityTier`（byd-news 固定 `official`；通用信源经 `news.source_id→sparkora_source.authority_tier` 派生）；只 `metadata || jsonb`、`id`/`embedding` 不动 → 零重嵌；补全 F-R3 跨源同 URL 去重 / F-R4 权威分档的生产侧数据。
 - `V17__seed_cpca_gasgoo_sources.sql`（10-09-cpca-gasgoo-collection）：预置乘联会 / 盖世汽车两源 + 4 栏目（`INSERT ... WHERE NOT EXISTS` 幂等，不改表结构，默认 `enabled=false`）；`parse_rules` 含 `listRows`/`rowCells`/`imageDeny` 增量字段。回滚=删除预置行/禁用源。
 - `V18__retire_unreachable_gasgoo_ranking_channel.sql`（10-09-cpca-gasgoo-collection 收口）：逻辑删除 V17 预置的盖世「销量排行」栏目——其详情页（`/qcxl/article/*` 等）由腾讯 WAF 验证码拦截（HTTP 200/1543B，Crawl4AI 亦无法渲染）真机不可采。`listRows` 解析能力保留在代码中（已单测），未来接入可达排行源可复用。幂等可重入。
-- 后续结构变更一律新增 `V19+` 脚本，不再触碰 V1~V11。
+- `V19__align_gasgoo_sales_channel.sql`（10-10-gasgoo-sales-channel）：把 V17 预置的盖世 C-110 栏目正名为「车企销量」、分类对齐为「销量数据」（`/auto-news/C-110` ≡ `/sales/C-110`，即各车企单独发布的销量稿类目）；`UPDATE ... FROM` 显式关联 `c.source_id = s.id`，幂等（重复跑 UPDATE 0）。不改 `list_url`/选择器/表结构。
+- 后续结构变更一律新增 `V20+` 脚本，不再触碰 V1~V11。
 - **JSON 存 TEXT 为有意约定**（P1-⑦ 复核裁定，不转 JSONB），理由见 `.trellis/spec/backend/database-guidelines.md`「JSON 存 TEXT 是有意约定」。
 - **Boot 4 注意**：Flyway 自动配置已从 `spring-boot-autoconfigure` 拆到独立 `spring-boot-flyway` 模块，pom 必须引 `spring-boot-starter-flyway`（+ 显式 `flyway-database-postgresql`），否则迁移**静默不执行**（详见 database-guidelines.md「Boot 4 下只引 flyway-core」）。

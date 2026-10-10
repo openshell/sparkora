@@ -138,12 +138,13 @@
 |---|---|---|---|---|---|---|
 | 乘联会 | SITE | true | 车市解读 | `https://www.cpcaauto.com/news.php?types=csjd` | 销量数据 | CRAWL4AI |
 | 乘联会 | SITE | true | 乘联分会论坛 | `https://www.cpcaauto.com/news.php?types=yjsy` | 行业资讯 | CRAWL4AI |
-| 盖世汽车 | SITE | false | 销量资讯 | `https://auto.gasgoo.com/auto-news/C-110` | 官方新闻 | HTTP |
+| 盖世汽车 | SITE | false | 车企销量 | `https://auto.gasgoo.com/auto-news/C-110` | 销量数据 | HTTP |
 
 > **盖世「销量排行」栏目已退役（`V18__retire_unreachable_gasgoo_ranking_channel.sql`，2026-10-09）**：V17 曾预置 `/qcxl` 排行栏目，但实测其详情页（`/qcxl/article/*`、`/qcxl/cqph`、`/qcxl/xlph`）由**腾讯 WAF 验证码**拦截（HTTP 200 / 1543B 挑战页，需人工交互；Crawl4AI 亦无法渲染），且 `i.gasgoo.com/data/ranking` 为 JS 壳（真实数据走 `.aspx`，同样不可直取）→ 真机不可采。故 V18 逻辑删除该栏目。**`SourceTableParser.parseListRows` 的 `listRows`/`rowCells` 能力保留**（已单测覆盖，零回归），未来接入可达排行源可直接复用。
 
 - **乘联会**（直连 403，走 Crawl4AI 渲染）：`parse_rules` = `{"list":".list_d li.q","link":"a","title":"a","date":"span","detail":"div.read_content","tables":"","images":""}`；排期用发布窗口（`window_start_day=8,window_end_day=11`）。列表须经 G1 `/crawl` 渲染后才有 `<a href>`；详情正文在 `div.read_content`（`section>span` 型，G2 容器优先）；销量数值不丢。
-- **盖世销量资讯**（直连 200，HTTP）：`parse_rules` = `{"list":"div.contentList dl","link":"a","title":"h2 a","date":"span.time","detail":"#ArticleContent","images":"#ArticleContent img","imageDeny":"160_110"}`；54 个 `<p>` 段落型正文；正文海报经 G5 过滤（deny 图标/logo/二维码/缩略图）后转存图库。
+- **盖世车企销量**（直连 200，HTTP，C-110「汽车销量」类目）：`parse_rules` = `{"list":"div.contentList dl","link":"a","title":"h2 a","date":"span.time","detail":"#ArticleContent","images":"#ArticleContent img","imageDeny":"160_110"}`；54 个 `<p>` 段落型正文；正文海报经 G5 过滤（deny 图标/logo/二维码/缩略图）后转存图库。**C-110 = 各车企单独发布的销量稿聚合**（长城皮卡/通用/北汽/长安/五菱/零跑/极氪/理想 等），是「车企官方口径销量」素材，与乘联会协会统计互补。来源类型 `SourceCatalog.sourceTypeOf("盖世汽车","车企销量")` → 命中「销量」→ **`gasgoo-announce`**（`crossCounted=true`，可与乘联会构成独立交叉）。分页 `/auto-news/C-110/{page}`（约 378 页）；**本通道采用「持续增量」语义：定时/手动仅采最新一页并幂等去重**（不做历史分页回填，用户 2026-10-10 决策）。
+  > **V19 正名（`V19__align_gasgoo_sales_channel.sql`，2026-10-10）**：V17 预置时该栏目名为「销量资讯」、分类「官方新闻」，语义与用途不符；V19 幂等对齐为「车企销量」/「销量数据」（不改 `list_url`/选择器/表结构）。
 - **盖世销量排行**（`/qcxl` 首页文章列表；排行正文为 `div.data ul li` 行结构，非 `<table>`）：`parse_rules` = `{"list":"div.frontlist ul.newslist li","link":"a","title":"a","detail":"div.data","listRows":"div.data ul li","rowCells":"span"}`；G3 `parseListRows` 在 `div.data` 容器内逐行取 `span` 单元格，`CELL_SEP` 拼接，数值可检索命中。
 - **销量全收**：`parse_rules.bydOnly=false`（default），R1/R2 不做 BYD 过滤（`accept()` 直接放行）。
 - **排期**：乘联会月度窗口（复用 B 的发布窗口语义，成功才标 batch）；盖世 `cron=0 30 3 * * ?`（每日）。
