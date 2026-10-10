@@ -1796,3 +1796,38 @@ SOURCE 类型+本地优先+同URL去重+权威分档(默认关);check 修 Spring
 ### Next Steps
 
 - 如需启用:面板启用盖世源 + SOURCE_COLLECT_ENABLED=true
+
+
+## Session 66: 10-10 盖世车企销量栏目切换规范入口并启用采集
+<!-- trellis-session: v=2 fp=4fa83565c901eb75 -->
+
+**Date**: 2026-10-10
+**Task**: 10-10 盖世车企销量栏目切换规范入口并启用采集
+**Branch**: `main`
+
+### Summary
+
+list_url 切至 /sales/C-110(V20 幂等);启用乘联会/盖世采集(源 enabled + SOURCE_COLLECT_ENABLED=true);重建后端;手动采集 SUCCESS 20/20
+
+### Main Changes
+
+- V20 迁移切换盖世车企销量栏目 list_url 至规范入口
+- 启用两源采集 + 总开关(运行态);调度注册 2 源
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1c03c48` | feat(10-10): 盖世车企销量栏目切换规范入口(V20)并启用采集 |
+
+### Testing
+
+- [OK] mvn test 1117/0/0/0; 真机采集 job#3 SUCCESS 20/20 + 198 切块 + 49 海报
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 观察 03:30 定时采集;按需在面板停用/调整
