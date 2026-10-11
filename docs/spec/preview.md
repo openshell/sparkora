@@ -65,11 +65,12 @@
 
 ## 4. 前端
 
-- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤三）：`preview-options` 下拉/开关控件读后端配置；iframe `srcdoc` 顶部标注「排版引擎:文颜(与发布同源)」；`degraded=true` 顶部黄条；PC-only（双 pane 可拖拽分栏，拖拽条记忆 localStorage）。
+- `StepPreview.vue`（`/projects/:id/preview` 子路由，步骤三）：`preview-options` 下拉/开关控件读后端配置；右侧为 `PreviewPane` 手机拟真窗（pane-head「公众号预览」+ 进度细条 + 渲染失败错误 tag/重试），渲染走本机 `@wenyan-md/core` 纯正文渲染，产物经 `sanitizeWenyanHtml` 清洗后 **`v-html` 注入**（**已无 iframe `srcdoc`/degraded 黄条**：浏览器端渲染无降级链，失败走 pane 内错误提示与重试）；主题/高亮/Mac 变更只替换 `.wenyan-preview` 容器级共享 `<style>`，不重渲染（**footnote 例外**：影响 DOM 结构走重渲染，`StepPreview.onWechatRebuild`）；预览容器只有**一次性淡入**（首帧渲染完成/主题切换应用完成时点亮 0.18s，内容更新不重放，10-12-preview-draft-copy-defense R4）。**「复制排版」三级降级链（10-12-preview-draft-copy-defense R1）**：① 安全源原生 `navigator.clipboard.write`（ClipboardItem 富文本）；② 隐藏 contenteditable + `execCommand('copy')` 富文本（Chrome 非安全源 http://IP:8088 下 ① 不可用 → 恒走本级）；③ Markdown 源文纯文本兜底（提示明确告知非排版）；逐级失败才降级且不静默、全部失败才报错。PC-only（双 pane 可拖拽分栏，拖拽条记忆 localStorage）。
 - 四步流程 `maxReachableStepOf` 扩到 `index=3`（发布），发布步对 VERSIONS_READY/PUBLISHED_DRAFT 解锁。
 - 配图并入预览：工具栏「配图」面板提供图库插入 + AI 生图（文生图/图生图，产物进图库后插入正文）两种来源；封面走 frontmatter `cover` 元信息（见 [image.md](image.md)）。**无任何自动写入路径**（09-27-image-insert-bugs：AI 生图完成不再自动插入正文，插入/设封面一律用户显式点）。
 - **配图计数口径（09-27-image-insert-bugs）**：工具栏「配图 N · 待传 M」与发布页「插图 N 张」**同源**，都调 `frontend/src/utils/bodyImageRefs.js` 的 `countBodyImages`/`parseBodyImageRefs`——**唯一真值 = 当前正文 markdown 里的图片引用**（`![](target)`，按 target 去重）。`N` = 非 token 的图片目标数（**封面不计入**：封面走 `cover_image_id`，不经正文）；`M` = **仍可上传**的粘贴图占位数（`sparkora-img:` 且内存条目仍在、属当前项目）；已失效占位既不计入 `N` 也不计入 `M`，由顶部警示条单独呈现。此前口径（分母=图库快照 images 含封面、分子=快照∩正文、发布页数关联表）三处互不一致，已废弃。
-- 预览到发布衔接（09-11-preview-publish-bridge）：预览页/复制排版只渲染**纯正文**（无 frontmatter 残留）；「去发布」时若正文 dirty 自动先保存再跳转（失败停留并提示）；预览主题/高亮/Mac/脚注变更防抖落库项目级（`PUT /preview-style`），刷新/跨会话保持；工具栏宽度档位 `phone/tablet/full` 仅作用于预览容器视觉；`ctrl-bar` 粘性 + 间距打磨。
+- **草稿兜底（10-12-preview-draft-copy-defense）**：dirty 翻转仍立即写本地草稿（`sparkora-preview-draft-<id>`），且 dirty 期间对 `contentMd` ≈1s 节流跟随写入（leading+trailing）——崩溃/误关后恢复贴近最近一次编辑，保存成功即清 draftKey；恢复草稿进页顶部**常驻 `el-alert` 警示条** + 「放弃草稿（回退已保存版本）」动作；普通编辑产生的 dirty 不出现该警示条。不做自动保存（维持手动保存 + 草稿兜底模型）。
+- 预览到发布衔接（09-11-preview-publish-bridge）：预览页/复制排版只渲染**纯正文**（无 frontmatter 残留）；「去发布」时若正文 dirty 自动先保存再跳转（失败停留并提示）；预览主题/高亮/Mac/脚注变更防抖落库项目级（`PUT /preview-style`），刷新/跨会话保持；工具栏宽度档位 `phone/tablet/full` 仅作用于预览容器视觉（10-12-preview-draft-copy-defense R6 起记 localStorage `sparkora.previewWidth`，刷新保持）；`ctrl-bar` 粘性 + 间距打磨。
 - **主题选择范围（09-11-wenyan-themes）**：预览页主题下拉按「内置主题 / 社区主题」两组列出全部 15 个主题，社区主题显示中文名与色点；社区主题 `custom:*` 通过本机 CLI `--custom-theme <本地CSS绝对路径>` 渲染（CSS 随后端包内置），与内置主题一样可选、可预览、可发布。
 - **主题渲染分支（09-11-wenyan-themes）**：内置主题传 `--theme <id>`；社区主题传 `--custom-theme <abs css>` 且**不传 `--theme`**（同传时 `--theme` 覆盖 `--custom-theme`）；`--custom-theme` 不支持网络 URL。CSS 由 `WenyanThemeCatalog` 启动时从 classpath 物化到数据盘 `{IMAGE_STORAGE_DIR}/../tmp/wenyan-themes/`（jar 安全），物化失败该主题走降级链。
 
@@ -103,5 +104,5 @@
 ## 6. 关键实现路径
 
 - 后端：`com.sparkora.service.PreviewService`（渲染/降级/主题校验）、`com.sparkora.service.WenyanThemeCatalog`（15 主题权威目录 + CSS 物化）、`com.sparkora.wenyan.*`（CLI 调用）、`config.WenyanProperties`；控制器端点：`ProjectPreviewController#preview` / `#savePreviewStyle` / `#savePublishMeta` / `#publishOptions`、`ImageController#previewOptions`（09-27-split-monoliths 起预览相关端点自 `ArticleProjectController` 拆出，路径/鉴权不变）。
-- 前端：`views/project/StepPreview.vue`、`components/MarkdownEditor.vue`（`insertMd` / `insertMdAtAnchor`）、`utils/pendingImageStore.js`（剪贴板暂存区 + 占位 token 工具 + `projectBodyTokens` 预览投影）、`composables/usePendingImageFlush.js`（发布前转存编排，先落库后清条目）、`utils/bodyImageRefs.js`（**正文图片引用解析 = 插图计数唯一口径**，09-27）、`components/preview/PreviewPane.vue`（失效占位块样式）、`utils/wenyanThemes.js`（浏览器预览 CSS 兜底）。
+- 前端：`views/project/StepPreview.vue`、`components/MarkdownEditor.vue`（`insertMd` / `insertMdAtAnchor`）、`utils/pendingImageStore.js`（剪贴板暂存区 + 占位 token 工具 + `projectBodyTokens` 预览投影）、`composables/usePendingImageFlush.js`（发布前转存编排，先落库后清条目）、`utils/bodyImageRefs.js`（**正文图片引用解析 = 插图计数唯一口径**，09-27）、`components/preview/PreviewPane.vue`（失效占位块样式 + 一次性淡入，10-12）、`utils/textStat.js`（正文字数统计：剥图片语法/链接目标/结构标记后非空白字符计数，10-12 R5）、`utils/wenyanThemes.js`（浏览器预览 CSS 兜底）。
 - 表：`sparkora_article_project`（preview_* / author / source_url）、`sparkora_image_asset.storage_key`。

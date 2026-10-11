@@ -1866,3 +1866,28 @@ list_url 切至 /sales/C-110(V20 幂等);启用乘联会/盖世采集(源 enable
 ### Next Steps
 
 - AC-7 人工回归：语义态角标/命中原文、多图切换面板跟随、AI 图与新闻图字段、明暗主题观感、1280 小窗工具条形态
+
+
+---
+
+## 2026-10-12 智能配图建议缺陷批次修复 parent 收口
+
+### What
+
+- 子任务 A dedup(重复配图防御,`627ea94`)/ C threshold(门槛解耦 0.4,`4236391`)/ B adopt-persist(采纳即时落库,`b9a2d55`)全部实现+核查+真机验收并归档。
+- 追加:用户浏览器验收时发现建议结果在 420px 抽屉内展示拥挤,独立轻量任务 card-layout(候选横排卡+标签折叠 `+N`+锚点单行,`61637e8`)同步归档。
+- parent `10-11-img-suggest-defect-fixes` Cross-child 清单全过,归档。
+
+### Learnings
+
+- suggest 缺省门槛与图库搜索门槛必须独立配置(AI_ILLUSTRATION_MIN_SCORE=0.4 / AI_IMAGE_MIN_SCORE=0.3),真机三稿件校准:候选集中 0.45~0.75,0.4 为零召回损失下界。
+- 采纳双写(登记+插入回滚)之上再挂 persist 回调(复用宿主 saveContent,单张1次/整组1次),时序前提是 CodeMirror dispatch 同步驱动 v-model。
+- 420px overlay 抽屉不能加宽(遮挡预览画布);建议卡改横排(缩略图左100px+信息右)解决拥挤,标签 ≤2 + `+N` 折叠。
+
+### Status
+
+[OK] **Completed** — parent 归档;中期方向(句级分块检索)留待后续批次
+
+### Next Steps
+
+- 中期候选:句级分块 + 一键智能配图(每段 top1 一次确认);评审不建议项(生成期预配图/自动插入开关)不做

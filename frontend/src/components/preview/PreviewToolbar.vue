@@ -65,7 +65,10 @@
     <el-tag v-else-if="saveState === 'error'" type="danger" effect="plain" size="small">保存失败</el-tag>
     <el-tag v-else-if="savedAt" type="success" effect="plain" size="small">已保存 {{ savedAt }}</el-tag>
     <el-button size="small" type="primary" plain :loading="saving" :disabled="!dirty" @click="emit('save')">保存正文</el-button>
-    <el-button size="small" type="primary" :icon="DocumentCopy" :loading="copying" :disabled="renderError" @click="emit('copy')">复制排版</el-button>
+    <!-- 复制按钮禁用态必须显式转布尔(10-12-preview-draft-copy-defense 修复):renderError 经 String prop
+         传过来默认是 '',直绑后空串落在 el-button 的 disabled(Boolean) prop 上,经 Vue 的空串 casting
+         变成 true → 渲染正常时复制按钮也恒被禁用(S4 以来的写法)。改 !!renderError;"去发布"本就如此。 -->
+    <el-button size="small" type="primary" :icon="DocumentCopy" :loading="copying" :disabled="!!renderError" @click="emit('copy')">复制排版</el-button>
     <el-button size="small" type="success" :disabled="!!renderError" @click="emit('publish')">去发布</el-button>
   </div>
 </template>

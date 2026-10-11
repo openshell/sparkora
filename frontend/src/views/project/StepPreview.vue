@@ -30,6 +30,16 @@
         </template>
       </el-alert>
 
+      <!-- 已恢复未保存草稿警示(10-12-preview-draft-copy-defense R3):常驻可见 + 可放弃。
+           此前仅一条 6s toast(无放弃入口,文案里的「刷新放弃」不成立:draft≠originalMd 每次进页都命中恢复)。
+           只在「曾恢复草稿」的会话内出现;保存成功/放弃后消失。 -->
+      <el-alert v-if="draftRestored" class="lost-image-alert" type="warning" :closable="false" show-icon>
+        <template #title>
+          已恢复未保存的本地草稿（比已保存版本新或不同），点「保存正文」后此条消失。
+        </template>
+        <el-button size="small" @click="discardDraft">放弃草稿（回退已保存版本）</el-button>
+      </el-alert>
+
       <!-- 正文加载失败 -->
       <div v-if="loadError && !loaded" class="state-error">
         <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
@@ -106,6 +116,7 @@ import { usePendingImageFlush } from '../../composables/usePendingImageFlush'
 import { usePageHeader } from '../../composables/usePageHeader'
 import { clearProject, clearOthers, extractTokens, get } from '../../utils/pendingImageStore'
 import { parseBodyImageRefs } from '../../utils/bodyImageRefs'
+import { textStatOf } from '../../utils/textStat'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 
@@ -118,6 +129,9 @@ import { WarningFilled } from '@element-plus/icons-vue'
  *
  * 09-27-split-monoliths：抽 PreviewToolbar/PreviewPane/PreviewImageDrawer + usePreviewStylePersist
  * （图库分页与智能建议分别收在 usePreviewLibrary/usePreviewSuggestions，由抽屉组件持有）。
+ *
+ * 10-12-preview-draft-copy-defense：草稿节流写 + 恢复草稿警示条/放弃路径(R2/R3)、复制三级降级链(R1)、
+ * 草稿放弃(R3)、宽度档位持久化(R6,键 sparkora.previewWidth)。
  */
 const props = defineProps({ project: Object })
 const route = useRoute()
@@ -137,13 +151,23 @@ const imgSnapshot = ref(null)   // 配图快照:{images[],coverImageId,bodyImage
 const saving = ref(false)
 const savedAt = ref('')
 const saveState = ref('clean') // clean | dirty | error
+const draftRestored = ref(false) // 进页恢复了未保存草稿(R3):常驻警示条 + 放弃路径仅在此会话出现
 const themeOptions = ref([])
 const highlightOptions = ref(['solarized-light'])
 const theme = ref('default')
 const highlight = ref('solarized-light')
 const macStyle = ref(true)
 const footnote = ref(true)
-const previewWidth = ref('phone') // 预览宽度档位:phone | tablet | full(仅视觉)
+// 预览宽度档位:phone | tablet | full(仅视觉;R6 持久化,进页恢复,读写失败兜底默认 phone)
+const WIDTH_KEY = 'sparkora.previewWidth'
+const WIDTH_CHOICES = ['phone', 'tablet', 'full']
+const readSavedWidth = () => {
+  try {
+    const v = localStorage.getItem(WIDTH_KEY)
+    return WIDTH_CHOICES.includes(v) ? v : 'phone'
+  } catch (e) { /* localStorage 不可用(隐私模式等):兜底默认 */ return 'phone' }
+}
+const previewWidth = ref(readSavedWidth())
 const copying = ref(false)
 
 // ==== 配图面板状态(图库插入 + AI 生图——生图 UI/逻辑在共用组件 AiImageDrawer.vue) ====
@@ -154,7 +178,8 @@ const previewable = computed(() => !!props.project && ['VERSIONS_READY', 'PUBLIS
 // 底部「去发布」按钮:版本就绪后显示,发布成功(终态)后消失
 const canGoPublish = computed(() => !!props.project && props.project.status === 'VERSIONS_READY')
 const dirty = computed(() => contentMd.value !== originalMd.value)
-const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
+// 字数 = textStatOf(剥离图片语法/链接目标与 markdown 结构标记后按非空白字符计,R5;口径见 utils/textStat.js)
+const wordCount = computed(() => textStatOf(contentMd.value))
 
 const draftKey = computed(() => `sparkora-preview-draft-${projectId.value}`)
 
@@ -284,8 +309,11 @@ const onStyleFieldChange = (field, v) => {
   else onPreviewStyleChange()
 }
 
-/** 宽度档位仅作用于预览容器视觉,不触发渲染/落库。 */
-const onPreviewWidthChange = (v) => { previewWidth.value = v }
+/** 宽度档位仅作用于预览容器视觉,不触发渲染/落库;切换即写 localStorage(R6,失败仅本次会话生效)。 */
+const onPreviewWidthChange = (v) => {
+  previewWidth.value = v
+  try { localStorage.setItem(WIDTH_KEY, v) } catch (e) { /* localStorage 不可用:仅本次会话生效 */ }
+}
 
 /** 编辑器正文变更(v-model 更新 contentMd 后):防抖重渲染预览。手动插图/粘贴图/打字均走此入口。 */
 const onEdit = () => {
@@ -342,13 +370,16 @@ const loadContent = async () => {
     const v = (vr.data || []).find(x => x.id === vid)
     if (!v) throw new Error('当前版本不存在')
     versionId.value = vid
-    // 草稿优先(localStorage,防渲染崩溃/误关丢稿),但提供放弃草稿路径
-    const draft = localStorage.getItem(draftKey.value)
+    // 草稿优先(localStorage,防渲染崩溃/误关丢稿);恢复时置 draftRestored → 常驻警示条提供「放弃」路径(R3)
+    let draft = null
+    try { draft = localStorage.getItem(draftKey.value) } catch (e) { /* localStorage 不可用:跳过草稿恢复 */ }
     originalMd.value = v.contentMd || ''
     if (draft && draft !== originalMd.value) {
-      ElMessage({ message: '检测到未保存的本地草稿,已恢复;点「保存正文」持久化或刷新放弃', type: 'warning', duration: 6000 })
+      draftRestored.value = true
       contentMd.value = draft
+      ElMessage({ message: '检测到未保存的本地草稿,已恢复;可点「放弃草稿」回退,或「保存正文」持久化', type: 'warning', duration: 6000 })
     } else {
+      draftRestored.value = false
       contentMd.value = originalMd.value
     }
     loaded.value = true
@@ -379,7 +410,8 @@ const saveContent = async () => {
     originalMd.value = contentMd.value
     savedAt.value = new Date().toTimeString().slice(0, 5)
     saveState.value = 'clean'
-    localStorage.removeItem(draftKey.value)
+    try { localStorage.removeItem(draftKey.value) } catch (e) { /* 兜底 */ }
+    draftRestored.value = false // 保存成功即彻底化当前内容,恢复警示条随之消失(R3)
     ElMessage.success('正文已保存')
     return true
   } catch (e) {
@@ -389,10 +421,73 @@ const saveContent = async () => {
   } finally { saving.value = false }
 }
 
+/** 放弃草稿(R3):回退到服务器已保存版本;清 draftKey 与恢复警示条。
+ *  contentMd 回 originalMd → dirty computed 翻 false([dirty, contentMd] watch 会清待写的节流草稿);纯前端回退,不动保存通道。 */
+const discardDraft = () => {
+  contentMd.value = originalMd.value
+  draftRestored.value = false
+  saveState.value = 'clean'
+  try { localStorage.removeItem(draftKey.value) } catch (e) { /* 兜底 */ }
+  scheduleRender()
+  ElMessage.info('已放弃草稿,正文已回退到已保存版本')
+}
+
+/** 隐藏节点 + `execCommand('copy')` 写剪贴板(R1 降级链的底座,不依赖 navigator.clipboard/安全源)。
+ *  - 富文本(asPlainText=false):contenteditable div 载入 HTML → Range 选中全部内容 → copy(浏览器随选区带上 text/html);
+ *  - 纯文本(asPlainText=true):textarea 载入文本 → focus+select() → copy。
+ *  **顺序硬要求:先 `appendChild` 进文档(屏幕外 fixed 定位,不可见、不进布局),再 focus/select/Range** ——
+ *  detached 节点上这些调用是 no-op/抛错,而 execCommand('copy') 仍可能返回 true,会造成
+ *  「弹了成功提示但剪贴板没内容」的静默假成功。返回 false 或抛错 → 调用方走下一级。
+ *  @returns {boolean} 是否复制成功 */
+const copyViaHiddenNode = (content, asPlainText) => {
+  let node = null
+  let ok = false
+  try {
+    node = document.createElement(asPlainText ? 'textarea' : 'div')
+    // 先挂进文档再选中(见注释:detached 节点选中无效,execCommand 返回 true 也是假成功)
+    node.style.position = 'fixed'
+    node.style.left = '-9999px'
+    node.style.top = '-9999px'
+    if (asPlainText) {
+      node.setAttribute('readonly', '')   // 防聚焦弹出软键盘(iOS)
+      node.value = content
+    } else {
+      node.contentEditable = 'true'       // contenteditable 选中即富文本复制
+      node.innerHTML = content
+    }
+    document.body.appendChild(node)
+    if (asPlainText) {
+      node.focus({ preventScroll: true })
+      node.select()
+    } else {
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      const sel = window.getSelection()
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+    ok = document.execCommand('copy')
+  } catch (e) {
+    console.warn('[preview] execCommand 复制失败:', e)
+    ok = false
+  } finally {
+    window.getSelection()?.removeAllRanges()
+    node?.remove()
+  }
+  return ok
+}
+
 /** 复制排版:buildWechatHtml 内联输出(与发布同参),富文本进剪贴板。输入纯正文(不含 frontmatter)。
  *  含未上传暂存图(token)时拦截——否则复制出的 HTML 会带失效 src(09-27-preview-clipboard-image R4)。
  *  09-27-image-insert-bugs:拦截文案区分「待上传」与「已失效」——已失效的点「去发布」也传不上去,
- *  统一提示「先去发布」会把用户引到无效操作上(AC2 要求提示可执行)。 */
+ *  统一提示「先去发布」会把用户引到无效操作上(AC2 要求提示可执行)。
+ *
+ *  10-12-preview-draft-copy-defense R1 **三级降级链**(既有富文本优先语义不变,逐级失败才降级、不静默):
+ *  ① 安全源原生 `navigator.clipboard.write`(ClipboardItem 富文本)——现行为,成功文案不变;
+ *  ② 富文本降级 —— 隐藏 contenteditable + `execCommand('copy')`(桌面 Chrome/Edge 用户手势内可剪裁富文本;
+ *     Chrome 非安全源 http://IP:8088 下 navigator.clipboard 为 undefined,恒走本级,成功文案与 ① 一致);
+ *  ③ 纯文本兜底 —— 隐藏 textarea 复制 **Markdown 源文**,提示明确告知「非排版」;
+ *  ④ 全部失败 → 报错。 */
 const copyRich = async () => {
   if (hasPendingToken()) {
     ElMessage.warning(unresolvedTokens.value.length
@@ -405,15 +500,31 @@ const copyRich = async () => {
     const inline = await buildWechatHtml(contentMd.value || '', {
       theme: theme.value, highlight: highlight.value, macStyle: macStyle.value, footnote: footnote.value
     })
+    // ① 安全源原生富文本(现行为不变;write 被拒/抛错也继续走 ②,不静默终止)
     if (navigator.clipboard && window.ClipboardItem) {
-      await navigator.clipboard.write([new ClipboardItem({
-        'text/html': new Blob([inline], { type: 'text/html' }),
-        'text/plain': new Blob([props.project?.topic || '', inline], { type: 'text/plain' })
-      })])
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([inline], { type: 'text/html' }),
+          'text/plain': new Blob([props.project?.topic || '', inline], { type: 'text/plain' })
+        })])
+        ElMessage.success('已复制排版,去公众号编辑器粘贴即可')
+        return
+      } catch (e) {
+        console.warn('[preview] clipboard.write 失败,降级富文本复制:', e)
+      }
+    }
+    // ② 富文本降级:隐藏 contenteditable + execCommand('copy')
+    if (copyViaHiddenNode(inline, false)) {
       ElMessage.success('已复制排版,去公众号编辑器粘贴即可')
       return
     }
-    throw new Error('浏览器不支持富文本复制')
+    // ③ 纯文本兜底:复制 Markdown 源文(失败/降级不得静默——文案明确告知这不是排版结果)
+    if (copyViaHiddenNode(contentMd.value || '', true)) {
+      ElMessage.warning('浏览器不支持富文本复制,已复制 Markdown 源文(非排版)')
+      return
+    }
+    // ④ 全部失败:保留报错
+    ElMessage.error('浏览器不支持富文本复制')
   } catch (e) {
     ElMessage.error(e?.message || '复制失败')
   } finally { copying.value = false }
@@ -461,10 +572,43 @@ const onGenerated = async () => {
   try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响生成结果展示 */ }
 }
 
-watch(saveState, (s) => { if (s !== 'dirty') return })
-watch(dirty, (d) => {
-  if (d) { saveState.value = 'dirty'; localStorage.setItem(draftKey.value, contentMd.value) }
-  else saveState.value = 'clean'
+// ==== 草稿(崩溃恢复兜底,10-12-preview-draft-copy-defense R2) ====
+// 旧缺陷:仅 dirty false→true 翻转瞬间写一次,持续编辑不再更新 → 崩溃恢复只得「首次改动版」。
+// 现在 dirty 期间对 contentMd **节流写**(≈1s):距上次落盘 ≥1s 立即写(leading);否则挂 1s 后兜底写
+// 一次(trailing,写到期时刻的最新内容)——连续打字约每 1s 落盘一次,停止编辑 ≤1s 内补写最后一笔,
+// 且任何时刻距上次落盘 ≤2s,崩溃恢复始终贴近最新编辑(AC:编辑后等 ≥2s 强制刷新 → 恢复最近内容)。
+// 内容回到 originalMd(保存成功/撤销回退) → 不写并清掉已存草稿;保存成功路径的 removeItem 语义不动。
+const DRAFT_THROTTLE_MS = 1000
+let draftTimer = null
+let draftWrittenAt = 0
+const writeDraft = () => {
+  draftWrittenAt = Date.now()
+  try {
+    if (contentMd.value !== originalMd.value) localStorage.setItem(draftKey.value, contentMd.value)
+    else localStorage.removeItem(draftKey.value)
+  } catch (e) { /* localStorage 不可用(隐私模式等):草稿兜底失效,不影响编辑主流程 */ }
+}
+watch([dirty, contentMd], ([d]) => {
+  if (!d) {
+    // 回到已保存内容(保存成功 / 撤销回退):清 pending 节流 + 清已存草稿
+    clearTimeout(draftTimer)
+    draftTimer = null
+    saveState.value = 'clean'
+    // 与已保存版本一致时,「比已保存版本新或不同」不再成立 → 恢复警示条一并消失(R3)
+    draftRestored.value = false
+    writeDraft() // 此时内容与 originalMd 相等 → removeItem
+    return
+  }
+  saveState.value = 'dirty'
+  if (Date.now() - draftWrittenAt >= DRAFT_THROTTLE_MS) {
+    // leading:距上次落盘 ≥1s 立即写(保留旧「翻转立即写一次」,防 1s 内崩溃连首次改动都丢)
+    clearTimeout(draftTimer)
+    draftTimer = null
+    writeDraft()
+  } else if (!draftTimer) {
+    // trailing:挂 1s 后兜底写(到期读最新 contentMd;持续编辑不重挂——已有这颗定时器兜底即可)
+    draftTimer = setTimeout(() => { draftTimer = null; writeDraft() }, DRAFT_THROTTLE_MS)
+  }
 })
 
 onMounted(async () => {
@@ -505,7 +649,12 @@ watch(projectId, (newId, oldId) => {
 })
 
 watch(previewable, (ok) => { if (ok && !loaded.value && !loadError.value) loadContent() })
-onBeforeUnmount(() => { onSplitUp(); disposeRender(); flushSavePreviewStyle() })
+onBeforeUnmount(() => {
+  onSplitUp(); disposeRender(); flushSavePreviewStyle()
+  // 带走仍在节流窗口内的最后一笔草稿(R2):卸载时若编辑器里是未保存内容,立即落草稿盘;
+  // 未加载成功(loaded=false)时不动——contentMd/originalMd 都是空串,误清会删掉旧会话留下的草稿。
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; if (loaded.value) writeDraft() }
+})
 </script>
 
 <style scoped>

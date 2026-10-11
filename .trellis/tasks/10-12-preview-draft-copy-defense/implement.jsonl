@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "防抖定时器 onBeforeUnmount 清理、localStorage try/catch 兜底、纯派生函数抽 utils 惯例、焦点/密度 token;草稿节流写与放弃条实现须符合"}
+{"file": "docs/spec/preview.md", "reason": "§3 契约与 §4 前端段(现存 iframe srcdoc 漂移待修)、§4.1 剪贴板防呆与复制拦截文案;R1 降级链与 R7 同步落点"}

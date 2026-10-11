@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对防抖清理/localStorage 兜底/utils 拆分/无依赖引入"}
+{"file": "docs/spec/preview.md", "reason": "核对 §4 同步后与实现逐点一致,复制防呆段未被降级链推翻"}

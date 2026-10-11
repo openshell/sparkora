@@ -20,7 +20,7 @@
           </span>
         </div>
         <div ref="previewBody" class="wechat-body" @scroll="emit('scroll')">
-          <div v-if="html" class="wenyan-preview" v-html="html"></div>
+          <div v-if="html" class="wenyan-preview" :class="{ 'fade-in-once': fadeOnce }" v-html="html"></div>
           <el-skeleton v-else :rows="9" animated class="preview-skeleton" />
         </div>
         <div class="phone-home" aria-hidden="true"><span></span></div>
@@ -30,13 +30,18 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 
 /**
  * 预览页右侧手机拟真预览窗（渲染态/错误重试/滚动）。
- * 从 StepPreview.vue 抽出（09-27-split-monoliths，纯结构重构，零行为变化）。
+ * 从 StepPreview.vue 抽出（09-27-split-monoliths，纯结构重构）。
  * 滚动同步由父编排：父调 scrollToPercent(percent)，滚动时 emit('scroll') 由父读 currentPercent()。
+ *
+ * 10-12-preview-draft-copy-defense R4：入场动画改为**一次性淡入**——旧实现把 `animation: fadein`
+ * 常驻挂在 `.wenyan-preview` 上;实测普通 v-html 内容更新不重放（节点未重建）,但常驻动画没有
+ * 「内容更新之外」的语义且 remount 场景必重放。现在只在「首帧渲染完成 / 主题切换应用完成」
+ * 点亮 `fade-in-once`（双 rAF 保证 none→value 重启）,连续 400ms 内容更新绝不重放。
  */
 const props = defineProps({
   html: { type: String, default: '' },
@@ -60,6 +65,22 @@ const currentPercent = () => {
   return (el.scrollTop) / Math.max(1, el.scrollHeight - el.clientHeight)
 }
 defineExpose({ scrollToPercent, currentPercent })
+
+// ==== 一次性淡入(R4):仅首帧渲染完成 / 主题切换完成时点亮;内容更新不加类 → 不播动画 ====
+const fadeOnce = ref(false)
+let fadeTimer = null
+const playFadeIn = () => {
+  fadeOnce.value = false
+  // 双 rAF:先把类摘掉(动画回 none),下一两帧再加回 → animation 必定重启,不依赖节点重建
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    fadeOnce.value = true
+    clearTimeout(fadeTimer)
+    fadeTimer = setTimeout(() => { fadeOnce.value = false }, 300) // 略大于 .18s 动画期,随后摘类
+  }))
+}
+watch(() => props.html, (v, ov) => { if (!ov && v) playFadeIn() })          // 首帧渲染完成(空 → 有内容)
+watch(() => props.themeLoading, (v, ov) => { if (ov && !v) playFadeIn() })  // 主题/高亮应用完成
+onBeforeUnmount(() => clearTimeout(fadeTimer))
 </script>
 
 <style scoped>
@@ -87,7 +108,9 @@ defineExpose({ scrollToPercent, currentPercent })
 .wechat-body { width: 100%; background: #fff; padding: 10px 14px 20px; min-height: 520px; max-height: 640px; overflow: auto; border-radius: 0 0 14px 14px; overflow-y: auto; }
 .phone-home { display: flex; justify-content: center; padding: 5px 0 3px; }
 .phone-home span { width: 100px; height: 4px; border-radius: 2px; background: rgba(0,0,0,.28); }
-.wenyan-preview { animation: fadein .18s ease; }
+/* 一次性淡入(R4):不再常挂.wenyan-preview——内容由 v-html 更新时容器元素不重建,
+   挂了类才会播一次 fadein(首帧/主题切换),普通内容更新不加类 → 无入场动画。 */
+.wenyan-preview.fade-in-once { animation: fadein .18s ease; }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 .preview-skeleton { padding: 16px; }
 
@@ -110,7 +133,7 @@ defineExpose({ scrollToPercent, currentPercent })
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .wenyan-preview { animation: none; }
+  .wenyan-preview.fade-in-once { animation: none; }
   .theme-progress { display: none; }
 }
 </style>

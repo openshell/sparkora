@@ -178,6 +178,25 @@ const onKeywordInput = () => { clearTimeout(kwTimer); kwTimer = setTimeout(load,
 onBeforeUnmount(() => { clearTimeout(kwTimer) })
 ```
 
+> **本地草稿类「不能丢」的持久化用 leading+trailing 节流，不是纯 debounce（10-12-preview-draft-copy-defense R2）**：纯 debounce 在连续打字时每键重置窗口、**永不落盘**，反而复刻「只存首次改动」的旧缺陷。范式：dirty 翻转立即写（leading，距上次落盘 ≥1s 就当场写）+ 挂 1s 到期兜底写最新内容（trailing，连续输入每 ≤1s 落盘一次）；卸载时清 timer 并 flush 最后一笔（仅当页面已加载成功，防止空串覆盖旧草稿）。
+
+### Convention: 富文本复制三级降级链与 execCommand 剪贴板兜底
+
+`navigator.clipboard` 全家（含 `ClipboardItem`）只在**安全源**可用——产线形态 `http://IP:8088` 下为 `undefined`，只走原生 API 的复制功能**必然失败**。复制类动作用三级降级链（先例 `StepPreview.vue#copyRich`，10-12-preview-draft-copy-defense R1）：
+
+1. **①** 安全源：`navigator.clipboard.write` 富文本（现行为不变）；
+2. **②** 富文本降级：隐藏 contenteditable 节点载入内联 HTML + `document.execCommand('copy')`；
+3. **③** Markdown 源文纯文本兜底（隐藏 textarea + execCommand），**提示必须明确告知「非排版」**；
+4. **④** 全部失败才报错。逐级失败进入下一级，**任何一级成功都不得谎报为高一级的结果**。
+
+`execCommand('copy')` 实现三条硬要求：
+
+- **节点必须先 `appendChild` 进 DOM**（`position:fixed` 挂屏幕外），再 focus/select/Range 后才调用 execCommand——**detached 节点上 focus/select 无效但 execCommand 仍返回 true**（静默假成功，剪贴板里什么都没有）；
+- 复制完成后 `remove()` 节点 + `selection.removeAllRanges()` 清选区（finally 里做，不留 DOM 残留）；
+- 与既有防呆契约共存：正文含待上传/已失效 token 时复制被拦截（`hasPendingToken`），降级链不能绕过拦截。
+
+**Related**: `frontend/src/views/project/StepPreview.vue`、`docs/spec/preview.md` §4。
+
 ### Convention: 客户端「取消」≠ 服务端停止：必须如实告知 + 取消判据先于超时判据
 
 长耗时非幂等请求（生图、发布、批量重建…）给「取消」入口时，`AbortController` 只能**停止客户端等待**——后端请求线程仍在跑，下游可能照常处理完成并**落库**。三条硬性要求（09-27 先例：`AiImageDrawer.vue` 的生成取消，与后端 [`external-cli-integration.md`](../backend/external-cli-integration.md) 的非幂等条款同源）：
@@ -509,6 +528,16 @@ const isInline = computed(() => props.mode === 'preview')
 ```
 
 **Prevention**: 覆盖 EP 内部结构样式前，先在 node_modules 的组件 CSS 里核对真实选择器（写 `:deep()` 死选择器是静默无效的，构建/测试都不会拦）。
+
+### Common Mistake: String prop 直绑 Element Plus 的 Boolean prop（`:disabled="renderError"`）
+
+**Symptom**: 按钮永远处于禁用态（如「复制排版」从 S4 起一直点不了），但 build 与测试都不报错——禁用按钮的用例没人写，就是最隐蔽的一类回归（10-12-preview-draft-copy-defense 实现/核查实测）。
+
+**Cause**: Vue 对 **Boolean 型 prop 做 casting**：属性缺省=`false`、`''`→**`true`**、任意非空串→`true`。父组件持有 String prop（如 `renderError: { type: String, default: '' }`）直接 `:disabled="renderError"` 绑到 el-button 的 `disabled(Boolean)` 上时，空串被铸成 `true`——「无错误」被解释成「禁用」。
+
+**Fix**: Boolean prop 绑定一律显式布尔化：`:disabled="!!renderError"`（同组「去发布」的正确写法）。
+
+**Prevention**: review/核查 diff 时 grep `:disabled="` / `:loading="` / 其他 Boolean prop，凡绑定的源不是 Boolean（String/数字/computed 可能返回串）一律要求 `!!` 或显式三元；数值同理（`:maxlength="count"` 若 count 是数字串）。
 
 ---
 
