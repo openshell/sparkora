@@ -73,14 +73,13 @@
     <!-- 图库网格:元数据入 hover 层 -->
     <template v-else>
       <div class="img-grid" :class="{ compact: density === 'compact' }" v-loading="loading" element-loading-text="加载中…">
-        <ImageCard v-for="img in images" :key="img.id"
-                   :img="img" :select-mode="selectMode" :selected="selectedIds.has(img.id)"
-                   :highlight="highlightId === img.id" :source-info="sourceInfo(img.id)"
+        <ImageCard v-for="(img, index) in images" :key="img.id"
+                   :img="img" :index="index" :select-mode="selectMode" :selected="selectedIds.has(img.id)"
+                   :highlight="highlightId === img.id"
                    :projects="projects" :can-edit="user.isEditorOrAbove"
                    :can-regenerate="canRegenerate(img)" :deleting="deletingId === img.id" :regenerating="regenId === img.id"
-                   :page-origin-urls="pageOriginUrls"
                    @card-click="onCardClick" @filter-tag="filterByTag" @edit-tags="openTagDialog"
-                   @regen="onRegenerate" @delete="onDelete" @open-news="openNews" />
+                   @regen="onRegenerate" @delete="onDelete" />
       </div>
       <!-- 分页：语义搜索为 topK 无分页，仅图库浏览态显示 -->
       <div v-if="!semanticMode" class="pager-row">
@@ -88,6 +87,13 @@
                        layout="prev, pager, next, total" background @current-change="load" />
       </div>
     </template>
+
+    <!-- 全屏预览(宿主托管单实例 viewer + 右侧详情面板):原图序列连续浏览,面板信息跟随当前图 -->
+    <ImagePreviewViewer
+      v-model:visible="viewerVisible"
+      :url-list="pageOriginUrls" :index="viewerIndex" :img="currentImg"
+      :source-info="currentSourceInfo" :projects="projects"
+      @switch="onViewerSwitch" @open-news="openNews" />
 
     <!-- AI 生图抽屉（09-26 image-gen-drawer-ux：共用组件，library 模式 → 生成后定位列表） -->
     <AiImageDrawer v-model="aiDrawer" :project-id="null" mode="library"
@@ -115,6 +121,7 @@ import AiImageDrawer from '../components/AiImageDrawer.vue'
 import ImageLibraryToolbar from '../components/image/ImageLibraryToolbar.vue'
 import ImageSemanticBar from '../components/image/ImageSemanticBar.vue'
 import ImageCard from '../components/image/ImageCard.vue'
+import ImagePreviewViewer from '../components/image/ImagePreviewViewer.vue'
 import ImageTagDialog from '../components/image/ImageTagDialog.vue'
 import ImageBulkTagDialog from '../components/image/ImageBulkTagDialog.vue'
 import { imageApi, projectApi } from '../api'
@@ -211,8 +218,26 @@ const { selectMode, selectedIds, bulkDeleting, enter, exit, selectAllPage, toggl
   getPageIds: () => images.value.map(i => i.id),
   reload: () => load()
 })
-/** 卡片点击:选择模式 = 勾选;浏览态 = 预览(交给 el-image,不处理)。 */
-const onCardClick = (img) => { if (selectMode.value) toggleSelect(img) }
+/** 卡片点击:选择模式 = 勾选;浏览态 = 打开全屏预览(index 由 v-for 直传定位,杜绝重名 URL 错位)。 */
+const onCardClick = (img, index) => {
+  if (selectMode.value) { toggleSelect(img); return }
+  viewerIndex.value = clampViewerIndex(index)
+  viewerVisible.value = true
+}
+
+// ==== 全屏预览(宿主托管单实例 viewer:10-10-img-gallery-ui-polish) ====
+const viewerVisible = ref(false)
+const viewerIndex = ref(0)
+/** 索引 clamp:任何来源(卡片直传/EP switch 上抛)都收敛到当前网格有效区间 */
+const clampViewerIndex = (i) => {
+  const n = images.value.length
+  if (!n) return 0
+  return Math.min(Math.max(i, 0), n - 1)
+}
+/** 当前图与来源追溯派生(面板信息跟随 EP viewer 的 switch 事件) */
+const currentImg = computed(() => images.value[clampViewerIndex(viewerIndex.value)] || null)
+const currentSourceInfo = computed(() => (currentImg.value ? (sourceInfo(currentImg.value.id) || null) : null))
+const onViewerSwitch = (i) => { viewerIndex.value = clampViewerIndex(i) }
 
 /** 点卡片标签 → 直接按该标签筛选（09-13 image-tags；09-15 起为多选数组，点已选标签则取消）。
  *  语义模式下点标签则退出检索、回到浏览态按该标签筛选（语义结果与精确筛选不混用）。 */

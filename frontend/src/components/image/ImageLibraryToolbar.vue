@@ -7,6 +7,8 @@
       </el-upload>
       <el-button v-if="canEdit" type="primary" plain icon="MagicStick" @click="emit('ai-gen')">AI 生图</el-button>
     </div>
+    <!-- 主操作组 / 浏览控制组视觉分隔(10-10-img-gallery-ui-polish) -->
+    <el-divider direction="vertical" class="tb-divider" />
     <div class="tb-group tb-browse">
       <!-- 语义搜索模式(09-15 img-semantic-search 子B):自然语言找图,与下方精确筛选互斥 -->
       <el-tooltip content="语义搜索：用自然语言找图，如「比亚迪销量海报」" placement="top" :show-after="300">
@@ -54,7 +56,7 @@
         <el-button text :icon="density === 'compact' ? Menu : Grid" aria-label="切换网格密度" @click="emit('toggle-density')" />
       </el-tooltip>
       <el-button v-if="!semanticMode" text :icon="Refresh" aria-label="刷新" @click="emit('reload')" />
-      <el-button v-if="canEdit && !selectMode && imagesLength && !semanticMode" text type="danger" plain @click="emit('enter-select')">批量管理</el-button>
+      <el-button v-if="canEdit && !selectMode && imagesLength && !semanticMode" text type="danger" @click="emit('enter-select')">批量管理</el-button>
     </div>
   </div>
 </template>
@@ -112,6 +114,10 @@ const semanticMinScoreModel = computed({ get: () => props.semanticMinScore, set:
 .tb-group { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
 .tb-primary { flex: none; }
 .tb-browse { flex: 1; min-width: 0; justify-content: flex-end; }
+/* 分组分隔线(10-10-img-gallery-ui-polish):竖向 divider 拉高对齐控件行。
+   EP 2.8 竖向 divider 的线画在根元素 border-left 上（无 .el-divider__separator 子元素），
+   改 border 颜色对齐项目 token，勿用 EP 默认 --el-border-color。 */
+.tb-divider { height: var(--control-h-md); margin: 0; align-self: center; border-left-color: var(--line); }
 .kw-input { width: 200px; }
 .sem-input { width: 240px; }
 .src-filter { width: 104px; }
