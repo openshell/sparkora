@@ -16,8 +16,10 @@ import { projectApi, imageApi } from '../api'
  *   - insertAtAnchor: (headingPath, md) => boolean（editorRef.insertMdAtAnchor）
  *   - originUrl: (img) => string（原图 URL 派生）
  *   - refreshSnapshot: () => Promise（写入后刷新配图快照）
+ *   - saveContent: () => Promise（persist:采纳结算后保存正文;宿主注入唯一保存通道(StepPreview.saveContent),
+ *     本组合函数不感知其实现——成功/失败提示均由宿主内部完成,此处只吞结果与异常,不改变采纳成功口径）
  */
-export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEditorReady, insertAtAnchor, originUrl, refreshSnapshot }) {
+export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEditorReady, insertAtAnchor, originUrl, refreshSnapshot, saveContent }) {
   const sugGroups = ref([])          // 按锚点分组的建议: [{anchorKey,anchorIndex,headingPath,anchorText,candidates[]}]
   const sugLoading = ref(false)
   const sugLoaded = ref(false)       // 是否已生成过(区分「未生成」/「生成后无候选」空态)
@@ -97,10 +99,21 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
     if (!silent) ElMessage.success('已插入到正文并登记插图')
   }
 
+  /** 采纳结算后的正文落库(persist,10-11-img-suggest-adopt-persist):消除「关联行已落、content_md 未落」的半状态窗口。
+   *  复用宿主唯一保存通道(saveContent → StepPreview.saveContent,经 prop 注入),不新增保存通道。
+   *  失败语义(R3):宿主 saveContent 内部已提示(成功「正文已保存」/失败中文警示),此处吞掉返回值与异常——
+   *  不回滚正文与登记行、不重复弹错;persist 失败不改变「采纳成功」口径。 */
+  const persistAfterAdopt = async () => {
+    if (typeof saveContent !== 'function') return
+    try { await saveContent() } catch (e) { /* 保存失败已在宿主内部提示,仅吞错避免双 toast */ }
+  }
+
   const onAdoptOne = async (group, img) => {
     busy.value = true
     try {
       await adoptSuggestion(group, img)
+      // 采纳结算(登记+插入含回滚)后立即落正文;CodeMirror dispatch 同步驱动 v-model,当前 contentMd 已含刚插图
+      await persistAfterAdopt()
       try { await refreshSnapshot() } catch (e) { /* 快照刷新失败不影响已完成的写入,仅提示 */ }
     } catch (e) {
       ElMessage.error('采用失败:' + (e.response?.data?.msg || e.message || '网络异常'))
@@ -108,7 +121,8 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
   }
 
   /** 整组采用:逐张执行(单张失败不阻断其余,末尾汇总提示)。
-   *  倒序插入:每次都插到标题行之后,倒序执行才能让「相关度最高」的排在紧贴标题的第一位(与候选展示序一致)。 */
+   *  倒序插入:每次都插到标题行之后,倒序执行才能让「相关度最高」的排在紧贴标题的第一位(与候选展示序一致)。
+   *  整组处理完后**仅触发一次** persist(不逐张保存);组内有失败也不中断,persist 内容=最新 contentMd,与组内成败无关。 */
   const onAdoptGroup = async (group) => {
     if (!group.candidates?.length) return
     busy.value = true
@@ -120,6 +134,7 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
           ok++
         } catch (e) { fail++ }
       }
+      await persistAfterAdopt()   // 整组结算后一次落正文(R1:N 次采纳 1 次保存)
       try { await refreshSnapshot() } catch (e) { /* 快照刷新失败不影响已完成的写入,仅提示 */ }
       if (fail) ElMessage.warning(`已采用 ${ok} 张,${fail} 张失败`)
       else ElMessage.success(`已采用 ${ok} 张`)

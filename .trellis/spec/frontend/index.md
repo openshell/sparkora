@@ -79,6 +79,7 @@ editorRef.value?.insertMdAtAnchor?.(group.headingPath, `\n![](${url})\n`)  // �
 - 回滚前判断该图是否**本次新登记**（对照 `imgSnapshot.bodyImageIds`），已登记过的图不得因插入失败被移除（会误删用户既有插图）。
 - **接口 DTO 是 record 时字段名可能与实体不同**：建议/检索类候选走 `ImageSearchHit`（`imageId`/`url`/`thumbUrl`），图库实体走 `id`/`url`。混用会静默传 `undefined`（如 `POST /images/undefined/body` → 400「参数 imageId 格式不正确」），且**编译与构建都不会报错**——对照 `frontend/src/api/index.js` 的接口注释确认字段名。
 - **不得提供任何自动写入路径**：不设自动插入开关；生成建议（检索）可自动，写入必须用户点。服务侧也不得注入可写字段的组件。
+- **采纳结算后即时落库（10-11-img-suggest-adopt-persist）**：采纳动作（登记 + 插入，含回滚）结算完成后，经 prop 注入的 persist 回调复用宿主 `StepPreview.saveContent` 落一次正文——单张采纳 1 次、整组「全部采用」仅 1 次（组内单张失败不中断，persist 内容=最新 contentMd 与组内成败无关；全失败也触发一次，幂等无害）。persist 失败不回滚、不叠加提示（宿主 `saveContent` 自带中文警示/成功提示，回调只吞错防双 toast）；未传 prop 时静默跳过（向后兼容）。persist 后 `refreshSnapshot` 仍照常执行；「去发布」dirty 前置存语义不变。persist 可保存最新正文的时序前提：`insertAtAnchor` 经 CodeMirror `dispatch` → `emit('update:modelValue')` **同步**更新 `contentMd`（400ms 防抖仅在渲染侧，不介入 v-model）。
 
 **Related**: `frontend/src/views/project/StepPreview.vue`（智能建议 tab）、`frontend/src/components/MarkdownEditor.vue`（`insertMdAtAnchor`）。
 

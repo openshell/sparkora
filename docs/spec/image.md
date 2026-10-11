@@ -342,6 +342,8 @@
 
 二者均幂等（`addBodyImage` 幂等；重复插入 markdown 用户可见可自行编辑）。不新增关联模型。
 
+- **第三层：采纳结算即落正文（10-11-img-suggest-adopt-persist；仅新增保存调用层,上述二写语义与回滚不变）**：采纳结算（登记 + 插入含回滚）完成后，由宿主注入的 persist 回调立即触发既有 `saveContent`（`PUT /projects/{id}/versions/{versionId}/content`，经 `StepPreview.saveContent` prop 透传，不新增保存通道）——单张采纳成功 1 次；「全部采用」整组结算后仅 1 次（组内单张失败不中断其余，persist 内容 = 最新 contentMd，与组内成败无关）。保存失败只提示不回滚（登记行与 markdown 均保留；失败提示出自宿主 saveContent 既有实现，回调只吞错避免双 toast）；组合函数/抽屉不感知保存实现，仅持「persist 后再 refreshSnapshot」的回调约定。
+
 ### 7.4 「忽略」的语义
 
 - 「忽略此段」→ `POST /{id}/illustration-suggestions/dismiss` body `{anchorKey}` 写 dismiss 表；后续生成建议该锚点被跳过（不再反复打扰）。

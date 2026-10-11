@@ -84,6 +84,7 @@
       :is-editor-ready="isEditorReady"
       :insert-at-anchor="insertAtAnchor"
       :refresh-snapshot="refreshImgSnapshot"
+      :save-content="saveContent"
       @update:busy="(v) => (busy = v)"
       @insert="insertBodyImage" @set-cover="onSetCover" @generated="onGenerated" />
   </div>
@@ -368,6 +369,7 @@ const loadContent = async () => {
   }
 }
 
+/** 保存正文(唯一保存通道):工具栏「保存正文」/「去发布」前置存/配图建议采纳落库(经 prop 透传给抽屉)共用。 */
 const saveContent = async () => {
   saving.value = true
   saveState.value = 'dirty'

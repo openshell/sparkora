@@ -131,6 +131,8 @@ import { usePreviewSuggestions } from '../../composables/usePreviewSuggestions'
  * @prop snapshot 配图快照 ref（建议采用回滚判定读 bodyImageIds）
  * @prop insertAtAnchor (headingPath, md) => boolean（编辑器按标题插入）
  * @prop refreshSnapshot () => Promise（写入后刷新配图快照）
+ * @prop saveContent () => Promise（persist:建议采纳结算后保存正文;透传宿主 StepPreview.saveContent,
+ *       本组件不感知保存实现,与 refreshSnapshot 同款回调接线）
  */
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -141,7 +143,8 @@ const props = defineProps({
   snapshot: { type: Object, default: null },
   isEditorReady: { type: Function, default: null },
   insertAtAnchor: { type: Function, default: null },
-  refreshSnapshot: { type: Function, default: null }
+  refreshSnapshot: { type: Function, default: null },
+  saveContent: { type: Function, default: null }
 })
 const emit = defineEmits(['update:modelValue', 'update:busy', 'insert', 'set-cover', 'generated'])
 
@@ -174,7 +177,8 @@ const {
   isEditorReady: () => (props.isEditorReady ? props.isEditorReady() : !!props.insertAtAnchor),
   insertAtAnchor: (headingPath, md) => (props.insertAtAnchor ? props.insertAtAnchor(headingPath, md) : false),
   originUrl,
-  refreshSnapshot: () => (props.refreshSnapshot ? props.refreshSnapshot() : Promise.resolve())
+  refreshSnapshot: () => (props.refreshSnapshot ? props.refreshSnapshot() : Promise.resolve()),
+  saveContent: () => (props.saveContent ? props.saveContent() : Promise.resolve())
 })
 
 // S10:抽屉首次打开时拉图库分页(后续打开仅在空态时重拉,避免打断滚动位置)
