@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对清单：原图 URL 约定未被破坏、组件 props/emits 声明式契约、防抖 timer 清理、焦点环、E2E 导入契约（fixtures）与基线重录是否按流程"}
+{"file": "docs/spec/image.md", "reason": "核对详情面板字段名与 ImageSearchHit/实体差异是否遵守（projectId 缺失不臆断「全局」）、接口零变更确认"}
+{"file": ".trellis/tasks/10-10-img-gallery-ui-polish/prd.md", "reason": "AC-1~AC-7 逐条验收 + 非目标越界检查"}
+{"file": ".trellis/tasks/10-10-img-gallery-ui-polish/design.md", "reason": "回归口径：点击穿透与 @click.stop 交互元素不被预览劫持、viewer switch 索引 clamp、明暗主题变量"}
