@@ -269,6 +269,60 @@ const listOf = (raw) => {
 <el-image :src="img.thumbUrl || img.url" :preview-src-list="[img.url]" preview-teleported hide-on-click-modal />
 ```
 
+> 图库类网格适用下一条「点击穿透模型」：`el-image` 退化为纯展示，预览入口上移到卡片根，不再逐卡挂 `preview-src-list`。
+
+### Convention: 图库类「hover 显隐层」卡片必须整卡可点（点击穿透模型）
+
+**What**: 带 hover 显隐元数据层的卡片，主点击（看大图/打开详情）必须落在**卡片根元素**上；hover 层恒定 `pointer-events: none`，仅真正的交互元素（标签、按钮、外链）恢复 `auto` + `@click.stop`。hover/focus 规则只切**透明度**，不切 pointer-events。
+
+**Why**: hover 层随 hover 切 `auto` 会吞掉中下部点击——要素越多的图遮罩越大、越点不进预览，交互自相矛盾（10-10-img-gallery-ui-polish 修复先例：图库「点图区才可预览」，点 hover 层文字即无响应）。整卡可点恢复「点卡片≈看图」直觉。
+
+```vue
+<div class="img-card" @click="emit('card-click', img, index)">  <!-- 根元素=唯一点击面 -->
+  <el-image :src="imgUrl(img)" fit="cover" />                    <!-- 纯展示,无 preview-src-list -->
+  <div class="hover-panel">                                      <!-- 恒定 none -->
+    <div class="hp-name">…</div>                                 <!-- 非交互行,点击穿透到根 → 预览 -->
+    <span class="hp-tag" @click.stop="emit('filter-tag', t)">…</span>
+    <el-button @click.stop="emit('delete', img)">删除</el-button>
+  </div>
+</div>
+```
+
+```css
+.hover-panel { pointer-events: none; }          /* 恒定,勿在 :hover/:focus-within 里切回 auto */
+.hp-tag, .hp-actions { pointer-events: auto; }  /* 交互元素逐个恢复 */
+```
+
+- 触发主动作的 payload **必须携带 v-for `index`**，宿主按索引定位后续动作（连续预览/定位）——不要用 `list.indexOf(某字段)`，值重复时定位错位。
+- 「根点击语义切换」（如选择模式点卡片=勾选而非预览）在**宿主处理**：`onCardClick(item, index)` 内 `selectMode ? toggle : openViewer`；卡片组件保持纯 emits，不持有 viewer 状态。
+- 非交互浮标（来源小标、相关度角标等）一律 `pointer-events: none`，样式仿半透明深底白字胶囊（`rgba(0,0,0,.55)` + 白字 + blur），与交互元素严格区分。
+
+**Related**: `frontend/src/components/image/ImageCard.vue`、`views/ImageLibrary.vue`（`onCardClick`）、`docs/spec/image.md` §8。
+
+### Convention: 全屏大图预览 = 「el-image-viewer 单实例宿主 + 外挂信息面板」
+
+**What**: 需要在看大图时附带详情面板/外挂操作时，用**组件托管的单实例 `el-image-viewer`**（先例 `ImagePreviewViewer.vue`）替代逐卡挂 `preview-src-list`：`el-image` 纯展示，viewer 由宿主 `viewerVisible`/`viewerIndex` 状态驱动，信息面板与 viewer 同壳叠放。
+
+**Example**:
+
+```vue
+<div v-if="visible" class="preview-viewer">      <!-- position:fixed; inset:0; 自成叠层上下文 -->
+  <el-image-viewer :teleported="false" hide-on-click-modal
+                   :url-list="urlList" :initial-index="clampedIndex"
+                   @switch="i => emit('switch', i)"
+                   @close="emit('update:visible', false)" />
+  <aside class="viewer-info">…</aside>            <!-- absolute 悬浮卡,可收起 -->
+</div>
+```
+
+- **`:teleported="false"` 是关键**：viewer 渲染进 fixed 包裹层而非 `body`，外挂面板才能与其同壳；包裹层独立 z-index（图库 2000、面板/fab 2020），**面板几何必须让开 EP 内置控件**——关闭钮 top/right 40、右箭头 right:40 中部 44px、底部工具条居中：贴边全高面板会遮死关闭钮/右箭头（图库用内缩 96px 悬浮卡）。
+- **契约**：viewer 组件纯 props-in/emits-out（`urlList`=原图 url 序列、`index`、当前对象、`sourceInfo`），不得改宿主状态；`@switch(i)` 上抛 → 宿主同步索引并 clamp `[0, urlList.length)` → 面板信息跟随；`@close` → `update:visible=false`（ESC/关闭钮由 EP 内置处理）。
+- 面板行拼装抽**纯函数**（`utils/imageDisplay.js#viewerRowsOf(img, projects, sourceInfo)`），**全部非空才渲染、缺失不臆断**——语义命中是 `ImageSearchHit` 子集（可能无 `projectId`/尺寸/创建人），`projectId === undefined` 沿 `projectLabel` 空串约定、不显示「全局」。
+- 面板开合是 viewer 组件内部状态（不持久化），每次打开重置为展示；EP viewer 自带缩放/旋转/下载/键盘切换全部保留。
+- `<el-image-viewer>` 经 `app.use(ElementPlus)` 全局注册即可用于模板（无需显式 import；build + dev 双验证）。
+
+**Related**: `frontend/src/components/image/ImagePreviewViewer.vue`、`frontend/src/utils/imageDisplay.js`、`docs/spec/image.md` §8。
+
 ### Convention: 上传类图片必须先补「文件名扩展名」，不能只验 MIME
 
 后端 multipart 上传/参考图校验（`ImageService.readValidatedImage`）**按 `file.getOriginalFilename()` 的扩展名**判断白名单（png/jpg/jpeg/webp）——剪切板与拖拽得到的 `File` 经常没有扩展名（`image` / `blob`，甚至名字为空），前端若只按 `file.type`（MIME）放行，后端会以「仅支持 png/jpg/webp 格式图片」400 拒绝。
@@ -386,6 +440,7 @@ for (const f of info.files || []) {
 - **断言锚点**：优先契约类名/结构——`.wenyan-preview`、`sparkora-img-missing`、`.page.step-body`、`aside.step-rail`、`.ctxbar .crumb` / `.ctxbar-right button`、`.bubble-row`、`.splitter`——不写脆弱 `nth-child`。
 - **fixture 字段名必须对齐实体契约**：版本是 `versionLabel`（不是 `label`）、项目创建人是 `createdBy`（不是 `creator`）。字段写错时页面**静默渲染兜底值**（`—`/空），测试与截图都不报错，是最隐蔽的 fixture bug。
 - **步骤页路由会被状态机前跳**：`ProjectLayout.loadProject` 在 `routeStepIndex < activeStepOf(status)` 时 `router.replace` 自动前跳（`VERSIONS_READY` 落在 `/versions` 会跳到 `/preview`）。要截/测非活跃步骤页，走用户真实路径——先落活跃页再点步骤 rail（`onMounted` 才触发前跳，客户端切换不会再跳）。
+- **基线容差会吞小像素差异（10-10-img-gallery-ui-polish 教训）**：`playwright.config.js` 的 `maxDiffPixelRatio: 0.01`（1% 容差）下，小面积 UI 变更（如 1×32px 的 divider）+ 存量陈旧差异可以**双重蒙混通过**，呈现「基线无变化」假象。版式变更后重录一律用 `npx playwright test <spec> --update-snapshots=all`，并**解码 PNG 逐区域复核 diff 位置**（确认差异全部来自本次变更，而非既有漂移被顺带固化），不能只看测试是否绿。
 
 **Related**: `frontend/tests/`、`frontend/playwright.config.js`、`.trellis/tasks/10-01-e2e-testing/`（README 级用法见 `frontend/tests/README.md`）。
 
@@ -436,6 +491,23 @@ const isInline = computed(() => props.mode === 'preview')
 **Fix**: 「事后一次性展示」类面板在每个相关分支都渲染（本项目：无简报区 + 简报正文分支都放 `DeepPlanCard`）；数据源（`deepReasoning`）由 `syncDeepStatus()` 在挂载时兜底拉取，保证刷新/重进完成态仍可见。
 
 **Prevention**: 新增/迁移「过程/进度/辅助」面板时，逐一核对状态机所有终态分支是否都能渲染；只挂在一个中转态分支上，必然在完成瞬间丢失。
+
+### Common Mistake: EP 竖向 divider 配色定制作用在子选择器上（不存在该子元素）
+
+**Symptom**: 给 `<el-divider direction="vertical">` 定制颜色写的 `.x :deep(.el-divider__separator)` 样式**完全无效**（divider 仍走 EP 默认 `--el-border-color`），但构建不报错。
+
+**Cause**: EP 2.8 竖向 divider 的分隔线画在**根元素自身的 `border-left`** 上，DOM 里**不存在** `.el-divider__separator` 子元素（那是横向 divider `el-divider--horizontal` 的内容结构）；死 CSS 无任何报错（10-10-img-gallery-ui-polish check 实测，node_modules 核对）。
+
+**Fix**: 直接给根元素设 `border-left-color`：
+
+```vue
+<el-divider direction="vertical" class="tb-divider" />
+```
+```css
+.tb-divider { height: 32px; border-left-color: var(--line); }  /* 根元素 border-left 即分隔线 */
+```
+
+**Prevention**: 覆盖 EP 内部结构样式前，先在 node_modules 的组件 CSS 里核对真实选择器（写 `:deep()` 死选择器是静默无效的，构建/测试都不会拦）。
 
 ---
 
