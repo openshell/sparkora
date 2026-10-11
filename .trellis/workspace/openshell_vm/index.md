@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 66
-- **Last Active**: 2026-10-10
+- **Total Sessions**: 67
+- **Last Active**: 2026-10-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1833 | Active |
+| `journal-1.md` | ~1868 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 67 | 2026-10-11 | 图库 UI 优化：按钮留白 + 整卡预览交互 + 全屏详情面板 | `1070823`, `cfd55cf` | `main` |
 | 66 | 2026-10-10 | 10-10 盖世车企销量栏目切换规范入口并启用采集 | `1c03c48` | `main` |
 | 65 | 2026-10-10 | 10-10 盖世车企销量采集通道：C-110 端到端验证 + V19 正名 | `d3b914b`, `f7da964` | `main` |
 | 64 | 2026-10-10 | 10-09 乘联会与盖世信源采集计划：实现/复核/收口 | `2809f70`, `9ebf947` | `main` |

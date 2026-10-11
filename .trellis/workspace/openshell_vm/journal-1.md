@@ -1831,3 +1831,38 @@ list_url 切至 /sales/C-110(V20 幂等);启用乘联会/盖世采集(源 enable
 ### Next Steps
 
 - 观察 03:30 定时采集;按需在面板停用/调整
+
+
+## Session 67: 图库 UI 优化：按钮留白 + 整卡预览交互 + 全屏详情面板
+<!-- trellis-session: v=2 fp=3723f1f10db6e3fd -->
+
+**Date**: 2026-10-11
+**Task**: 图库 UI 优化：按钮留白 + 整卡预览交互 + 全屏详情面板
+**Branch**: `main`
+
+### Summary
+
+重构图库卡片交互模型：hover 层收窄 4 组并恒定点击穿透（整卡点击开预览），新建 ImagePreviewViewer 承载 el-image-viewer 单实例宿主 + 右侧详情面板，索引直传修复重名 URL 错位；按钮留白与工具条分组修正；前端 spec 新增点击穿透模型与 viewer 宿主范式约定。
+
+### Main Changes
+
+- ImageCard hover 层恒定 pointer-events:none 点击穿透 + score-badge 角标；ImagePreviewViewer.vue 新建（viewer 宿主 + 8 行详情面板 + 面板收起/fab 重开）；ImageLibrary 宿主 viewer 状态接线 + v-for 索引直传废除 indexOf(url)；工具条批量管理去 plain + 分组竖 divider
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1070823` | fix(10-10): 图库按钮留白与预览交互优化 + 全屏预览详情面板 |
+| `cfd55cf` | docs(10-10): 图库交互规格与前端 spec 同步（点击穿透模型 / viewer 宿主范式） |
+
+### Testing
+
+- [OK] npm run build 绿；Playwright 全量 44/44；图库视觉基线 ×4 重录（--update-snapshots=all）；临时交互 spec 无头实测 AC-2/AC-4/AC-5 后删除
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- AC-7 人工回归：语义态角标/命中原文、多图切换面板跟随、AI 图与新闻图字段、明暗主题观感、1280 小窗工具条形态
