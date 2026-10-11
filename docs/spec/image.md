@@ -319,11 +319,15 @@
 1. 取项目当前版本（`current_version_id`）→ 无版本/正文空 → 400（见接口表）。
 2. `AnchorExtractor.extract(contentMd, maxAnchors)`。
 3. 过滤**已忽略**锚点（按 `version_id` 查 `sparkora_illustration_dismiss` 的 `anchor_key` 集合）。
-4. 逐锚点调 `ImageEmbeddingService.searchImages(anchorText, topN=AI_ILLUSTRATION_TOP_N, minScore, tags)`（图片语义检索；串行 ≤5 次，无并发复杂度）。**单锚点失败仅 warn 跳过**，其余照常返回（图库/模型偶发失败不应让整页建议不可用）；门槛以下无候选 → 该锚点不出现。
-5. 组装 `{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}`。
+4. **节内已含插图**锚点跳过（R1，10-11 img-suggest-dedup）：锚点所在标题节（§7.1 锚点节口径：该标题行到**下一个标题**之间的原文，含节内任意行；`###` 子标题自成锚点节——子节内插图不标记父节锚点，父节未配图的正文段落仍可获建议）存在 markdown 图片语法（`![](…)`，图片-only 段落与行内混排均算）即视为已配图——该锚点不出现在建议结果中（与「无候选锚点不出现」同语义，**静默跳过、不做 UI 标注**）。判定在切分器层完成：`AnchorExtractor.Anchor.hasImage`（对节内**原始行**打标——剥标记后的判定不可靠，`stripMarkdown` 会把图片整段替换丢失位置信息；围栏（``` ~~~）内图片语法不判定，与 `extractText` 丢弃围栏内容一致；无标题退化路径同样逐原始行判定）。**指纹不受影响**：`fingerprint` 的入参与归一化路径不动，已忽略记录与正文纯格式编辑后的偏移行为零变化。
+5. 逐锚点调 `ImageEmbeddingService.searchImages(anchorText, topN=AI_ILLUSTRATION_TOP_N, minScore, tags)`（图片语义检索；串行 ≤5 次，无并发复杂度）。**单锚点失败仅 warn 跳过**，其余照常返回（图库/模型偶发失败不应让整页建议不可用）；门槛以下无候选 → 该锚点不出现。
+6. **候选同图去重**（R2/R3，10-11 img-suggest-dedup）：维护合并 seen 集合 = ① 当前版本 `sparkora_article_version_image` **已登记关联图**（R3：无论其图片语法是否还在正文 markdown 中，一律占用；**封面 `cover_image_id` 不参与判定**，经只读 `ArticleVersionImageMapper.findImageIdsByVersion` 读取，每调用查询一次）＋ ② 本次调用内先前锚点**已入选**的图（R2 会话占用）；命中 seen 的候选被剔除，同一张图只出现在最先（相似度最高）命中的锚点组，候选全部被占用 → 该锚点不出现（与无候选同语义）。
+7. 组装 `{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}`。
 
 - **建议候选不落库**：建议是「当前正文 + 当前图库」的**派生视图**，按需重算且结果稳定（检索确定性 + 无随机）；落库只会引入「建议陈旧」问题。只有用户的「忽略」决策需要持久化。
 - **可重算/幂等**：同一版本同一正文 + 同一图库 → 相同结果；正文变更后结果随锚点变化（符合预期）。
+- **已登记排除按「登记行」而非「markdown 位置」**：登记行是发布计数与删图引用保护的真源（「markdown + 登记」双写自洽设计），markdown 位置信息（步骤 4）与登记（步骤 6）各管一层互为兜底——用户手动删掉正文里的图片语法时登记行仍在，该图不再被推荐到其他段落，行为更保守更可预期。
+- 「全部采用」在多组采用同一图的行为随 R2 结构性消除（组间候选互斥）；`usePreviewSuggestions.sugAdopted` 已采用标记语义不变。
 
 ### 7.3 「采用」的写入（用户批准后，唯一写入路径）
 

@@ -722,11 +722,13 @@ public void embedQuietly(Long imageId) {
 ### 2. Signatures
 ```java
 // AnchorExtractor（纯静态，无 Spring/AI 依赖，可单测）
-record Anchor(int anchorIndex, String headingPath, String text, String key)
+record Anchor(int anchorIndex, String headingPath, String text, String key, boolean hasImage)
+        // hasImage：锚点标题节内**围栏外原始行**含 ![]() 即 true（10-11 img-suggest-dedup）；切分器只打标不丢弃该锚点
 static List<Anchor> extract(String contentMd, int maxAnchors)      // 上限保序截断
 static String fingerprint(String headingPath, String text)         // 归一化文本前 80 字符 sha256 前 12 位
 
-// IllustrationSuggestionService（只读；刻意不注入 ImageService）
+// IllustrationSuggestionService（只读；刻意不注入 ImageService；
+//   10-11 起**追加注入只读** ArticleVersionImageMapper，仅读已登记插图）
 record AnchorSuggestion(String anchorKey, int anchorIndex, String headingPath,
                         String anchorText, List<ImageSearchHit> candidates)
 List<AnchorSuggestion> suggest(Long projectId, List<String> tags, Double minScore)
@@ -734,7 +736,9 @@ void dismiss(Long projectId, String anchorKey, String operator)
 ```
 
 ### 3. Contracts
-- **派生建议零副作用**：`suggest` 只读正文 + 图库（`searchImages`），**不写 `content_md` / `sparkora_article_version_image`**；服务**不得注入 `ImageService`**（否则 `modifyBodyImage`/`setCover` 写路径可达）。生成建议前后 DB 的 `content_md` 与版本插图关联行必须完全一致（硬验证项）。
+- **派生建议零副作用**：`suggest` 只读正文 + 图库（`searchImages`）+ 本版本插图关联行（只读 `ArticleVersionImageMapper.findImageIdsByVersion`），**不写 `content_md` / `sparkora_article_version_image`**；服务**不得注入 `ImageService`**（否则 `modifyBodyImage`/`setCover` 写路径可达，**此约束不因只读 mapper 的存在而松动**）。生成建议前后 DB 的 `content_md` 与版本插图关联行必须完全一致（硬验证项）。
+- **已有插图锚点静默跳过（R1，10-11 img-suggest-dedup）**：锚点标题节内围栏外原始行存在 markdown 图片语法 → `hasImage=true` → suggest 跳过该锚点（不出现在结果里、不做 UI 标注）；围栏内图片语法不判定（与 extractText 丢弃围栏内容一致）；**指纹入参与归一化路径零变化**。
+- **跨锚点同图去重（R2/R3，10-11 img-suggest-dedup）**：合并 seen 集合 = 本版本已登记关联图（R3，按登记行判定而非 markdown 位置，**封面不参与**）∪ 会话内先前锚点已入选图（R2）；同一张图只出现在最先（相似度最高）命中的锚点组，候选全部被占用 → 该锚点不出现（与无候选同语义）。
 - **无自动插入能力**：不存在自动写入开关/配置；写入仅由用户显式「采用」触发（前端 markdown 插入 + `POST /images/{id}/body`）。
 - **建议不落库**：建议是「当前正文 + 当前图库」的派生视图（可重算、结果稳定）；只有用户的「忽略」决策持久化。落库会引入「建议陈旧」。
 - **锚点用指纹而非序号**：正文编辑后序号漂移会让「忽略」记录错位；指纹（标题路径 + 归一化文本 sha256 前 12 位）未编辑时稳定，纯格式调整（加粗/换行）不改指纹。
@@ -752,8 +756,8 @@ void dismiss(Long projectId, String anchorKey, String operator)
 - Bad: 因候选分数高就自动插入；或在建议服务里注入 `ImageService` 顺手写版本插图关联行。
 
 ### 6. Tests Required
-- `AnchorExtractorTest`：分段/前言/H1 不计入、纯列表/引用/代码块/图片/过短跳过、上限截断、markdown 清洗、指纹稳定性与超长窗口、null/空/非法上限边界。
-- `IllustrationSuggestionServiceTest`：前置校验 4 例、按锚点组装与 topN/门槛透传、无候选不出现、单锚点失败跳过、已忽略过滤、`dismiss` 幂等与唯一冲突、**零副作用断言**（写方法从未被调用 + 反射断言未注入 `ImageService`）。
+- `AnchorExtractorTest`：分段/前言/H1 不计入、纯列表/引用/代码块/图片/过短跳过、上限截断、markdown 清洗、指纹稳定性与超长窗口、null/空/非法上限边界；**hasImage 判定**（10-11）：标题行后紧跟插图段/节中间插图 → true、围栏内图片语法 → false、节内无图 → false、退化路径同样判定、插图有无不改指纹。
+- `IllustrationSuggestionServiceTest`：前置校验 4 例、按锚点组装与 topN/门槛透传、无候选不出现、单锚点失败跳过、已忽略过滤、`dismiss` 幂等与唯一冲突、**零副作用断言**（写方法从未被调用 + 反射断言未注入 `ImageService` + 只读 mapper 无写调用）；**重复配图防御**（10-11）：已登记关联图排除、含图锚点整组不出现且不触发检索、同图跨锚点只出现最先一组、已登记×先命中混合占用。
 
 ### 7. Wrong vs Correct
 #### Wrong

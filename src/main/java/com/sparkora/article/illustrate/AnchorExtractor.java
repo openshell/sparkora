@@ -20,6 +20,8 @@ import java.util.regex.Pattern;
  *   <li>无标题时（罕见）退化为按空行切分段落，每段一个锚点。</li>
  *   <li>跳过：代码块（``` 围栏）、引用块行（{@code >} 开头）、纯列表段落、图片段落（剥标记后为空）、
  *       去空白后 &lt; {@value #MIN_TEXT_LEN} 字的过短段落。</li>
+ *   <li>每个锚点带 {@code hasImage} 标志（10-11 img-suggest-dedup）：该锚点标题节内**围栏外原始行**
+ *       含图片语法即 {@code true}（节内已配图）；切分器只打标不丢弃该锚点，是否跳过由调用方决定。</li>
  *   <li>上限 {@code maxAnchors} 保序截断（优先靠前段落，避免配图过密）。</li>
  * </ul>
  */
@@ -66,8 +68,9 @@ public final class AnchorExtractor {
      * @param headingPath 标题路径（如「续航实测」或「续航实测 > 高速工况」；前言段为空串，非 null）
      * @param text        锚点正文（已剔除 markdown 标记，单空格连接，trim）
      * @param key         锚点指纹（见 {@link #fingerprint}），用于「忽略」记录的稳定定位
+     * @param hasImage    该锚点标题节内（围栏外原始行）是否已含 markdown 图片语法（10-11 img-suggest-dedup）
      */
-    public record Anchor(int anchorIndex, String headingPath, String text, String key) {
+    public record Anchor(int anchorIndex, String headingPath, String text, String key, boolean hasImage) {
     }
 
     /** 原始分段：标题路径 + 该段的行（不含标题行本身）。 */
@@ -89,10 +92,31 @@ public final class AnchorExtractor {
             String text = extractText(s.lines());
             if (text == null) continue;   // 该段无可配图内容（纯列表/引用/过短/空）
             String headingPath = String.join(" > ", s.headingPath());
-            anchors.add(new Anchor(anchors.size(), headingPath, text, fingerprint(headingPath, text)));
+            boolean hasImage = sectionHasImage(s.lines());
+            anchors.add(new Anchor(anchors.size(), headingPath, text, fingerprint(headingPath, text), hasImage));
             if (anchors.size() >= maxAnchors) break;
         }
         return anchors;
+    }
+
+    /**
+     * 节内是否已含 markdown 图片语法（10-11 img-suggest-dedup）：对**原始行**逐行判定
+     * {@code ![](...)}（整段落是图或行内混排图均算——剥标记后的判定不可靠，
+     * stripMarkdown 会把图片整段替换、丢失位置信息）。
+     * 围栏内行不判定（与 extractText 丢弃围栏内容一致）；节首围栏一定闭合
+     * （splitSections / splitByBlankLines 均在围栏外的标题/空行处切分），故本方法围栏状态从 false 起。
+     */
+    private static boolean sectionHasImage(List<String> lines) {
+        boolean inFence = false;
+        for (String line : lines) {
+            if (FENCE.matcher(line).matches()) {
+                inFence = !inFence;
+                continue;
+            }
+            if (inFence) continue;
+            if (IMAGE.matcher(line).find()) return true;
+        }
+        return false;
     }
 
     /**

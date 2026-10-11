@@ -149,6 +149,109 @@ class AnchorExtractorTest {
 
         assertEquals(1, anchors.size());
         assertTrue(anchors.get(0).text().startsWith("图片之后的普通段落"), anchors.get(0).text());
+        assertTrue(anchors.get(0).hasImage(), "节内原始行含图片语法 → 已配图（10-11 img-suggest-dedup）");
+    }
+
+    // ==================== 已配图判定（10-11 img-suggest-dedup）====================
+
+    @Test
+    void 节内已含图_标题行后紧跟插图段落_hasImage为true() {
+        String md = String.join("\n",
+                "## 续航实测",
+                "",
+                "![](https://pic.example.com/a.jpg)",
+                "",
+                para("实测高速工况下的续航表现，"));
+
+        List<AnchorExtractor.Anchor> anchors = AnchorExtractor.extract(md, 5);
+
+        assertEquals(1, anchors.size());
+        assertTrue(anchors.get(0).hasImage(), "标题行正下方插图段（图片-only 段被剥但原始行仍在节内）→ 已配图");
+    }
+
+    @Test
+    void 节内已含图_节中间正文行插图_hasImage为true() {
+        String md = String.join("\n",
+                "## 续航实测",
+                "",
+                para("实测高速工况下的续航表现，"),
+                "",
+                "![](https://pic.example.com/a.jpg)",
+                "",
+                para("空调全开时的电耗变化，"));
+
+        List<AnchorExtractor.Anchor> anchors = AnchorExtractor.extract(md, 5);
+
+        assertEquals(1, anchors.size());
+        assertTrue(anchors.get(0).hasImage(), "节中间插图 → 已配图");
+        assertTrue(anchors.get(0).text().contains("实测高速工况"), anchors.get(0).text());
+        assertFalse(anchors.get(0).text().contains("pic.example.com"),
+                "插图不进入锚点正文: " + anchors.get(0).text());
+    }
+
+    @Test
+    void 节内已含图_围栏内图片语法不误判_hasImage为false() {
+        String md = String.join("\n",
+                "## 代码示例",
+                "",
+                "```java",
+                "![](https://pic.example.com/a.jpg)",   // 围栏内的假图片语法（文档示例代码）
+                "```",
+                "",
+                para("代码块之后的普通段落，"));
+
+        List<AnchorExtractor.Anchor> anchors = AnchorExtractor.extract(md, 5);
+
+        assertEquals(1, anchors.size());
+        assertFalse(anchors.get(0).hasImage(), "围栏内图片语法不算已配图（与 extractText 丢弃围栏内容一致）");
+    }
+
+    @Test
+    void 节内无图_hasImage为false() {
+        String md = String.join("\n",
+                "## 续航实测",
+                "",
+                para("实测高速工况下的续航表现，"));
+
+        List<AnchorExtractor.Anchor> anchors = AnchorExtractor.extract(md, 5);
+
+        assertEquals(1, anchors.size());
+        assertFalse(anchors.get(0).hasImage());
+    }
+
+    @Test
+    void 无标题退化路径_段落行内混排图片_hasImage为true() {
+        // 退化路径下图片-only 段自成段落且被剥弃，只有行内混排图片的段落能带 hasImage=true
+        String md = para("第一段讲背景，")
+                + "\n\n" + para("第二段带一张插图见下，") + "![](https://pic.example.com/a.jpg)";
+
+        List<AnchorExtractor.Anchor> anchors = AnchorExtractor.extract(md, 5);
+
+        assertEquals(2, anchors.size());
+        assertFalse(anchors.get(0).hasImage());
+        assertTrue(anchors.get(1).hasImage(), "退化路径同样按节原始行判定");
+        assertFalse(anchors.get(1).text().contains("pic.example.com"), anchors.get(1).text());
+    }
+
+    @Test
+    void 节内已含图_指纹不受插图影响_与无图版本一致() {
+        // hasImage 判定是对节内原始行的旁路旁听,不影响指纹入参(归一化文本) → 指纹语义零变化
+        String withImage = String.join("\n",
+                "## 续航实测", "",
+                "![](https://pic.example.com/a.jpg)", "",
+                para("实测高速工况下的续航表现，"));
+        String withoutImage = String.join("\n",
+                "## 续航实测", "",
+                para("实测高速工况下的续航表现，"));
+
+        List<AnchorExtractor.Anchor> a = AnchorExtractor.extract(withImage, 5);
+        List<AnchorExtractor.Anchor> b = AnchorExtractor.extract(withoutImage, 5);
+
+        assertEquals(1, a.size());
+        assertEquals(1, b.size());
+        assertEquals(b.get(0).key(), a.get(0).key(), "插图的有无不改变锚点指纹");
+        assertTrue(a.get(0).hasImage());
+        assertFalse(b.get(0).hasImage());
     }
 
     @Test

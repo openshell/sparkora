@@ -5,8 +5,10 @@ import com.sparkora.config.AiProperties;
 import com.sparkora.domain.dto.ImageSearchHit;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
+import com.sparkora.domain.entity.ArticleVersionImageEntity;
 import com.sparkora.domain.entity.IllustrationDismissEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.IllustrationDismissMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,8 +33,8 @@ import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,7 +43,9 @@ import static org.mockito.Mockito.when;
  *
  * 覆盖：无版本/正文空/项目不存在/minScore 非法 → IllegalArgumentException；
  * 已忽略锚点被过滤；单锚点检索失败跳过 + 其余正常；无候选锚点不出现；
- * **零副作用断言**（suggest 不触发任何写路径）；dismiss 幂等与入参校验。
+ * **零副作用断言**（suggest 不触发任何写路径）；dismiss 幂等与入参校验；
+ * **重复配图防御**（10-11 img-suggest-dedup）：节内含图锚点不产建议、已登记关联图排除、
+ * 同图跨锚点只出现在最先命中组。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -49,6 +53,7 @@ class IllustrationSuggestionServiceTest {
 
     @Mock ArticleProjectMapper projectMapper;
     @Mock ArticleVersionMapper versionMapper;
+    @Mock ArticleVersionImageMapper versionImageMapper;
     @Mock ImageEmbeddingService embeddingService;
     @Mock IllustrationDismissMapper dismissMapper;
 
@@ -69,8 +74,10 @@ class IllustrationSuggestionServiceTest {
         aiProps.setImageMinScore(0.3);
         aiProps.setIllustrationMaxAnchors(5);
         aiProps.setIllustrationTopN(3);
-        service = new IllustrationSuggestionService(projectMapper, versionMapper, embeddingService,
-                dismissMapper, aiProps);
+        service = new IllustrationSuggestionService(projectMapper, versionMapper, versionImageMapper,
+                embeddingService, dismissMapper, aiProps);
+        // 默认:版本未登记任何正文插图(重复配图防御用例再按需覆盖)
+        when(versionImageMapper.findImageIdsByVersion(any())).thenReturn(List.of());
     }
 
     private ArticleProjectEntity project(Long id, Long currentVersionId) {
@@ -149,8 +156,10 @@ class IllustrationSuggestionServiceTest {
         when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
         when(versionMapper.selectById(9L)).thenReturn(version(9L, MD));
         when(dismissMapper.selectList(any())).thenReturn(List.of());
+        // 两锚点返回不同图:同一张图在 R2 语义下只会落在最先命中的锚点组
         when(embeddingService.searchImages(any(), anyInt(), anyDouble(), anyList()))
-                .thenReturn(List.of(hit(7L, 0.62)));
+                .thenReturn(List.of(hit(7L, 0.62)))
+                .thenReturn(List.of(hit(8L, 0.61)));
 
         List<IllustrationSuggestionService.AnchorSuggestion> out =
                 service.suggest(1L, List.of("主题/销量"), 0.42);
@@ -162,6 +171,7 @@ class IllustrationSuggestionServiceTest {
         assertEquals(1, out.get(1).anchorIndex());
         assertEquals(12, out.get(0).anchorKey().length());
         assertEquals(7L, out.get(0).candidates().get(0).imageId());
+        assertEquals(8L, out.get(1).candidates().get(0).imageId());
         // 逐锚点检索（两个锚点各调一次）：topN=3、显式门槛 0.42、标签原样透传
         verify(embeddingService, org.mockito.Mockito.times(2))
                 .searchImages(any(), eq(3), eq(0.42), eq(List.of("主题/销量")));
@@ -211,10 +221,82 @@ class IllustrationSuggestionServiceTest {
         assertTrue(out.stream().noneMatch(s -> s.anchorKey().equals(prefaceKey)));
     }
 
+    // ==================== 重复配图防御（10-11 img-suggest-dedup）====================
+
+    @Test
+    void 已登记关联图被排除_不进入任何锚点候选() {
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
+        when(versionMapper.selectById(9L)).thenReturn(version(9L, MD));
+        when(dismissMapper.selectList(any())).thenReturn(List.of());
+        // 图 7 已登记为本版本正文插图(R3:无论 markdown 里是否仍引用,不再进入新锚点组)
+        when(versionImageMapper.findImageIdsByVersion(9L)).thenReturn(List.of(7L));
+        when(embeddingService.searchImages(any(), anyInt(), anyDouble(), any())).thenReturn(List.of(hit(7L, 0.62)));
+
+        assertTrue(service.suggest(1L, null, null).isEmpty(), "唯一候选图已被登记占用 → 不产任何建议组");
+    }
+
+    @Test
+    void 锚点节内含图_整组不出现且不触发检索() {
+        String md = String.join("\n",
+                "这是开头的前言段落，描述文章的背景与写作动机，长度足够参与配图建议的语义检索。",
+                "",
+                "## 续航实测",
+                "",
+                "![](https://pic.example.com/a.jpg)",
+                "",
+                "实测高速工况下的续航表现，空调全开时的电耗变化与官方标称数值存在明显差异，需要结合路况说明。");
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
+        when(versionMapper.selectById(9L)).thenReturn(version(9L, md));
+        when(dismissMapper.selectList(any())).thenReturn(List.of());
+        when(embeddingService.searchImages(any(), anyInt(), anyDouble(), any())).thenReturn(List.of(hit(7L, 0.62)));
+
+        List<IllustrationSuggestionService.AnchorSuggestion> out = service.suggest(1L, null, null);
+
+        assertEquals(1, out.size(), "含图锚点(R1)整组不出现");
+        assertEquals("", out.get(0).headingPath(), "仅前言锚点保留");
+        // 含图锚点在检索前被跳过:仅前言锚点调 1 次检索
+        verify(embeddingService, times(1)).searchImages(any(), anyInt(), anyDouble(), any());
+    }
+
+    @Test
+    void 同图命中两锚点_仅最先一组出现() {
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
+        when(versionMapper.selectById(9L)).thenReturn(version(9L, MD));
+        when(dismissMapper.selectList(any())).thenReturn(List.of());
+        // 两锚点检索返回同一张图(R2:只保留最先/相似度最高命中的锚点组)
+        when(embeddingService.searchImages(any(), anyInt(), anyDouble(), any())).thenReturn(List.of(hit(7L, 0.62)));
+
+        List<IllustrationSuggestionService.AnchorSuggestion> out = service.suggest(1L, null, null);
+
+        verify(embeddingService, times(2)).searchImages(any(), anyInt(), anyDouble(), any());
+        assertEquals(1, out.size(), "同一张图只出现在最先命中的锚点组");
+        assertEquals("", out.get(0).headingPath());
+        assertEquals(7L, out.get(0).candidates().get(0).imageId());
+    }
+
+    @Test
+    void 已登记与先命中合并占用_混合场景() {
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
+        when(versionMapper.selectById(9L)).thenReturn(version(9L, MD));
+        when(dismissMapper.selectList(any())).thenReturn(List.of());
+        // 已登记 7(全局占用);前言锚命中 8(会话占用);续航锚再命中 7、8 → 全部被占用 → 不出现
+        when(versionImageMapper.findImageIdsByVersion(9L)).thenReturn(List.of(7L));
+        when(embeddingService.searchImages(any(), anyInt(), anyDouble(), any()))
+                .thenReturn(List.of(hit(8L, 0.7)))
+                .thenReturn(List.of(hit(7L, 0.6), hit(8L, 0.5)));
+
+        List<IllustrationSuggestionService.AnchorSuggestion> out = service.suggest(1L, null, null);
+
+        assertEquals(1, out.size());
+        assertEquals("", out.get(0).headingPath());
+        assertEquals(8L, out.get(0).candidates().get(0).imageId(), "已登记图不占用候选位,先命中的新图入选");
+    }
+
     /**
      * 零副作用硬断言（PRD AC）：suggest 不得触发任何写路径。
      * 本服务刻意不注入 ImageService，故此处断言「无 insert/update/delete 类写调用」
-     * ——只有 dismissMapper.selectList（读）与 project/version 的 selectById（读）。
+     * ——只有 dismissMapper.selectList（读）、project/version 的 selectById（读）
+     * 与 versionImageMapper.findImageIdsByVersion（读，10-11 img-suggest-dedup 起新增）。
      */
     @Test
     void 零副作用_suggest只读不写() throws Exception {
@@ -238,6 +320,13 @@ class IllustrationSuggestionServiceTest {
         verify(dismissMapper, never()).insert(any(IllustrationDismissEntity.class));
         verify(dismissMapper, never()).update(any(IllustrationDismissEntity.class), any());
         verify(dismissMapper, never()).delete(any());
+        // ①' 只读关联表 mapper:suggest 只允许 select 类读(findImageIdsByVersion),不得触达任何写方法
+        verify(versionImageMapper, never()).insert(any(ArticleVersionImageEntity.class));
+        verify(versionImageMapper, never()).update(any(ArticleVersionImageEntity.class), any());
+        verify(versionImageMapper, never()).delete(any());
+        verify(versionImageMapper, never()).deleteById(any(java.io.Serializable.class));
+        verify(versionImageMapper, never()).deleteByVersionAndImage(any(), any());
+        verify(versionImageMapper, never()).deleteByVersion(any());
         verify(embeddingService, never()).embedQuietly(any());
         verify(embeddingService, never()).embedOne(any(com.sparkora.domain.entity.ImageAssetEntity.class));
         verify(embeddingService, never()).rebuildAll();

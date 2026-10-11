@@ -8,6 +8,7 @@ import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.domain.entity.IllustrationDismissEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
+import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.IllustrationDismissMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +33,9 @@ import java.util.Set;
  *       不写版本插图关联行（{@code sparkora_article_version_image}）。配图进入正文的唯一路径是用户在预览页显式点「采用」。</li>
  *   <li><b>无自动插入开关</b>：不存在 {@code AUTO_ILLUSTRATE_ENABLED} 之类配置，从设计上排除无人值守自动配图。
  *       本类刻意**不注入** {@link ImageService}（避免任何 {@code modifyBodyImage}/{@code setCover} 写路径可达）。</li>
+ *   <li><b>只读关联表不计入写路径</b>：注入 {@link ArticleVersionImageMapper} 仅用于读取本版本
+ *       **已登记插图** id（10-11 img-suggest-dedup，排除重复推荐），纯只读 Mapper、
+ *       {@code suggest} 不触达其任何写方法。</li>
  * </ul>
  *
  * 建议候选**不落库**：建议是「当前正文 + 当前图库」的派生视图，按需重算且结果稳定；
@@ -47,17 +51,20 @@ public class IllustrationSuggestionService {
 
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
+    private final ArticleVersionImageMapper versionImageMapper;   // 只读:读取本版本已登记插图,排除重复推荐
     private final ImageEmbeddingService embeddingService;
     private final IllustrationDismissMapper dismissMapper;
     private final AiProperties aiProps;
 
     public IllustrationSuggestionService(ArticleProjectMapper projectMapper,
                                          ArticleVersionMapper versionMapper,
+                                         ArticleVersionImageMapper versionImageMapper,
                                          ImageEmbeddingService embeddingService,
                                          IllustrationDismissMapper dismissMapper,
                                          AiProperties aiProps) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
+        this.versionImageMapper = versionImageMapper;
         this.embeddingService = embeddingService;
         this.dismissMapper = dismissMapper;
         this.aiProps = aiProps;
@@ -77,7 +84,8 @@ public class IllustrationSuggestionService {
     }
 
     /**
-     * 生成建议（**只读，零副作用**）：当前版本正文 → 锚点切分 → 过滤已忽略 → 逐锚点语义检索 → 组装。
+     * 生成建议（**只读，零副作用**）：当前版本正文 → 锚点切分 → 过滤已忽略/已配图锚点（R1，节内含插图）→
+     * 逐锚点语义检索（候选按「已登记关联图 + 本次会话已入选」合并 seen 集合去重，R2/R3）→ 组装。
      *
      * 无候选的锚点不出现在结果中（不报错）；单个锚点检索失败仅 warn 跳过，不影响其余锚点
      * （图库/模型偶发失败不应让整页建议不可用）。
@@ -106,9 +114,16 @@ public class IllustrationSuggestionService {
         if (anchors.isEmpty()) return List.of();
 
         Set<String> dismissed = dismissedKeys(v.getId());
+        // R2/R3 跨锚点同图去重（10-11 img-suggest-dedup）:seen 集合双语义——
+        // 初始化为本版本已登记插图（R3:用户已定夺的插图全局占用,无论其图片语法是否还在正文里;
+        // 封面 cover_image_id 不参与判定）;本次调用内先前锚点已入选的图随循环追加(会话占用)。
+        Set<Long> seen = new LinkedHashSet<>();
+        List<Long> registeredIds = versionImageMapper.findImageIdsByVersion(v.getId());
+        if (registeredIds != null) seen.addAll(registeredIds);
         List<AnchorSuggestion> out = new ArrayList<>(anchors.size());
         for (AnchorExtractor.Anchor a : anchors) {
             if (dismissed.contains(a.key())) continue;   // 用户已忽略该锚点：不再推荐
+            if (a.hasImage()) continue;                  // R1 该锚点标题节内已含插图：视为已配图,不再产建议
             List<ImageSearchHit> hits;
             try {
                 hits = embeddingService.searchImages(a.text(), topN, threshold, tags);
@@ -118,7 +133,14 @@ public class IllustrationSuggestionService {
                 continue;
             }
             if (hits == null || hits.isEmpty()) continue;   // 门槛以下无候选 → 该锚点不出现
-            out.add(new AnchorSuggestion(a.key(), out.size(), a.headingPath(), a.text(), hits));
+            List<ImageSearchHit> fresh = new ArrayList<>(hits.size());
+            for (ImageSearchHit h : hits) {
+                Long imageId = h.imageId();
+                if (imageId == null) continue;              // 生产命中必带图 id;异常数据不入组
+                if (seen.add(imageId)) fresh.add(h);        // add 返回 false = 该图已被占用(已登记/先命中)
+            }
+            if (fresh.isEmpty()) continue;   // 候选全部被占用 → 该锚点不出现（与无候选同语义）
+            out.add(new AnchorSuggestion(a.key(), out.size(), a.headingPath(), a.text(), fresh));
         }
         return out;
     }
