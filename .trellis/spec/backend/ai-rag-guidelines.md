@@ -743,11 +743,12 @@ void dismiss(Long projectId, String anchorKey, String operator)
 - **建议不落库**：建议是「当前正文 + 当前图库」的派生视图（可重算、结果稳定）；只有用户的「忽略」决策持久化。落库会引入「建议陈旧」。
 - **锚点用指纹而非序号**：正文编辑后序号漂移会让「忽略」记录错位；指纹（标题路径 + 归一化文本 sha256 前 12 位）未编辑时稳定，纯格式调整（加粗/换行）不改指纹。
 - **单锚点失败降级**：任一锚点检索失败仅 warn 跳过，其余锚点照常返回（不整体 500）；门槛以下无候选 → 该锚点不出现（不报错）。
+- **缺省门槛与图库搜索解耦（10-11 img-suggest-threshold）**：`suggest` 的 `minScore=null` → `AI_ILLUSTRATION_MIN_SCORE`（建议专用，`sparkora.ai.illustration-min-score`，**默认 0.4**；0.3 对「建议」偏宽松消耗信任，评审 P2）；**不再取图文检索的 `AI_IMAGE_MIN_SCORE`（0.3，仍作用于图库搜索 `POST /api/images/search` 与问答语义配图 `QaImageRefService`，行为不变）**。显式传参仍须 [0,1]（沿用 `requireMinScore`）；null 语义仅指「取哪份默认配置」。校准调整时文档四处（接口表/§7.2/.env.example/前端默认值）与 `IllustrationSuggestionServiceTest` 默认值锁定用例必须同步。
 - **`dismiss` 幂等**：先查 + `UNIQUE(version_id, anchor_key)` 兜底，捕 `DuplicateKeyException` 静默吞（无外层事务，不会污染调用方）。
 
 ### 4. Validation & Error Matrix
 - 项目不存在 → 400「项目不存在」；无当前版本 → 400「尚未生成正文版本，无法生成配图建议」；正文空 → 400「正文为空，无法生成配图建议」。
-- `minScore` <0 或 >1 → 400；`anchorKey` 空/超 200 字符 → 400。
+- `minScore` <0 或 >1 → 400；null → 取 `AI_ILLUSTRATION_MIN_SCORE`（0.4）；`anchorKey` 空/超 200 字符 → 400。
 - VIEWER：suggest 200（读）；dismiss 403。
 
 ### 5. Good/Base/Bad Cases
@@ -757,7 +758,7 @@ void dismiss(Long projectId, String anchorKey, String operator)
 
 ### 6. Tests Required
 - `AnchorExtractorTest`：分段/前言/H1 不计入、纯列表/引用/代码块/图片/过短跳过、上限截断、markdown 清洗、指纹稳定性与超长窗口、null/空/非法上限边界；**hasImage 判定**（10-11）：标题行后紧跟插图段/节中间插图 → true、围栏内图片语法 → false、节内无图 → false、退化路径同样判定、插图有无不改指纹。
-- `IllustrationSuggestionServiceTest`：前置校验 4 例、按锚点组装与 topN/门槛透传、无候选不出现、单锚点失败跳过、已忽略过滤、`dismiss` 幂等与唯一冲突、**零副作用断言**（写方法从未被调用 + 反射断言未注入 `ImageService` + 只读 mapper 无写调用）；**重复配图防御**（10-11）：已登记关联图排除、含图锚点整组不出现且不触发检索、同图跨锚点只出现最先一组、已登记×先命中混合占用。
+- `IllustrationSuggestionServiceTest`：前置校验 4 例、按锚点组装与 topN/门槛透传、无候选不出现、单锚点失败跳过、已忽略过滤、`dismiss` 幂等与唯一冲突、**零副作用断言**（写方法从未被调用 + 反射断言未注入 `ImageService` + 只读 mapper 无写调用）；**重复配图防御**（10-11）：已登记关联图排除、含图锚点整组不出现且不触发检索、同图跨锚点只出现最先一组、已登记×先命中混合占用；**门槛解耦**（10-11 img-suggest-threshold）：缺省透传建议专用配置（imageMinScore 设干扰值 0.9、illustrationMinScore=0.5 断言取 0.5）、双缺省值锁定 0.4/0.3（调校准值须有意识改此断言）、显式传参优先于配置缺省 + 越界仍报错。
 
 ### 7. Wrong vs Correct
 #### Wrong

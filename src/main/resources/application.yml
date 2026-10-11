@@ -128,7 +128,8 @@ sparkora:
     rag-rerank-enabled: ${AI_RAG_RERANK_ENABLED:false} # A:LLM 重排总开关(false 默认,行为与现状逐条一致)
     rag-rerank-topn: ${AI_RAG_RERANK_TOPN:20}  # A:参与重排的候选数上限(按原分取前 N,控制 token)
     rag-rerank-timeout-ms: ${AI_RAG_RERANK_TIMEOUT_MS:10000} # A:重排单次超时预算(ms,超时回退原序)
-    image-min-score: ${AI_IMAGE_MIN_SCORE:0.3}  # 09-15:图片语义检索相似度门槛(低于该余弦相似度的图片命中被过滤)
+    image-min-score: ${AI_IMAGE_MIN_SCORE:0.3}  # 09-15:图片语义检索相似度门槛(图库搜索等直接检索入口;建议缺省门槛见下方 illustration-min-score)
+    illustration-min-score: ${AI_ILLUSTRATION_MIN_SCORE:0.4} # 10-11:配图建议缺省相似度门槛(suggest 未显式传 minScore 时用;与图库搜索 AI_IMAGE_MIN_SCORE 解耦、独立校准)
     illustration-max-anchors: ${AI_ILLUSTRATION_MAX_ANCHORS:5} # 09-15 子C:配图建议锚点上限(取前 N 个可配图段落,避免配图过密)
     illustration-top-n: ${AI_ILLUSTRATION_TOP_N:3}             # 09-15 子C:配图建议每锚点候选图条数
     illustration-suggest-enabled: ${AI_ILLUSTRATION_SUGGEST_ENABLED:true} # 09-15 子C:配图建议生成总开关(R6 可关闭;关闭的只是「建议生成」,与「禁止自动写入」无关)

@@ -68,8 +68,18 @@ public class AiProperties {
      */
     private long ragRerankTimeoutMs = 10000;
 
-    /** 图片语义检索相似度门槛（09-15 img-semantic-search）:低于该余弦相似度的图片命中被过滤;默认 0.3（对齐 AI_RAG_MIN_SCORE）。 */
+    /** 图片语义检索相似度门槛（09-15 img-semantic-search）:低于该余弦相似度的图片命中被过滤;默认 0.3（对齐 AI_RAG_MIN_SCORE）。
+     *  作用域仅**图库搜索**（{@code POST /api/images/search} 及问答语义配图等直接检索入口）;
+     *  配图建议缺省门槛另见 {@link #illustrationMinScore}（10-11 img-suggest-threshold 解耦）。 */
     private double imageMinScore = 0.3;
+
+    /**
+     * 配图建议缺省相似度门槛（10-11 img-suggest-threshold）:{@code suggest} 未显式传 {@code minScore} 时使用。
+     * 与图库搜索门槛 {@link #imageMinScore}（AI_IMAGE_MIN_SCORE=0.3）**解耦、独立校准**——
+     * 10-11 评审结论:0.3 对「建议」场景偏宽松,弱相关候选出现在建议页会消耗用户信任;
+     * 初定 0.4,真机校准结论留痕见 {@code docs/spec/image.md} §7.2。显式传参仍须在 [0,1]（越界 400）。
+     */
+    private double illustrationMinScore = 0.4;
 
     /** 配图建议锚点数上限（09-15 article-auto-illustrate）:单次建议最多取前 N 个可配图锚点,避免配图过密;默认 5。 */
     private int illustrationMaxAnchors = 5;

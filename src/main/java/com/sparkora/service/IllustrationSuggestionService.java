@@ -91,7 +91,9 @@ public class IllustrationSuggestionService {
      * （图库/模型偶发失败不应让整页建议不可用）。
      *
      * @param tags     可选的项目级主题标签预过滤（AND 语义，复用子B）
-     * @param minScore 相似度门槛（null → {@code AI_IMAGE_MIN_SCORE}；须在 [0,1]，否则 IllegalArgumentException）
+     * @param minScore 相似度门槛（null → {@code AI_ILLUSTRATION_MIN_SCORE} 建议专用门槛，10-11
+     *                 img-suggest-threshold 与图库搜索 {@code AI_IMAGE_MIN_SCORE} 解耦；
+     *                 须在 [0,1]，否则 IllegalArgumentException）
      */
     public List<AnchorSuggestion> suggest(Long projectId, List<String> tags, Double minScore) {
         // R6「可关闭」:关闭的是**建议的生成**（与 R3「禁止自动写入」是两件事——
@@ -193,9 +195,12 @@ public class IllustrationSuggestionService {
         return versionMapper.selectById(p.getCurrentVersionId());
     }
 
-    /** minScore 校验：null → 配置默认；越界（&lt;0 或 &gt;1）→ IllegalArgumentException（控制器 400）。 */
+    /**
+     * minScore 校验：null → 建议专用配置 {@code AI_ILLUSTRATION_MIN_SCORE}（10-11 img-suggest-threshold，
+     * 与图库搜索门槛 {@code AI_IMAGE_MIN_SCORE} 解耦）；越界（&lt;0 或 &gt;1）→ IllegalArgumentException（控制器 400）。
+     */
     private double requireMinScore(Double minScore) {
-        if (minScore == null) return aiProps.getImageMinScore();
+        if (minScore == null) return aiProps.getIllustrationMinScore();
         if (minScore < 0 || minScore > 1) throw new IllegalArgumentException("相似度门槛须在 0~1 之间");
         return minScore;
     }

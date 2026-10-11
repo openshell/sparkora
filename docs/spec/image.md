@@ -284,7 +284,7 @@
 | GET | `/api/projects/{id}/images` | 三角色 | — | `{images[], coverImageId, bodyImageIds[], coverImage?, bodyImages[]}`。**S10 语义改写**：`images` 从全量图库收缩为**当前版本引用的图**（封面+插图）；新增服务端解析的 `coverImage`（对象含 url）/`bodyImages`（按 `bodyImageIds` 顺序）。全量图库浏览改走 `GET /api/images` 分页接口 |
 | POST | `/api/projects/{id}/images/{imageId}/cover` | ADMIN/EDITOR | — | `{ok:true}`（`version.cover_image_id`）；重复选同一张幂等 |
 | POST | `/api/projects/{id}/images/{imageId}/body` | ADMIN/EDITOR | `?action=add/remove` | `{ok:true}`（增删 `sparkora_article_version_image` 关联行）；重复添加幂等 |
-| POST | `/api/projects/{id}/illustration-suggestions` | 三角色 | `{tags?[], minScore?}`（09-15 article-auto-illustrate 子C 新增）；`tags` 为**标签 AND 预过滤**（同 `GET /api/images`）；`minScore` null → `AI_IMAGE_MIN_SCORE`（默认 0.3），须在 [0,1] 否则 400 | `data = [{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}]`，`candidates` 为 `ImageSearchHit`（同 `/api/images/search`，按 score 降序）。**零副作用**：只读正文 + 图库，**不修改 `content_md` / `sparkora_article_version_image`**。无候选的锚点不出现在结果中（不报错）；单锚点检索失败仅跳过该锚点（其余照常返回）。无当前版本 → `R.fail(400,"尚未生成正文版本，无法生成配图建议")`；正文空 → `R.fail(400,"正文为空，无法生成配图建议")`；项目不存在 → `R.fail(400,"项目不存在")`。契约详解见下文「配图建议」 |
+| POST | `/api/projects/{id}/illustration-suggestions` | 三角色 | `{tags?[], minScore?}`（09-15 article-auto-illustrate 子C 新增）；`tags` 为**标签 AND 预过滤**（同 `GET /api/images`）；`minScore` null → **`AI_ILLUSTRATION_MIN_SCORE`**（建议专用缺省门槛，**默认 0.4**；10-11 img-suggest-threshold 与图库搜索门槛 `AI_IMAGE_MIN_SCORE`=0.3 解耦、独立校准），须在 [0,1] 否则 400 | `data = [{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}]`，`candidates` 为 `ImageSearchHit`（同 `/api/images/search`，按 score 降序）。**零副作用**：只读正文 + 图库，**不修改 `content_md` / `sparkora_article_version_image`**。无候选的锚点不出现在结果中（不报错）；单锚点检索失败仅跳过该锚点（其余照常返回）。无当前版本 → `R.fail(400,"尚未生成正文版本，无法生成配图建议")`；正文空 → `R.fail(400,"正文为空，无法生成配图建议")`；项目不存在 → `R.fail(400,"项目不存在")`。契约详解见下文「配图建议」 |
 | POST | `/api/projects/{id}/illustration-suggestions/dismiss` | ADMIN/EDITOR | `{anchorKey}`（09-15 article-auto-illustrate 子C 新增） | `{ok:true}`；写 `sparkora_illustration_dismiss`（`UNIQUE(version_id, anchor_key)`），**幂等**（重复忽略不报错、不重复插入）。`anchorKey` 空/超长(>200) → `R.fail(400)`；无当前版本 → `R.fail(400)`。VIEWER 调用 403 |
 
 - 图片访问：**图床公网 URL**（`url` 字段，由 `storage_key` 实时拼）。`/images/**` 静态映射已删除（S6 本地不留）。
@@ -320,7 +320,7 @@
 2. `AnchorExtractor.extract(contentMd, maxAnchors)`。
 3. 过滤**已忽略**锚点（按 `version_id` 查 `sparkora_illustration_dismiss` 的 `anchor_key` 集合）。
 4. **节内已含插图**锚点跳过（R1，10-11 img-suggest-dedup）：锚点所在标题节（§7.1 锚点节口径：该标题行到**下一个标题**之间的原文，含节内任意行；`###` 子标题自成锚点节——子节内插图不标记父节锚点，父节未配图的正文段落仍可获建议）存在 markdown 图片语法（`![](…)`，图片-only 段落与行内混排均算）即视为已配图——该锚点不出现在建议结果中（与「无候选锚点不出现」同语义，**静默跳过、不做 UI 标注**）。判定在切分器层完成：`AnchorExtractor.Anchor.hasImage`（对节内**原始行**打标——剥标记后的判定不可靠，`stripMarkdown` 会把图片整段替换丢失位置信息；围栏（``` ~~~）内图片语法不判定，与 `extractText` 丢弃围栏内容一致；无标题退化路径同样逐原始行判定）。**指纹不受影响**：`fingerprint` 的入参与归一化路径不动，已忽略记录与正文纯格式编辑后的偏移行为零变化。
-5. 逐锚点调 `ImageEmbeddingService.searchImages(anchorText, topN=AI_ILLUSTRATION_TOP_N, minScore, tags)`（图片语义检索；串行 ≤5 次，无并发复杂度）。**单锚点失败仅 warn 跳过**，其余照常返回（图库/模型偶发失败不应让整页建议不可用）；门槛以下无候选 → 该锚点不出现。
+5. 逐锚点调 `ImageEmbeddingService.searchImages(anchorText, topN=AI_ILLUSTRATION_TOP_N, minScore, tags)`（图片语义检索；串行 ≤5 次，无并发复杂度）。`minScore` 未显式传 → **`AI_ILLUSTRATION_MIN_SCORE`**（建议专用缺省门槛，默认 0.4；**不从** `AI_IMAGE_MIN_SCORE` 继承——建议场景与自由检索对「弱相关」的容忍度不同，缺省值独立校准，见下）。**单锚点失败仅 warn 跳过**，其余照常返回（图库/模型偶发失败不应让整页建议不可用）；门槛以下无候选 → 该锚点不出现。
 6. **候选同图去重**（R2/R3，10-11 img-suggest-dedup）：维护合并 seen 集合 = ① 当前版本 `sparkora_article_version_image` **已登记关联图**（R3：无论其图片语法是否还在正文 markdown 中，一律占用；**封面 `cover_image_id` 不参与判定**，经只读 `ArticleVersionImageMapper.findImageIdsByVersion` 读取，每调用查询一次）＋ ② 本次调用内先前锚点**已入选**的图（R2 会话占用）；命中 seen 的候选被剔除，同一张图只出现在最先（相似度最高）命中的锚点组，候选全部被占用 → 该锚点不出现（与无候选同语义）。
 7. 组装 `{anchorKey, anchorIndex, headingPath, anchorText, candidates[]}`。
 
@@ -328,6 +328,10 @@
 - **可重算/幂等**：同一版本同一正文 + 同一图库 → 相同结果；正文变更后结果随锚点变化（符合预期）。
 - **已登记排除按「登记行」而非「markdown 位置」**：登记行是发布计数与删图引用保护的真源（「markdown + 登记」双写自洽设计），markdown 位置信息（步骤 4）与登记（步骤 6）各管一层互为兜底——用户手动删掉正文里的图片语法时登记行仍在，该图不再被推荐到其他段落，行为更保守更可预期。
 - 「全部采用」在多组采用同一图的行为随 R2 结构性消除（组间候选互斥）；`usePreviewSuggestions.sugAdopted` 已采用标记语义不变。
+- **缺省门槛口径与校准（10-11 img-suggest-threshold）**：`minScore` null → `AI_ILLUSTRATION_MIN_SCORE`（默认 **0.4**，初定值），与图库搜索门槛 `AI_IMAGE_MIN_SCORE`（默认 0.3）**解耦**。
+  - **为什么解耦**：图库搜索是用户**主动检索**——门槛放宽把召回交给用户自行判断；建议是**系统主动推荐**，弱相关候选直接出现在建议页会消耗用户信任，门槛应更严格且随场景独立调整（调图库搜索门槛不得改变建议行为，反之亦然；显式传参两边语义一致：[0,1] 全域合法，越界 400）。
+  - **校准结论（0.4，2026-10-11 真机复核定稿）**：10-11 设计评审确认 0.3 对「建议」场景偏宽松——建议页会出现与锚点段落仅弱相关的候选（语义检索常见弱命中形态：仅与标题词共现的通用图），逐条忽略此类候选的成本高于其参考价值，故建议场景门槛应比自由检索更严。**真机校准观察（2026-10-11，容器环境，embedding=Qwen3-Embedding-8B，图库 ~170 张）**：三篇真实稿件（#65 销量主题 4 锚点 / #63 上市主题 4 锚点 / #54 技术主题 0 命中锚点）实测——候选相关度分布集中在 **0.45~0.75** 分段，**0.3~0.4 弱相关分段零命中**（#65、#63 显式 0.3 与 0.4 候选集合完全一致，#54 任何门槛下均无候选→空态不误现）；同一请求多次调用间 embedding 分数波动 ±0.003（多候选嵌入模型路由所致，非缺陷）。结论：**0.4 为零召回损失的更严下界**，维持初定值；同时用注入 `AI_IMAGE_MIN_SCORE=0.95` 的独立环境对照实证了两配置解耦（图库搜索默认随环境变量收缩至 0 命中，建议缺省不受影响、候选仍在 0.45 分段）。**调整缺省值时须四处同步**：本段、`AiProperties` 注释、`application.yml` 缺省与 `.env.example` 注释；复测方法：任取 ≥2 篇真实稿件对 0.3/0.4/0.5 三档显式传参做候选分布对照。
+  - **前端口径一致**：预览页「智能建议」门槛输入默认 0.4（`usePreviewSuggestions.sugMinScore`），提示文案标注「对齐后端校准值」。
 
 ### 7.3 「采用」的写入（用户批准后，唯一写入路径）
 
@@ -383,7 +387,7 @@
   - **语义检索能力（09-15 img-semantic-search，后端就绪）**：图库图片已完成向量化（单表 `vector_store` `domain=IMAGE`，与 car/kb/news 三域同向量空间），可被 `POST /api/images/search` 用自然语言检索（如「销量海报」）；支持叠加标签 AND 预过滤在「`主题/销量` + `年份/2026`」范围内语义搜。**本任务纯后端**（前端检索入口与自动配图 UI 由配图建议/问答配图承载）。
 - **新闻知识页封面与主题标签（09-15 img-classify）**：`NewsKnowledgePanel.vue` 封面 URL 取 `coverImageUrl || resolveUrl(imageUrl)`（图库图优先，官网原始 URL 回退，未同步封面不报错）；卡片/详情展示**主题标签**（`news.themes`，后端用同一分类器按标题重算，不查图库避免 N+1），**点标签跳图库并按 `主题/<名>` 筛选**。详见 [knowledge/news.md](knowledge/news.md)。
 - **预览步配图面板（项目向导预览步）**：工具栏「配图」面板提供**图库插入**（**S10 起走分页接口 + 来源/关键字筛选 + 触底加载**，选图插入正文光标处/设封面）与 **AI 生图**（文生图/图生图，**S10 起可一次生成 n(1/2/4) 张候选，逐张插入/设封面/重生成**；**09-26 起同一 `AiImageDrawer`（`mode="preview"`）渲染，图生图支持粘贴/本地文件/图库三来源参考图**；产物进图库后展示候选列表）两种来源。图不够时引导去图库页。车型库图片接入**预留**（暂不开发）。**09-27-image-insert-bugs**：①无任何自动插入/自动设封面，一律用户显式点；②工具栏角标口径 = **解析正文图片引用**（`utils/bodyImageRefs.js`），显示「配图 N · 待传 M」——`N` 为已就绪插图数（不含封面、不含未上传占位），`M` 为**仍可上传**的粘贴图占位数（已失效的不计入，避免误导）；③正文含失效占位时顶部黄色警示条 + 复制/去发布/发布三处阻断。详见 [preview.md](preview.md)。
-- **预览页「智能建议」tab（09-15 article-auto-illustrate 子C）**：配图抽屉第 3 个 tab（`imgTab='suggest'`）。顶部：相似度门槛（默认 0.3）+ 标签预过滤多选（AND，数据源 `GET /api/images/tags`）+「生成建议/重新生成」按钮 + 提示「系统只给建议，点采用才写入正文」。按锚点分组卡片：锚点标题（`headingPath` 或「开头段落」）+ 锚点文本摘要 + 候选网格（缩略图/相关度百分比/标签）。每张候选「插入到此段」；每组「全部采用」/「忽略此段」。**空态三态**：未生成（引导点生成）/ 生成后无候选（提示调低门槛、换标签或先去图库补图）/ 全部被忽略。**建议不自动触发**——须用户点「生成建议」（避免打开抽屉即产生 embedding 调用）。移动端单列、触控目标 ≥44px。
+- **预览页「智能建议」tab（09-15 article-auto-illustrate 子C；门槛口径 10-11 img-suggest-threshold）**：配图抽屉第 3 个 tab（`imgTab='suggest'`）。顶部：相似度门槛（默认 0.4，对齐后端建议专用缺省 `AI_ILLUSTRATION_MIN_SCORE`；提示文案注明「对齐后端校准值」）+ 标签预过滤多选（AND，数据源 `GET /api/images/tags`）+「生成建议/重新生成」按钮 + 提示「系统只给建议，点采用才写入正文」。按锚点分组卡片：锚点标题（`headingPath` 或「开头段落」）+ 锚点文本摘要 + 候选网格（缩略图/相关度百分比/标签）。每张候选「插入到此段」；每组「全部采用」/「忽略此段」。**空态三态**：未生成（引导点生成）/ 生成后无候选（提示调低门槛、换标签或先去图库补图）/ 全部被忽略。**建议不自动触发**——须用户点「生成建议」（避免打开抽屉即产生 embedding 调用）。移动端单列、触控目标 ≥44px。
 
 ---
 

@@ -22,7 +22,7 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
   const sugLoading = ref(false)
   const sugLoaded = ref(false)       // 是否已生成过(区分「未生成」/「生成后无候选」空态)
   const sugTagFilter = ref([])       // 标签预过滤(AND 语义)
-  const sugMinScore = ref(0.3)       // 相似度门槛(默认与后端 AI_IMAGE_MIN_SCORE 同口径)
+  const sugMinScore = ref(0.4)       // 相似度门槛(默认对齐后端建议专用配置 AI_ILLUSTRATION_MIN_SCORE=0.4;与图库搜索 AI_IMAGE_MIN_SCORE=0.3 解耦,10-11 img-suggest-threshold)
   const sugAdopted = ref(new Set())  // 本次会话已采用的图片 id(仅用于候选标记「已采用」)
   const sugDismissedCount = ref(0)   // 本次会话已忽略的锚点数(区分「无候选」与「全被忽略」两种空态)
   const allTags = ref([])            // 全库标签清单(预过滤下拉同源)

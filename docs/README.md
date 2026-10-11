@@ -182,7 +182,7 @@ graph TD
 | JWT / 端口 | `JWT_SECRET`、`JWT_EXPIRE_MINUTES`、`SERVER_PORT`（默认 8080）、`BACKEND_PORT`/`FRONTEND_PORT`（Docker 产线端口，见 [deploy.md](deploy.md)） | [spec/overview.md](spec/overview.md)、[deploy.md](deploy.md) |
 | AI 统一入口 | `AI_BASE_URL` / `AI_API_KEY` / `AI_MODEL` / `AI_EMBEDDING_MODEL` / `AI_EMBEDDING_DIM` / `AI_TIMEOUT_MS` / `AI_TEMPERATURE` | [spec/overview.md](spec/overview.md)、[spec/retrieval.md §4.1](spec/retrieval.md) |
 | AI 图像 | `AI_IMAGE_MODEL` / `AI_IMAGE_MODELS`（多模型逗号分隔轮询，图生图）+ `AI_IMAGE_MIN_SCORE` | [spec/image.md](spec/image.md) |
-| 配图建议 | `AI_ILLUSTRATION_SUGGEST_ENABLED` / `AI_ILLUSTRATION_MAX_ANCHORS` / `AI_ILLUSTRATION_TOP_N` | [spec/image.md](spec/image.md) |
+| 配图建议 | `AI_ILLUSTRATION_SUGGEST_ENABLED` / `AI_ILLUSTRATION_MAX_ANCHORS` / `AI_ILLUSTRATION_TOP_N` / `AI_ILLUSTRATION_MIN_SCORE`（缺省门槛 0.4，与图库搜索门槛解耦） | [spec/image.md](spec/image.md) |
 | RAG 检索 | `AI_RAG_MIN_SCORE` / `AI_RAG_REJECT_SCORE` / `AI_RAG_KB_TOPK` / `AI_RAG_KB_ENABLED` / `AI_RAG_ANCHOR_BOOST` / `AI_RAG_NEWS_TOPK` | [spec/retrieval.md](spec/retrieval.md)、[spec/knowledge/kb.md](spec/knowledge/kb.md)、[spec/knowledge/news.md](spec/knowledge/news.md) |
 | 深度研究 | `SEARCH_WEB_ENABLED` / `DEEP_WEB_PROVIDER_ORDER` / `TAVILY_API_KEY` / `DEEP_TAVILY_API_KEY` / `SEARXNG_BASE_URL` / `DEEP_RESEARCH_TIMEOUT_MS` / `DEEP_MAX_AGENTS` | [spec/brief-generation.md](spec/brief-generation.md) |
 | 图床 | `QINIU_ENABLED` / `QINIU_ACCESS_KEY` / `QINIU_SECRET_KEY` / `QINIU_BUCKET` / `QINIU_UPLOAD_HOST` / `QINIU_PUBLIC_DOMAIN` / `QINIU_TOKEN_TTL`、`IMAGE_STORAGE_DIR`、`IMAGE_MAX_UPLOAD_MB` | [img.md](img.md)、[spec/image.md](spec/image.md) |

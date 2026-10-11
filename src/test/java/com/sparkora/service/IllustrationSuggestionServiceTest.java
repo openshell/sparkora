@@ -45,7 +45,9 @@ import static org.mockito.Mockito.when;
  * 已忽略锚点被过滤；单锚点检索失败跳过 + 其余正常；无候选锚点不出现；
  * **零副作用断言**（suggest 不触发任何写路径）；dismiss 幂等与入参校验；
  * **重复配图防御**（10-11 img-suggest-dedup）：节内含图锚点不产建议、已登记关联图排除、
- * 同图跨锚点只出现在最先命中组。
+ * 同图跨锚点只出现在最先命中组；
+ * **门槛配置解耦**（10-11 img-suggest-threshold）：缺省取建议专用 AI_ILLUSTRATION_MIN_SCORE、
+ * 与图库搜索 AI_IMAGE_MIN_SCORE 互不影响、显式传参优先。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -72,6 +74,7 @@ class IllustrationSuggestionServiceTest {
     void setUp() {
         aiProps = new AiProperties();
         aiProps.setImageMinScore(0.3);
+        aiProps.setIllustrationMinScore(0.4);
         aiProps.setIllustrationMaxAnchors(5);
         aiProps.setIllustrationTopN(3);
         service = new IllustrationSuggestionService(projectMapper, versionMapper, versionImageMapper,
@@ -337,6 +340,52 @@ class IllustrationSuggestionServiceTest {
             assertTrue(!ImageService.class.equals(f.getType()),
                     "配图建议服务不得注入 ImageService（自动写入风险）: " + f.getName());
         }
+    }
+
+    // ==================== 门槛配置解耦（10-11 img-suggest-threshold）====================
+
+    /** R1:suggest 未显式传 minScore → 取建议专用配置 AI_ILLUSTRATION_MIN_SCORE;
+     *  图库搜索的 AI_IMAGE_MIN_SCORE 即使设得再高也不影响缺省建议(解耦断言)。 */
+    @Test
+    void 缺省门槛取建议专用配置_与图库搜索配置解耦() {
+        aiProps.setIllustrationMinScore(0.5);   // 可区分值:若误读图库搜索配置将透传 0.3 或 0.9
+        aiProps.setImageMinScore(0.9);
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
+        when(versionMapper.selectById(9L)).thenReturn(version(9L, MD));
+        when(dismissMapper.selectList(any())).thenReturn(List.of());
+        when(embeddingService.searchImages(any(), anyInt(), anyDouble(), any())).thenReturn(List.of(hit(7L, 0.6)));
+
+        assertTrue(service.suggest(1L, null, null).size() >= 1, "0.6 命中高于 0.5 缺省门槛,应有建议组");
+
+        // 两个锚点检索均透传建议专用缺省门槛(而非图库搜索的 0.9)
+        verify(embeddingService, times(2)).searchImages(any(), anyInt(), eq(0.5), any());
+    }
+
+    /** 配置缺省值锁定(校准初定 0.4;真机校准调整该值时须有意识地更新此断言与 docs/spec/image.md §7)。 */
+    @Test
+    void 建议门槛配置默认0点4_图库搜索默认0点3不变() {
+        assertEquals(0.4, new AiProperties().getIllustrationMinScore(), 1e-9);
+        assertEquals(0.3, new AiProperties().getImageMinScore(), 1e-9, "图库搜索门槛口径不变");
+    }
+
+    /** R2:显式传参语义不变——合法值优先于配置缺省;越界(<0/>1)仍 IllegalArgumentException(400)。 */
+    @Test
+    void 显式门槛优先于配置缺省_越界仍报错() {
+        aiProps.setIllustrationMinScore(0.6);
+        when(projectMapper.selectById(1L)).thenReturn(project(1L, 9L));
+        when(versionMapper.selectById(9L)).thenReturn(version(9L, MD));
+        when(dismissMapper.selectList(any())).thenReturn(List.of());
+        when(embeddingService.searchImages(any(), anyInt(), anyDouble(), any())).thenReturn(List.of(hit(7L, 0.6)));
+
+        service.suggest(1L, List.of("主题/销量"), 0.42);
+
+        // 显式 0.42 胜过配置缺省 0.6,标签透传不变
+        verify(embeddingService, times(2)).searchImages(any(), anyInt(), eq(0.42), eq(List.of("主题/销量")));
+
+        assertEquals("相似度门槛须在 0~1 之间", assertThrows(IllegalArgumentException.class,
+                () -> service.suggest(1L, null, 2.0)).getMessage());
+        assertEquals("相似度门槛须在 0~1 之间", assertThrows(IllegalArgumentException.class,
+                () -> service.suggest(1L, null, -0.1)).getMessage());
     }
 
     // ==================== 忽略 ====================
