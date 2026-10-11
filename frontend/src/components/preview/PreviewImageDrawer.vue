@@ -161,10 +161,13 @@ const {
   loadMoreLibrary, reloadLibrary, onLibKeywordInput
 } = usePreviewLibrary()
 
+// 智能建议组合函数契约要求 ref/computed（内部取 .value）；传普通函数会让 projectId 变 undefined
+// → URL 拼成 /api/projects/undefined/… → 后端 400「参数 projectId 格式不正确」（10-11 实测回归）
+const projectIdRef = computed(() => props.projectId)
 const {
   sugGroups, sugLoading, sugLoaded, sugTagFilter, sugMinScore, sugAdopted, sugDismissedCount, allTags,
   generateSuggestions, loadSugTags, onAdoptOne, onAdoptGroup, onDismissGroup
-} = usePreviewSuggestions(() => props.projectId, {
+} = usePreviewSuggestions(projectIdRef, {
   busy,
   getSnapshot: () => props.snapshot,
   isEditorReady: () => (props.isEditorReady ? props.isEditorReady() : !!props.insertAtAnchor),
