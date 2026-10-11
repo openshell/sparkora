@@ -1891,3 +1891,25 @@ list_url 切至 /sales/C-110(V20 幂等);启用乘联会/盖世采集(源 enable
 ### Next Steps
 
 - 中期候选:句级分块 + 一键智能配图(每段 top1 一次确认);评审不建议项(生成期预配图/自动插入开关)不做
+
+
+---
+
+## 2026-10-12 预览页评审收口(checkpoint)
+
+### What
+
+- 评审 → 任务 `10-12-preview-draft-copy-defense`(P1 复制三级降级 / P2a 草稿节流落盘 / P2b 放弃路径 / P2d 淡入收敛 / P3c 字数 / P3d 宽度持久化 / P3e §4 规格漂移),`9825a7a fix(ui)`,已归档(`ed6f81a`)。
+- 评审勘误:P2d「每 400ms 重放 fadein」诊断不精确——v-html innerHTML 更新不重建容器节点、CSS 动画不重播;仍按一次性淡入落地。
+- 实现带出真 P0:`:disabled="renderError"`(String→Boolean casting)使「复制排版」自 S4 恒禁用,已修 + spec 沉淀(Common Mistake)。
+
+### 留痕(中期方向 / 遗留)
+
+- **P2c 滚动同步锚点化**(中期):百分比映射在长文 md↔html 错位放大;修向 = marked heading ↔ CodeMirror 行号锚点映射。
+- **P3a 采纳双成功 toast 降噪**(未批准范围):单张采纳 =「已插入+已保存」双 toast,persist 场景可抑制宿主成功提示。
+- **StepPublish.vue:210 字数旧口径**:与 textStat.js 统一(后续小任务)。
+- StepPreview 预置遗留:localStorage 裸读无 try/catch(SPLIT_KEY 初始化/setItem);saveContent await 期续打字的保存竞态(最新编辑被视为已保存),红线内未动。
+
+### Status
+
+[OK] **Completed** — 预览页评审批次闭环
