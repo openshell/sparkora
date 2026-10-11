@@ -89,20 +89,25 @@
                 <el-button size="small" text :disabled="busy" @click="onDismissGroup(g)">忽略此段</el-button>
               </span>
             </div>
-            <div class="sug-anchor-text">{{ g.anchorText }}</div>
+            <div class="sug-anchor-text" :title="g.anchorText">{{ g.anchorText }}</div>
+            <!-- 横排卡(10-11 img-suggest-card-layout):左缩略图 + 右信息列;纯展示改动,事件接线/onAdoptOne 签名零变化 -->
             <div class="sug-grid">
               <div v-for="img in g.candidates" :key="img.imageId" class="sug-cell">
                 <el-image :src="img.thumbUrl || img.url" fit="cover" class="sug-thumb"
                           :preview-src-list="[img.url]" preview-teleported hide-on-click-modal />
-                <div class="sug-meta">
-                  <span class="sug-score-val">相关度 {{ (img.score * 100).toFixed(0) }}%</span>
-                  <span v-if="sugAdopted.has(img.imageId)" class="sug-adopted">已采用</span>
+                <div class="sug-info">
+                  <div class="sug-meta">
+                    <span class="sug-score-val">相关度 {{ (img.score * 100).toFixed(0) }}%</span>
+                    <span v-if="sugAdopted.has(img.imageId)" class="sug-adopted">已采用</span>
+                  </div>
+                  <div class="sug-tag-row">
+                    <el-tag v-for="t in sugVisibleTags(img)" :key="t" size="small" effect="plain">{{ t }}</el-tag>
+                    <el-tag v-if="sugExtraTagCount(img) > 0" size="small" effect="plain" class="sug-tag-more"
+                            :title="sugExtraTagsTitle(img)">+{{ sugExtraTagCount(img) }}</el-tag>
+                  </div>
+                  <el-button size="small" type="primary" plain class="sug-insert"
+                             :disabled="busy" @click="onAdoptOne(g, img)">插入到此段</el-button>
                 </div>
-                <div class="sug-tag-row">
-                  <el-tag v-for="t in (img.tags || [])" :key="t" size="small" effect="plain">{{ t }}</el-tag>
-                </div>
-                <el-button size="small" type="primary" plain class="sug-insert"
-                           :disabled="busy" @click="onAdoptOne(g, img)">插入到此段</el-button>
               </div>
             </div>
           </div>
@@ -159,6 +164,13 @@ const busy = computed({
 // 图库图片图床公网 URL（入库即已转存，后端填充 url 字段）
 const imgUrl = (img) => img?.thumbUrl || img?.url || ''   // S10:网格缩略图(imageView2/webp)
 const originUrl = (img) => img?.url || ''                 // 插入正文/大图预览用原图 URL
+
+// 智能建议横排卡展示辅助(10-11 img-suggest-card-layout;纯展示函数,无响应式依赖):
+// 标签最多显示 2 个(≤2 全显),超出折叠为 +N 小标签,原生 title 提示剩余标签
+const SUG_TAG_VISIBLE_MAX = 2
+const sugVisibleTags = (img) => (img.tags || []).slice(0, SUG_TAG_VISIBLE_MAX)
+const sugExtraTagCount = (img) => Math.max(0, (img.tags || []).length - SUG_TAG_VISIBLE_MAX)
+const sugExtraTagsTitle = (img) => `其余标签：${(img.tags || []).slice(SUG_TAG_VISIBLE_MAX).join('、')}`
 
 const {
   libraryImages, libTotal, libLoading, libSource, libKeyword, libHasMore,
@@ -228,14 +240,19 @@ watch(imgTab, (t) => { if (t === 'suggest') loadSugTags() })
 .sug-group-title { font-size: 13px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sug-group-actions { flex: none; display: inline-flex; gap: 4px; }
 .sug-anchor-text { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 8px;
-  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sug-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-.sug-cell { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px; }
-.sug-thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); background: var(--paper); }
-.sug-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 5px; }
-.sug-score-val { font-size: 11px; color: var(--muted); }
-.sug-adopted { font-size: 11px; color: #fff; background: var(--ok, #67c23a); border-radius: 8px; padding: 0 6px; }
-.sug-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 20px; }
-.sug-tag-row .el-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.sug-insert { width: 100%; margin-top: 6px; min-height: 32px; }
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 横排卡(10-11 img-suggest-card-layout):单列纵向排布,每卡 = 左缩略图(固定 100px,4:3) + 右信息列 */
+.sug-grid { display: flex; flex-direction: column; gap: 10px; }
+.sug-cell { display: flex; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 6px; background: var(--card); }
+.sug-thumb { width: 100px; flex: none; aspect-ratio: 4 / 3; border-radius: var(--radius-sm);
+  background: var(--paper); align-self: center; }
+.sug-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sug-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.sug-score-val { font-size: 11px; color: var(--muted); flex: none; }
+.sug-adopted { font-size: 11px; color: #fff; background: var(--ok, #67c23a); border-radius: 8px; padding: 0 6px; flex: none; }
+.sug-tag-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; min-height: 20px; overflow: hidden; }
+.sug-tag-row .el-tag { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sug-tag-row .sug-tag-more { flex: none; }
+.sug-insert { width: 100%; min-height: var(--control-h-sm); }
 </style>

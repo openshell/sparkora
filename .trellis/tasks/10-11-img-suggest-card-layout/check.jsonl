@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对纯展示改动符合拆分/接线/密度约定,未越界改逻辑"}
+{"file": "docs/spec/image.md", "reason": "核对 §8 tab 描述与实现一致或确认无需改"}
