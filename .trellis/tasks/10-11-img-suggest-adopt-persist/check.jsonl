@@ -1,0 +1,3 @@
+{"file": "docs/spec/preview.md", "reason": "核对采纳双写顺序与保存时点描述一致;失效占位/dirty 前置存语义未被波及"}
+{"file": "docs/spec/image.md", "reason": "§7 采用链路语义(登记→插入二写自洽+回滚)不变;确认只新增了保存调用层"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 API 调用走具名导出、无直调 http、drawer→composable→prop 回调接线符合拆分惯例"}

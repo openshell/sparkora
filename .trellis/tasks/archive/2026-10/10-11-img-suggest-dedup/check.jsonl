@@ -1,0 +1,4 @@
+{"file": "docs/spec/image.md", "reason": "§7.2 过滤规则与字段表是否与实现一致;零副作用/契约字段不变声明核对"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对 suggest 仍零副作用、未注入 ImageService 写路径、多步写入失败顺序纪律未被突破"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "确认未新增错误面:400(功能关闭/项目/版本/正文/门槛)与 500 语义不变"}
+{"file": "docs/spec/preview.md", "reason": "采纳双写与插图落点契约未被本任务波及;真机验收口径按此核对"}

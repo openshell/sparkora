@@ -1,0 +1,30 @@
+{
+  "id": "img-suggest-defect-fixes",
+  "name": "img-suggest-defect-fixes",
+  "title": "智能配图建议缺陷批次修复(parent)",
+  "description": "汇总 10-11 设计评审确认的三项缺陷修复(重复配图防御/采用落正文/门槛解耦),持有跨子任务验收与环境收口",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "openshell_vm",
+  "assignee": "openshell_vm",
+  "createdAt": "2026-10-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-11-img-suggest-dedup",
+    "10-11-img-suggest-adopt-persist",
+    "10-11-img-suggest-threshold"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

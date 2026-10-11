@@ -1,0 +1,3 @@
+{"file": "docs/spec/image.md", "reason": "核对接口表缺省值/AiProperties/.env.example 三处一致;校准结论已留痕"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "核对配置命名与绑定惯例一致(AI_ILLUSTRATION_MIN_SCORE ↔ illustrationMinScore)"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对新默认值仅动建议 tab 口径,图库搜索 UI/行为无回归"}

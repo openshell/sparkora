@@ -1,0 +1,4 @@
+{"file": "docs/spec/image.md", "reason": "§7 建议生成链路 + 接口表 minScore 缺省值描述是权威契约,配置解耦后需三处同步"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "AiProperties 配置惯例与向量检索相似度门槛口径(imageMinScore 现状);解耦新增配置须沿用命名/绑定惯例"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "minScore 越界 400 语义沿用;确认解耦不引入新 500 面"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端门槛控件默认值与文案改动走 drawer/composable 既有拆分落位与 API 约定"}

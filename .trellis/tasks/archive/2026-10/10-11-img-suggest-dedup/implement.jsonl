@@ -1,0 +1,5 @@
+{"file": "docs/spec/image.md", "reason": "§7 配图建议语义/过滤规则/接口行为是本次变更的权威契约,实现后必须三处同步"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "零副作用与不可逆副作用隔离纪律:新增只读 mapper 依赖需满足「无写路径可达」约束,实现时对照"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 错误语义与 400/500 边界保持不变,防止本任务引入新错误面"}
+{"file": ".trellis/spec/backend/ai-rag-guidelines.md", "reason": "PgVectorStore 单表与 searchImages 检索契约:过滤是 searchImages 之后的后处理层,不改向量域过滤"}
+{"file": "docs/spec/preview.md", "reason": "采纳双写(登记关联行+插入正文)契约:本任务只收窄建议候选,采用语义不得被波及(验收口径)"}

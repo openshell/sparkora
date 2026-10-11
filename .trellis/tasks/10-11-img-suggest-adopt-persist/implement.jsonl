@@ -1,0 +1,3 @@
+{"file": "docs/spec/preview.md", "reason": "预览页采纳/插图落点/保存契约权威来源;采纳时点落库描述需与实现同步"}
+{"file": "docs/spec/image.md", "reason": "§7 建议采用链路(登记→插入)契约;保存时机是新增层,核对不破坏 §7 语义"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "API 层具名导出约定(saveContent 走 imageApi)、大组件拆分落位(drawer/composables)、props 回调用接线惯例(refreshSnapshot 同款)"}
