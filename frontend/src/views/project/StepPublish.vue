@@ -139,6 +139,7 @@ import { WarningFilled, SuccessFilled } from '@element-plus/icons-vue'
 import { isPublishable } from '../../constants/project'
 import { hasToken, hasAny, extractTokens, get } from '../../utils/pendingImageStore'
 import { countBodyImages } from '../../utils/bodyImageRefs'
+import { textStatOf } from '../../utils/textStat'
 
 /**
  * Step 4 · 发布(S5):同源渲染(与 Step3 preview 完全同参)→ wenyan-server(公众号草稿箱)。
@@ -207,7 +208,8 @@ const coverUrl = ref('')
 /** 插图数:解析正文图片引用,与预览页工具栏同一口径(09-27-image-insert-bugs)。
  *  不再数关联表(bodyImageIds)——它对「手工编辑正文」不敏感(删图不摘登记),数出来会虚高。 */
 const bodyImageCount = computed(() => countBodyImages(contentMd.value))
-const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
+/** 字数:与预览页同源 textStatOf(剥离图片语法/链接目标/结构标记后按非空白字符计,口径统一至 utils/textStat.js,R2)。 */
+const wordCount = computed(() => textStatOf(contentMd.value))
 
 const loadSummary = async () => {
   summaryLoaded.value = false

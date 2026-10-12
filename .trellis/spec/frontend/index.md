@@ -79,7 +79,7 @@ editorRef.value?.insertMdAtAnchor?.(group.headingPath, `\n![](${url})\n`)  // �
 - 回滚前判断该图是否**本次新登记**（对照 `imgSnapshot.bodyImageIds`），已登记过的图不得因插入失败被移除（会误删用户既有插图）。
 - **接口 DTO 是 record 时字段名可能与实体不同**：建议/检索类候选走 `ImageSearchHit`（`imageId`/`url`/`thumbUrl`），图库实体走 `id`/`url`。混用会静默传 `undefined`（如 `POST /images/undefined/body` → 400「参数 imageId 格式不正确」），且**编译与构建都不会报错**——对照 `frontend/src/api/index.js` 的接口注释确认字段名。
 - **不得提供任何自动写入路径**：不设自动插入开关；生成建议（检索）可自动，写入必须用户点。服务侧也不得注入可写字段的组件。
-- **采纳结算后即时落库（10-11-img-suggest-adopt-persist）**：采纳动作（登记 + 插入，含回滚）结算完成后，经 prop 注入的 persist 回调复用宿主 `StepPreview.saveContent` 落一次正文——单张采纳 1 次、整组「全部采用」仅 1 次（组内单张失败不中断，persist 内容=最新 contentMd 与组内成败无关；全失败也触发一次，幂等无害）。persist 失败不回滚、不叠加提示（宿主 `saveContent` 自带中文警示/成功提示，回调只吞错防双 toast）；未传 prop 时静默跳过（向后兼容）。persist 后 `refreshSnapshot` 仍照常执行；「去发布」dirty 前置存语义不变。persist 可保存最新正文的时序前提：`insertAtAnchor` 经 CodeMirror `dispatch` → `emit('update:modelValue')` **同步**更新 `contentMd`（400ms 防抖仅在渲染侧，不介入 v-model）。
+- **采纳结算后即时落库（10-11-img-suggest-adopt-persist）**：采纳动作（登记 + 插入，含回滚）结算完成后，经 prop 注入的 persist 回调复用宿主 `StepPreview.saveContent` 落一次正文——单张采纳 1 次、整组「全部采用」仅 1 次（组内单张失败不中断，persist 内容=最新 contentMd 与组内成败无关；全失败也触发一次，幂等无害）。persist 失败不回滚、不叠加提示（10-12-preview-leftover-cleanup R1 起宿主经 `:save-content` 注入**静默变体**——`saveContent({ silentSuccess: true })` 或同义包装，StepPreview 现为命名包装 `saveContentSilent`：成功「正文已保存」toast 由宿主抑制——采纳链已有自己的成功提示（「已插入到正文并登记插图」/「已采用 N 张」），失败中文警示保留；工具栏「保存正文」与「去发布」前置存不加参、成功提示照旧，回调只吞错防双 toast）；未传 prop 时静默跳过（向后兼容）。persist 后 `refreshSnapshot` 仍照常执行；「去发布」dirty 前置存语义不变。persist 可保存最新正文的时序前提：`insertAtAnchor` 经 CodeMirror `dispatch` → `emit('update:modelValue')` **同步**更新 `contentMd`（400ms 防抖仅在渲染侧，不介入 v-model）。
 
 **Related**: `frontend/src/views/project/StepPreview.vue`（智能建议 tab）、`frontend/src/components/MarkdownEditor.vue`（`insertMdAtAnchor`）。
 
@@ -179,6 +179,19 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 ```
 
 > **本地草稿类「不能丢」的持久化用 leading+trailing 节流，不是纯 debounce（10-12-preview-draft-copy-defense R2）**：纯 debounce 在连续打字时每键重置窗口、**永不落盘**，反而复刻「只存首次改动」的旧缺陷。范式：dirty 翻转立即写（leading，距上次落盘 ≥1s 就当场写）+ 挂 1s 到期兜底写最新内容（trailing，连续输入每 ≤1s 落盘一次）；卸载时清 timer 并 flush 最后一笔（仅当页面已加载成功，防止空串覆盖旧草稿）。
+
+### Convention: 保存通道契约（工具栏/去发布前置存/采纳 persist 共用 `StepPreview.saveContent`）
+
+三个调用方共用宿主唯一保存通道：工具栏「保存正文」/「去发布」前置存/采纳 persist（经 `:save-content` prop 注入）。失败一律走宿主中文警示（`saveState='error'`），成功提示按通道区分——**采纳 persist 走 `silentSuccess` 静默变体（`saveContentSilent`）抑制「正文已保存」toast**（采纳链自有成功提示），工具栏与去发布前置存照常提示（10-12-preview-leftover-cleanup R1）。
+
+**R4（10-12-preview-leftover-cleanup）起成功分支以「入口快照」为准**：`saveContent` 入口先把 `contentMd` 固化为快照 `md`、请求体用 `md`；保存 await 期间用户续打字时落库的是请求时快照，最新编辑未随本次保存落库——因此：
+
+- 保存期间**无新编辑**（`contentMd.value === md`）→ 现行为不变：`originalMd=md`、`saveState='clean'`、清 draftKey、恢复警示条消失；
+- 保存期间**有新编辑** → `originalMd` 只推进到快照 `md`（≠ 最新 `contentMd`）→ `dirty` computed 保持 true、`saveState` 维持 `'dirty'`、**不清 draftKey**（草稿兜底最新编辑），下次保存再结算。
+
+反例（改前行为）：成功后直接 `originalMd = contentMd.value`（最新编辑）+ 无条件清草稿 + 置 clean——把「落库的是快照」标成「全部已保存」，await 窗口内的最新编辑丢失保护。
+
+**Related**: `frontend/src/views/project/StepPreview.vue`（`saveContent`/`saveContentSilent`）、`frontend/src/composables/usePendingImageFlush.js`（去发布前置存）、`docs/spec/preview.md` §4。
 
 ### Convention: 富文本复制三级降级链与 execCommand 剪贴板兜底
 

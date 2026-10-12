@@ -94,7 +94,7 @@
       :is-editor-ready="isEditorReady"
       :insert-at-anchor="insertAtAnchor"
       :refresh-snapshot="refreshImgSnapshot"
-      :save-content="saveContent"
+      :save-content="saveContentSilent"
       @update:busy="(v) => (busy = v)"
       @insert="insertBodyImage" @set-cover="onSetCover" @generated="onGenerated" />
   </div>
@@ -242,11 +242,20 @@ syncHeader()
 watch([canGoPublish, renderError], syncHeader)
 onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
 
-// ==== 分栏比例:可拖拽分隔条,30%~75%,记忆到 localStorage ====
+// ==== 分栏比例:可拖拽分隔条,30%~75%,记忆到 localStorage(读写失败静默兜底,R3:对齐 useSplitPane 惯例) ====
 const SPLIT_KEY = 'sparkora.previewSplit'
 const splitRef = ref(null)                                   // .duo 容器(换算指针 x → 百分比)
 const isSplitDragging = ref(false)
-const splitPercent = ref(clampSplit(Number(localStorage.getItem(SPLIT_KEY)) || 50))
+const SPLIT_DEFAULT = 50
+const readSplitPercent = () => {
+  try { return Number(localStorage.getItem(SPLIT_KEY)) || SPLIT_DEFAULT }
+  catch (e) { /* localStorage 不可用(隐私模式等):兜底默认 */ return SPLIT_DEFAULT }
+}
+const persistSplitPercent = () => {
+  try { localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent.value))) }
+  catch (e) { /* localStorage 不可用:仅本次会话生效 */ }
+}
+const splitPercent = ref(clampSplit(readSplitPercent()))
 function clampSplit(p) { return Math.min(75, Math.max(30, p || 50)) }
 const onSplitDown = (e) => {
   isSplitDragging.value = true
@@ -266,14 +275,14 @@ function onSplitUp() {
   isSplitDragging.value = false
   window.removeEventListener('pointermove', onSplitMove)
   window.removeEventListener('pointerup', onSplitUp)
-  localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent.value)))
+  persistSplitPercent()
 }
 /** 键盘可达:左右方向键微调分栏比例 */
 const onSplitKey = (e) => {
   if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
   const step = e.shiftKey ? 10 : 2
   splitPercent.value = clampSplit(splitPercent.value + (e.key === 'ArrowLeft' ? -step : step))
-  localStorage.setItem(SPLIT_KEY, String(Math.round(splitPercent.value)))
+  persistSplitPercent()
 }
 
 // ==== 预览样式落库(项目级,跨会话保持):防抖 400ms,失败仅 warn 不阻塞预览 ====
@@ -400,19 +409,31 @@ const loadContent = async () => {
   }
 }
 
-/** 保存正文(唯一保存通道):工具栏「保存正文」/「去发布」前置存/配图建议采纳落库(经 prop 透传给抽屉)共用。 */
-const saveContent = async () => {
+/** 保存正文(唯一保存通道):工具栏「保存正文」/「去发布」前置存/配图建议采纳落库(经 prop 透传给抽屉)共用。
+ *  R1(10-12-preview-leftover-cleanup):可选 `silentSuccess`——persist(采纳落库)走静默变体抑制「正文已保存」
+ *  成功 toast(采纳链已有自己的成功提示),失败中文警示/saveState/originalMd 全不变;默认无参,工具栏/去发布提示照旧。
+ *  R4 保存竞态防御:入口先把 contentMd 固化为快照 md,请求体用 md;保存 await 期间用户续打字时,
+ *  落库的是请求时快照而最新编辑未落 → dirty 保持、saveState 维持 dirty、不清草稿(草稿兜底最新编辑)。 */
+const saveContent = async ({ silentSuccess } = {}) => {
   saving.value = true
   saveState.value = 'dirty'
   try {
-    const res = await imageApi.saveContent(projectId.value, versionId.value, contentMd.value)
+    const md = contentMd.value // R4:请求体固化为入口快照,await 期间的新编辑不进本次保存
+    const res = await imageApi.saveContent(projectId.value, versionId.value, md)
     if (res.code !== 0) throw new Error(res.msg || '保存失败')
-    originalMd.value = contentMd.value
+    originalMd.value = md
     savedAt.value = new Date().toTimeString().slice(0, 5)
-    saveState.value = 'clean'
-    try { localStorage.removeItem(draftKey.value) } catch (e) { /* 兜底 */ }
-    draftRestored.value = false // 保存成功即彻底化当前内容,恢复警示条随之消失(R3)
-    ElMessage.success('正文已保存')
+    if (contentMd.value === md) {
+      // 保存期间无新编辑:现行为不变——clean、清草稿、恢复警示条消失
+      saveState.value = 'clean'
+      try { localStorage.removeItem(draftKey.value) } catch (e) { /* 兜底 */ }
+      draftRestored.value = false // 保存成功即彻底化当前内容,恢复警示条随之消失(R3)
+    } else {
+      // 保存期间有新编辑:originalMd=md 使 dirty 精确指向「快照之后的新编辑」(保持 true);
+      // saveState 维持 dirty,草稿保留——最新编辑不丢,由工具栏「未保存」提示再存
+      saveState.value = 'dirty'
+    }
+    if (!silentSuccess) ElMessage.success('正文已保存')
     return true
   } catch (e) {
     saveState.value = 'error'
@@ -420,6 +441,9 @@ const saveContent = async () => {
     return false
   } finally { saving.value = false }
 }
+
+/** persist 静默变体(R1):配图建议采纳落库通道(`:save-content` 注入)——抑制成功 toast,其余语义同 saveContent。 */
+const saveContentSilent = () => saveContent({ silentSuccess: true })
 
 /** 放弃草稿(R3):回退到服务器已保存版本;清 draftKey 与恢复警示条。
  *  contentMd 回 originalMd → dirty computed 翻 false([dirty, contentMd] watch 会清待写的节流草稿);纯前端回退,不动保存通道。 */

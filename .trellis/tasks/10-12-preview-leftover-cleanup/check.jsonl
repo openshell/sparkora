@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 saveContent 契约三调用方一致、persist 语义修正已同步进 dual-write 条目、无自动保存越界"}
+{"file": "docs/spec/preview.md", "reason": "核对 §4/§4.1 与 R4 新成功语义一致;grep 旧行号漂移"}

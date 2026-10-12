@@ -16,8 +16,9 @@ import { projectApi, imageApi } from '../api'
  *   - insertAtAnchor: (headingPath, md) => boolean（editorRef.insertMdAtAnchor）
  *   - originUrl: (img) => string（原图 URL 派生）
  *   - refreshSnapshot: () => Promise（写入后刷新配图快照）
- *   - saveContent: () => Promise（persist:采纳结算后保存正文;宿主注入唯一保存通道(StepPreview.saveContent),
- *     本组合函数不感知其实现——成功/失败提示均由宿主内部完成,此处只吞结果与异常,不改变采纳成功口径）
+ *   - saveContent: () => Promise（persist:采纳结算后保存正文;宿主注入唯一保存通道(StepPreview.saveContent,
+ *     实为静默变体 saveContentSilent,10-12 R1:成功提示抑制、失败警示仍由宿主完成）,
+ *     本组合函数不感知其实现——此处只吞结果与异常,不改变采纳成功口径）
  */
 export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEditorReady, insertAtAnchor, originUrl, refreshSnapshot, saveContent }) {
   const sugGroups = ref([])          // 按锚点分组的建议: [{anchorKey,anchorIndex,headingPath,anchorText,candidates[]}]
@@ -101,8 +102,9 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
 
   /** 采纳结算后的正文落库(persist,10-11-img-suggest-adopt-persist):消除「关联行已落、content_md 未落」的半状态窗口。
    *  复用宿主唯一保存通道(saveContent → StepPreview.saveContent,经 prop 注入),不新增保存通道。
-   *  失败语义(R3):宿主 saveContent 内部已提示(成功「正文已保存」/失败中文警示),此处吞掉返回值与异常——
-   *  不回滚正文与登记行、不重复弹错;persist 失败不改变「采纳成功」口径。 */
+   *  提示语义(10-12-preview-leftover-cleanup R1):宿主注入的是静默变体 saveContentSilent——成功「正文已保存」
+   *  toast 被抑制(本 composable 自有「已插入到正文并登记插图」/「已采用 N 张」提示),失败中文警示仍由宿主弹出;
+   *  此处吞掉返回值与异常——不回滚正文与登记行、不重复弹错;persist 失败不改变「采纳成功」口径。 */
   const persistAfterAdopt = async () => {
     if (typeof saveContent !== 'function') return
     try { await saveContent() } catch (e) { /* 保存失败已在宿主内部提示,仅吞错避免双 toast */ }
