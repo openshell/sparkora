@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 public class CarSyncJobEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
-    private String jobType;        // SELECTED / RETRY / SCHEDULED
+    private String jobType;        // SELECTED / RETRY / IMAGE_BACKFILL(轻回填) / INCREMENTAL(增量) / SCHEDULED(旧定时历史值)
     private String status;         // RUNNING/SUCCESS/PARTIAL/FAILED
     private Integer total;
     private Integer success;

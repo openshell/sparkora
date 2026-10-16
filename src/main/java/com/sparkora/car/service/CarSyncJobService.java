@@ -22,15 +22,22 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 车型同步任务编排服务(S6 重构:异步任务化)。
+ * 车型同步任务编排服务(S6 重构:异步任务化;10-15-car-image-backfill B 扩两类任务)。
+ *
+ * job_type 四类:
+ *   SELECTED / RETRY        —— 全量 syncOne(既有语义零变化)
+ *   IMAGE_BACKFILL          —— 轻回填:仅拉 goodsInfo → persistIntroImages 图片域 + 指纹收敛,不触参数/清洗/向量
+ *   INCREMENTAL             —— 增量分派:按 sync_fingerprint 决定 跳过/轻回填/全量(dispatchIncremental)
+ *   (SCHEDULED 为旧定时类型历史值,新调度改创建 INCREMENTAL)
  *
  * 取消全量同步,仅手动指定车型同步。流程:
  *   createJob(goodsIds) → 落任务表(RUNNING) → 返回 jobId
- *   @Async runJob(jobId) → 逐车型 syncOne → 更新任务进度/失败明细
+ *   @Async runJob(jobId) → 逐车型按类型分派 → 更新任务进度/明细
  *
  * 并发控制:任务启动时原子更新 status(RUNNING→RUNNING 影响行数=0 则拒绝),
  * 用数据库行锁避免重复触发,无需 Redis。
  *
+ * 明细结构:失败条目 {goodsId,name,error};备注条目 {goodsId,name,note(如「官网无图」「跳过:指纹一致」)}。
  * 注意:@Async 线程无 SecurityContext,created_by 在同步的 createJob 阶段写入。
  */
 @Slf4j
@@ -54,12 +61,33 @@ public class CarSyncJobService {
         this.json = json;
     }
 
-    /** 创建同步任务(同步调用,带 SecurityContext)。返回 jobId。 */
+    /** 创建同步任务(同步调用,带 SecurityContext)。返回 jobId。jobType: SELECTED/RETRY(既有语义零变化)。 */
     @Transactional
     public Long createJob(List<String> goodsIds, String jobType) {
         if (goodsIds == null || goodsIds.isEmpty()) throw new IllegalArgumentException("请选择要同步的车型");
+        return insertJobAndRun(goodsIds, jobType == null ? "SELECTED" : jobType);
+    }
+
+    /**
+     * 创建「图片补入库」任务(R1 存量回填):覆盖全部库内存活车型(orderByAsc id),
+     * job_type=IMAGE_BACKFILL;逐车型轻回填(仅图片域 + 指纹收敛),不触参数/清洗/向量。
+     */
+    @Transactional
+    public Long createBackfillJob() {
+        List<CarModelEntity> rows = modelMapper.selectList(new QueryWrapper<CarModelEntity>()
+                .select("id", "goods_id").orderByAsc("id"));
+        List<String> goodsIds = new ArrayList<>();
+        for (CarModelEntity m : rows) {
+            if (m.getGoodsId() != null && !m.getGoodsId().isBlank()) goodsIds.add(m.getGoodsId());
+        }
+        if (goodsIds.isEmpty()) throw new IllegalArgumentException("库内没有可回填的车型");
+        return insertJobAndRun(goodsIds, "IMAGE_BACKFILL");
+    }
+
+    /** 落任务行并触发异步执行(自注入代理触发 @Async;单测 self 为空退化为同步直调)。 */
+    private Long insertJobAndRun(List<String> goodsIds, String jobType) {
         CarSyncJobEntity job = new CarSyncJobEntity();
-        job.setJobType(jobType == null ? "SELECTED" : jobType);
+        job.setJobType(jobType);
         job.setStatus("RUNNING");
         job.setTotal(goodsIds.size());
         job.setSuccess(0);
@@ -68,11 +96,11 @@ public class CarSyncJobService {
         job.setCreatedBy(SecurityUtil.current() == null ? "system" : SecurityUtil.current().getUsername());
         job.setCreatedAt(LocalDateTime.now());
         jobMapper.insert(job);
-        self.runJob(job.getId(), goodsIds);
+        (self == null ? this : self).runJob(job.getId(), goodsIds);
         return job.getId();
     }
 
-    /** 异步执行任务:逐车型同步,统计成功/失败,写失败明细。 */
+    /** 异步执行任务:按 job_type 分派(全量/轻回填/增量),统计成功/失败,写明细。 */
     @Async
     public void runJob(Long jobId, List<String> goodsIds) {
         CarSyncJobEntity job = jobMapper.selectById(jobId);
@@ -84,30 +112,61 @@ public class CarSyncJobService {
             log.warn("同步任务 {} 已被并发处理,跳过", jobId);
             return;
         }
-        List<Map<String, Object>> failedItems = new ArrayList<>();
+        String type = job.getJobType() == null ? "SELECTED" : job.getJobType();
+        // 明细:失败条目 {goodsId,name,error} + 备注条目 {goodsId,name,note}(官网无图/跳过:指纹一致)
+        List<Map<String, Object>> detailItems = new ArrayList<>();
         int success = 0;
         int failed = 0;
-        // 清洗方式聚合(可观测:RULE/AI/FALLBACK 汇总,随任务收尾日志输出)
+        // 清洗方式聚合(可观测:RULE/AI/FALLBACK 汇总,随任务收尾日志输出);轻回填/跳过不触清洗域,清洗净为 null
         int aggRule = 0, aggAi = 0, aggFallback = 0;
         for (String goodsId : goodsIds) {
             try {
-                // 先置 SYNCING 中间态,再入库(入库成功 persistModel 会置 SUCCESS)
-                markSyncing(goodsId);
-                CarModelService.SyncOutcome outcome = modelService.syncOne(goodsId);
-                CleanStats st = outcome.cleanStats();
-                aggRule += st.getRule();
-                aggAi += st.getAi();
-                aggFallback += st.getFallback();
-                log.info("车型同步完成 goodsId={} name={} 清洗统计 RULE={} AI={} FALLBACK={}",
-                        goodsId, outcome.model().getName(), st.getRule(), st.getAi(), st.getFallback());
-                success++;
+                if ("IMAGE_BACKFILL".equals(type)) {
+                    // 轻回填:仅图片域 + 指纹收敛;版本/参数/清洗/向量域零触碰
+                    CarModelService.IncrementalOutcome o = modelService.backfillImages(goodsId);
+                    appendNote(detailItems, goodsId, o.note());
+                    String name = o.outcome() != null && o.outcome().model() != null
+                            ? o.outcome().model().getName() : goodsId;
+                    log.info("车型图片回填完成 goodsId={} name={} note={}",
+                            goodsId, name, o.note() == null ? "-" : o.note());
+                    success++;
+                } else if ("INCREMENTAL".equals(type)) {
+                    // 增量分派:跳过/轻回填/全量由指纹决定;note 透传任务明细(前端原样展示)
+                    CarModelService.IncrementalOutcome o = modelService.dispatchIncremental(goodsId);
+                    appendNote(detailItems, goodsId, o.note());
+                    if (o.outcome() == null) {
+                        log.info("车型增量跳过 goodsId={} note={}", goodsId, o.note());
+                    } else {
+                        CleanStats st = o.outcome().cleanStats();
+                        if (st != null) {
+                            aggRule += st.getRule();
+                            aggAi += st.getAi();
+                            aggFallback += st.getFallback();
+                        }
+                        log.info("车型增量同步完成 goodsId={} note={} 清洗统计 RULE={} AI={} FALLBACK={}",
+                                goodsId, o.note() == null ? "-" : o.note(),
+                                st == null ? 0 : st.getRule(), st == null ? 0 : st.getAi(), st == null ? 0 : st.getFallback());
+                    }
+                    success++;
+                } else {
+                    // 全量路径(SELECTED/RETRY),语义零变化
+                    markSyncing(goodsId);
+                    CarModelService.SyncOutcome outcome = modelService.syncOne(goodsId);
+                    CleanStats st = outcome.cleanStats();
+                    aggRule += st.getRule();
+                    aggAi += st.getAi();
+                    aggFallback += st.getFallback();
+                    log.info("车型同步完成 goodsId={} name={} 清洗统计 RULE={} AI={} FALLBACK={}",
+                            goodsId, outcome.model().getName(), st.getRule(), st.getAi(), st.getFallback());
+                    success++;
+                }
             } catch (Exception e) {
                 failed++;
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("goodsId", goodsId);
                 item.put("name", modelName(goodsId));
                 item.put("error", e.getMessage() == null ? "未知错误" : e.getMessage());
-                failedItems.add(item);
+                detailItems.add(item);
                 log.warn("车型同步失败 goodsId={}: {}", goodsId, e.getMessage());
             }
             // 每完成一个更新一次进度(前端轮询可见)
@@ -115,20 +174,30 @@ public class CarSyncJobService {
             job.setFailed(failed);
             jobMapper.updateById(job);
         }
-        log.info("同步任务完成 jobId={} 清洗聚合 total={} RULE={} AI={} FALLBACK={} (fallbackPct={}%)",
-                jobId, aggRule + aggAi + aggFallback, aggRule, aggAi, aggFallback,
+        log.info("同步任务完成 jobId={} type={} 清洗聚合 total={} RULE={} AI={} FALLBACK={} (fallbackPct={}%)",
+                jobId, type, aggRule + aggAi + aggFallback, aggRule, aggAi, aggFallback,
                 (aggRule + aggAi + aggFallback) == 0 ? 0
                         : aggFallback * 100 / (aggRule + aggAi + aggFallback));
-        finish(job, success, failed, failedItems);
+        finish(job, success, failed, detailItems);
     }
 
-    /** 任务收尾:置终态(SUCCESS/PARTIAL/FAILED)并写失败明细。 */
+    /** 追加「成功但有可汇报信息」的明细条目(note 键,无 error;不参与 retry 重试候选)。 */
+    private void appendNote(List<Map<String, Object>> detailItems, String goodsId, String note) {
+        if (note == null || note.isBlank()) return;
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("goodsId", goodsId);
+        item.put("name", modelName(goodsId));
+        item.put("note", note);
+        detailItems.add(item);
+    }
+
+    /** 任务收尾:置终态(SUCCESS/PARTIAL/FAILED)并写明细(失败+备注)。 */
     @Transactional
-    protected void finish(CarSyncJobEntity job, int success, int failed, List<Map<String, Object>> failedItems) {
+    protected void finish(CarSyncJobEntity job, int success, int failed, List<Map<String, Object>> detailItems) {
         job.setSuccess(success);
         job.setFailed(failed);
         job.setFinishedAt(LocalDateTime.now());
-        job.setFailedItems(toJson(failedItems));
+        job.setFailedItems(toJson(detailItems));
         if (failed == 0) {
             job.setStatus("SUCCESS");
         } else if (success > 0) {
@@ -200,6 +269,8 @@ public class CarSyncJobService {
                     json.getTypeFactory().constructCollectionType(List.class, Map.class));
             List<String> out = new ArrayList<>();
             for (Map<String, Object> it : items) {
+                // 备注条目(如「官网无图」「跳过:指纹一致」)非失败项,不参与重试候选
+                if (it.get("error") == null) continue;
                 Object g = it.get("goodsId");
                 if (g != null) out.add(String.valueOf(g));
             }

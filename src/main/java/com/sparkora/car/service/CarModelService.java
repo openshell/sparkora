@@ -34,9 +34,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -359,6 +361,192 @@ public class CarModelService {
     public record SyncOutcome(CarModelEntity model, CleanStats cleanStats) {}
 
     /**
+     * 增量分派/轻回填执行结果(10-15-car-image-backfill B2):note 为任务明细备注(可空,
+     * 如「官网无图」「跳过:指纹一致」),outcome 为同步产物(SKIP 分支为 null;轻回填的
+     * cleanStats 恒为 null —— 轻回填不触清洗域)。
+     */
+    public record IncrementalOutcome(String note, SyncOutcome outcome) {}
+
+    /** 指纹序列化专用 Jackson(确定性输出,与全局实例解耦)。 */
+    private static final ObjectMapper FP_JSON = new ObjectMapper();
+
+    /**
+     * 计算官网 goodsInfo 稳定字段指纹(R2 增量调度依据):name/salesNetworkName/vehicleId/
+     * price/features/introduce(逐项原始顺序,Jackson 数组天然保序)/carRights 序列化后
+     * SHA-256 → 64 位 hex。
+     * 包级静态可见:增量分派单测需以同一口径构造「指纹一致/不一致」用例(纯函数,对齐
+     * 「纯算法抽静态方法并单测」先例)。
+     * 已知盲区(设计明示):goodsParams 独立变化不触发增量,需手动全目录同步兜底。
+     */
+    static String computeFingerprint(GoodsInfoDto.Item item) {
+        if (item == null) return null;
+        try {
+            Map<String, Object> canonical = new LinkedHashMap<>();
+            canonical.put("name", item.getName());
+            canonical.put("salesNetworkName", item.getSalesNetworkName());
+            canonical.put("vehicleId", item.getVehicleId());
+            canonical.put("price", item.getPrice());
+            canonical.put("features", item.getFeatures());
+            canonical.put("introduce", item.getIntroduce());
+            canonical.put("carRights", item.getCarRights());
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(FP_JSON.writeValueAsBytes(canonical));
+            return sha256Hex(digest);
+        } catch (Exception e) {
+            throw new IllegalStateException("车型同步指纹计算失败", e);
+        }
+    }
+
+    /** 取 goodsInfo 首个 item(空响应返回 null,沿 syncOne 判空口径)。 */
+    private static GoodsInfoDto.Item firstGoodsInfoItem(GoodsInfoDto info) {
+        if (info == null || info.getGoodsinfoList() == null
+                || info.getGoodsinfoList().getItems() == null
+                || info.getGoodsinfoList().getItems().isEmpty()) return null;
+        return info.getGoodsinfoList().getItems().get(0);
+    }
+
+    /** SHA-256 摘要 → 64 位 hex(指纹共用)。 */
+    private static String sha256Hex(byte[] digest) {
+        StringBuilder hex = new StringBuilder(digest.length * 2);
+        for (byte b : digest) hex.append(String.format("%02x", b));
+        return hex.toString();
+    }
+
+    /**
+     * 轻回填(存量车型图片补入库,R1):仅拉 goodsInfo(不调 goodsParams/goodsAttrList)→
+     * 复用 persistIntroImages(下载/内容哈希去重/图床转存/「车型-名」自动打标)→ 收敛
+     * sync_fingerprint + syncStatus=SUCCESS + lastSyncAt。不走 persistModel:版本、参数、
+     * 清洗、向量域零触碰。introduce 为空(官网无图)时 persistIntroImages 早退、不冲写
+     * intro_images,note=「官网无图」供任务明细标注。
+     *
+     * @return 增量结果:note(官网无图时非空)+ outcome(model + null 清洗统计)
+     * @throws IllegalStateException 车型行不存在/已删除(回填范围来自库存行,行缺失说明被并发删除,不复活)
+     */
+    public IncrementalOutcome backfillImages(String goodsId) {
+        GoodsInfoDto.Item item = firstGoodsInfoItem(client.goodsInfo(goodsId));
+        CarModelEntity row = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
+        if (row == null) throw new IllegalStateException("车型不存在或已删除,无法轻回填: goodsId=" + goodsId);
+        return backfillInternal(row, item);   // note(官网无图/无数据兜底)由 backfillInternal 生成
+    }
+
+    /**
+     * 增量分派(定时 INCREMENTAL 任务逐车型入口,R2 分派表):
+     *   行不存在            → 全量 syncOne(官网目录新增车型)
+     *   指纹 NULL           → 轻回填(存量兼容,顺带初始化指纹)
+     *   指纹 == 新 goodsInfo 指纹 → 跳过(零下载/零清洗/零嵌入;note=「跳过:指纹一致」)
+     *   指纹不一致          → 全量 syncOne(price/卖点/图片字段均在 goodsInfo 内,可触发)
+     * 跳过分支不触碰参数/清洗/向量,也不重写 intro_images。
+     */
+    public IncrementalOutcome dispatchIncremental(String goodsId) {
+        CarModelEntity row = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
+        if (row == null) return new IncrementalOutcome(null, syncOne(goodsId));
+        GoodsInfoDto.Item item = firstGoodsInfoItem(client.goodsInfo(goodsId));
+        String stored = row.getSyncFingerprint();
+        if (stored == null || stored.isBlank()) {
+            // 10-15 真机修订:backfillInternal 含「无条目」兜底与 note 生成,item 职责单一化
+            return backfillInternal(row, item);
+        }
+        if (item != null && stored.equals(computeFingerprint(item))) {
+            return new IncrementalOutcome("跳过:指纹一致", null);
+        }
+        if (item == null && stored.equals(computeRowSnapshotFingerprint(row))) {
+            // 官网当前无条目且库存快照未变 → 跳过(每天一次 goodsInfo 调用,零下载/零清洗/零嵌入)
+            return new IncrementalOutcome("跳过:官网无数据(与上次快照一致)", null);
+        }
+        return new IncrementalOutcome(null, syncOne(goodsId));
+    }
+
+    /**
+     * 轻回填执行体(复用调用方已拉取的 item,免二次网络调用),note 一并在此生成。
+     * 有条目:走 persistIntroImages(item 口径指纹);无条目:存量 URL 下载兜底 + 库存行快照指纹。
+     * 清洗净为 null。
+     */
+    private IncrementalOutcome backfillInternal(CarModelEntity row, GoodsInfoDto.Item item) {
+        String note;
+        if (item != null) {
+            persistIntroImages(row, item);   // 单图失败仅告警不阻断(既有语义);空 introduce 早退不冲写
+            row.setSyncFingerprint(computeFingerprint(item));
+            note = (item.getIntroduce() == null || item.getIntroduce().isEmpty()) ? "官网无图" : null;
+        } else {
+            // 10-15 真机发现(10 车型 goodsInfo 返回空条目):无条目 ≠ 无图——用库存行的存量 URL 直接下载兜底。
+            // 指纹用库存行快照口径:官网数据恢复后 goodsInfo 指纹必不匹配 → 增量触发一次全量收敛;
+            // 未恢复时快照一致 → 增量跳过,每天零成本。
+            List<Long> ids = persistLegacyIntroImages(row);
+            if (!ids.isEmpty()) row.setIntroImages(toJson(ids));
+            row.setSyncFingerprint(computeRowSnapshotFingerprint(row));
+            note = ids.isEmpty() ? "官网无数据,且无存量图可兜底" : "官网无数据,已按存量URL兜底入库" + ids.size() + "张";
+        }
+        row.setSyncStatus("SUCCESS");
+        row.setLastSyncAt(LocalDateTime.now());
+        row.setUpdatedAt(LocalDateTime.now());
+        modelMapper.updateById(row);
+        return new IncrementalOutcome(note, new SyncOutcome(row, null));
+    }
+
+    /**
+     * 存量 URL 兜底(轻回填/增量「无条目」分支):解析库存行 intro_images 中的 http URL 项
+     * (旧管线格式)逐张下载转存,复用与 introduce 图片同口径的入库管线(哈希去重/图床/打标)。
+     * 单张失败仅告警;全部失败时回退,不打乱存量 intro_images(空返回由调用方语义收敛)。
+     */
+    private List<Long> persistLegacyIntroImages(CarModelEntity row) {
+        List<String> urls = legacyIntroUrls(row);
+        List<Long> ids = new ArrayList<>();
+        for (String url : urls) persistIntroImageUrl(row, url, ids);
+        return ids;
+    }
+
+    /** 解析存量 intro_images 中的 http URL 项(JSON 数组;已收敛为 id 列表的行返回空)。 */
+    private List<String> legacyIntroUrls(CarModelEntity row) {
+        List<String> urls = new ArrayList<>();
+        String raw = row.getIntroImages();
+        if (raw == null || raw.isBlank()) return urls;
+        try {
+            JsonNode arr = json.readTree(raw);
+            if (arr.isArray()) {
+                for (JsonNode node : arr) {
+                    String v = node.asText(null);
+                    if (v != null && v.trim().startsWith("http")) urls.add(v.trim());
+                }
+            }
+        } catch (Exception ignore) {
+            // intro_images 非法 JSON,兜底失败由「无存量图可兜底」备注提示
+        }
+        return urls;
+    }
+
+    /**
+     * 无条目时库存行快照指纹(与 computeFingerprint 同哈希口径):官网恢复数据后 goodsInfo 指纹
+     * 必不匹配快照 → 增量自动触发一次全量收敛;未恢复则快照一致 → 跳过。features/carRights/
+     * intro_images 库内为 JSON 字符串,统一 readTree 还原后再入 canonical(与 item 口径序列化形状一致)。
+     */
+    static String computeRowSnapshotFingerprint(CarModelEntity row) {
+        if (row == null) return null;
+        try {
+            Map<String, Object> canonical = new java.util.LinkedHashMap<>();
+            canonical.put("name", row.getName());
+            canonical.put("salesNetworkName", row.getSalesNetwork());
+            canonical.put("vehicleId", row.getVehicleId());
+            canonical.put("price", row.getPriceRange());
+            canonical.put("features", safeParseJson(row.getFeatures()));
+            canonical.put("introduce", safeParseJson(row.getIntroImages()));
+            canonical.put("carRights", safeParseJson(row.getCarRights()));
+            // 必须先做 SHA-256 摘要再转 hex;sha256Hex 本身不做摘要(传原始字节会产出超长串,VARCHAR(64) 装不下)
+            return sha256Hex(MessageDigest.getInstance("SHA-256").digest(FP_JSON.writeValueAsBytes(canonical)));
+        } catch (Exception e) {
+            throw new IllegalStateException("车型同步指纹计算失败(行快照口径)", e);
+        }
+    }
+
+    /** JSON 字符串 → JsonNode(还原官网数据的结构化形态供序列化);不可解析时原样字符串。 */
+    private static Object safeParseJson(String raw) {
+        if (raw == null || raw.isBlank()) return raw;
+        try {
+            return FP_JSON.readTree(raw);
+        } catch (Exception e) {
+            return raw;
+        }
+    }
+
+    /**
      * 车型介绍图(introduce URL 列表)下载转存图床,写入 sparkora_image_asset(source='byd',全局图库)。
      * car_model.intro_images 更新为图库记录 id 列表(JSON 数组)。单图失败仅告警,不阻断整车型同步。
      * 09-13 image-tags:preset 预设「车型-<车型名>」标签,走统一入库管线自动落标(零额外逻辑)。
@@ -367,28 +555,33 @@ public class CarModelService {
         if (item == null || item.getIntroduce() == null || item.getIntroduce().isEmpty()) return;
         List<Long> ids = new ArrayList<>();
         for (String url : item.getIntroduce()) {
-            if (url == null || url.isBlank()) continue;
-            try {
-                byte[] bytes = downloadImage(url);
-                String ext = sniffImageExt(bytes);
-                // S10:走 ImageService 统一入库管线（内容哈希去重;同步幂等重跑不重复占图床对象）
-                com.sparkora.domain.entity.ImageAssetEntity preset = new com.sparkora.domain.entity.ImageAssetEntity();
-                preset.setProjectId(null);                       // 全局图库
-                preset.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
-                preset.setSource("byd");
-                preset.setCreatedBy("system");
-                preset.setTags(List.of("车型-" + model.getName()));   // 09-13:自动分类标签(管线自动落标)
-                ImageAssetEntity e = imageService.persistOrReuse(bytes, ext, preset);
-                ids.add(e.getId());
-                log.info("比亚迪车型图已入库 model={} url={} id={} dedupe={}",
-                        model.getName(), shorten(url), e.getId(), Boolean.TRUE.equals(e.getDedupeHit()));
-            } catch (Exception ex) {
-                log.warn("比亚迪车型图转存失败(跳过): model={} url={} err={}", model.getName(), shorten(url), ex.getMessage());
-            }
+            persistIntroImageUrl(model, url, ids);
         }
         if (!ids.isEmpty()) {
             model.setIntroImages(toJson(ids));
             modelMapper.updateById(model);
+        }
+    }
+
+    /** 单张车型图入库(introduce 循环体与存量 URL 兜底共用):下载→哈希去重→图床→「车型-名」标签;单图失败仅告警。 */
+    private void persistIntroImageUrl(CarModelEntity model, String url, List<Long> ids) {
+        if (url == null || url.isBlank()) return;
+        try {
+            byte[] bytes = downloadImage(url);
+            String ext = sniffImageExt(bytes);
+            // S10:走 ImageService 统一入库管线（内容哈希去重;同步幂等重跑不重复占图床对象）
+            com.sparkora.domain.entity.ImageAssetEntity preset = new com.sparkora.domain.entity.ImageAssetEntity();
+            preset.setProjectId(null);                       // 全局图库
+            preset.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
+            preset.setSource("byd");
+            preset.setCreatedBy("system");
+            preset.setTags(List.of("车型-" + model.getName()));   // 09-13:自动分类标签(管线自动落标)
+            ImageAssetEntity e = imageService.persistOrReuse(bytes, ext, preset);
+            ids.add(e.getId());
+            log.info("比亚迪车型图已入库 model={} url={} id={} dedupe={}",
+                    model.getName(), shorten(url), e.getId(), Boolean.TRUE.equals(e.getDedupeHit()));
+        } catch (Exception ex) {
+            log.warn("比亚迪车型图转存失败(跳过): model={} url={} err={}", model.getName(), shorten(url), ex.getMessage());
         }
     }
 
@@ -439,6 +632,8 @@ public class CarModelService {
             if (item.getCarRights() != null) {
                 m.setCarRights(toJson(item.getCarRights()));
             }
+            // 10-15 R2:全量路径统一写指纹(增量分派依据;既有 upsert 语义不变,仅加此列写入)
+            m.setSyncFingerprint(computeFingerprint(item));
         }
         m.setSourceUrl("https://www.byd.com/cn/parameter-comparison?goodsId=" + goodsId);
         m.setSyncStatus("SUCCESS");

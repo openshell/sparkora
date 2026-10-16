@@ -62,6 +62,23 @@ public class CarModelController {
         }
     }
 
+    /**
+     * 创建「图片补入库」任务(10-15-car-image-backfill R1 存量回填;无参,覆盖全部库内存活车型)。
+     * 逐车型轻回填:仅图片域(下载/哈希去重/图床/自动打标)+ 指纹收敛,不触参数/清洗/向量。
+     * 返回 jobId(前端复用任务轮询面板看进度/明细;空图车型明细标注「官网无图」)。
+     */
+    @PostMapping("/sync/backfill")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Long> createBackfillJob() {
+        try {
+            return R.ok(jobService.createBackfillJob());
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());   // 参数/前置错误(如库内无可回填车型)
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+    }
+
     /** 查询同步任务进度。 */
     @GetMapping("/sync/jobs/{id}")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")

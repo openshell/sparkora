@@ -26,6 +26,17 @@ public class SettingEntity {
      * 09-25-brief-web-search:ADMIN 系统设置调整;空则回退部署级 DEEP_WEB_PROVIDER_ORDER。
      */
     private String webProviderOrder;
+    /**
+     * 车型库定时增量同步开关(10-15-car-image-backfill R3:运行时设置,免重启;
+     * CarSyncScheduler 每分钟 tick 读取)。V22 列默认 FALSE;.env 的 CAR_SYNC_ENABLED
+     * 降级为遗留种子(调度不再读取)。
+     */
+    private Boolean carSyncEnabled;
+    /**
+     * 车型库定时增量同步 cron(Spring 6 段格式,V22 列默认 0 0 3 * * ?)。
+     * 合法性由 SettingService 的 CronExpression.parse 兜底(非法 → 400);改后下一 tick 重算到点。
+     */
+    private String carSyncCron;
     /** 最近修改人用户 id */
     private Long updatedBy;
     private LocalDateTime updatedAt;

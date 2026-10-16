@@ -32,6 +32,13 @@ public class CarModelEntity {
     private String detailPage;     // 官网详情页路径
     private String carRights;      // JSON,购车权益
     private String sourceUrl;      // 来源官网 URL
+    /**
+     * 同步指纹(10-15-car-image-backfill R2):goodsInfo 稳定字段 SHA-256(64 hex)。
+     * NULL = 未初始化(存量兼容)——增量分派对该车型走轻回填顺带初始化;非 NULL 时与
+     * 最新 goodsInfo 指纹比对,一致即跳过(零下载/零清洗/零嵌入)。已知盲区:goodsParams
+     * 独立变化不触发(需手动全目录同步兜底)。由 persistModel(全量)/backfillImages(轻回填)统一写入。
+     */
+    private String syncFingerprint;
     private String syncStatus;     // PENDING/SYNCING/SUCCESS/FAILED
     private LocalDateTime lastSyncAt;
     private String lastSyncError;
