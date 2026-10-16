@@ -28,20 +28,25 @@
               <el-icon class="spin" v-if="job.status === 'RUNNING'"><Loading /></el-icon>
               <el-icon v-else><CircleCheck /></el-icon>
               {{ jobTitle }}
+              <el-tag size="small" effect="plain" round class="job-type">{{ jobTypeLabel }}</el-tag>
             </span>
-            <span class="job-count">{{ job.success }} 成功 · {{ job.failed }} 失败</span>
+            <span class="job-count">
+              {{ job.success }} 成功 · {{ job.failed }} 失败<template v-if="skippedCount"> · 跳过 {{ skippedCount }}</template>
+            </span>
           </div>
           <el-progress v-if="job.status === 'RUNNING'" :percentage="progress" :stroke-width="8" :show-text="false" />
           <div v-if="job.status === 'RUNNING'" class="job-progress-text">
             已处理 {{ job.success + job.failed }} / {{ job.total }} 个车型
           </div>
-          <div v-if="failedItems.length" class="job-failed">
-            <div class="failed-title">失败明细：</div>
-            <div v-for="(f, i) in failedItems" :key="i" class="failed-item">
+          <div v-if="detailItems.length" class="job-failed">
+            <div class="failed-title">{{ failedTitle }}</div>
+            <div v-for="(f, i) in detailItems" :key="i" class="failed-item">
               <span class="f-name">{{ f.name || f.goodsId }}</span>
-              <span class="f-err">{{ f.error }}</span>
+              <span v-if="f.error" class="f-err">{{ f.error }}</span>
+              <!-- 备注条目(如「官网无图」「跳过:指纹一致」)是成功路径的可观测信息,不作异常红条 -->
+              <span v-else class="f-note">{{ f.note }}</span>
             </div>
-            <el-button v-if="job.status !== 'RUNNING'" size="small" type="primary" plain :loading="retrying" @click="onRetry">
+            <el-button v-if="job.status !== 'RUNNING' && errorItems.length" size="small" type="primary" plain :loading="retrying" @click="onRetry">
               重试失败项
             </el-button>
           </div>
@@ -61,6 +66,9 @@
           <span class="sel-count">已选 {{ selected.length }} 个</span>
           <el-button type="primary" :loading="creating" :disabled="!selected.length" @click="onSync">
             <el-icon class="btn-icon"><Refresh /></el-icon>同步选中
+          </el-button>
+          <el-button v-if="user.isEditorOrAbove" :loading="backfilling" :disabled="jobRunning" @click="onBackfill">
+            <el-icon class="btn-icon"><Picture /></el-icon>图片补入库
           </el-button>
         </div>
 
@@ -90,9 +98,11 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { carApi } from '../api'
-import { ElMessage } from 'element-plus'
-import { Refresh, WarningFilled, Search, Check, Loading, CircleCheck, Van } from '@element-plus/icons-vue'
+import { useUserStore } from '../store/user'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, WarningFilled, Search, Check, Loading, CircleCheck, Van, Picture } from '@element-plus/icons-vue'
 
+const user = useUserStore()
 const loading = ref(false)
 const error = ref('')
 const catalog = ref([])
@@ -102,6 +112,8 @@ const keyword = ref('')
 const statusFilter = ref('all')
 const creating = ref(false)
 const retrying = ref(false)
+// 图片补入库(10-15-car-image-backfill R1):创建任务 → 复用同一轮询面板展示进度/明细
+const backfilling = ref(false)
 
 // 同步任务
 const job = ref(null)
@@ -131,6 +143,20 @@ const failedItems = computed(() => {
   if (!job.value?.failedItems) return []
   try { return JSON.parse(job.value.failedItems) || [] } catch { return [] }
 })
+// 明细两类条目:error=真实失败(红);note=成功但有可汇报信息(官网无图/跳过:指纹一致,普通行)
+const errorItems = computed(() => failedItems.value.filter(f => f.error))
+const noteItems = computed(() => failedItems.value.filter(f => !f.error && f.note))
+const detailItems = computed(() => [...errorItems.value, ...noteItems.value])
+const failedTitle = computed(() =>
+  errorItems.value.length && noteItems.value.length ? '任务明细：'
+    : errorItems.value.length ? '失败明细：' : '明细备注：')
+// 增量任务跳过数(明细里 note 以「跳过」开头的条目),让「跳过多少」可观测
+const skippedCount = computed(() => noteItems.value.filter(f => (f.note || '').startsWith('跳过')).length)
+const jobRunning = computed(() => job.value?.status === 'RUNNING')
+// job_type 中文标签(10-15 起新增 IMAGE_BACKFILL/INCREMENTAL;SCHEDULED 为旧定时历史值)
+const jobTypeLabel = computed(() => ({
+  SELECTED: '选中同步', RETRY: '重试', IMAGE_BACKFILL: '图片补入库', INCREMENTAL: '增量同步', SCHEDULED: '定时同步'
+}[job.value?.jobType] || '同步'))
 
 const progress = computed(() => {
   if (!job.value || !job.value.total) return 0
@@ -178,6 +204,29 @@ const onSync = async () => {
   finally { creating.value = false }
 }
 
+// 图片补入库:确认 → 创建 IMAGE_BACKFILL 任务(覆盖全部库存车型) → 复用轮询面板。
+// 该接口返回 R<Long>,data 即 jobId(区别于 createJob 的 {jobId} 包装)
+const onBackfill = () => {
+  if (jobRunning.value) { ElMessage.warning('已有任务在运行,请等待完成后再发起'); return }
+  ElMessageBox.confirm(
+    '为全部存量车型补转官网介绍图进图库:仅处理图片域(下载/哈希去重/图床/自动打标),不重跑参数清洗与向量化;已有图片凭内容哈希去重,不会重复占图床。确认执行?',
+    '图片补入库', { type: 'info', confirmButtonText: '开始补入库', cancelButtonText: '取消' }
+  ).then(async () => {
+    backfilling.value = true
+    try {
+      const res = await carApi.createBackfillJob()
+      if (res.code === 0) {
+        jobId.value = res.data
+        job.value = null
+        startPoll()
+      } else ElMessage.error(res.msg || '创建任务失败')
+    } catch (e) {
+      if (e?.response?.status === 403) ElMessage.error('无权限:仅管理员/编辑可创建补入库任务')
+      else ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
+    } finally { backfilling.value = false }
+  }).catch(() => {})
+}
+
 const onRetry = async () => {
   if (!jobId.value) return
   retrying.value = true
@@ -206,8 +255,13 @@ const poll = async () => {
       job.value = res.data
       if (res.data.status !== 'RUNNING') {
         stopPoll()
-        if (res.data.status === 'SUCCESS') ElMessage.success(`同步完成，入库 ${res.data.success} 个车型`)
-        else if (res.data.failed > 0) ElMessage.warning(`同步完成，${res.data.success} 成功 / ${res.data.failed} 失败`)
+        const type = res.data.jobType
+        const done = type === 'IMAGE_BACKFILL' ? '图片补入库完成'
+          : type === 'INCREMENTAL' ? '增量同步完成' : '同步完成'
+        if (res.data.status === 'SUCCESS' && (type === 'IMAGE_BACKFILL' || type === 'INCREMENTAL'))
+          ElMessage.success(`${done}，处理 ${res.data.success} 个车型`)
+        else if (res.data.status === 'SUCCESS') ElMessage.success(`同步完成，入库 ${res.data.success} 个车型`)
+        else if (res.data.failed > 0) ElMessage.warning(`${done}，${res.data.success} 成功 / ${res.data.failed} 失败`)
         await load()
       }
     }
@@ -267,6 +321,7 @@ onBeforeUnmount(stopPoll)
 .job-panel.partial, .job-panel.failed { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
 .job-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .job-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.job-type { flex-shrink: 0; }
 .job-count { color: var(--muted); font-size: 13px; }
 .job-progress-text { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .spin { animation: spin 1s linear infinite; }
@@ -276,6 +331,7 @@ onBeforeUnmount(stopPoll)
 .failed-item { display: flex; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
 .f-name { font-weight: 600; flex-shrink: 0; }
 .f-err { color: var(--err); word-break: break-all; }
+.f-note { color: var(--muted); word-break: break-all; }
 
 @media (max-width: 768px) {
   .search { width: 100%; }

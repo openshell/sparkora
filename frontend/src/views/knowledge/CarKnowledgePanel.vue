@@ -42,6 +42,9 @@
         <div class="stat"><span class="stat-num ok">{{ countBy('SUCCESS') }}</span><span class="stat-label">已同步</span></div>
         <div class="stat"><span class="stat-num warn">{{ countBy('PENDING') }}</span><span class="stat-label">待同步</span></div>
         <div class="stat"><span class="stat-num err">{{ countBy('FAILED') }}</span><span class="stat-label">失败</span></div>
+        <div class="stat" v-if="bydImageTotal != null">
+          <span class="stat-num">{{ bydImageTotal }}</span><span class="stat-label">车型图已入库</span>
+        </div>
       </div>
 
       <!-- 同步进度面板 -->
@@ -95,7 +98,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { carApi } from '../../api'
+import { carApi, imageApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, WarningFilled, Loading, CircleCheck, Van, MagicStick } from '@element-plus/icons-vue'
@@ -107,6 +110,8 @@ const rows = ref([])
 const keyword = ref('')
 const networkFilter = ref('all')
 const statusFilter = ref('all')
+// 车型图入库统计(10-15-car-image-backfill):图库 byd 来源 total 轻量展示;加载失败静默,null=不显示
+const bydImageTotal = ref(null)
 
 // 单车型同步任务
 const syncingId = ref(null)
@@ -179,6 +184,10 @@ const load = async () => {
   } finally {
     loading.value = false
   }
+  // 车型图入库统计:轻量取图库 byd 来源 total(size=1 只为拿 total),不阻塞主列表、失败静默
+  imageApi.list({ source: 'byd', size: 1 })
+    .then(res => { if (res.code === 0 && res.data) bydImageTotal.value = res.data.total ?? 0 })
+    .catch(() => {})
 }
 
 // 单车型同步：创建异步任务 + 轮询进度

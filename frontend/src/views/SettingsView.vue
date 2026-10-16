@@ -51,6 +51,35 @@
                     title="两项均已停用"
                     description="生成将不使用任何外部资料，仅凭模型自身知识写作，事实风险会显著升高（factRisks 将标注数据未核实）。" />
 
+          <!-- 车型库同步(10-15-car-image-backfill R3):运行时定时设置,免重启。读 ADMIN/EDITOR(编辑器只读可见),写仅 ADMIN -->
+          <div class="section-divider" aria-hidden="true"></div>
+          <div class="section-head">
+            <h3 class="serif">车型库同步</h3>
+            <p class="muted">定时增量同步：到点自动创建增量任务，仅对「新增 / 有变化 / 未回填指纹」的车型执行同步，其余跳过。</p>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-name">定时增量同步</div>
+              <div class="setting-desc">
+                开启后按下方频率自动运行，修改无需重启；指纹一致的车型直接跳过（零下载 / 零清洗 / 零嵌入），可随时关闭。
+                已知限制：官网参数表独立变化不会触发增量，需要时请在车型库同步页手动全目录重跑兜底。
+              </div>
+            </div>
+            <el-switch v-model="form.carSyncEnabled" :disabled="!canEdit" />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-name">同步频率（Quartz cron）</div>
+              <div class="setting-desc">
+                Quartz cron 表达式（北京时间），保存后下一周期生效，无需重启；示例 0 0 3 * * ? = 每天 03:00。
+                增量任务仅对有变化 / 新增 / 未回填的车型执行全量同步，其余跳过。
+              </div>
+            </div>
+            <el-input v-model="form.carSyncCron" :disabled="!canEdit" class="cron-input" placeholder="0 0 3 * * ?" />
+          </div>
+
           <div class="actions" v-if="canEdit">
             <el-button type="primary" :loading="saving" @click="onSave">保存设置</el-button>
           </div>
@@ -75,7 +104,15 @@ const canEdit = computed(() => user.isAdmin)
 const loading = ref(true)
 const saving = ref(false)
 const updatedAt = ref('')
-const form = reactive({ kbEnabled: false, webSearchEnabled: true, webProviderOrder: 'TAVILY,SEARXNG' })
+// 车型库同步(10-15-car-image-backfill R3):carSyncEnabled 开关 + carSyncCron 频率,运行时生效免重启
+const DEFAULT_CAR_CRON = '0 0 3 * * ?'
+const form = reactive({
+  kbEnabled: false,
+  webSearchEnabled: true,
+  webProviderOrder: 'TAVILY,SEARXNG',
+  carSyncEnabled: false,
+  carSyncCron: DEFAULT_CAR_CRON
+})
 
 onMounted(async () => {
   try {
@@ -85,18 +122,30 @@ onMounted(async () => {
       form.webSearchEnabled = !!res.data.webSearchEnabled
       // 兼容历史行:webProviderOrder 为空时保持默认 Tavily 优先
       form.webProviderOrder = res.data.webProviderOrder || 'TAVILY,SEARXNG'
+      // 兼容历史行:carSync* 为空时回默认(后端运行时设置兜底口径一致;cron 保存时空串后端按默认处理)
+      form.carSyncEnabled = !!res.data.carSyncEnabled
+      form.carSyncCron = res.data.carSyncCron || DEFAULT_CAR_CRON
       updatedAt.value = res.data.updatedAt ? String(res.data.updatedAt).replace('T', ' ').slice(0, 19) : ''
     }
   } catch { /* 拦截器统一提示 */ } finally { loading.value = false }
 })
 
 const onSave = async () => {
+  // 开关开着时 cron 必填(空串会让后端回到默认值,与用户意图不符)
+  if (form.carSyncEnabled && !(form.carSyncCron || '').trim()) {
+    ElMessage.error('定时增量同步已开启，请填写同步频率 cron 表达式')
+    return
+  }
   saving.value = true
   try {
     const res = await settingApi.update({
       kbEnabled: form.kbEnabled,
       webSearchEnabled: form.webSearchEnabled,
-      webProviderOrder: form.webProviderOrder
+      webProviderOrder: form.webProviderOrder,
+      // 车型库同步字段随保存一并上送(读出的值原样带上再覆写目标字段,保证开关状态不丢);
+      // cron 非法由后端 CronExpression.parse 兜底 → R.fail(400,中文),此处直接展示
+      carSyncEnabled: form.carSyncEnabled,
+      carSyncCron: (form.carSyncCron || '').trim() || undefined
     })
     if (res.code === 0 && res.data) {
       updatedAt.value = res.data.updatedAt ? String(res.data.updatedAt).replace('T', ' ').slice(0, 19) : ''
@@ -130,6 +179,10 @@ h2 { margin: 0 0 4px; }
 }
 .setting-name { font-weight: 600; margin-bottom: 4px; }
 .setting-desc { font-size: 13px; color: var(--muted, #909399); line-height: 1.6; }
+.cron-input { width: 240px; }
+.section-divider { margin-top: 20px; border-top: 1px solid var(--line); }
+.section-head { padding-top: 16px; }
+.section-head h3 { margin: 0 0 4px; font-size: 16px; }
 .actions { margin-top: 20px; }
 .updated-at { margin-top: 8px; }
 @media (max-width: 640px) {

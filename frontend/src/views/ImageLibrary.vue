@@ -152,17 +152,19 @@ const tagOptionNames = computed(() => {
   ;[...presetTags.value, ...tagDialogTags.value, ...bulkTagTags.value].forEach(t => t && set.add(t))
   return [...set]
 })
-/** 标签下拉分组（09-15 img-classify）：按 `/` 前缀分组——「主题」/「年份」独立成组，其余归「其他」。 */
+/** 标签下拉分组(09-15 img-classify):按 `/` 前缀分组——「主题」/「年份」独立成组;
+ *  10-15-car-image-backfill R4:「车型-」前缀(车型介绍图标签「车型-<车型名>」,无 `/`,原先落「其他」)单独成组,其余归「其他」。 */
 const tagGroups = computed(() => {
   const groups = new Map()
   for (const t of allTags.value) {
+    // 先判「车型-」前缀,再走通用 `/` 分组(车型标签名不含 `/`,两套命名空间不冲突)
     const i = t.name.indexOf('/')
-    const g = i > 0 ? t.name.slice(0, i) : '其他'
+    const g = t.name.startsWith('车型-') ? '车型' : (i > 0 ? t.name.slice(0, i) : '其他')
     if (!groups.has(g)) groups.set(g, [])
     groups.get(g).push(t)
   }
-  // 分组顺序固定：主题 > 年份 > 其他 > 其余（保序输出）
-  const order = ['主题', '年份', '其他']
+  // 分组顺序固定:主题 > 年份 > 车型 > 其他 > 其余(保序输出)
+  const order = ['主题', '年份', '车型', '其他']
   return [...groups.entries()]
     .sort((a, b) => {
       const ia = order.indexOf(a[0]), ib = order.indexOf(b[0])

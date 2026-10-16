@@ -106,6 +106,10 @@ export const carApi = {
   catalog: () => http.get('/car/catalog'),
   // 创建同步任务：body={goodsIds:[...]}，异步执行，返回 {jobId}
   createJob: (goodsIds) => http.post('/car/sync/jobs', { goodsIds }),
+  // 创建「图片补入库」任务（10-15-car-image-backfill R1 存量回填）：无参，覆盖全部库存车型；
+  // 轻回填只动图片域（下载/哈希去重/图床/打标）+指纹收敛，不触参数/清洗/向量。
+  // 注意：返回 R<Long>，data 即 jobId（区别于 createJob 的 {jobId} 包装）；创建需同步落库+触发异步，给 60s 余量
+  createBackfillJob: () => http.post('/car/sync/backfill', null, { timeout: 60000 }),
   // 查询同步任务进度
   getJob: (id) => http.get(`/car/sync/jobs/${id}`),
   // 同步任务历史
