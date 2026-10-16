@@ -42,6 +42,8 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login").permitAll()
+                        // BYD 本机 Agent 不使用用户 JWT；Controller 内校验专属 X-Agent-Token。
+                        .requestMatchers("/api/agent/byd-dynasty/**").permitAll()
                         .requestMatchers("/api/**").authenticated()
                         .anyRequest().permitAll()
                 )
