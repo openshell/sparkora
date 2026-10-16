@@ -15,11 +15,11 @@
 | `car_model.intro_images` | **语义 = 图库 `image_asset.id` 列表 JSON**（非 URL）；存量旧数据可能为 URL 数组，双读兼容 |
 | `introImageUrls` | 非持久化派生字段（`@TableField(exist=false)`）：`list()`/`detail()` 由 `introImages` 实时解析——数字 id → `ImageService.publicUrl`，`http` 开头原样保留，解析失败跳过；前端 `CarLibrary.vue` 缩略图取 `introImageUrls[0]` |
 | 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块；并按 `modelId` 物理清理单表 store（`deleteByCarModel`，兜底历史逻辑删除残留；**10-03 E6 前为 `sparkora_car_doc_embedding`，已退役**）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
-| 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 定时 `@Scheduled`（`job_type=SCHEDULED`，以官网目录全量幂等刷新，**未过期** RUNNING 任务存在则跳过；陈旧 RUNNING（`started_at` 超 60 分钟）先置 FAILED 自愈后继续，见 [news.md §4](news.md)）；默认关闭 |
-| 配置 | `CAR_SYNC_ENABLED`（默认 false）/ `CAR_SYNC_CRON`（默认 `0 0 3 * * ?`） |
+| 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 手动 `POST /api/car/sync/backfill`（`job_type=IMAGE_BACKFILL`，10-15：存量车型图片轻回填，覆盖全部库内存活车型）+ 定时 `@Scheduled`（10-15 起每分钟 tick 读运行时设置，到点创建 `job_type=INCREMENTAL` 增量分派任务；**未过期** RUNNING 任务存在则跳过；陈旧 RUNNING（`started_at` 超 60 分钟）先置 FAILED 自愈后继续，见 [news.md §4](news.md)）；默认关闭（运行时设置 `sparkora_setting.car_sync_enabled=false`） |
+| 配置 | 运行时设置 `sparkora_setting.car_sync_enabled`（默认 false）/ `car_sync_cron`（默认 `0 0 3 * * ?`），设置 UI 改动免重启生效；`.env` 的 `CAR_SYNC_ENABLED`/`CAR_SYNC_CRON` **降级为遗留种子**（调度不再读取） |
 | KB 索引 | 矢量层统一为单表 `vector_store` HNSW cosine + metadata GIN（10-03 E1/E6；原 `sparkora_kb_chunk_embedding` 已退役，见 [kb.md](kb.md)） |
 
-- `intro_images` 字段级：图库资产 id 列表（JSON 字符串，TEXT 列），由 `CarModelService.persistIntroImages` 在同步时转存图库后写入（单图失败不阻断）；标签 `车型-<车型名>`（见 [image.md](../image.md)「BYD 图片自动分类」）。
+- `intro_images` 字段级：图库资产 id 列表（JSON 字符串，TEXT 列），由 `CarModelService.persistIntroImages` 在同步时转存图库后写入（单图失败不阻断）；标签 `车型-<车型名>`（见 [image.md](../image.md)「BYD 图片自动分类」）。**10-15 存量回填后统一收敛为 id 列表语义**（旧 URL 数组随 IMAGE_BACKFILL/增量轻回填自然替换）。
 - `introImageUrls` 与 `introImages` 的区别是前端常见 bug 来源：**不要把 `introImages` 当 URL 用**。
 
 ---
@@ -46,9 +46,31 @@
 ## 4. 同步任务与调度
 
 - `CarSyncJobService`：`createJob(jobType)`（`@Transactional` 落 RUNNING，`created_by=SecurityUtil`）；`@Async runJob(jobId)`（原子锁 `status=RUNNING→RUNNING` 影响行数=0 拒绝）；`finish`（`SUCCESS`/`PARTIAL`/`FAILED` + `failed_items` JSON）；`get`/`list`/`retry`/`hasFreshRunning`/`markStaleRunningAsFailed`。
-- `CarSyncScheduler`：`@Scheduled(cron="${sparkora.car.sync-cron:...}")`，`CAR_SYNC_ENABLED=false` 直接返回；**先 `markStaleRunningAsFailed()` 清陈旧 RUNNING、再 `hasFreshRunning()` 防重叠**（顺序不可反）；全程 try/catch。
+- `CarSyncScheduler`：10-15 起 `@Scheduled(cron = "0 * * * * ?")` **每分钟 tick**（不再直读 `.env` cron）——读 `SettingService.get()`（内存缓存）→ `car_sync_enabled=false` 早退 → `CronExpression.parse(car_sync_cron)` 维护 `nextRunAt`（cron 变化/首轮只装载不开跑；非法/未配置 log 后跳过不崩）；到点执行原编排（**先 `markStaleRunningAsFailed()` 清陈旧 RUNNING、再 `hasFreshRunning()` 防重叠**（顺序不可反）→ 官网目录取 goodsId → `createJob(goodsIds, "INCREMENTAL")`），完成后顺延下一拍（跳过/失败也顺延防同拍重复）；全程 try/catch，异常不中断 tick。设置改动下一 tick 生效，免重启。
 - **定时同步陈旧自愈（kb-cleanup，2026-09-12）**：任务表无 `updated_at`，以 `started_at` 为存活时间戳，阈值 `SYNC_STALE_MS=60 分钟`（全量 56 车型 + 清洗 + embedding 实测可超 20 分钟，10 分钟会误判活任务）。车型与新闻两侧对称实现（细节见 [news.md §4](news.md)）。
-- 任务表 `sparkora_car_sync_job`：`job_type`（`SELECTED`/`RETRY`/`SCHEDULED`）、`status`、计数、`failed_items`、`started_at`/`finished_at`/`error_msg`。
+- 任务表 `sparkora_car_sync_job`：`job_type`（`SELECTED`/`RETRY` 全量 syncOne、`IMAGE_BACKFILL` 轻回填、`INCREMENTAL` 增量分派、`SCHEDULED` 旧定时历史值）、`status`、计数、`failed_items`、`started_at`/`finished_at`/`error_msg`。明细条目两类：失败 `{goodsId,name,error}` 与备注 `{goodsId,name,note}`（如「官网无图」「跳过：指纹一致」，成功路径可观测信息）；**retry 只取含 `error` 的条目**（note 条目不进重试候选）。
+
+### 4.1 同步指纹与增量分派（10-15-car-image-backfill）
+
+- **`sparkora_car_model.sync_fingerprint`**（VARCHAR(64)，V21 加列，存量行为 NULL）：goodsInfo 稳定字段序列化后 SHA-256（64 hex）。稳定字段 = `name`/`salesNetworkName`/`vehicleId`/`price`/`features`/`introduce`（逐项原始顺序，Jackson 天然保序）/`carRights`；`detailPage` 等**不参与**。顺序敏感（同源顺序稳定）。字段契约见 `CarModelService.computeFingerprint`（包级静态，纯函数可单测）。
+- **双写点统一**：全量路径 `persistModel` 与轻回填路径 `backfillImages`（→ `backfillInternal`）都写 `computeFingerprint(item)`；`sync_fingerprint IS NULL` = 指纹未初始化（存量兼容）。
+- **双格式语义收敛**：轻回填**不走 `persistModel`**——`persistModel` 会把 `intro_images` 重写为 raw URL 列表（:543），而 `persistIntroImages` 覆写为图库 asset id 列表；轻回填只调 `persistIntroImages` + 写指纹/`syncStatus=SUCCESS`/`lastSyncAt`，**不触版本/参数/清洗/向量域**。introduce 为空时 `persistIntroImages` 早退、不冲写 `intro_images`，明细 note=「官网无图」（官网空图车型：海狮05EV/2026款海豹07DM-i/海狮06EV，官网数据变化后随增量自动补图）。
+- **「无条目」≠「无图」（10-15 真机验收发现并修复）**：官网 `getGoodsInfoById` 对部分存库 goodsId（如 `136`/`123`/`10022` 系列，已不在官网在售目录）返回**空条目**（`goodsinfoList.items` 为空，非 introduce 空）。此时：① 用库存行 `intro_images` 中的存量 URL 逐张下载兜底入库（`persistLegacyIntroImages`，单张失败仅告警）；② 指纹用**库存行快照口径** `computeRowSnapshotFingerprint(row)`（同哈希口径，`features`/`carRights`/`intro_images` 库内 JSON 字符串先 `readTree` 还原结构）；③ note=「官网无数据,已按存量URL兜底入库N张」/「官网无数据,且无存量图可兜底」。官网数据恢复后 goodsInfo 指纹必不匹配快照 → 增量自动触发一次全量收敛；未恢复时快照一致 → 增量跳过（每天仅 1 次 goodsInfo 调用）。
+- **增量分派表（`dispatchIncremental(goodsId)`，定时 INCREMENTAL 逐车型入口）**：
+
+| 车型行 | 存量指纹 vs 当前 goodsInfo 指纹 | 动作 | 明细 |
+|---|---|---|---|
+| 行不存在 | — | 全量 `syncOne`（官网目录新增车型） | — |
+| 行存在 | `NULL`/空 | 轻回填（图片域+指纹初始化顺带完成） | 空图车型 note「官网无图」；无条目车型走快照兜底（见上） |
+| 行存在 + 有条目 | 一致 | **跳过**（只拉 goodsInfo 比对，零下载/零清洗/零嵌入/零写库） | note「跳过：指纹一致」，计入 success |
+| 行存在 + 有条目 | 不一致 | 全量 `syncOne`（price/卖点/图片字段均在 goodsInfo 内，可触发） | — |
+| 行存在 + 无条目 | == 行快照指纹 | **跳过**（官网在售目录已无该车型，快照未变） | note「跳过：官网无数据(与上次快照一致)」 |
+| 行存在 + 无条目 | ≠ 行快照指纹 | 全量 `syncOne`（安全兜底） | — |
+
+> 2026-10-15 实测：官网在售目录 46 个 goodsId；库内失联 10 台（不在目录、goodsInfo 空条目）由 IMAGE_BACKFILL 存量 URL 兜底收敛后指纹固化，增量每拍全 skip（零成本）。
+
+- **已知盲区**（明示接受）：goodsParams 独立变化（goodsInfo 不变）**不会触发增量**，需手动同步页「同步选中」全目录重跑兜底。
+- 幂等：重跑 IMAGE_BACKFILL 依赖 `persistOrReuse` 内容哈希去重，不重复占图床对象；指纹一致车型手动回填显式重抓（哈希命中零成本）、增量调度跳过。
 
 ---
 
@@ -60,6 +82,7 @@
 | GET | `/api/car/catalog` | 三角色 | 官网车型目录（供同步页手动选择） |
 | GET | `/api/car/models/{id}` | 三角色 | 车型详情（可带 `?versionId=`） |
 | POST | `/api/car/sync/jobs` | ADMIN/EDITOR | 创建同步任务（`{goodsIds:[...]}`），异步执行，返回 `{jobId}` |
+| POST | `/api/car/sync/backfill` | ADMIN/EDITOR | 创建「图片补入库」任务（10-15 新增，无 body，覆盖全部库内存活车型，`job_type=IMAGE_BACKFILL` 轻回填），返回 `data=jobId`（数字，非 `{jobId}` 包装）；库内无车型 400 |
 | GET | `/api/car/sync/jobs/{id}` | 三角色 | 任务进度；不存在 404 |
 | GET | `/api/car/sync/jobs` | 三角色 | 任务历史 |
 | POST | `/api/car/sync/jobs/{id}/retry` | ADMIN/EDITOR | 重试失败项，返回新任务 `{jobId}` |
@@ -92,12 +115,13 @@
 | `CAR_GOODS_ATTR_LIST_URL` | — | 属性列表接口 |
 | `CAR_TIMEOUT_MS` | — | 采集读超时 |
 | `CAR_HMAC_SIGN_KEY` / `CAR_HMAC_SECRET_KEY` | — | 官网 API 签名 |
-| `CAR_SYNC_ENABLED` | `false` | 定时同步开关 |
-| `CAR_SYNC_CRON` | `0 0 3 * * ?` | 定时 cron |
+| `CAR_SYNC_ENABLED` | `false` | **遗留种子**（10-15 起）：仅运行时设置 `sparkora_setting.car_sync_enabled` 为准（设置 UI 承载，免重启），env 值不再被调度读取 |
+| `CAR_SYNC_CRON` | `0 0 3 * * ?` | **遗留种子**（10-15 起）：仅运行时设置 `sparkora_setting.car_sync_cron` 为准 |
 
 ---
 
 ## 8. 已知限制
 
 - 清洗口径变更仅对新重建的车型生效；存量车型需逐个重建向量。
-- 车型库图片接入文章配图**预留**（暂不开发）；图库中 `source=byd` 的车型介绍图仅作素材。
+- goodsParams 独立变化不触发增量分派（指纹只覆盖 goodsInfo 稳定字段），需手动「同步选中」全目录重跑兜底（10-15 明示接受）。
+- 车型库图片接入文章配图**预留**（暂不开发）；图库中 `source=byd` 的车型介绍图可经来源过滤/`车型` 标签组/关键词/语义搜索检索（10-15 存量回填后），但未接入文章配图面板。

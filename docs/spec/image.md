@@ -98,7 +98,7 @@
 
 | 来源 | 自动标签 | 实现 |
 |---|---|---|
-| 车型介绍图（`source=byd`） | `车型-<车型名>`（如 `车型-大唐EV`） | `CarModelService.persistIntroImages` preset 传 tags，走统一管线自动落标；**存量追溯**由 `ImageTagBackfillRunner` 启动一次性遍历 `car_model.intro_images` asset id 列表 mergeTags（幂等可重跑，异常不阻断启动；URL 旧格式跳过） |
+| 车型介绍图（`source=byd`） | `车型-<车型名>`（如 `车型-大唐EV`） | `CarModelService.persistIntroImages` preset 传 tags，走统一管线自动落标；**存量追溯**由 `ImageTagBackfillRunner` 启动一次性遍历 `car_model.intro_images` asset id 列表 mergeTags（幂等可重跑，异常不阻断启动；URL 旧格式跳过）；**10-15-car-image-backfill 存量规模化回填**：`POST /api/car/sync/backfill`（`job_type=IMAGE_BACKFILL`）逐车型轻回填（仅 goodsInfo+图片域，指纹一致车型增量调度跳过、哈希去重不重复占图床），`intro_images` 由旧 URL 数组收敛为 asset id 列表；前端 `ImageLibrary.vue` 标签下拉 `车型-` 前缀单独成组「车型」（与 主题/年份 并列） |
 | 新闻封面图（`source=byd-news`） | `新闻` + **`主题/<主题名>`** + **`年份/<年>`**（09-15 img-classify） | `NewsService.upsertOne` 下载 `imageUrl` 字节走 `saveExternalImage` 入库（相对 URL 拼 `https://www.byd.com`，带 `sourceRef=news_id`）；标签由 `NewsImageClassifier.toTagsFrom(title, publishDate)` 派生（零 AI）。单图下载失败仅告警**不阻断新闻入库**；`sparkora_news.image_url` 保留原 URL 留痕 |
 | 通用信源采集正文图（`source=source`） | 来源**标题** + 来源 `category` | `SourceImageService.transfer` 遍历正文图（选择器 `parse_rules.images`）→ `ImageService.saveExternalImage(null, url, detailBaseUrl, ...)` 转存；**相对 URL 按栏目 `detail_base_url` 解析**（不硬编码 byd.com）；`sourceRef`=派生 `news_id`；单图失败 warn 跳过不阻断 |
 
