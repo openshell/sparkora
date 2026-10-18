@@ -1,0 +1,33 @@
+{
+  "id": "byd-dynasty-local-push",
+  "name": "byd-dynasty-local-push",
+  "title": "BYD 王朝小程序本地推送集成",
+  "description": "在 Sparkora 集成比亚迪王朝小程序图文草稿推送：Service/Server 负责任务与审计，Windows Local Agent 负责本地检测、备份、图片上传与 MMKV 写入。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "c_cha",
+  "assignee": "c_cha",
+  "createdAt": "2026-10-16",
+  "completedAt": null,
+  "branch": "feature/byd-dynasty-miniapp-push",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-16-server-task-contracts",
+    "10-16-windows-local-agent",
+    "10-16-publish-channel-ui",
+    "10-16-integration-security-validation"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "architecture": "Sparkora Server + Windows Local Agent"
+  }
+}

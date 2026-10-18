@@ -1,0 +1,32 @@
+{
+  "id": "server-task-contracts",
+  "name": "server-task-contracts",
+  "title": "BYD 推送任务模型与 Server Agent API",
+  "description": "实现 BYD 推送任务表、Agent 注册/心跳/拉取/回传 API、草稿 payload 编译与结果审计状态机。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "c_cha",
+  "assignee": "c_cha",
+  "createdAt": "2026-10-16",
+  "completedAt": "2026-10-16",
+  "branch": "feature/byd-dynasty-miniapp-push",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-16-byd-dynasty-local-push",
+  "relatedFiles": [
+    "src/main/resources/db/migration/V21__byd_dynasty_local_push.sql",
+    "src/main/java/com/sparkora/service/BydDynastyPushService.java",
+    "src/main/java/com/sparkora/web/controller/BydDynastyAgentController.java",
+    "src/main/java/com/sparkora/web/controller/ProjectBydDynastyController.java",
+    "src/test/java/com/sparkora/service/BydDynastyPushServiceTest.java"
+  ],
+  "notes": "",
+  "meta": {}
+}

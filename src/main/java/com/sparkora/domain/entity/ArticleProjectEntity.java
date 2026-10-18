@@ -44,6 +44,15 @@ public class ArticleProjectEntity {
     private String previewHighlight;    // 预览页当前高亮主题
     private Boolean previewMacStyle;    // 预览页 Mac 代码块开关
     private Boolean previewFootnote;    // 预览页链接转脚注开关
+    // ===== BYD 王朝小程序本地推送(10-16):与公众号 publish_* 字段完全隔离 =====
+    private LocalDateTime bydDynastyPublishedAt;
+    private String bydDynastyLastJobId;
+    private String bydDynastyLastDraftId;
+    private Integer bydDynastyLastDraftCount;
+    private String bydDynastyClubId;
+    private String bydDynastyClubTitle;
+    private String bydDynastyLastError;
+
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

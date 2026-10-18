@@ -1,0 +1,31 @@
+{
+  "id": "windows-local-agent",
+  "name": "windows-local-agent",
+  "title": "Windows BYD Local Agent 执行器",
+  "description": "实现运行在微信所在 Windows 机器的 Local Agent：身份认证、本地预检、图片上传/压缩、MMKV 读写备份、结果回传。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "c_cha",
+  "assignee": "c_cha",
+  "createdAt": "2026-10-16",
+  "completedAt": "2026-10-16",
+  "branch": "feature/byd-dynasty-miniapp-push",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-16-byd-dynasty-local-push",
+  "relatedFiles": [
+    "agent/byd-dynasty/byd_local_agent.py",
+    "agent/byd-dynasty/README.md",
+    "agent/byd-dynasty/tests/test_byd_local_agent.py",
+    "agent/byd-dynasty/config.example.env"
+  ],
+  "notes": "",
+  "meta": {}
+}
