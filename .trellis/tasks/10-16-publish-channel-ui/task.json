@@ -1,0 +1,30 @@
+{
+  "id": "publish-channel-ui",
+  "name": "publish-channel-ui",
+  "title": "BYD 王朝发布页渠道接入",
+  "description": "在 Sparkora 发布步骤中新增王朝小程序渠道：Agent 状态、本地预检、任务状态、成功失败提示与安全提醒。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "c_cha",
+  "assignee": "c_cha",
+  "createdAt": "2026-10-16",
+  "completedAt": "2026-10-16",
+  "branch": "feature/byd-dynasty-miniapp-push",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "10-16-byd-dynasty-local-push",
+  "relatedFiles": [
+    "frontend/src/components/publish/BydDynastyPanel.vue",
+    "frontend/src/views/project/StepPublish.vue",
+    "frontend/src/api/index.js"
+  ],
+  "notes": "",
+  "meta": {}
+}

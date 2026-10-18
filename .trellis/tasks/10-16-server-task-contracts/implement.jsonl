@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端实现约定"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Agent/PushJob 迁移与实体约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "任务与 Agent API 错误语义"}
+{"file": "docs/spec/publish.md", "reason": "避免污染公众号发布契约"}

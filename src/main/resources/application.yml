@@ -104,6 +104,14 @@ sparkora:
   jwt:
     secret: ${JWT_SECRET:change-me-to-a-long-random-string}
     expire-minutes: ${JWT_EXPIRE_MINUTES:1440}
+  byd:
+    dynasty:
+      # 服务器编排 BYD 推送；本机 Agent 用该共享密钥接入并只领取绑定用户的任务。
+      agent-token: ${BYD_DYNASTY_AGENT_TOKEN:}
+      agent-owner-user-id: ${BYD_DYNASTY_AGENT_OWNER_USER_ID:}
+      heartbeat-timeout-ms: ${BYD_DYNASTY_AGENT_HEARTBEAT_TIMEOUT_MS:60000}
+      default-club-id: ${BYD_DYNASTY_CLUB_ID:}
+      default-club-title: ${BYD_DYNASTY_CLUB_TITLE:}
   ai:
     base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
     api-key: ${AI_API_KEY:}

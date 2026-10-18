@@ -282,6 +282,14 @@ export const imageApi = {
 
 // 系统检索设置(09-09-brief-gen-redesign R1):页面控制内部知识库/外部搜索启用;
 // 读 ADMIN/EDITOR,写仅 ADMIN
+export const bydApi = {
+  // BYD 王朝小程序本地推送任务；Server 编排，本机 Agent 执行。
+  state: (projectId) => http.get(`/projects/${projectId}/byd-dynasty/state`),
+  createJob: (projectId, payload) =>
+    http.post(`/projects/${projectId}/byd-dynasty/push-jobs`, payload || {}, { skipGlobalErrorToast: true }),
+  getJob: (projectId, jobId) => http.get(`/projects/${projectId}/byd-dynasty/push-jobs/${jobId}`)
+}
+
 export const settingApi = {
   get: () => http.get('/settings'),
   update: (payload) => http.put('/settings', payload)
