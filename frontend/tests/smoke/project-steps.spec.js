@@ -29,3 +29,28 @@ test('step page renders step-body and ctxbar wiring', async ({ page }) => {
   // 发布摘要命中 mock 数据(标题来自版本 title)
   await expect(page.locator('text=版本标题')).toBeVisible();
 });
+
+// 契约:BYD 状态接口返回 R<T> 外层信封,组件必须解包 res.data;
+// 已配置但 Agent 离线时只能提示离线,不得误报「服务端缺少配置」。
+test('BYD panel unwraps state envelope and reports agent offline', async ({ page }) => {
+  await page.route('**/api/projects/1/byd-dynasty/state', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      code: 0,
+      msg: 'ok',
+      data: {
+        projectId: 1,
+        agentConfigured: true,
+        agentOnline: false,
+        agentPreflightReady: false,
+        agentDisabledReason: null,
+      },
+    }),
+  }))
+  await page.setViewportSize(SMOKE_VIEWPORT)
+  await page.goto('/projects/1/publish')
+  await expect(page.getByText('本机 Agent 离线')).toBeVisible()
+  await expect(page.getByText('BYD 推送通道未启用')).toHaveCount(0)
+  await expect(page.getByText('Agent 已在线且本地预检通过，可以创建推送任务。')).toHaveCount(0)
+})
