@@ -12,6 +12,36 @@
 
 Agent 不暴露 TCP 监听端口，也不使用浏览器扩展或油猴脚本。
 
+## 一键使用（Windows 推荐）
+
+双击：
+
+```text
+Start-BYDAgent.cmd
+```
+
+会打开「BYD 推送助手」控制面板，并自动在后台启动 Agent，不需要手动打开
+PowerShell、设置环境变量或输入命令。
+
+控制面板提供：
+
+- Agent 进程状态与 PID；
+- 微信进程检测；
+- 最近一次预检结果；
+- 启动 Agent / 安全停止；
+- 打开配置、日志和发布页。
+
+关闭控制面板不会停止后台 Agent。点击「安全停止」会写入停止标记，
+Agent 在当前任务执行完毕后的调度周期退出，不会强杀正在写入 MMKV 的进程。
+
+日志位置：
+
+```text
+work/agent.stdout.log
+work/agent.stderr.log
+work/control.log
+```
+
 ## 部署
 
 1. 将 `agent/byd-dynasty` 目录复制到 Windows 电脑；

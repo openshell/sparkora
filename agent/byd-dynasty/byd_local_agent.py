@@ -44,6 +44,9 @@ MAX_IMAGE_EDGE = 1920
 JPEG_QUALITY = 88
 NONCE_CHARS = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678"
 DEFAULT_WECHAT_PROCESSES = {"wechat.exe", "weixin.exe", "wechatapp.exe", "wechatappex.exe"}
+WORK_DIR = Path(__file__).with_name("work")
+RUNTIME_STATUS_FILE = WORK_DIR / "agent.status.json"
+STOP_REQUEST_FILE = WORK_DIR / "agent.stop"
 
 
 class AgentError(RuntimeError):
@@ -99,6 +102,35 @@ def _normalize_process_names(value: object) -> set[str]:
     if isinstance(value, (list, set, tuple)):
         return {str(item).strip().lower() for item in value if str(item).strip()}
     return set()
+
+
+def stop_requested() -> bool:
+    """Consume a control-panel stop request at a safe scheduling boundary."""
+    if not STOP_REQUEST_FILE.exists():
+        return False
+    try:
+        STOP_REQUEST_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return True
+
+
+def write_runtime_status(preflight: dict[str, Any]) -> None:
+    """Publish local-only liveness/preflight state for the control panel."""
+    try:
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "pid": os.getpid(),
+            "updatedAt": time.time(),
+            "agentVersion": AGENT_VERSION,
+            "preflight": preflight,
+        }
+        temp = RUNTIME_STATUS_FILE.with_suffix(".tmp")
+        temp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        temp.replace(RUNTIME_STATUS_FILE)
+    except OSError:
+        # Status reporting must never interrupt the Agent scheduling loop.
+        pass
 
 
 def load_environment(config_path: str | None) -> AgentConfig:
@@ -772,7 +804,11 @@ def run_loop(config: AgentConfig) -> None:
     next_heartbeat = 0.0
     while True:
         try:
+            if stop_requested():
+                print("[agent] 收到控制面板停止请求，正在退出")
+                return
             preflight = build_preflight(config, probe_server=False)
+            write_runtime_status(preflight)
             if preflight.get("ready"):
                 if time.time() >= next_heartbeat:
                     register_agent(config, preflight)

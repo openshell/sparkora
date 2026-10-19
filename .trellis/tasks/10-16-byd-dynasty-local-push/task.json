@@ -22,7 +22,8 @@
     "10-16-server-task-contracts",
     "10-16-windows-local-agent",
     "10-16-publish-channel-ui",
-    "10-16-integration-security-validation"
+    "10-16-integration-security-validation",
+    "10-19-agent-control-panel"
   ],
   "parent": null,
   "relatedFiles": [],
