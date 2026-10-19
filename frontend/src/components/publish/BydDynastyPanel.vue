@@ -20,7 +20,7 @@
       <span>已推送到王朝小程序草稿箱：{{ shortTime(state.publishedAt) }}</span>
     </div>
 
-    <div v-else class="state-ready">
+    <div v-else-if="preflightReady" class="state-ready">
       <el-icon color="var(--ok)"><SuccessFilled /></el-icon>
       <span>Agent 已在线且本地预检通过，可以创建推送任务。</span>
     </div>
@@ -126,7 +126,9 @@ const statusLabel = (value) => ({
 async function loadState(showError = false) {
   loading.value = loading.value || !loaded.value
   try {
-    const data = await bydApi.state(props.projectId)
+    const res = await bydApi.state(props.projectId)
+    if (res.code !== 0 || !res.data) throw new Error(res.msg || '查询 BYD 推送状态失败')
+    const data = res.data
     state.value = { ...state.value, ...data }
     clubId.value = data.clubId || clubId.value || ''
     clubTitle.value = data.clubTitle || clubTitle.value || ''
@@ -143,10 +145,12 @@ async function loadState(showError = false) {
 async function createJob() {
   submitting.value = true
   try {
-    const data = await bydApi.createJob(props.projectId, {
+    const res = await bydApi.createJob(props.projectId, {
       clubId: clubId.value.trim() || null,
       clubTitle: clubTitle.value.trim() || null
     })
+    if (res.code !== 0 || !res.data) throw new Error(res.msg || '创建 BYD 推送任务失败')
+    const data = res.data
     ElMessage.success('BYD 推送任务已创建，等待本机 Agent 领取')
     state.value = { ...state.value, ...data, publishedAt: null, latestJob: data }
     startPolling()
