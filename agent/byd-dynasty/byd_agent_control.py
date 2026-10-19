@@ -34,6 +34,24 @@ STDOUT_LOG = WORK_DIR / "agent.stdout.log"
 STDERR_LOG = WORK_DIR / "agent.stderr.log"
 CONTROL_LOG = WORK_DIR / "control.log"
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+_MUTEX_HANDLE = None
+
+
+def acquire_single_instance() -> bool:
+    """Prevent multiple control-panel windows from being opened by double-click."""
+    global _MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    kernel32 = ctypes.windll.kernel32
+    _MUTEX_HANDLE = kernel32.CreateMutexW(None, False, "Local\\SparkoraBydAgentControlPanel")
+    already_exists = 183
+    if not _MUTEX_HANDLE:
+        return True
+    if kernel32.GetLastError() == already_exists:
+        kernel32.CloseHandle(_MUTEX_HANDLE)
+        _MUTEX_HANDLE = None
+        return False
+    return True
 
 
 def python_executable() -> str:
@@ -455,6 +473,12 @@ class AgentControlPanel:
 
 
 def main() -> int:
+    if not acquire_single_instance():
+        try:
+            messagebox.showinfo("BYD 推送助手", "控制面板已经打开。")
+        except Exception:
+            pass
+        return 0
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     if Path(sys.executable).name.lower() == "pythonw.exe":
         try:
