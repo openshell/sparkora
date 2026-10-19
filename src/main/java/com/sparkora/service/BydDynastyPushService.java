@@ -245,7 +245,7 @@ public class BydDynastyPushService {
 
     // ==================== 用户侧任务 ====================
 
-    public Map<String, Object> state(Long projectId) {
+    public Map<String, Object> state(Long projectId, Long currentUserId) {
         ArticleProjectEntity project = requireProject(projectId, false);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("projectId", project.getId());
@@ -253,7 +253,8 @@ public class BydDynastyPushService {
         boolean configured = props.agentConfigured();
         if (configured) markStaleAgentsOffline();
 
-        BydDynastyAgentEntity agent = currentOnlineAgent(toLongQuietly(project.getCreatedBy()));
+        Long ownerUserId = currentUserId != null ? currentUserId : toLongQuietly(project.getCreatedBy());
+        BydDynastyAgentEntity agent = currentOnlineAgent(ownerUserId);
         data.put("agentOnline", agent != null);
         data.put("agentId", agent == null ? null : agent.getAgentId());
         data.put("agentMachineName", agent == null ? null : agent.getMachineName());
