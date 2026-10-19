@@ -108,9 +108,11 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void payload编译图片引用并禁止泄露本机MMKV路径() {
+    void payload清洗Markdown和HTML且不泄露本机MMKV路径() {
+        String markdown = "# 第一段\n\n**粗体** 和 [链接](https://example.com/x)<br>第二行\n\n"
+                + "![插图](https://qiniu.local/p1.jpg)\n";
         when(projectMapper.selectById(88L)).thenReturn(project());
-        when(versionMapper.selectById(99L)).thenReturn(version("第一段\n\n![插图](https://qiniu.local/p1.jpg)\n"));
+        when(versionMapper.selectById(99L)).thenReturn(version(markdown));
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         when(agentMapper.selectList(any())).thenReturn(List.of());
         when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
@@ -132,7 +134,15 @@ class BydDynastyPushServiceTest {
         List<Map<String, Object>> messages = (List<Map<String, Object>>) payload.get("messages");
         assertEquals(3, messages.size());
         assertEquals(Map.of("type", "img", "imageRef", "COVER-3"), messages.get(0));
-        assertEquals("第一段", messages.get(1).get("content"));
+        assertEquals("text", messages.get(1).get("type"));
+        String content = (String) messages.get(1).get("content");
+        assertTrue(content.contains("第一段"), content);
+        assertTrue(content.contains("粗体"), content);
+        assertTrue(content.contains("链接"), content);
+        assertTrue(content.contains("第二行"), content);
+        assertFalse(content.contains("#"), content);
+        assertFalse(content.contains("**"), content);
+        assertFalse(content.contains("https://"), content);
         assertEquals(Map.of("type", "img", "imageRef", "BODY-1"), messages.get(2));
 
         @SuppressWarnings("unchecked")
@@ -144,6 +154,80 @@ class BydDynastyPushServiceTest {
         assertFalse(raw.toLowerCase().contains("mmkv"));
         assertFalse(raw.toLowerCase().contains("usrmmkvstorage"));
         verify(jobMapper).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
+    void 标题经过行内清洗后写入payload() {
+        ArticleVersionEntity v = version("正文");
+        v.setTitle("**标题**\n[副标题](https://example.com)");
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(v);
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("标题 副标题", payload.get("title"));
+    }
+
+    @Test
+    void 只有图片的正文仍可创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("![图](https://qiniu.local/only.jpg)"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) payload.get("messages");
+        assertEquals(2, messages.size(), messages.toString());
+        assertEquals(Map.of("type", "img", "imageRef", "COVER-3"), messages.get(0));
+        assertEquals(Map.of("type", "img", "imageRef", "BODY-1"), messages.get(1));
+        verify(jobMapper).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
+    void 清洗后没有任何内容时不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("<script>alert(1)</script>"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.createJob(88L, createRequest(), 7L));
+
+        assertTrue(ex.getMessage().contains("正文内容为空"), ex.getMessage());
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 原始版本对象不会被清洗逻辑修改() {
+        ArticleVersionEntity v = version("# 原文\n\n**保留** [链接](https://example.com)");
+        v.setTitle("**原标题**");
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(v);
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        service.createJob(88L, createRequest(), 7L);
+
+        assertEquals("# 原文\n\n**保留** [链接](https://example.com)", v.getContentMd());
+        assertEquals("**原标题**", v.getTitle());
     }
 
     @Test
