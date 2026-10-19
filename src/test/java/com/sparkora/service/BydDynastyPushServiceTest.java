@@ -202,6 +202,21 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
+    void 状态查询使用当前登录用户id而不是项目createdBy字符串() {
+        ArticleProjectEntity p = project();
+        p.setCreatedBy("admin");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+
+        Map<String, Object> result = service.state(88L, 7L);
+
+        assertEquals(Boolean.TRUE, result.get("agentOnline"));
+        assertEquals("local-win", result.get("agentId"));
+        assertEquals(Boolean.TRUE, result.get("agentPreflightReady"));
+    }
+
+    @Test
     void agent领取采用条件更新防止并发重复领取() {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         when(agentMapper.selectList(any())).thenReturn(List.of());

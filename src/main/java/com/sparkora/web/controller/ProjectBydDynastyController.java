@@ -29,7 +29,7 @@ public class ProjectBydDynastyController {
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
     public R<Map<String, Object>> state(@PathVariable Long projectId) {
         try {
-            return R.ok(pushService.state(projectId));
+            return R.ok(pushService.state(projectId, SecurityUtil.require().getUserId()));
         } catch (IllegalArgumentException | IllegalStateException ex) {
             return R.fail(400, ex.getMessage());
         } catch (Exception ex) {
