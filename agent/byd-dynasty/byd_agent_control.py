@@ -8,7 +8,10 @@ existing byd_local_agent.py process instead of duplicating Agent business logic.
 from __future__ import annotations
 
 import ctypes
+import csv
 import json
+import locale
+import math
 import os
 import subprocess
 import sys
@@ -30,9 +33,12 @@ WORK_DIR = APP_DIR / "work"
 PID_FILE = WORK_DIR / "agent.pid"
 STOP_FILE = WORK_DIR / "agent.stop"
 STATUS_FILE = WORK_DIR / "agent.status.json"
+AGENT_LOG = WORK_DIR / "agent.log"
 STDOUT_LOG = WORK_DIR / "agent.stdout.log"
 STDERR_LOG = WORK_DIR / "agent.stderr.log"
 CONTROL_LOG = WORK_DIR / "control.log"
+HISTORY_FILE = WORK_DIR / "push-history.jsonl"
+HISTORY_READ_LIMIT = 500
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 _MUTEX_HANDLE = None
 
@@ -64,12 +70,19 @@ def python_executable() -> str:
     return str(executable)
 
 
+def _console_encoding() -> str:
+    """Use the Windows console code page so tasklist output never raises."""
+    if os.name == "nt":
+        return "mbcs"
+    return locale.getpreferredencoding(False) or "utf-8"
+
+
 def _hidden_process(args: list[str], **kwargs):
     return subprocess.run(
         args,
         capture_output=True,
         text=True,
-        encoding="utf-8",
+        encoding=kwargs.pop("encoding", "utf-8"),
         errors="replace",
         timeout=kwargs.pop("timeout", 30),
         creationflags=CREATE_NO_WINDOW,
@@ -157,11 +170,11 @@ def wechat_processes() -> list[str]:
     if os.name != "nt":
         return ["non-windows"]
     try:
-        result = _hidden_process(["tasklist", "/NH", "/FO", "CSV"], timeout=5)
+        result = _hidden_process(
+            ["tasklist", "/NH", "/FO", "CSV"], timeout=5, encoding=_console_encoding()
+        )
     except (OSError, subprocess.SubprocessError):
         return ["tasklist-unavailable"]
-    import csv
-
     names: set[str] = set()
     for row in csv.reader(result.stdout.splitlines()):
         if row:
@@ -171,7 +184,8 @@ def wechat_processes() -> list[str]:
     return sorted(names)
 
 
-def load_config_values() -> dict[str, str]:
+def load_config_values(keys: set[str] | None = None) -> dict[str, str]:
+    """Read selected config keys without retaining unrelated secrets."""
     values: dict[str, str] = {}
     try:
         with CONFIG_FILE.open("r", encoding="utf-8-sig") as fp:
@@ -180,14 +194,19 @@ def load_config_values() -> dict[str, str]:
                 if not text or text.startswith("#") or "=" not in text:
                     continue
                 key, value = text.split("=", 1)
-                values[key.strip()] = value.strip().strip('"').strip("'")
+                key = key.strip()
+                if keys is not None and key not in keys:
+                    continue
+                values[key] = value.strip().strip('"').strip("'")
     except OSError:
         pass
     return values
 
 
 def publish_page_url() -> str:
-    base = load_config_values().get("SPARKORA_BASE_URL", "http://192.168.3.108:5661").rstrip("/")
+    base = load_config_values({"SPARKORA_BASE_URL"}).get(
+        "SPARKORA_BASE_URL", "http://192.168.3.108:5661"
+    ).rstrip("/")
     parsed = urlparse(base)
     if not parsed.hostname:
         return base
@@ -208,16 +227,16 @@ def start_agent() -> tuple[int | None, str]:
     env["PYTHONUTF8"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
     try:
-        with STDOUT_LOG.open("a", encoding="utf-8") as stdout, STDERR_LOG.open("a", encoding="utf-8") as stderr:
-            stdout.write(f"\n=== 控制面板启动 Agent {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
-            stdout.flush()
+        with AGENT_LOG.open("a", encoding="utf-8", buffering=1) as agent_log:
+            agent_log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [INFO] 控制面板启动 Agent\n")
+            agent_log.flush()
             process = subprocess.Popen(
                 [python_executable(), "-u", str(AGENT_SCRIPT), "run"],
                 cwd=str(APP_DIR),
                 env=env,
                 stdin=subprocess.DEVNULL,
-                stdout=stdout,
-                stderr=stderr,
+                stdout=agent_log,
+                stderr=subprocess.STDOUT,
                 creationflags=CREATE_NO_WINDOW,
                 close_fds=True,
             )
@@ -283,15 +302,84 @@ def tail_text(path: Path, max_chars: int = 12000) -> str:
         return ""
 
 
+def _history_epoch(event: dict) -> float:
+    raw_epoch = event.get("atEpoch")
+    if raw_epoch not in (None, ""):
+        try:
+            epoch = float(raw_epoch)
+            if math.isfinite(epoch):
+                return epoch
+        except (TypeError, ValueError):
+            pass
+    try:
+        return time.mktime(time.strptime(str(event.get("at") or ""), "%Y-%m-%d %H:%M:%S"))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def read_push_history(path: Path | None = None, limit: int = HISTORY_READ_LIMIT) -> list[dict]:
+    """Read JSONL history, ignore damaged lines, and keep latest event per job."""
+    history_path = path or HISTORY_FILE
+    latest: dict[str, dict] = {}
+    try:
+        with history_path.open("r", encoding="utf-8", errors="replace") as fp:
+            for line in fp:
+                try:
+                    event = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                job_id = str(event.get("jobId") or "").strip()
+                status = str(event.get("status") or "").upper()
+                if not job_id or status not in {"RECEIVED", "RUNNING", "SUCCESS", "FAILED"}:
+                    continue
+                safe_event = {
+                    "at": str(event.get("at") or ""),
+                    "atEpoch": _history_epoch(event),
+                    "status": status,
+                    "jobId": job_id,
+                    "projectId": str(event.get("projectId") or ""),
+                    "versionId": str(event.get("versionId") or ""),
+                    "title": str(event.get("title") or "标题不可用"),
+                    "draftId": event.get("draftId"),
+                    "draftCount": event.get("draftCount"),
+                    "durationMs": event.get("durationMs"),
+                    "error": event.get("error"),
+                    "serverReported": event.get("serverReported"),
+                }
+                previous = latest.get(job_id)
+                if previous is None or safe_event["atEpoch"] >= previous["atEpoch"]:
+                    latest[job_id] = safe_event
+    except OSError:
+        return []
+    events = sorted(latest.values(), key=lambda item: item["atEpoch"], reverse=True)
+    return events[: max(0, int(limit))]
+
+
+def agent_log_text(max_chars: int = 12000) -> str:
+    """Prefer the unified log; use legacy stdout/stderr only as a fallback."""
+    unified = tail_text(AGENT_LOG, max_chars=max_chars).strip()
+    if unified:
+        return unified
+    legacy = "\n".join(
+        part for part in (tail_text(STDOUT_LOG, max_chars=max_chars), tail_text(STDERR_LOG, max_chars=max_chars)) if part
+    )
+    return legacy.strip()
+
+
 class AgentControlPanel:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Sparkora · BYD 推送助手")
-        self.root.geometry("760x590")
-        self.root.minsize(680, 520)
+        self.root.geometry("920x720")
+        self.root.minsize(780, 620)
         self.preflight_result: dict | None = None
         self.preflight_message = "正在等待预检…"
         self._preflight_running = False
+        self._history_signature: tuple | None = None
+        self._history_events: dict[str, dict] = {}
+        self._log_signature: str | None = None
         self._build_ui()
         self.root.after(120, self.bootstrap)
         self.root.after(1000, self.refresh)
@@ -340,9 +428,57 @@ class AgentControlPanel:
         for button in (self.start_button, self.stop_button, self.check_button, config_button, log_button, publish_button):
             button.pack(side="left", padx=(0, 8))
 
-        log_card = ttk.LabelFrame(outer, text="最近日志", padding=8)
-        log_card.pack(fill="both", expand=True)
-        self.log_text = ScrolledText(log_card, height=16, wrap="word", state="disabled", font=("Consolas", 9))
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill="both", expand=True)
+
+        history_tab = ttk.Frame(notebook, padding=8)
+        log_tab = ttk.Frame(notebook, padding=8)
+        notebook.add(history_tab, text="推送历史")
+        notebook.add(log_tab, text="运行日志")
+
+        history_toolbar = ttk.Frame(history_tab)
+        history_toolbar.pack(fill="x", pady=(0, 6))
+        ttk.Label(
+            history_toolbar,
+            text="同一任务只显示最新状态；选择记录可查看详情和失败原因。",
+            style="Subtle.TLabel",
+        ).pack(side="left")
+        ttk.Button(history_toolbar, text="打开历史文件", command=self.open_history).pack(side="right")
+
+        tree_frame = ttk.Frame(history_tab)
+        tree_frame.pack(fill="both", expand=True)
+        columns = ("time", "status", "project", "title", "drafts", "job")
+        self.history_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=11)
+        headings = {
+            "time": ("时间", 142),
+            "status": ("状态", 74),
+            "project": ("项目", 74),
+            "title": ("标题", 260),
+            "drafts": ("草稿数", 64),
+            "job": ("任务 ID", 180),
+        }
+        for column, (heading, width) in headings.items():
+            self.history_tree.heading(column, text=heading)
+            self.history_tree.column(column, width=width, minwidth=48, anchor="w")
+        self.history_tree.tag_configure("FAILED", foreground="#b42318")
+        self.history_tree.tag_configure("SUCCESS", foreground="#067647")
+        history_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=history_scroll.set)
+        self.history_tree.pack(side="left", fill="both", expand=True)
+        history_scroll.pack(side="right", fill="y")
+        self.history_tree.bind("<<TreeviewSelect>>", self._show_history_selection)
+
+        ttk.Label(history_tab, text="任务详情", style="Status.TLabel").pack(anchor="w", pady=(8, 3))
+        self.history_detail = ScrolledText(
+            history_tab, height=7, wrap="word", state="disabled", font=("Microsoft YaHei UI", 9)
+        )
+        self.history_detail.pack(fill="x")
+        self._set_history_detail("暂无推送记录")
+
+        log_toolbar = ttk.Frame(log_tab)
+        log_toolbar.pack(fill="x", pady=(0, 6))
+        ttk.Label(log_toolbar, text="统一日志：work/agent.log（旧版日志仅作回退）", style="Subtle.TLabel").pack(side="left")
+        self.log_text = ScrolledText(log_tab, height=16, wrap="word", state="disabled", font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
 
         footer = ttk.Frame(outer)
@@ -399,13 +535,107 @@ class AgentControlPanel:
             self.preflight_message = "未通过：" + ("；".join(errors) if errors else "等待 Agent 上报")
         self.preflight_value.configure(text=self.preflight_message)
 
-        log = "\n".join(part for part in (tail_text(STDOUT_LOG), tail_text(STDERR_LOG)) if part).strip()
+        self.refresh_history()
+        self.refresh_log()
+        self.root.after(2000, self.refresh)
+
+    def _set_history_detail(self, text: str) -> None:
+        self.history_detail.configure(state="normal")
+        self.history_detail.delete("1.0", "end")
+        self.history_detail.insert("1.0", text)
+        self.history_detail.configure(state="disabled")
+
+    def refresh_history(self) -> None:
+        events = read_push_history()
+        signature = tuple(
+            (
+                event.get("jobId"),
+                event.get("at"),
+                event.get("atEpoch"),
+                event.get("status"),
+                event.get("projectId"),
+                event.get("versionId"),
+                event.get("title"),
+                event.get("draftId"),
+                event.get("draftCount"),
+                event.get("durationMs"),
+                event.get("error"),
+                event.get("serverReported"),
+            )
+            for event in events
+        )
+        if signature == self._history_signature:
+            return
+        selected = self.history_tree.selection()
+        selected_job = self._history_events.get(selected[0], {}).get("jobId") if selected else None
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        self._history_events = {}
+        labels = {"RECEIVED": "已接收", "RUNNING": "执行中", "SUCCESS": "成功", "FAILED": "失败"}
+        for index, event in enumerate(events):
+            iid = str(index)
+            draft_count = event.get("draftCount")
+            self.history_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    event.get("at") or "-",
+                    labels.get(str(event.get("status")), event.get("status") or "-"),
+                    event.get("projectId") or "-",
+                    event.get("title") or "标题不可用",
+                    draft_count if draft_count is not None else "-",
+                    event.get("jobId") or "-",
+                ),
+                tags=(str(event.get("status")),),
+            )
+            self._history_events[iid] = event
+        self._history_signature = signature
+        target = next((iid for iid, event in self._history_events.items() if event.get("jobId") == selected_job), None)
+        if target is None and self._history_events:
+            target = "0"
+        if target is not None:
+            self.history_tree.selection_set(target)
+            self.history_tree.focus(target)
+            self._show_history_selection()
+        elif not events:
+            self._set_history_detail("暂无推送记录")
+
+    def _show_history_selection(self, _event=None) -> None:
+        selection = self.history_tree.selection()
+        if not selection:
+            return
+        event = self._history_events.get(selection[0])
+        if not event:
+            return
+        labels = {"RECEIVED": "已接收", "RUNNING": "执行中", "SUCCESS": "成功", "FAILED": "失败"}
+        status = labels.get(str(event.get("status")), event.get("status") or "-")
+        reported = event.get("serverReported")
+        reported_text = "是" if reported is True else "否" if reported is False else "未到结果阶段"
+        details = [
+            f"时间：{event.get('at') or '-'}",
+            f"状态：{status}",
+            f"项目：{event.get('projectId') or '-'}（版本 {event.get('versionId') or '-'}）",
+            f"标题：{event.get('title') or '标题不可用'}",
+            f"任务 ID：{event.get('jobId') or '-'}",
+            f"草稿 ID：{event.get('draftId') or '-'}",
+            f"草稿数：{event.get('draftCount') if event.get('draftCount') is not None else '-'}",
+            f"耗时：{event.get('durationMs')} ms" if event.get("durationMs") is not None else "耗时：-",
+            f"结果已回传服务端：{reported_text}",
+            f"失败原因：{event.get('error') or '-'}",
+        ]
+        self._set_history_detail("\n".join(details))
+
+    def refresh_log(self) -> None:
+        log = agent_log_text() or "暂无日志"
+        if log == self._log_signature:
+            return
+        self._log_signature = log
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
-        self.log_text.insert("1.0", log or "暂无日志")
+        self.log_text.insert("1.0", log)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
-        self.root.after(2000, self.refresh)
 
     def start_clicked(self) -> None:
         pid, message = start_agent()
@@ -468,8 +698,13 @@ class AgentControlPanel:
 
     def open_log(self) -> None:
         WORK_DIR.mkdir(parents=True, exist_ok=True)
-        STDOUT_LOG.touch(exist_ok=True)
-        os.startfile(str(STDOUT_LOG))  # type: ignore[attr-defined]
+        AGENT_LOG.touch(exist_ok=True)
+        os.startfile(str(AGENT_LOG))  # type: ignore[attr-defined]
+
+    def open_history(self) -> None:
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.touch(exist_ok=True)
+        os.startfile(str(HISTORY_FILE))  # type: ignore[attr-defined]
 
 
 def main() -> int:

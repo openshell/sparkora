@@ -13,6 +13,7 @@ import csv
 import hashlib
 import io
 import json
+import locale
 import os
 import platform
 import random
@@ -47,6 +48,8 @@ DEFAULT_WECHAT_PROCESSES = {"wechat.exe", "weixin.exe", "wechatapp.exe", "wechat
 WORK_DIR = Path(__file__).with_name("work")
 RUNTIME_STATUS_FILE = WORK_DIR / "agent.status.json"
 STOP_REQUEST_FILE = WORK_DIR / "agent.stop"
+PUSH_HISTORY_FILE = WORK_DIR / "push-history.jsonl"
+MAX_PUSH_HISTORY_EVENTS = 5000
 
 
 class AgentError(RuntimeError):
@@ -104,6 +107,132 @@ def _normalize_process_names(value: object) -> set[str]:
     return set()
 
 
+def _safe_text(value: object, max_length: int = 240) -> str:
+    """Collapse operator-facing text to one bounded line."""
+    text = str(value or "").replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return (text[:max_length] + "…") if len(text) > max_length else text
+
+
+def safe_error_text(error: object, config: AgentConfig | None = None) -> str | None:
+    """Return a bounded error that cannot expose local paths, URLs or secrets."""
+    if error is None:
+        return None
+    text = _safe_text(error, MAX_ERROR_LENGTH)
+    if config is not None:
+        for secret in (
+            config.agent_token,
+            config.upload_sign_key,
+            config.upload_session_id,
+            config.upload_app_key,
+            config.mmkv_dir,
+            config.backup_dir,
+        ):
+            if secret and len(str(secret)) >= 4:
+                text = text.replace(str(secret), "<已隐藏>")
+    text = re.sub(r"https?://[^\s，；]+", "<链接已隐藏>", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"(?i)\b(token|sign|signature|session(?:_?id)?|secret|app_?key|sign_?key)\s*[:=]\s*([^\s&，；]+)",
+        r"\1=<已隐藏>",
+        text,
+    )
+    # A Windows path may contain spaces. Redact through the line/punctuation
+    # boundary instead of stopping at the first space and leaking its suffix.
+    text = re.sub(r"(?<![A-Za-z0-9])[A-Za-z]:\\[^\r\n，；]*", "<本机路径已隐藏>", text)
+    text = re.sub(r"\\\\[^\r\n，；]*", "<本机路径已隐藏>", text)
+    return _safe_text(text, MAX_ERROR_LENGTH)
+
+
+def log(
+    level: str,
+    message: object,
+    *,
+    stream: Any | None = None,
+    config: AgentConfig | None = None,
+) -> None:
+    """Write one flushed, sanitized local-time log line for the control panel."""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    safe_message = safe_error_text(message, config) or ""
+    line = f"{timestamp} [{str(level).upper()}] {safe_message}"
+    print(line, file=stream or sys.stdout, flush=True)
+
+
+def _job_history_fields(job: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    def first(*values: object) -> object:
+        return next((value for value in values if value is not None and str(value).strip()), "")
+
+    return {
+        "jobId": _safe_text(first(job.get("jobId"), payload.get("jobId")), 128),
+        "projectId": _safe_text(first(job.get("projectId"), payload.get("projectId")), 128),
+        "versionId": _safe_text(first(job.get("versionId"), payload.get("versionId")), 128),
+        "title": _safe_text(first(job.get("title"), payload.get("title"), "标题不可用"), 240),
+        "draftId": _safe_text(first(job.get("draftId"), payload.get("draftId")), 128) or None,
+    }
+
+
+def _safe_history_value(value: object, config: AgentConfig | None, max_length: int) -> str:
+    return _safe_text(safe_error_text(value, config) or "", max_length)
+
+
+def _optional_int(value: object) -> int | None:
+    """Coerce optional history counters without letting bad metadata break a job."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def record_push_history(
+    status: str,
+    fields: dict[str, Any],
+    *,
+    config: AgentConfig | None = None,
+    draft_id: object = None,
+    draft_count: object = None,
+    duration_ms: object = None,
+    error: object = None,
+    server_reported: bool | None = None,
+) -> None:
+    """Append one safe event to the persistent local push history."""
+    now = time.time()
+    event = {
+        "at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+        "atEpoch": round(now, 3),
+        "status": str(status).upper(),
+        "jobId": _safe_history_value(fields.get("jobId"), config, 128),
+        "projectId": _safe_history_value(fields.get("projectId"), config, 128),
+        "versionId": _safe_history_value(fields.get("versionId"), config, 128),
+        "title": _safe_history_value(fields.get("title") or "标题不可用", config, 240),
+        "draftId": _safe_history_value(draft_id or fields.get("draftId"), config, 128) or None,
+        "draftCount": _optional_int(draft_count),
+        "durationMs": _optional_int(duration_ms),
+        "error": safe_error_text(error, config),
+        "serverReported": server_reported,
+    }
+    try:
+        WORK_DIR.mkdir(parents=True, exist_ok=True)
+        with PUSH_HISTORY_FILE.open("a", encoding="utf-8", buffering=1) as fp:
+            fp.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+            fp.flush()
+        _trim_push_history()
+    except OSError:
+        log("WARNING", "推送历史写入失败，任务执行不受影响")
+
+
+def _trim_push_history() -> None:
+    try:
+        lines = PUSH_HISTORY_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    if len(lines) <= MAX_PUSH_HISTORY_EVENTS:
+        return
+    temp = PUSH_HISTORY_FILE.with_suffix(".tmp")
+    temp.write_text("\n".join(lines[-MAX_PUSH_HISTORY_EVENTS:]) + "\n", encoding="utf-8")
+    temp.replace(PUSH_HISTORY_FILE)
+
+
 def stop_requested() -> bool:
     """Consume a control-panel stop request at a safe scheduling boundary."""
     if not STOP_REQUEST_FILE.exists():
@@ -144,8 +273,8 @@ def load_environment(config_path: str | None) -> AgentConfig:
                     continue
                 key, value = text.split("=", 1)
                 os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-    else:
-        print(f"[config] 未找到 {path.name}，仅读取环境变量")
+    # Missing config files are reported by caller-level validation without
+    # contaminating the machine-readable preflight JSON on stdout.
     required_keys = [
         "SPARKORA_BASE_URL",
         "SPARKORA_AGENT_TOKEN",
@@ -397,7 +526,7 @@ def fetch_image(source_url: str) -> bytes:
         response = requests.get(source_url, timeout=30, headers={"User-Agent": "Sparkora-BYD-Agent/1.0"})
         response.raise_for_status()
     except requests.RequestException as exc:
-        raise AgentError(f"下载任务图片失败：{source_url}") from exc
+        raise AgentError("下载任务图片失败，请检查图片源是否可访问") from exc
     return response.content
 
 
@@ -482,7 +611,7 @@ def upload_payload_images(config: AgentConfig, images: list[dict[str, Any]], ref
         urls[image_id] = url
         uploaded_urls.append(url)
         logs[f"image_{image_id}_uploaded"] = True
-        print(f"[upload] {image_id} -> {url}")
+        log("INFO", f"图片上传成功：{image_id}")
         if index < len(referenced_ids):
             time.sleep(random.uniform(0.8, 2.5))
     return urls, uploaded_urls
@@ -553,12 +682,24 @@ def readable_mmkv(config: AgentConfig) -> tuple[bool, int, str | None]:
 def wechat_processes_running(config: AgentConfig) -> list[str]:
     if platform.system() != "Windows":
         return ["non-windows"]
+    console_encoding = "mbcs" if os.name == "nt" else (locale.getpreferredencoding(False) or "utf-8")
     try:
-        completed = subprocess.run(["tasklist", "/NH", "/FO", "CSV"], capture_output=True, text=True, timeout=5, check=False)
-    except (OSError, subprocess.SubprocessError):
+        completed = subprocess.run(
+            ["tasklist", "/NH", "/FO", "CSV"],
+            capture_output=True,
+            text=True,
+            encoding=console_encoding,
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
         return ["tasklist-unavailable"]
+    output = completed.stdout or ""
+    if isinstance(output, bytes):
+        output = output.decode(console_encoding, errors="replace")
     running: set[str] = set()
-    for row in csv.reader(completed.stdout.splitlines()):
+    for row in csv.reader(output.splitlines()):
         if not row:
             continue
         name = row[0].strip().strip('"').lower()
@@ -741,93 +882,260 @@ def execute_job(config: AgentConfig, payload: dict[str, Any]) -> tuple[dict[str,
 
 
 def process_claimed_job(config: AgentConfig, job: dict[str, Any]) -> None:
-    job_id = str(job.get("jobId") or "")
+    started = time.monotonic()
+    job = job if isinstance(job, dict) else {}
     raw_payload = job.get("payloadJson") or job.get("payload")
-    preflight = None
+    # Persist receipt before touching the executable payload. The claim response
+    # carries safe top-level metadata even when payloadJson is malformed.
+    fields = _job_history_fields(job, {})
+    record_push_history("RECEIVED", fields, config=config, server_reported=None)
+
+    preflight: dict[str, Any] | None = None
     try:
         payload = raw_payload if isinstance(raw_payload, dict) else json.loads(raw_payload or "{}")
-    except (TypeError, json.JSONDecodeError) as exc:
+        if not isinstance(payload, dict):
+            raise AgentError("任务 payload 格式不正确")
+        fields = _job_history_fields(job, payload)
+    except (TypeError, ValueError) as exc:
         error = f"任务 payload 解析失败，请联系管理员：{type(exc).__name__}"
-        _report_failure(config, job_id, error, preflight)
+        log(
+            "ERROR",
+            "收到任务：status=RECEIVED "
+            f"jobId={fields['jobId'] or '-'} projectId={fields['projectId'] or '-'} "
+            f"title={fields['title']}",
+            config=config,
+        )
+        _report_failure(config, fields, error, preflight, started)
         return
+    except AgentError as exc:
+        log(
+            "ERROR",
+            "收到任务：status=RECEIVED "
+            f"jobId={fields['jobId'] or '-'} projectId={fields['projectId'] or '-'} "
+            f"title={fields['title']}",
+            config=config,
+        )
+        _report_failure(config, fields, str(exc), preflight, started)
+        return
+
+    log(
+        "INFO",
+        "收到任务：status=RECEIVED "
+        f"jobId={fields['jobId'] or '-'} projectId={fields['projectId'] or '-'} "
+        f"title={fields['title']}",
+        config=config,
+    )
+
     try:
         preflight = build_preflight(config, probe_server=False)
         if not preflight.get("ready"):
             raise AgentError("本地预检未通过：" + "；".join(preflight.get("errors") or []))
+        record_push_history("RUNNING", fields, config=config, server_reported=None)
+        log(
+            "INFO",
+            "开始执行任务：status=RUNNING "
+            f"jobId={fields['jobId'] or '-'} projectId={fields['projectId'] or '-'} "
+            f"title={fields['title']}",
+            config=config,
+        )
         result, logs = execute_job(config, payload)
+    except AgentError as exc:
+        _report_failure(config, fields, str(exc), preflight, started)
+        return
+    except Exception as exc:
+        error = f"本地执行未知异常：{type(exc).__name__}: {exc}"
+        _report_failure(config, fields, error, preflight, started)
+        return
+
+    _report_success(config, fields, result, preflight, logs, started)
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _report_success(
+    config: AgentConfig,
+    fields: dict[str, Any],
+    result: dict[str, Any],
+    preflight: dict[str, Any],
+    logs: dict[str, Any],
+    started: float,
+) -> None:
+    duration_ms = _duration_ms(started)
+    draft_id = result.get("draftId")
+    draft_count = result.get("draftCount")
+    report_error: str | None = None
+    server_reported = True
+    try:
         report_result(
             config,
-            job_id,
+            str(fields.get("jobId") or ""),
             True,
-            result.get("draftId"),
-            result.get("draftCount"),
+            draft_id,
+            draft_count,
             result.get("uploadedImageUrls", []),
             preflight,
             logs,
             None,
         )
-    except AgentError as exc:
-        _report_failure(config, job_id, str(exc), preflight)
     except Exception as exc:
-        _report_failure(config, job_id, f"本地执行未知异常：{type(exc).__name__}: {exc}", preflight)
+        server_reported = False
+        report_error = safe_error_text(
+            f"本地执行成功，但结果回传失败：{type(exc).__name__}: {exc}", config
+        ) or "本地执行成功，但结果回传失败"
+
+    # One append-only event represents the final outcome. It is written only
+    # after the reporting attempt so success cannot be duplicated.
+    record_push_history(
+        "SUCCESS",
+        fields,
+        config=config,
+        draft_id=draft_id,
+        draft_count=draft_count,
+        duration_ms=duration_ms,
+        error=report_error,
+        server_reported=server_reported,
+    )
+    message = (
+        "任务执行成功：status=SUCCESS "
+        f"jobId={fields['jobId'] or '-'} draftId={draft_id or '-'} "
+        f"draftCount={draft_count if draft_count is not None else '-'} "
+        f"durationMs={duration_ms} serverReported={str(server_reported).lower()}"
+    )
+    if report_error:
+        log("ERROR", f"{message}；{report_error}", config=config)
+    else:
+        log("INFO", message, config=config)
 
 
-def _report_failure(config: AgentConfig, job_id: str, error: str, preflight: dict[str, Any] | None) -> None:
+def _report_failure(
+    config: AgentConfig,
+    fields: dict[str, Any],
+    error: str,
+    preflight: dict[str, Any] | None,
+    started: float,
+) -> None:
+    duration_ms = _duration_ms(started)
+    safe_error = safe_error_text(error, config) or "任务执行失败"
     if preflight is None:
-        preflight = build_preflight(config, probe_server=False)
-    print(f"[job] {job_id} 失败：{error}")
+        try:
+            preflight = build_preflight(config, probe_server=False)
+        except Exception:
+            preflight = {"ready": False, "errors": ["本地预检不可用"], "checks": {}}
+
+    server_reported = True
+    final_error = safe_error
     try:
-        report_result(config, job_id, False, None, None, [], preflight, {}, error)
-    except AgentError as exc:
-        print(f"[job] 失败结果回传失败：{exc}")
+        report_result(
+            config,
+            str(fields.get("jobId") or ""),
+            False,
+            None,
+            None,
+            [],
+            preflight,
+            {},
+            safe_error,
+        )
+    except Exception as exc:
+        server_reported = False
+        final_error = safe_error_text(
+            f"{safe_error}；结果回传失败：{type(exc).__name__}: {exc}", config
+        ) or safe_error
+
+    # Exactly one final FAILED event, carrying whether the server accepted it.
+    record_push_history(
+        "FAILED",
+        fields,
+        config=config,
+        duration_ms=duration_ms,
+        error=final_error,
+        server_reported=server_reported,
+    )
+    message = (
+        "任务执行失败：status=FAILED "
+        f"jobId={fields['jobId'] or '-'} serverReported={str(server_reported).lower()}；"
+        f"{final_error}"
+    )
+    log("ERROR", message, config=config)
 
 
 def once(config: AgentConfig) -> None:
     preflight = build_preflight(config, probe_server=True)
-    print(f"[preflight] ready={preflight.get('ready')} errors={preflight.get('errors')}")
+    errors = safe_error_text("；".join(preflight.get("errors") or []), config)
+    if preflight.get("ready"):
+        log("INFO", "预检通过，准备执行单次调度")
+    else:
+        log("WARNING", f"预检未通过：{errors or '等待 Agent 上报'}")
     try:
         register_agent(config, preflight)
         heartbeat(config, preflight)
+        log("INFO", "Agent 注册与心跳完成")
     except AgentError as exc:
-        print(f"[heartbeat] {exc}")
+        log("ERROR", f"Agent 注册或心跳失败：{safe_error_text(exc, config)}")
         return
     if not preflight.get("ready"):
         return
     claim = claim_job(config)
     if not claim.get("claimed"):
-        print(f"[job] {claim.get('reason') or '当前没有可领取的任务'}")
+        log("INFO", f"当前没有可领取的任务：{claim.get('reason') or '暂无任务'}")
         return
     process_claimed_job(config, claim.get("job") or {})
 
 
 def run_loop(config: AgentConfig) -> None:
     next_heartbeat = 0.0
+    first_heartbeat = True
+    last_preflight_signature: tuple[Any, ...] | None = None
+    last_error: str | None = None
+    log("INFO", f"Agent 启动：version={AGENT_VERSION} pollInterval={config.poll_interval:g}s")
     while True:
         try:
             if stop_requested():
-                print("[agent] 收到控制面板停止请求，正在退出")
+                log("INFO", "收到控制面板停止请求，已在安全调度边界退出")
                 return
             preflight = build_preflight(config, probe_server=False)
             write_runtime_status(preflight)
+            signature = (
+                bool(preflight.get("ready")),
+                tuple(str(item) for item in (preflight.get("errors") or [])),
+            )
+            if signature != last_preflight_signature:
+                if preflight.get("ready"):
+                    log("INFO", "预检状态变化：通过")
+                else:
+                    errors = safe_error_text("；".join(preflight.get("errors") or []), config)
+                    log("WARNING", f"预检状态变化：未通过；{errors or '等待 Agent 上报'}")
+                last_preflight_signature = signature
             if preflight.get("ready"):
                 if time.time() >= next_heartbeat:
                     register_agent(config, preflight)
                     heartbeat(config, preflight)
                     next_heartbeat = time.time() + config.heartbeat_interval
+                    if first_heartbeat:
+                        log("INFO", f"首次心跳成功：agentId={config.agent_id}")
+                        first_heartbeat = False
                 claim = claim_job(config)
+                last_error = None
                 if claim.get("claimed"):
                     process_claimed_job(config, claim.get("job") or {})
                     time.sleep(1)
                     continue
-                print(f"[job] {claim.get('reason') or '当前没有可领取的任务'}")
             else:
-                print("[preflight] 预检未通过：" + "；".join(preflight.get("errors") or []))
+                last_error = None
         except AgentError as exc:
-            print(f"[agent] {exc}")
+            safe_error = safe_error_text(exc, config) or "Agent 运行异常"
+            if safe_error != last_error:
+                log("ERROR", f"Agent 运行异常：{safe_error}")
+                last_error = safe_error
         except KeyboardInterrupt:
             raise
         except Exception as exc:
-            print(f"[agent] 未知异常：{type(exc).__name__}: {exc}")
+            safe_error = safe_error_text(f"未知异常：{type(exc).__name__}: {exc}", config) or "Agent 未知异常"
+            if safe_error != last_error:
+                log("ERROR", safe_error)
+                last_error = safe_error
         time.sleep(config.poll_interval)
 
 
@@ -859,13 +1167,14 @@ def main() -> int:
         run_loop(config)
         return 0
     except AgentError as exc:
-        print(f"[agent] {exc}", file=sys.stderr)
+        log("ERROR", safe_error_text(exc) or "Agent 启动失败", stream=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        print("[agent] 已停止")
+        log("INFO", "Agent 已停止", stream=sys.stderr)
         return 0
     except Exception as exc:
-        print(f"[agent] 启动失败：{type(exc).__name__}: {exc}", file=sys.stderr)
+        error = safe_error_text(f"启动失败：{type(exc).__name__}: {exc}") or "Agent 启动失败"
+        log("ERROR", error, stream=sys.stderr)
         return 1
 
 

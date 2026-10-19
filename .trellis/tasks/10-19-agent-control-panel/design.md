@@ -30,3 +30,39 @@
 
 - 单元测试覆盖 PID 存活判断、预检输出解析、停止标记和微信进程解析。
 - Windows 手工冒烟：双击入口、自动启动、状态刷新、安全停止、日志/配置/发布页入口。
+
+## 增量设计：日志与推送历史
+
+### Event Flow
+
+```text
+Server claim-job
+  -> process_claimed_job
+  -> push-history.jsonl: RECEIVED
+  -> payload parse + local preflight
+  -> push-history.jsonl: RUNNING
+  -> execute_job
+  -> push-history.jsonl: SUCCESS / FAILED
+  -> control panel reducer: latest event per jobId
+```
+
+### Logging
+
+- `byd_local_agent.py` 使用统一 `log(level, message)` 输出本地时间戳。
+- 新日志统一写入 `work/agent.log`，子进程 `stderr` 合并到同一文件。
+- 预检状态只在变化时输出；空任务轮询不重复记录。
+- 任务事件只记录安全元数据，不记录 payload 正文、图片 URL、Token 或本机路径。
+
+### History Storage
+
+- `work/push-history.jsonl` 为追加式事件流，单行一个 JSON。
+- 事件状态：`RECEIVED`、`RUNNING`、`SUCCESS`、`FAILED`。
+- `read_push_history()` 忽略损坏行、按 `jobId` 取最新事件、按时间倒序返回。
+- 事件文件限制最大事件数量，避免无限增长。
+
+### Control Panel
+
+- 现有日志区改为页签：`推送历史` + `运行日志`。
+- 历史页签使用 `ttk.Treeview` 展示时间、状态、项目、标题、草稿数、任务 ID。
+- 选中历史记录后显示完整失败原因或任务详情。
+- 刷新历史时不重建未变化的表格，避免闪烁。
