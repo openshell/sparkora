@@ -55,6 +55,11 @@
 ## 3. 一键启动 / 停止
 
 ```bash
+# 推荐:拉取 main → 预拉基础镜像(镜像源回退) → Flyway 版本冲突检查 → 构建启动 → 健康检查
+./deploy.sh              # 等价于完整发布流程
+./deploy.sh --no-pull    # 跳过 git pull,仅重建启动
+
+# 手工分步(与脚本等价的下层命令)
 # 构建并后台启动（代码变动后必须加 --build，见 §6）
 docker compose up -d --build
 

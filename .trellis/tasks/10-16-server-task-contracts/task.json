@@ -21,7 +21,7 @@
   "children": [],
   "parent": "10-16-byd-dynasty-local-push",
   "relatedFiles": [
-    "src/main/resources/db/migration/V21__byd_dynasty_local_push.sql",
+    "src/main/resources/db/migration/V23__byd_dynasty_local_push.sql",
     "src/main/java/com/sparkora/service/BydDynastyPushService.java",
     "src/main/java/com/sparkora/web/controller/BydDynastyAgentController.java",
     "src/main/java/com/sparkora/web/controller/ProjectBydDynastyController.java",
