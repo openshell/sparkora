@@ -1,0 +1,29 @@
+{
+  "id": "byd-dynasty-plain-text-cleanup",
+  "name": "byd-dynasty-plain-text-cleanup",
+  "title": "BYD 王朝小程序草稿纯文本清洗",
+  "description": "使用 commonmark-java 和 Jsoup 将推送正文安全转换为纯文本与独立图片消息",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "c_cha",
+  "assignee": "c_cha",
+  "createdAt": "2026-10-19",
+  "completedAt": null,
+  "branch": "feature/byd-dynasty-miniapp-push",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dev_type": "feature",
+    "package": "backend"
+  }
+}
