@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/byd-miniapp-push.md", "reason": "核对 payload 和 Agent 草稿契约未被无意更改"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 BYD 发布页无下拉选项回归和 Boolean 绑定安全"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "执行后端测试、边界条件和提交前质量门禁"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "部署、环境变量重载、健康和回滚验收依据"}
