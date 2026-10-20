@@ -51,15 +51,15 @@
 ## Acceptance Criteria（跨子任务 / 集成）
 
 - [ ] **AC-P1 端到端**：至少接入 **工信部（BYD 申报全收）+ 盖世汽车** 与 **≥1 个** B 级源（乘联会，经 Crawl4AI）后，能定时/手动采集入库，且采集内容可被统一检索命中并进入简报事实手册。
-- [ ] **AC-P2 发布节奏**：每源 cron/窗口可独立配置并生效（乘联会月度窗口、工信部双批不会互相阻塞）；同源重叠任务被防重跳过。
+- [x] **AC-P2 发布节奏**：每源 cron/窗口可独立配置并生效（乘联会月度窗口、工信部双批不会互相阻塞）；同源重叠任务被防重跳过。
 - [ ] **AC-P3 资源红线**：Crawl4AI 并发 ≤2 强制生效（构造并发场景验证被限流而非击穿）；**Crawl4AI 同 host ≤2/天生效；HTTP 通道按最小间隔限速且不做硬日限**（验证工信部多子页 BYD 申报可一轮采完）。
-- [ ] **AC-P4 域隔离不回归**：新增信源内容后，CAR/KB 候选窗口不被信源块挤占（复现 news.md §5 验证口径，CAR 候选不因信源块增加而下降）；**且 NEWS 域内 BYD 官方新闻不被用户采集源挤占**（域内按 sourceType 二级隔离，构造并发命中验证）。
-- [ ] **AC-P8 结构化内容不丢数**：乘联会销量表等表格类内容的数值在切块后仍可被检索命中并注入（断言行列数值不丢失），不被 `TextChunker` 段内换行转空格压平。
-- [ ] **AC-P9 SOURCE 事实可用**：自建信源事实以 `SOURCE` 类型进入 `fact_sheet`（`validateFacts` 不拒、不误标 KB 0.9），并按权威档取置信；构造「误标 KB」与「产出 SOURCE」两反例单测。
-- [ ] **AC-P5 融合可观测**：同一项目下，融合前后 `fact_sheet` 的本地来源占比、同 URL 去重数、本地 vs 外部置信分层可见；`MULTI` 交叉规则不把同源多通道误判为独立交叉。
-- [ ] **AC-P6 零回归基线**：未启用自建信源时，`mvn test` 现有全绿 + `npm run build` 通过；BYD 新闻同步与深度研究行为逐位等价。
-- [ ] **AC-P7 契约与文档**：`docs/spec/knowledge/{news,center}.md`、`docs/spec/retrieval.md`、`docs/spec/brief-generation.md`、`docs/spec/image.md`、`.env.example` 同步字段级契约；URL 类配置键一律 `_BASE_URL` 结尾。
-- [ ] **AC-P10 采集配图可用（用户 2026-10-05）**：采集信源详情页正文图片经转存进入图库（`source=source`），且可被 `ImageEmbeddingService.searchImages` 语义检索命中（嵌入文本以信源标题为主信号）；单图失败不阻断采集；未配图/无图源行为与现状等价。
+- [x] **AC-P4 域隔离不回归**：新增信源内容后，CAR/KB 候选窗口不被信源块挤占（复现 news.md §5 验证口径，CAR 候选不因信源块增加而下降）；**且 NEWS 域内 BYD 官方新闻不被用户采集源挤占**（域内按 sourceType 二级隔离，构造并发命中验证）。
+- [x] **AC-P8 结构化内容不丢数**：乘联会销量表等表格类内容的数值在切块后仍可被检索命中并注入（断言行列数值不丢失），不被 `TextChunker` 段内换行转空格压平。
+- [x] **AC-P9 SOURCE 事实可用**：自建信源事实以 `SOURCE` 类型进入 `fact_sheet`（`validateFacts` 不拒、不误标 KB 0.9），并按权威档取置信；构造「误标 KB」与「产出 SOURCE」两反例单测。
+- [x] **AC-P5 融合可观测**：同一项目下，融合前后 `fact_sheet` 的本地来源占比、同 URL 去重数、本地 vs 外部置信分层可见；`MULTI` 交叉规则不把同源多通道误判为独立交叉。
+- [x] **AC-P6 零回归基线**：未启用自建信源时，`mvn test` 现有全绿 + `npm run build` 通过；BYD 新闻同步与深度研究行为逐位等价。
+- [x] **AC-P7 契约与文档**：`docs/spec/knowledge/{news,center}.md`、`docs/spec/retrieval.md`、`docs/spec/brief-generation.md`、`docs/spec/image.md`、`.env.example` 同步字段级契约；URL 类配置键一律 `_BASE_URL` 结尾。
+- [x] **AC-P10 采集配图可用（用户 2026-10-05）**：采集信源详情页正文图片经转存进入图库（`source=source`），且可被 `ImageEmbeddingService.searchImages` 语义检索命中（嵌入文本以信源标题为主信号）；单图失败不阻断采集；未配图/无图源行为与现状等价。
 
 ## Out of Scope（父级范围外）
 
@@ -108,3 +108,24 @@
 - 工信部公示列表页准确路径首次接入需人工从官网导航定位一次，之后固定。
 - 任何真实密钥/内网地址不写入本仓；本机服务地址（Crawl4AI/SearXNG）走 `.env` 配置。
 - 变更检索/新闻相关文档须同步 `docs/spec/knowledge/news.md`、`docs/spec/knowledge/center.md`、`docs/spec/retrieval.md`、`docs/spec/brief-generation.md` 与 `.env.example`。
+
+---
+
+## 父级集成评审记录（2026-10-21 审计）
+
+结论：**保留 open，不归档**。9 个 children 均已归档且 `status=completed`，但父级 `AC-P1` 仍未闭环；`AC-P3` 的线上工信部多子页限速场景也未取得运行证据。
+
+| 验收项 | 可复核证据 | 结论 |
+| --- | --- | --- |
+| AC-P1 | `10-05-source-crawl-base/prd.md` 明确记录“live 站点未真连”；`10-09-cpca-gasgoo-collection` 的范围不含工信部申报入库；`docs/spec/knowledge/sources.md` 仍保留“AC-1/AC-2/AC-8/AC-9 端到端真实采集”未完成项。盖世/乘联会虽有真机采集记录，但不能替代工信部 BYD 申报全收 + 统一检索进入 `fact_sheet`。 | **不满足，保持 open** |
+| AC-P2 | `SourceScheduleServiceTest`（20 用例）覆盖窗口/cron/本批完成跳过；`SourceJobServiceTest` 覆盖 RUNNING 防重叠；乘联会/盖世真实采集记录包含排期与防重验证。 | 通过（代码/真机证据） |
+| AC-P3 | `Crawl4aiConcurrencyTest` 验证在途 ≤2、超出快速限流不排队；`FetchRateLimiterTest` 验证 Crawl4AI 同 host ≤2/天、跨 host 独立、跨日重置与 HTTP 无硬日限。**缺少工信部多子页 BYD 申报真实一轮采完证据**。 | **部分，保持 open** |
+| AC-P4 | `CarRagServiceTest.E2_*` 覆盖 CAR/KB 域窗与 NEWS 内 `byd-news`/`user-source` 二级隔离；`NewsServiceSourceIsolationTest` 覆盖 `/api/news` 不泄漏通用信源。 | 通过（单测） |
+| AC-P5 | `FactSheetServiceTest` 的 `AC_F1`~`AC_F4` 覆盖本地优先、同 URL 去重、`sourceMeta` 计数、`gasgoo-ranking` 不计独立交叉；`SubAgentRunnerTest` 覆盖 SOURCE 元数据透传。 | 通过（单测） |
+| AC-P6 | 2026-10-21 全量 `mvn test`：1247/0/0/0；`frontend/npm run build` 通过（4242 modules，25.05s）。 | 通过 |
+| AC-P7 | `docs/spec/knowledge/news.md`、`center.md`、`sources.md`、`docs/spec/retrieval.md`、`brief-generation.md`、`image.md` 与 `.env.example` 已包含信源/抓取/图库字段；URL 配置使用 `_BASE_URL`。 | 通过（静态契约） |
+| AC-P8 | `TextChunkerTest.preserveNewlines_*` 与 `SourceDocServiceTest.结构化分类_保留换行_数值行不丢`、`SourceTableParserTest` 覆盖表格数值/行列语义。 | 通过（单测） |
+| AC-P9 | `SubAgentRunnerTest.SOURCE事实_*` 覆盖 SOURCE 接受、带自造 URL 拒绝、带合法 sourceId 归一 WEB；`FactSheetServiceTest` 覆盖 official/industry/media 置信分档与 `crossCounted=false`。 | 通过（单测） |
+| AC-P10 | `SourceImageServiceTest` 覆盖 `source=source`、`sourceRef`、`detail_base_url` 相对链、单图失败不阻断、无图零调用；`ImageEmbeddingTextBuilderTest`/`ImageEmbeddingServiceTest` 覆盖标题嵌入与语义检索。 | 通过（单测） |
+
+未覆盖：工信部真实站点采集、工信部多子页一轮限速/全收、真实 `fact_sheet` 端到端命中；在补齐这些证据前不得将父任务归档。

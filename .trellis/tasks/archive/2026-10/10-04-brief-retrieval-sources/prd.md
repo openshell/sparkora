@@ -57,16 +57,16 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC1（零回归基线）** 不设任何新配置时，深度研究行为与现状**逐位等价**：单 provider 短路、每 agent 1 条上限、仅背景题补正文、`rag_status` 四态语义不变；`mvn test` 现有 842 例全绿 + `npm run build` 通过。
-- [ ] **AC2（Serper 可用）** `SERPER_API_KEY` + `SERPER_API_BASE_URL` 配置后，深度研究可经 `WebSearchRouter` 命中 Serper 结果（`name()="SERPER"`、Header `X-API-KEY` 认证、5s/15s 超时口径与 Tavily 一致）；未配置时 `toolHealth` 显示 `UNCONFIGURED`，不影响 Tavily/SearxNG；**仅改配置即可在官方端点与中转之间切换**，无需改代码。
-- [ ] **AC2a（垂直路由）** 时效信号问题走 `/news` 垂直并能拿到 `date`/`source` 字段；非时效问题走 `/web`；两者均为默认行为向后兼容（不配置时全走 `web`）；`/news` 与 `/web` 同价（`credits=1`），调用量不因此翻倍。
-- [ ] **AC3（多源聚合正确性）** `PRIMARY_FANOUT` 下：primary 组并行且单 provider 异常不影响其他；primary 为空回落 `FIRST_HIT`；跨源去重生效且 `witnessCount` 正确；**合并后 `sourceId` 全局唯一**，LLM 引用任意 `sourceId` 都能通过 `validateFacts` 的 URL+provider 严格比对（构造反例单测）；`maxResults` 不放大。
-- [ ] **AC4（交叉验证收益可观测）** 在同一项目上以 `FIRST_HIT` vs `PRIMARY_FANOUT` 各跑一次，`fact_sheet` 中 `MULTI` entry 占比 / `sourceCount>=2` 簇数**应呈上升趋势**；`SearchMeta.providers` 与 `attempts[].witnessTotal` 能完整列出参与 provider 与交叉见证数。**本项为观测性验证而非强断言**——单源短路解除只是抬升了「不同 URL 同 claim 同时召回」的概率，该概率还取决于 query 措辞多样性（由 R3 提供），故不得作为 R2 的独立交付门槛（理由见 `design.md` §2.3）。
-- [ ] **AC5（覆盖补检索）** Round 1 有缺口时，`selectFollowupTargets` 正确选出 ≤`maxFollowups` 个目标并发起补检索，结果并入 `fact_sheet`；无缺口时不发起任何额外调用；补检索**不新建子代理、不重跑 plan**（`research_plan` 与 Round 1 落地的 notes 不被覆盖）；轮次与总预算有上限，超限停止。
-- [ ] **AC6（预算与去重）** `WebCallBudget` 三级上限生效，超限后拒绝新调用并置 `budgetExhausted`；`per-round` 生效值取 `max(配置值, maxAgents × |primary 组|)`，**保证 n=6 + primary=2 时 Round 1 的 12 次调用不被预算掐死**；跨轮重复 URL 不重复注入 LLM 且不重复计入 `sourceCount`；批次内相同 `provider+query+maxResults` 第二次命中缓存（`cacheHit` 计数可见）；批次结束缓存全部释放；`attempts.resultCount` 记**实际**返回条数（覆盖 provider 返回少于请求数的情形）。
-- [ ] **AC7（降级不阻断）** provider 超时 / rate limit / 空结果 / extract 失败 → 相应 warning + 回落，**不中断研究**；`webAllowed=false` 时不发任何 search/extract 请求（含 `extract`）；`budgetExhausted` 场景下已获证据照常进入 `fact_sheet` 并正常生成简报。
-- [ ] **AC8（契约与前端）** `toolHealth` 含 `SERPER`；`strategyLabel()` 三值正确；`research` 启动返回体与 `SearchMeta` 的新增字段为**增量**（旧字段名与语义不变）；前端来源展示读取 `attempts`，旧前端不读新增字段也不报错。
-- [ ] **AC9（默认全关）** `webFanout=FIRST_HIT`、`webFollowup=off`、`webSourceGrading=off`、`webExtractPolicy=background-only`、`maxTotalWebCalls=20`、`webCallBudgetPerRound=12` 为默认值；`.env.example` 已同步新增全部 `SERPER_*` / `DEEP_SERPER_*` / `DEEP_TAVILY_API_BASE_URL` / `DEEP_WEB_*` 配置项，且 **URL 类配置键一律以 `_BASE_URL` 结尾**（否则被 `secret-guard` 插件误判为凭据）；运行时 `sparkora_setting` 未新增 fanout/followup/budget 开关。
+- [x] **AC1（零回归基线）** 不设任何新配置时，深度研究行为与现状**逐位等价**：单 provider 短路、每 agent 1 条上限、仅背景题补正文、`rag_status` 四态语义不变；`mvn test` 现有 842 例全绿 + `npm run build` 通过。
+- [x] **AC2（Serper 可用）** `SERPER_API_KEY` + `SERPER_API_BASE_URL` 配置后，深度研究可经 `WebSearchRouter` 命中 Serper 结果（`name()="SERPER"`、Header `X-API-KEY` 认证、5s/15s 超时口径与 Tavily 一致）；未配置时 `toolHealth` 显示 `UNCONFIGURED`，不影响 Tavily/SearxNG；**仅改配置即可在官方端点与中转之间切换**，无需改代码。
+- [x] **AC2a（垂直路由）** 时效信号问题走 `/news` 垂直并能拿到 `date`/`source` 字段；非时效问题走 `/web`；两者均为默认行为向后兼容（不配置时全走 `web`）；`/news` 与 `/web` 同价（`credits=1`），调用量不因此翻倍。
+- [x] **AC3（多源聚合正确性）** `PRIMARY_FANOUT` 下：primary 组并行且单 provider 异常不影响其他；primary 为空回落 `FIRST_HIT`；跨源去重生效且 `witnessCount` 正确；**合并后 `sourceId` 全局唯一**，LLM 引用任意 `sourceId` 都能通过 `validateFacts` 的 URL+provider 严格比对（构造反例单测）；`maxResults` 不放大。
+- [x] **AC4（交叉验证收益可观测）** 在同一项目上以 `FIRST_HIT` vs `PRIMARY_FANOUT` 各跑一次，`fact_sheet` 中 `MULTI` entry 占比 / `sourceCount>=2` 簇数**应呈上升趋势**；`SearchMeta.providers` 与 `attempts[].witnessTotal` 能完整列出参与 provider 与交叉见证数。**本项为观测性验证而非强断言**——单源短路解除只是抬升了「不同 URL 同 claim 同时召回」的概率，该概率还取决于 query 措辞多样性（由 R3 提供），故不得作为 R2 的独立交付门槛（理由见 `design.md` §2.3）。
+- [x] **AC5（覆盖补检索）** Round 1 有缺口时，`selectFollowupTargets` 正确选出 ≤`maxFollowups` 个目标并发起补检索，结果并入 `fact_sheet`；无缺口时不发起任何额外调用；补检索**不新建子代理、不重跑 plan**（`research_plan` 与 Round 1 落地的 notes 不被覆盖）；轮次与总预算有上限，超限停止。
+- [x] **AC6（预算与去重）** `WebCallBudget` 三级上限生效，超限后拒绝新调用并置 `budgetExhausted`；`per-round` 生效值取 `max(配置值, maxAgents × |primary 组|)`，**保证 n=6 + primary=2 时 Round 1 的 12 次调用不被预算掐死**；跨轮重复 URL 不重复注入 LLM 且不重复计入 `sourceCount`；批次内相同 `provider+query+maxResults` 第二次命中缓存（`cacheHit` 计数可见）；批次结束缓存全部释放；`attempts.resultCount` 记**实际**返回条数（覆盖 provider 返回少于请求数的情形）。
+- [x] **AC7（降级不阻断）** provider 超时 / rate limit / 空结果 / extract 失败 → 相应 warning + 回落，**不中断研究**；`webAllowed=false` 时不发任何 search/extract 请求（含 `extract`）；`budgetExhausted` 场景下已获证据照常进入 `fact_sheet` 并正常生成简报。
+- [x] **AC8（契约与前端）** `toolHealth` 含 `SERPER`；`strategyLabel()` 三值正确；`research` 启动返回体与 `SearchMeta` 的新增字段为**增量**（旧字段名与语义不变）；前端来源展示读取 `attempts`，旧前端不读新增字段也不报错。
+- [x] **AC9（默认全关）** `webFanout=FIRST_HIT`、`webFollowup=off`、`webSourceGrading=off`、`webExtractPolicy=background-only`、`maxTotalWebCalls=20`、`webCallBudgetPerRound=12` 为默认值；`.env.example` 已同步新增全部 `SERPER_*` / `DEEP_SERPER_*` / `DEEP_TAVILY_API_BASE_URL` / `DEEP_WEB_*` 配置项，且 **URL 类配置键一律以 `_BASE_URL` 结尾**（否则被 `secret-guard` 插件误判为凭据）；运行时 `sparkora_setting` 未新增 fanout/followup/budget 开关。
 
 ## Out of Scope
 
@@ -109,3 +109,14 @@
 - 各 provider 中转的完整实测证据见上方「第三方中转实测」条目与 `design.md` §0.1；**任何真实密钥都不写入本仓**（已在 `.env`，其路径被 `.gitignore` 覆盖）。
 - 变更 Tavily/Serper 相关文档时须同步 `docs/spec/brief-generation.md`、`docs/spec/retrieval.md` 与 `.env.example` 三处。
 
+---
+
+## 父级集成验收记录（2026-10-21 审计）
+
+- 4 个 children 均已归档且 `status=completed`：`10-04-serper-provider`（2026-10-06）、`10-04-web-fanout-merge`（2026-10-08）、`10-04-web-followup-budget`（2026-10-08）、`10-05-tavily-endpoint-priority`（2026-10-08）。
+- AC1：`mvn test` 在 Java 21 下通过 **1247 tests / 0 failures / 0 errors / 0 skipped**；`frontend/npm run build` 通过（4242 modules，25.05s，仅有既有构建警告）。
+- AC2/AC2a/AC8/AC9：父契约已落在 `DeepProperties`、`WebSearchRouter`、`SerperSearchTool`、设置 DTO/UI、`docs/spec/brief-generation.md`、`docs/spec/retrieval.md` 与 `.env.example`；`SerperSearchToolTest`、provider order/settings 与 SearchMeta 兼容性用例通过。
+- AC3/AC6/AC7：`WebSearchRouterFanoutTest`、`WebResultNormalizerMergeTest`、`WebCallBudgetTest`、`WebSearchCacheTest`、`DeepResearchServiceFollowupTest`、`SubAgentRunnerTest` 覆盖并行 fanout、异常隔离、跨源去重、统一 `sourceId`、预算/缓存、`webAllowed=false` 与降级不阻断；全量测试同批通过。
+- AC5：`SelectFollowupTargetsTest` 覆盖缺口选择/聚类/截断；`DeepResearchServiceFollowupTest` 断言 Round 2 增量写回、不重跑 plan、不新建子 agent，且生成只调用一次。
+- AC4：`witnessTotal_可观测交叉验证` 与 `SearchMeta_providers增量透出_旧provider字段语义不变` 证明 `providers`/`witnessTotal` 契约完整；本次审计**未找到同项目 FIRST_HIT vs PRIMARY_FANOUT 的线上 A/B 趋势快照**。PRD 明示该项是观测性验证、不是独立交付门槛，故不据此否定父任务；该缺口在证据矩阵中保留。
+- 结论：父级契约、四个 children 的完成态、后端全量回归和前端构建均已闭环，归档父任务；AC4 线上 A/B 趋势作为后续观测项，不影响本次父级收口。

@@ -44,10 +44,10 @@
 
 - [ ] 真机:单张采纳 → 仅「已插入到正文并登记插图」一条;整组 → 仅「已采用 N 张」;工具栏保存 → 仍有「正文已保存」
 - [ ] 真机:同篇正文,预览页与发布页字数一致
-- [ ] DevTools 禁 localStorage(或代码审查确认三处均 try/catch)无报错
+- [x] DevTools 禁 localStorage(或代码审查确认三处均 try/catch)无报错
 - [ ] 真机/慢网:保存请求在途继续输入 → 成功后工具栏仍「未保存」、离开页面草稿仍在、最新编辑不丢
 - [ ] `npm run build` 通过;`npx playwright test` 44 存量用例全绿
-- [ ] spec/docs 最小同步(R5)
+- [x] spec/docs 最小同步(R5)
 
 ## Non-goals
 
@@ -55,3 +55,17 @@
 - 自动保存、beforeunload 离开确认(维持既有策略)
 - 不改采纳登记/双写回滚、登记时机、dirty→draft watch 结构(R2 节流已有)
 - 无后端改动、无新依赖
+
+---
+
+## 审计记录（2026-10-21）
+
+- 实现提交：`ba6968b fix(ui): 采纳降噪双Toast,发布页字数统一,localStorage兜底,保存竞态防御(快照口径)`。
+- R1 静态核对：`StepPreview.vue` 的 `saveContent({ silentSuccess })` 默认保留工具栏/去发布成功提示；采纳 persist 经 `saveContentSilent` 抑制宿主成功 toast，失败警示不变。**真机单张/整组/工具栏 toast 未复核，保持未勾选。**
+- R2 静态核对：`StepPublish.vue` 已使用 `textStatOf`，与预览页同源。**真机预览/发布同文同篇字数一致未复核，保持未勾选。**
+- R3 静态核对：`SPLIT_KEY` 初始化读写、拖拽落盘、键盘微调落盘及草稿读写均有 `try/catch`；按验收“或代码审查确认”条件通过。
+- R4 静态核对：`saveContent` 入口固化 `md`；成功后仅 `contentMd.value === md` 时置 clean/清草稿，保存期间有新编辑时保持 dirty 与草稿。**慢网在途续写真机未复核，保持未勾选。**
+- R5 已核对：`.trellis/spec/frontend/index.md` 与 `docs/spec/preview.md` 已同步静默保存语义及预览/发布衔接。
+- `frontend/npm run build`：通过（4242 modules，25.05s，仅既有警告）。
+- `frontend/npx playwright test`：**24 passed / 25 failed**。24 个失败为 Windows 视觉快照 `*-win32.png` 缺失；1 个为 `tests/smoke/project-steps.spec.js:35` 仍在公众号发布页期待 BYD 面板（10-19 已将面板迁至 BYD 推送步）。定向重跑该 spec：3 passed / 1 failed，确认是该陈旧断言。未修改测试/产品代码。
+- 结论：四项实现的静态证据存在，但 E2E 门禁未全绿且四个真机项无现场证据；**保留 open，不归档**。

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审计不得用生产数据或不可逆操作证明完成态"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "归档和验收文档更新需保持文档结构一致"}
+{"file": "docs/spec/preview.md", "reason": "10-12 预览页四项验收的页面与保存契约"}
+{"file": "docs/spec/publish.md", "reason": "10-19 渠道化发布与公众号零回归验收契约"}

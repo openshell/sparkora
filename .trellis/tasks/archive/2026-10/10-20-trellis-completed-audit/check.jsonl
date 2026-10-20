@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "复核测试未污染生产数据且结论可回滚"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "复核归档文档与验收记录结构"}
+{"file": "docs/spec/preview.md", "reason": "复核 10-12 四项实现的验收证据"}
+{"file": "docs/spec/publish.md", "reason": "复核 10-19 发布分流和公众号回归证据"}
