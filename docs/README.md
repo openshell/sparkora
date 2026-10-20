@@ -90,6 +90,7 @@ graph LR
 | 系统检索设置 | [spec/settings.md](spec/settings.md) | `web.controller.SettingController`、`service.SettingService`、`domain.entity.SettingEntity` / `views/SettingsView.vue`、`layouts/AppShell.vue` |
 | 排版预览 | [spec/preview.md](spec/preview.md) | `service.PreviewService`/`WenyanThemeCatalog`/`WenyanServerService` / `project/StepPreview.vue` |
 | 公众号发布 | [spec/publish.md](spec/publish.md) | `service.PublishService`/`WenyanServerService`、`wenyan.*` / `project/StepPublish.vue` |
+| 渠道化工作台（公众号 / 王朝小程序） | [spec/channel.md](spec/channel.md) | `ArticleProjectEntity.channel`（V24）、`service.BydDynastyGenerateService`/`BydDynastyPushService`、`ProjectBydDynastyController` / `views/ProjectEdit.vue`、`project/ProjectLayout.vue`、`project/BydGenerateStep.vue`、`BydEditorStep.vue`、`BydPushStep.vue` |
 | 文章仿写 | [spec/imitation.md](spec/imitation.md) | `service.ImitationService`、`service.VersionService`（仿写分支） / `views/ProjectEdit.vue`、`project/StepBrief.vue`、`project/StepVersions.vue` |
 | 知识域 · 车型（CAR） | [spec/knowledge/car.md](spec/knowledge/car.md) | `com.sparkora.car.*`（`CarModelService`/`CarChunkService`/`CarSyncJobService`/`CarSyncScheduler`）、`web.controller.CarModelController` / `views/CarLibrary.vue`、`CarDetail.vue`、`CarSync.vue` |
 | 知识域 · 通用知识库（KB） | [spec/knowledge/kb.md](spec/knowledge/kb.md) | `com.sparkora.kb.service.KbDocService`、`web.controller.KbDocController` / `views/KbLibrary.vue` |

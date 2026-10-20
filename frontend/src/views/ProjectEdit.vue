@@ -2,7 +2,28 @@
   <!-- 批 2:去掉 .container 窄卡 + 页内页头(标题/动作并入上下文条),改为全幅双列分区表单 -->
   <div class="page edit-page">
     <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="form-body">
-      <div class="form-grid">
+      <!-- 10-19-channel-editor-publish：发布渠道先于创作参数，决定创建后进入哪套工作台。
+           创建/编辑共用本页；当前路由仅提供新建入口（编辑沿用后端 PUT，渠道创建后不再迁移）。 -->
+      <section class="form-sec channel-sec">
+        <div class="sec-head">
+          <span class="sec-index">渠道</span>
+          <div class="sec-title">
+            <div class="sec-name">发布渠道</div>
+            <div class="sec-desc">项目绑定单一渠道，创建后不可更改；两个渠道的内容与发布字段互不相通</div>
+          </div>
+        </div>
+        <el-form-item prop="channel">
+          <el-radio-group v-model="form.channel">
+            <el-radio-button value="gzh">微信公众号</el-radio-button>
+            <el-radio-button value="byd_miniapp">王朝小程序</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-alert v-if="isByd" type="info" :closable="false" show-icon
+                  title="王朝小程序工作台"
+                  description="王朝小程序项目进入「生成 → 编辑 → 推送」工作台，从空草稿开始，可自由撰写或使用官方活动发文生成。" />
+      </section>
+
+      <div v-if="!isByd" class="form-grid">
         <div class="form-col">
           <!-- 区块零:创作方式(主题创作/文章仿写;仿写时下方分支切换) -->
           <section class="form-sec">
@@ -93,10 +114,27 @@
         </div>
       </div>
 
+      <!-- 小程序渠道：不展示公众号生成参数，创建后直达自由编辑器 -->
+      <section v-if="isByd" class="form-sec byd-intro">
+        <div class="sec-head">
+          <span class="sec-index">01</span>
+          <div class="sec-title">
+            <div class="sec-name">从空草稿开始</div>
+            <div class="sec-desc">创建后直接进入编辑步，可手写正文+配图，也可先去「生成」步用官方活动发文让 AI 起草</div>
+          </div>
+        </div>
+        <p class="form-tip">
+          小程序内容面向比亚迪车友社区，按消息流转义，不套用公众号排版主题；标题与正文都在编辑步维护，
+          完成后到推送步由本机 Windows Agent 写入王朝小程序草稿箱。
+        </p>
+      </section>
+
       <!-- 提交按钮已并入上下文条,此处只留流程说明(与主 CTA 强相关) -->
-      <p class="form-tip form-tip-lead">{{ isImitation
-        ? '「创建并分析原文」会进入详情页并调用 AI 分析原文与推荐风格（通常需要 10~30 秒）。'
-        : '「创建并生成简报」会立即进入详情页并调用 AI 生成创作简报（通常需要 1~2 分钟）；深度模式先生成研究计划并进入反问环节。' }}</p>
+      <p class="form-tip form-tip-lead">{{ isByd
+        ? '「创建并进入编辑器」会立即创建项目及空草稿版本，并进入王朝小程序编辑工作台。'
+        : (isImitation
+          ? '「创建并分析原文」会进入详情页并调用 AI 分析原文与推荐风格（通常需要 10~30 秒）。'
+          : '「创建并生成简报」会立即进入详情页并调用 AI 生成创作简报（通常需要 1~2 分钟）；深度模式先生成研究计划并进入反问环节。') }}</p>
     </el-form>
   </div>
 </template>
@@ -113,15 +151,19 @@ const formRef = ref()
 const loading = ref(false)   // 创建并生成
 const saving = ref(false)    // 仅存草稿
 // 创作方式(09-09-article-imitation):TOPIC 主题创作(默认)/IMITATION 文章仿写
-const form = reactive({ genSource: 'TOPIC', topic: '', audience: '', wordCountTarget: 1500, contentDescription: '', imitationText: '' })
+// 10-19:channel 决定创建后进入公众号四步向导还是王朝小程序三步工作台(默认 gzh)
+const form = reactive({ channel: 'gzh', genSource: 'TOPIC', topic: '', audience: '', wordCountTarget: 1500, contentDescription: '', imitationText: '' })
 const isImitation = computed(() => form.genSource === 'IMITATION')
-// 仿写时 topic 语义为「任务名」,校验文案随模式切换
+const isByd = computed(() => form.channel === 'byd_miniapp')
+// 公众号主题必填、小程序允许空主题；仿写校验仅对公众号生效
 const rules = computed(() => ({
-  topic: [{ required: true, message: isImitation.value ? '请输入任务名' : '请输入主题', trigger: 'blur' }],
+  topic: isByd.value
+    ? []
+    : [{ required: true, message: isImitation.value ? '请输入任务名' : '请输入主题', trigger: 'blur' }],
   imitationText: [{
     required: true, trigger: 'blur',
     validator: (rule, value, cb) => {
-      if (!isImitation.value) return cb()
+      if (isByd.value || !isImitation.value) return cb()
       if (!value || !value.trim()) return cb(new Error('请粘贴参考原文'))
       cb()
     }
@@ -135,13 +177,19 @@ watch(isImitation, (v) => { if (!v) form.imitationText = '' })
 
 const doSave = async () => {
   await formRef.value.validate()
-  // genSource 仅仿写时随 create 提交(主题创作不传,后端缺省 TOPIC)
-  const payload = { ...form }
-  if (isImitation.value) {
-    payload.genSource = 'IMITATION'
+  // 小程序渠道只提交渠道与（可空的）主题，公众号生成参数一概不带；
+  // 公众号渠道保持原提交形态（genSource 仅仿写时提交，主题创作由后端缺省 TOPIC）。
+  const payload = { channel: form.channel }
+  if (isByd.value) {
+    payload.topic = form.topic || ''
   } else {
-    delete payload.genSource
-    delete payload.imitationText
+    Object.assign(payload, {
+      topic: form.topic,
+      audience: form.audience,
+      wordCountTarget: form.wordCountTarget,
+      contentDescription: form.contentDescription
+    })
+    if (isImitation.value) payload.genSource = 'IMITATION'
   }
   const res = await projectApi.create(payload)
   return res.data
@@ -168,9 +216,15 @@ const onSaveAndGenerate = async () => {
   if (loading.value) return
   loading.value = true
   const imitation = isImitation.value
+  const byd = isByd.value
   try {
     await formRef.value.validate()
     const id = await doSave()
+    if (byd) {
+      ElMessage.success('已创建王朝小程序项目，进入编辑工作台')
+      router.push(`/projects/${id}/byd-editor`)
+      return
+    }
     if (imitation) {
       router.push(`/projects/${id}?gen=imitation`)
       try {
@@ -214,20 +268,30 @@ const header = usePageHeader()
 const syncHeader = () => {
   if (!header) return
   header.crumbs = [{ label: '项目' }, { label: '新建创作任务' }]
-  header.actions = [
-    { key: 'draft', label: '仅存草稿', loading: saving.value, disabled: loading.value, onClick: guard(onSave) },
-    {
-      key: 'create',
-      label: isImitation.value ? '创建并分析原文 →' : '创建并生成简报 →',
-      type: 'primary',
-      loading: loading.value,
-      disabled: saving.value,
-      onClick: guard(onSaveAndGenerate)
-    }
-  ]
+  // 小程序渠道没有「仅存草稿」分支：创建即建空版本并直达编辑器
+  header.actions = isByd.value
+    ? [{
+        key: 'create-byd',
+        label: '创建并进入编辑器 →',
+        type: 'primary',
+        loading: loading.value,
+        disabled: saving.value,
+        onClick: guard(onSaveAndGenerate)
+      }]
+    : [
+        { key: 'draft', label: '仅存草稿', loading: saving.value, disabled: loading.value, onClick: guard(onSave) },
+        {
+          key: 'create',
+          label: isImitation.value ? '创建并分析原文 →' : '创建并生成简报 →',
+          type: 'primary',
+          loading: loading.value,
+          disabled: saving.value,
+          onClick: guard(onSaveAndGenerate)
+        }
+      ]
 }
 syncHeader()
-watch([loading, saving, isImitation], syncHeader)
+watch([loading, saving, isImitation, isByd], syncHeader)
 onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = [] } })
 </script>
 
@@ -235,6 +299,11 @@ onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = []
 /* 批 2:全幅双列分区(左:创作方式+主题;右:内容设定+素材),各分区自带卡片面 */
 .edit-page { display: flex; flex-direction: column; }
 .form-body { width: 100%; }
+.channel-sec { margin-bottom: var(--sp-5); }
+.channel-sec .sec-index { width: auto; min-width: 46px; padding: 0 var(--sp-2); font-size: var(--fs-12); }
+.channel-sec :deep(.el-form-item) { margin-bottom: var(--sp-3); }
+.channel-sec :deep(.el-alert) { margin-top: var(--sp-2); }
+.byd-intro { margin-top: var(--sp-5); }
 .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-6); align-items: start; }
 .form-col { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
 

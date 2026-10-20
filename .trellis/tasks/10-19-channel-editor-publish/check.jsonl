@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "检查后端:R 包装/权限注解/DTO 校验/状态机写权收敛未被破坏"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "检查前端:控件密度/build 通过/路由守卫/viewer 只读"}
+{"file": "docs/spec/publish.md", "reason": "检查公众号链路零回归与文档同步(§4 验收状态)"}
+{"file": ".trellis/tasks/10-16-publish-channel-ui/prd.md", "reason": "检查 BYD 面板迁移后 10-16 语义保持(AC-1~AC-8 对照)"}

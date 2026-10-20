@@ -120,7 +120,8 @@
           </section>
         </div>
 
-        <BydDynastyPanel class="byd-publish-panel" :project-id="projectId" :editor-or-above="editorOrAbove" />
+        <!-- 10-19-channel-editor-publish R5：BYD 面板已迁至王朝小程序工作台推送步，
+             本页回归纯公众号发布形态（gzh 项目不再出现小程序面板）。 -->
 
         <!-- 发布进行中提示(/publish 非幂等:重复点击会产生重复草稿,必须显式警示) -->
         <p v-if="publishing" class="pub-hint">正在渲染并通过 wenyan-server 写入草稿箱,约 1 分钟…请勿刷新或重复点击(重复发布会产生重复草稿)</p>
@@ -133,7 +134,6 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { projectApi, imageApi } from '../../api'
-import BydDynastyPanel from '../../components/publish/BydDynastyPanel.vue'
 import { useUserStore } from '../../store/user'
 import { useProjectDetailStore } from '../../store/project-detail'
 import { usePageHeader } from '../../composables/usePageHeader'

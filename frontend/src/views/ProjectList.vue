@@ -54,7 +54,10 @@
         <el-table-column v-if="user.isAdmin" type="selection" width="42" />
         <el-table-column prop="topic" label="主题" min-width="320">
           <template #default="{ row }">
-            <a class="topic-link" @click="$router.push(`/projects/${row.id}`)">{{ row.topic }}</a>
+            <span class="topic-cell">
+              <a class="topic-link" @click="$router.push(`/projects/${row.id}`)">{{ displayTitle(row) }}</a>
+              <el-tag v-if="isBydProject(row)" size="small" type="warning" effect="plain" round>王朝小程序</el-tag>
+            </span>
           </template>
         </el-table-column>
         <el-table-column prop="createdBy" label="创建人" width="120" />
@@ -125,6 +128,13 @@ onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = []
 
 // 后端 updatedAt 为 LocalDateTime 序列化,展示成「YYYY-MM-DD HH:mm」
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
+// 10-19:渠道标识与空主题兜底（小程序项目允许从空草稿开始）
+const isBydProject = (row) => row?.channel === 'byd_miniapp'
+const displayTitle = (row) => {
+  const t = (row?.topic || '').trim()
+  if (t) return t
+  return isBydProject(row) ? '未命名小程序文章' : '无标题'
+}
 
 const load = async () => {
   loading.value = true
@@ -178,8 +188,11 @@ onMounted(load)
 </script>
 
 <style scoped>
+.topic-cell { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
 .topic-link {
   display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;

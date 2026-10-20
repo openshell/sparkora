@@ -2,8 +2,11 @@ package com.sparkora.web.controller;
 
 import com.sparkora.common.R;
 import com.sparkora.security.SecurityUtil;
+import com.sparkora.service.BydDynastyGenerateService;
 import com.sparkora.service.BydDynastyPushService;
+import com.sparkora.web.dto.BydActivityGenerateRequest;
 import com.sparkora.web.dto.BydPushJobCreateRequest;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,9 +22,12 @@ import java.util.Map;
 public class ProjectBydDynastyController {
 
     private final BydDynastyPushService pushService;
+    private final BydDynastyGenerateService generateService;
 
-    public ProjectBydDynastyController(BydDynastyPushService pushService) {
+    public ProjectBydDynastyController(BydDynastyPushService pushService,
+                                       BydDynastyGenerateService generateService) {
         this.pushService = pushService;
+        this.generateService = generateService;
     }
 
     /** BYD 推送准备状态（本地 Agent、预检摘要、项目最近结果）。 */
@@ -34,6 +40,33 @@ public class ProjectBydDynastyController {
             return R.fail(400, ex.getMessage());
         } catch (Exception ex) {
             return R.fail(500, "查询 BYD 推送状态失败: " + ex.getMessage());
+        }
+    }
+
+    /** 活动发文生成（ADMIN/EDITOR）：同步占位后异步生成新版本，前端轮询 generate-state。 */
+    @PostMapping("/byd-dynasty/generate")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> generate(@PathVariable Long projectId,
+                                           @Valid @RequestBody BydActivityGenerateRequest req) {
+        try {
+            return R.ok(generateService.startGenerate(projectId, req, SecurityUtil.require().getUserId()));
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "生成小程序文章失败: " + ex.getMessage());
+        }
+    }
+
+    /** 活动发文生成状态（三角色只读）。 */
+    @GetMapping("/byd-dynasty/generate-state")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")
+    public R<Map<String, Object>> generateState(@PathVariable Long projectId) {
+        try {
+            return R.ok(generateService.state(projectId));
+        } catch (IllegalArgumentException ex) {
+            return R.fail(400, ex.getMessage());
+        } catch (Exception ex) {
+            return R.fail(500, "查询小程序生成状态失败: " + ex.getMessage());
         }
     }
 

@@ -22,7 +22,9 @@
 
       <!-- 状态 tag:从原页头下移至 rail 底部(标题并入上下文条) -->
       <div v-if="project" class="rail-status">
-        <el-tag :type="statusTagType(project.status)" effect="light" round>
+        <!-- 小程序项目不展示公众号状态机语义（其推送结果落在 byd_dynasty_* 字段） -->
+        <el-tag v-if="isByd" type="info" effect="light" round>王朝小程序</el-tag>
+        <el-tag v-else :type="statusTagType(project.status)" effect="light" round>
           {{ statusLabel(project.status) }}
         </el-tag>
       </div>
@@ -63,12 +65,19 @@ import { usePageHeader } from '../../composables/usePageHeader'
 import { statusLabel, statusTagType, activeStepOf, maxReachableStepOf, isGenerating } from '../../constants/project'
 import { Check, Lock, WarningFilled, ArrowLeft } from '@element-plus/icons-vue'
 
-const STEPS = [
+// 公众号沿用四步向导；王朝小程序为三步工作台（生成可选 → 编辑 → 推送）
+const GZH_STEPS = [
   { key: 'brief', title: '简报', route: 'brief' },
   { key: 'versions', title: '版本', route: 'versions' },
   { key: 'preview', title: '预览', route: 'preview' },
   { key: 'publish', title: '发布', route: 'publish' }
 ]
+const BYD_STEPS = [
+  { key: 'byd-generate', title: '生成', route: 'byd-generate' },
+  { key: 'byd-editor', title: '编辑', route: 'byd-editor' },
+  { key: 'byd-push', title: '推送', route: 'byd-push' }
+]
+const BYD_ROUTE_NAMES = new Set(BYD_STEPS.map((s) => `project-${s.key}`))
 
 const route = useRoute()
 const router = useRouter()
@@ -79,18 +88,27 @@ const loadError = computed(() => store.projectError(route.params.id))
 const loadingProject = ref(false)   // 首次装载中(骨架/禁用入口用)
 const loadFailedLabel = '加载失败'  // 失败时标题占位
 
-// 步骤推进/可达范围统一由 constants/project.js 计算(生成中停在当前步骤)
-const activeStep = computed(() => activeStepOf(project.value?.status))
-const maxReachable = computed(() => maxReachableStepOf(project.value?.status))
+// 渠道缺省按 gzh（存量项目 / 旧接口无 channel 字段）
+const isByd = computed(() => project.value?.channel === 'byd_miniapp')
+const STEPS = computed(() => (isByd.value ? BYD_STEPS : GZH_STEPS))
 
 // 当前路由对应的步骤(用于「当前」高亮,与状态推进位置解耦)
 const routeStepIndex = computed(() => {
   const name = route.name
+  if (isByd.value) {
+    const i = BYD_ROUTE_NAMES.has(name) ? BYD_STEPS.findIndex((s) => `project-${s.key}` === name) : 0
+    return Math.max(0, i)
+  }
   if (name === 'project-versions') return 1
   if (name === 'project-preview') return 2
   if (name === 'project-publish') return 3
   return 0
 })
+
+// 步骤推进/可达范围:公众号仍由状态机计算；小程序三步全部可达（推送步内部有 Agent 门禁），
+// 「已完成」按当前路由之前的步骤判定（生成可选，不能反过来用状态机推断）。
+const activeStep = computed(() => (isByd.value ? routeStepIndex.value : activeStepOf(project.value?.status)))
+const maxReachable = computed(() => (isByd.value ? BYD_STEPS.length - 1 : maxReachableStepOf(project.value?.status)))
 
 const stepClass = (i) => ({
   done: i < activeStep.value,
@@ -104,20 +122,49 @@ const header = usePageHeader()
 const syncHeader = () => {
   if (!header) return
   const id = route.params.id
-  const tail = project.value?.topic || (loadError.value ? loadFailedLabel : '')
+  // 小程序项目允许空主题：列表/面包屑用统一兜底，避免出现 "#id / " 的空尾
+  const tail = (project.value?.topic || '').trim()
+    || (isByd.value ? '未命名小程序文章' : '')
+    || (loadError.value ? loadFailedLabel : '')
   header.crumbs = [{ label: '项目' }, { label: `#${id}` }, ...(tail ? [{ label: tail }] : [])]
 }
 watch([() => route.params.id, () => route.name, project, loadError], syncHeader, { immediate: true })
 onBeforeRouteLeave(() => { if (header) header.crumbs = [] })
 
+// 渠道守卫：项目加载完成后，gzh / byd 步骤路由互斥。
+// - 小程序项目误入公众号步骤 → 回编辑步（生成步仍可通过 rail 主动进入）
+// - 公众号项目误入小程序步骤 → 回落到状态机对应的公众号步骤
+const guardChannelRoute = () => {
+  const p = project.value
+  if (!p) return
+  const bydProject = p.channel === 'byd_miniapp'
+  const onBydRoute = BYD_ROUTE_NAMES.has(route.name)
+  if (bydProject && !onBydRoute) {
+    router.replace({ name: 'project-byd-editor', params: { id: route.params.id } })
+  } else if (!bydProject && onBydRoute) {
+    const idx = Math.min(activeStepOf(p.status), GZH_STEPS.length - 1)
+    router.replace({ name: `project-${GZH_STEPS[idx].key}`, params: { id: route.params.id } })
+  }
+}
+watch(
+  [() => route.params.id, () => route.name, () => project.value?.channel],
+  guardChannelRoute,
+  { immediate: true }
+)
+
 const loadProject = async () => {
   loadingProject.value = true
   await store.ensureProject(route.params.id, { force: true })
   loadingProject.value = false
+  // 小程序工作台不带公众号状态机推进，只做渠道路由纠偏
+  if (isByd.value) {
+    guardChannelRoute()
+    return
+  }
   // 中断重进自动定位:若当前路由落后于最新流程节点(如从列表进入默认落在简报页),自动跳到该做的步骤
   const targetStep = activeStepOf(project.value?.status)
   if (routeStepIndex.value < targetStep) {
-    const step = STEPS[targetStep]
+    const step = GZH_STEPS[targetStep]
     if (step?.route) router.replace({ name: `project-${step.key}`, params: { id: route.params.id } })
   }
 }
@@ -131,8 +178,8 @@ watch(() => [route.params.id, project.value?.status], ([id, status]) => {
 // 服务端已有生成进度的项目留在本页时也保持刷新,切换子路由不重复装载
 const onStepClick = (i) => {
   if (i > maxReachable.value) return
-  const step = STEPS[i]
-  if (step.route) router.push({ name: `project-${step.key}`, params: { id: route.params.id } })
+  const step = STEPS.value[i]
+  if (step?.route) router.push({ name: `project-${step.key}`, params: { id: route.params.id } })
 }
 
 // 渲染层兜底:子树(步骤子路由)抛错时显示错误卡片而非整片空白,提供重试(重建子组件)

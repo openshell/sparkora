@@ -48,6 +48,8 @@ import java.util.regex.Pattern;
 public class BydDynastyPushService {
 
     private static final int PAYLOAD_VERSION = 1;
+    /** 10-19:王朝小程序渠道项目不走公众号状态机（自由编辑完即推），推送只要求有当前版本。 */
+    private static final String CHANNEL_BYD_MINIAPP = "byd_miniapp";
     /** BYD 草稿记录中的 draftId 常见为 32 位随机字符，与 UUID 去横线形态一致。 */
     private static final Pattern MD_IMAGE = Pattern.compile("!\\[[^\\]]*]\\(([^)]+)\\)");
     private static final int MAX_ERROR = 990;
@@ -479,6 +481,9 @@ public class BydDynastyPushService {
         if (project == null) throw new IllegalArgumentException("项目不存在");
         if (!requirePublishable) return project;
         if (project.getCurrentVersionId() == null) throw new IllegalStateException("尚未选定正文版本，无法创建 BYD 推送任务");
+        // 10-19:小程序项目在编辑步保存正文不改项目状态（DRAFT 起），因此不套公众号状态机门禁；
+        // 公众号渠道保持原契约（版本就绪/已发草稿才可推），既有 gzh 调用零回归。
+        if (CHANNEL_BYD_MINIAPP.equals(project.getChannel())) return project;
         String status = project.getStatus();
         if (!"VERSIONS_READY".equals(status) && !"PUBLISHED_DRAFT".equals(status))
             throw new IllegalStateException("项目状态为 " + status + "，版本就绪后才可创建 BYD 推送任务");

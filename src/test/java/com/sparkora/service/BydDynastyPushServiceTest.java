@@ -108,6 +108,39 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
+    void 小程序项目DRAFT状态只要有版本即可创建推送任务() {
+        ArticleProjectEntity p = project();
+        p.setChannel("byd_miniapp");
+        p.setStatus("DRAFT");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(versionMapper.selectById(99L)).thenReturn(version("手写正文"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+
+        assertEquals("PENDING", data.get("status"));
+        verify(jobMapper).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
+    void 公众号项目仍要求版本就绪才可推送() {
+        ArticleProjectEntity p = project();
+        p.setChannel("gzh");
+        p.setStatus("DRAFT");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.createJob(88L, createRequest(), 7L));
+        assertTrue(ex.getMessage().contains("版本就绪后才可创建"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
     void payload编译图片引用并禁止泄露本机MMKV路径() {
         when(projectMapper.selectById(88L)).thenReturn(project());
         when(versionMapper.selectById(99L)).thenReturn(version("第一段\n\n![插图](https://qiniu.local/p1.jpg)\n"));

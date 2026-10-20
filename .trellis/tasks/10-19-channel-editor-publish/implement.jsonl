@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口:控制器 R<T>/PreAuthorize/DTO 校验/服务拆分惯例"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口:el-form/rules/控件密度/路由与 ProjectLayout 惯例"}
+{"file": "docs/spec/publish.md", "reason": "公众号发布契约零回归基线(§2 接口契约/§5 实现路径);发布步摘除 BYD 面板的对照"}
+{"file": "docs/spec/preview.md", "reason": "预览编辑区(自由编辑器复用基线):MarkdownEditor/配图三来源/粘贴图占位契约"}
+{"file": ".trellis/tasks/10-16-byd-dynasty-local-push/design.md", "reason": "王朝小程序推送既有架构(Agent/push job 状态机/payload),本任务在其上做内容域解耦"}

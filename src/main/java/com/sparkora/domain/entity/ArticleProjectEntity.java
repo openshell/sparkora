@@ -22,6 +22,7 @@ public class ArticleProjectEntity {
     private String audience;
     private Integer wordCountTarget;
     private Long brandVoiceProfileId;
+    private String channel;  // 10-19:发布渠道 gzh(公众号,默认) / byd_miniapp(王朝小程序)
     private String status;  // DRAFT / GENERATING_BRIEF / READY / ...
     private Long currentBriefId;       // S1：指向当前 brief（sparkora_article_brief.id）
     private String lastBriefError;     // S1：最近一次生成失败原因（成功后清空）

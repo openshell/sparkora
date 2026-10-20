@@ -14,7 +14,11 @@ const routes = [
       { path: 'brief', name: 'project-brief', component: () => import('../views/project/StepBrief.vue') },
       { path: 'versions', name: 'project-versions', component: () => import('../views/project/StepVersions.vue') },
       { path: 'preview', name: 'project-preview', component: () => import('../views/project/StepPreview.vue') },
-      { path: 'publish', name: 'project-publish', component: () => import('../views/project/StepPublish.vue') }
+      { path: 'publish', name: 'project-publish', component: () => import('../views/project/StepPublish.vue') },
+      // 10-19-channel-editor-publish：王朝小程序三步工作台（生成可选 → 编辑 → 推送）
+      { path: 'byd-generate', name: 'project-byd-generate', component: () => import('../views/project/BydGenerateStep.vue') },
+      { path: 'byd-editor', name: 'project-byd-editor', component: () => import('../views/project/BydEditorStep.vue') },
+      { path: 'byd-push', name: 'project-byd-push', component: () => import('../views/project/BydPushStep.vue') }
     ]
   },
   { path: '/styles', name: 'styles', component: () => import('../views/StyleLibrary.vue'), meta: { auth: true } },

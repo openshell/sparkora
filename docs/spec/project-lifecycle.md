@@ -20,7 +20,8 @@
 | 字段 | 类型 | 表单 | 列表 | 说明 |
 |---|---|---|---|---|
 | id | Long | — | — | 自增主键 |
-| topic | String(200) | ✅ 必填 | ✅ | 主题 |
+| channel | String(20) | ✅ 创建时选（默认 `gzh`） | ✅ 标签 | **10-19 渠道化**：`gzh`(公众号)/`byd_miniapp`(王朝小程序)；项目绑定单一渠道，创建后不可切换。`byd_miniapp` 时 `topic` 允许为空（从空草稿开始）。见 [channel.md](channel.md) |
+| topic | String(200) | `gzh` 必填 / `byd_miniapp` 可空 | ✅ | 主题 |
 | content_description | TEXT | 选填 | — | **内容描述**（10-02：原 `extra_info`「补充信息」改名列，存量已迁移；全链路注入：澄清/研究/简报/深度写作/多版本） |
 | audience | String(200) | 选填 | — | 目标读者 |
 | word_count_target | Integer | 选填 | — | 目标字数 |

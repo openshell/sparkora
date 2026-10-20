@@ -1,18 +1,24 @@
 package com.sparkora.domain.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
  * 新建/编辑创作任务请求。
+ *
+ * <p>topic 的必填性按渠道区分(10-19-channel-editor-publish):公众号 gzh 仍必填,
+ * 王朝小程序 byd_miniapp 允许空(方式一从空草稿开始自由编辑),因此不在 DTO 上写
+ * {@code @NotBlank},由控制器按项目渠道显式校验并返回等价中文提示。</p>
  */
 @Data
 public class ProjectRequest {
 
-    @NotBlank(message = "主题不能为空")
     @Size(max = 200, message = "主题不能超过 200 字")
     private String topic;
+
+    /** 10-19:发布渠道,可选,缺省 gzh;仅允许 gzh / byd_miniapp(控制器校验)。 */
+    @Size(max = 20, message = "渠道标识不能超过 20 字")
+    private String channel;
 
     @Size(max = 200)
     private String audience;

@@ -291,7 +291,17 @@ export const bydApi = {
   state: (projectId) => http.get(`/projects/${projectId}/byd-dynasty/state`),
   createJob: (projectId, payload) =>
     http.post(`/projects/${projectId}/byd-dynasty/push-jobs`, payload || {}, { skipGlobalErrorToast: true }),
-  getJob: (projectId, jobId) => http.get(`/projects/${projectId}/byd-dynasty/push-jobs/${jobId}`)
+  getJob: (projectId, jobId) => http.get(`/projects/${projectId}/byd-dynasty/push-jobs/${jobId}`),
+  // 10-19-channel-editor-publish：官方活动发文生成（异步占位，随后轮询 generateState）。
+  // body={activityBrief, personalInfo}；接口毫秒级返回，AI 在后台生成新版本。
+  // skipGlobalErrorToast：页面自行以中文黄条展示失败原因（避免与全局 toast 重复）。
+  generate: (projectId, payload) =>
+    http.post(`/projects/${projectId}/byd-dynasty/generate`, payload || {},
+      { timeout: 30000, skipGlobalErrorToast: true }),
+  // 生成状态：{generating, lastError, currentVersionId}，生成中 2s 轮询直至 generating=false。
+  // 轮询失败由调用方 warn 后继续下一轮——若走全局 toast 会在网络抖动时每 2s 弹一次。
+  generateState: (projectId) =>
+    http.get(`/projects/${projectId}/byd-dynasty/generate-state`, { skipGlobalErrorToast: true })
 }
 
 export const settingApi = {
