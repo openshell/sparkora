@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "检查未删除数据卷或破坏共享服务"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "检查 inventory、归档和路径记录清晰可复核"}

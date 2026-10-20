@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "服务器工作区治理需遵守容器部署与数据保留边界"}
+{"file": "docs/deploy.md", "reason": "服务器文件审计与回滚需遵循部署说明"}
+{"file": ".trellis/spec/guides/docs-structure-guide.md", "reason": "治理记录与归档路径需保持文档结构一致"}

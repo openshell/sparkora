@@ -72,7 +72,8 @@ ssh sparkora-dev 'cd /data/code/sparkora && curl -sS -o /dev/null -w "backend=%{
 ## 执行记录（2026-10-21）
 
 - 已生成并更新 `research/acceptance-matrix.md`，其中所有未验证项均明确标记为替代验证或保留。
-- 本轮实际测试：`mvn test` 1248/0/0/0；Agent `python -m pytest -q` 60 passed；`npm run build` 通过（4242 modules，26.71s）；Playwright 定向 `project-steps.spec.js` 9 passed（11.5s）。全量 Playwright 首轮因 Windows 视觉基线缺失为 27 passed / 24 failed；生成本地基线后重跑 52 passed，但基线未提交，不能作为干净 checkout 结论。
-- 已修复并测试：`BydDynastyPanel.vue` 成功态优先 `job.result.draftId`，仅在旧响应且 `lastJobId` 对齐时回退 `state.lastDraftId`；`project-steps.spec.js` 覆盖该契约、旧 ID 串用负例和 BYD 路由边界；Agent 新增微信/MMKV 缺失/异常/20 条草稿测试；后端新增同 Agent 重复上报测试。
+- 最终测试：`mvn test` 1248/0/0/0；Agent `python -m pytest -q` 60 passed；`npm run build` 通过（4242 modules，22.00s）；Playwright 定向 `project-steps.spec.js` 9 passed（10.1s）。全量 Playwright 首轮因 Windows 视觉基线缺失为 27 passed / 24 failed；本地生成基线后重跑 52 passed，但基线未提交，不能作为干净 checkout 结论。
+- 已修复并测试：`BydDynastyPanel.vue` 成功态优先 `job.result.draftId`；同 `lastJobId` 时即使历史结果对象没有 `draftId` 也安全回退项目 `lastDraftId`；草稿数量优先取预检 `checks.mmkvDraftCount`，缺失时回退项目 `lastDraftCount`。Playwright 覆盖正反例和两级数量回退；Agent 新增微信/MMKV 缺失/异常/20 条草稿测试；后端新增同 Agent 重复上报测试。
 - 保留风险：Agent Token 无 TTL、RUNNING 任务无租约/reaper、create-job 无 API 幂等键；真实草稿箱内容与视频真机未验证。
-- 归档步骤 8～10 本轮不执行：主会话负责最终 check、提交、部署与统一归档复核。服务器远程 tracked 工作区存在无关脏改动，部署不得在未处理前执行。
+- 已完成提交 `d183ca3`、`0c2d949` 并推送；从独立干净 worktree 部署 `0c2d949`，backend healthy、frontend 200、backend 401。真实页面已显示草稿 ID `20fee5d96f1441c8ad87a1c29a40097b` 与草稿数量 6。
+- 归档步骤 8～10 仍不执行：Token TTL、RUNNING 租约/reaper、create-job 幂等键属于真实剩余缺口，因此本任务保持 open，不能为清理任务树而伪造完成。

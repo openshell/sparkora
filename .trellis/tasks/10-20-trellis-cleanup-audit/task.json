@@ -1,0 +1,30 @@
+{
+  "id": "trellis-cleanup-audit",
+  "name": "trellis-cleanup-audit",
+  "title": "Trellis 任务树收尾与工作区治理",
+  "description": "审计并收口已完成或长期停留的任务状态，完成 BYD 推送安全验收，并治理本地与服务器未跟踪任务文件。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "c_cha",
+  "assignee": "c_cha",
+  "createdAt": "2026-10-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-20-trellis-completed-audit",
+    "10-20-byd-push-security-acceptance",
+    "10-20-workspace-untracked-governance"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

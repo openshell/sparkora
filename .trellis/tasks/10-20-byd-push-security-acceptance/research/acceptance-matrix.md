@@ -15,6 +15,7 @@
 - 本轮没有修改真实项目、版本、MMKV、Token、`.env` 或真实推送数据。
 - 真实推送记录仅从本机 `agent/byd-dynasty/work/push-history.jsonl` 和 Agent 状态文件只读核对。
 - 测试不读取或输出 `.env`、Agent Token、上传签名密钥或私钥。
+- `2026-10-21` 已从独立干净 worktree 部署提交 `0c2d949` 并完成页面、HTTP 与容器健康复验。
 
 ## 1. 原 R1 十个联调场景
 
@@ -89,7 +90,7 @@
 | AC-5 正常真机推送至少成功一次 | `[x]` | 两条历史 SUCCESS 记录；人工草稿内容核对不包含在该 AC 的证据内 |
 | AC-6 备份文件可恢复或比对 | `[x]` | `test_write_mmkv_restores_backup_when_post_write_verification_fails` 恢复主文件和 CRC；真实备份文件存在 |
 | AC-7 `mvn test` 与前端构建通过 | `[x]` | 本轮实际结果见下节；Agent pytest 也通过 |
-| AC-8 输出最终部署/启动/使用说明 | `[ ]` | 本轮没有部署；主会话需在提交/推送后执行部署健康检查并输出最终说明 |
+| AC-8 输出最终部署/启动/使用说明 | `[x]` | 已部署 `0c2d949` 至 `sparkora` Compose 项目；backend healthy、frontend 200、backend `/api/auth/me` 401；页面显示真实草稿 ID `20fee5d96f1441c8ad87a1c29a40097b` 与草稿数量 6 |
 
 
 ## 5.1 本任务 `10-20-byd-push-security-acceptance` AC 状态
@@ -101,8 +102,8 @@
 | AC-3 原 R3 五项稳定性均有结论 | `[ ]`（部分通过） | 备份、状态隔离、离线发现已有证据；RUNNING 租约/reaper 与 create-job 幂等键仍未实现。 |
 | AC-4 至少一条正常真机成功记录已写入并说明覆盖范围 | `[x]` | 两条历史 SUCCESS；草稿箱内容和视频真机未覆盖。 |
 | AC-5 后端、Agent、前端构建通过 | `[x]` | 结果见第 6 节。 |
-| AC-6 运行时变更完成镜像重建和健康检查 | `[ ]` | 本轮禁止部署，且远程分支/提交与工作区状态未就绪。 |
-| AC-7 父子任务按顺序归档并提交关联记录 | `[ ]` | 本轮禁止提交和归档，由主会话处理。 |
+| AC-6 运行时变更完成镜像重建和健康检查 | `[x]` | 独立 worktree 部署 `0c2d949`；backend healthy、frontend 200、backend 401；`/projects/67/byd-push` 显示成功任务、真实草稿 ID 和草稿数量 6。 |
+| AC-7 父子任务按顺序归档并提交关联记录 | `[ ]` | 产品修复与部署提交已完成，但 Token TTL、RUNNING 租约/reaper、create-job 幂等键仍为真实缺口；安全验收未通过前不得归档原 BYD 父子任务。 |
 | AC-8 未修改/删除生产数据、MMKV、Token 或凭据 | `[x]` | 本轮仅运行测试、构建和只读状态检查；测试使用 Mock/临时目录。 |
 
 ## 6. 本轮实际测试结果
@@ -111,10 +112,11 @@
 |---|---|---|
 | 后端 `mvn test`（`JAVA_HOME=C:\Program Files (x86)\Common Files\JDK\jdk-21`） | 1248 passed / 0 failures / 0 errors / 0 skipped，BUILD SUCCESS | 2026-10-21 check 阶段重跑（含同 Agent 重复上报的条件更新断言） |
 | Agent `python -m pytest -q` | 60 passed（1.99s） | 含缺失/异常 MMKV、微信、20 条草稿测试 |
-| 前端 `npm run build` | 通过，4242 modules，26.71s | 仅验证构建，不等同于真实页面验收 |
-| Playwright 定向 `npx playwright test tests/smoke/project-steps.spec.js` | 9 passed（11.5s） | 覆盖公众号不挂载 BYD 面板、byd-push 路由、离线 Agent 提示、`job.result.draftId` 优先、仅同任务旧响应回退，以及 job 不匹配/结果缺字段时不得串用旧 draft ID |
+| 前端 `npm run build` | 通过，4242 modules，22.00s | 最终展示修复后的构建结果，不等同于真实页面验收 |
+| Playwright 定向 `npx playwright test tests/smoke/project-steps.spec.js` | 9 passed（10.1s） | 覆盖公众号不挂载 BYD 面板、byd-push 路由、离线 Agent 提示、`job.result.draftId` 优先、同任务旧响应回退、跨任务禁止串用旧 draft ID，以及预检/项目状态两级草稿数量回退 |
 | Playwright 全量 | 首轮 27 passed / 24 failed；基线生成后本地重跑 52 passed | 首轮 24 个失败均为缺少 `*-win32.png` Windows 视觉基线，输出包含 “A snapshot doesn't exist ... writing actual”；基线生成后重跑 52/52 通过，但这依赖本轮生成且未提交的本地 Windows 基线，不能据此宣称干净 checkout 全量通过。没有 smoke/logic 失败；生成的快照和 `test-results/` 不纳入提交 |
-| 只读远程状态（2026-10-21 本轮） | backend Up/healthy，frontend Up，frontend 200，backend 401；当前 branch=`fix/knowledge-car-sync`，commit=`491c8c9`；远程 tracked 工作区存在无关脏改动 | 不是本轮部署；远程分支/提交和脏状态均阻断安全部署，需要主会话/用户处理 |
+| 独立 worktree 部署（2026-10-21） | commit=`0c2d949`；backend Up/healthy，frontend Up，frontend 200，backend `/api/auth/me` 401；未覆盖原 `fix/knowledge-car-sync` checkout | 使用 `/data/code/sparkora-byd-deploy-d183ca3` 独立 worktree；容器数据卷仍指向原 `/data/code/sparkora/data` |
+| 真实页面复验（`/projects/67/byd-push`） | Agent 在线、预检通过、圈子“四川迪友会”、草稿数量 6；最近成功任务 `da3f37ba08974838b5277c6b58291808` 显示草稿 ID `20fee5d96f1441c8ad87a1c29a40097b` | 修复了历史结果缺少 `draftId` 时页面显示 `-`，以及预检缺少计数时未回退项目最后草稿数的问题；未人工打开草稿箱核对正文/图片顺序 |
 
 ## 7. 结论与后续
 
@@ -127,5 +129,5 @@
    - 真实 MMKV 进程中断/断电没有复现，只有恢复测试替代；
    - 服务器部署健康检查未在本轮执行。
 3. **若后续需要补齐：** 优先单独评估 Agent Token TTL、任务租约/reaper 和 create-job 幂等键；这些是安全/稳定性产品改动，不应由本验收矩阵伪装成已通过。
-4. **部署：** 当前只改了前端运行时和测试/文档；主会话完成提交、推送、远程清洁工作区处理后再重建 frontend 镜像并执行健康检查。
-5. **本任务 AC：** AC-2、AC-3、AC-6、AC-7 仍未完成；因此当前只能作为 check 结果保留，不能据此归档。
+4. **部署：** 已从独立干净 worktree 构建并部署 `0c2d949`，未覆盖服务器上另一个并发任务的工作区；容器健康与真实页面复验均通过。
+5. **本任务 AC：** AC-6 已完成；AC-2、AC-3、AC-7 仍因静态 Token 无 TTL、RUNNING 任务无租约/reaper、create-job 无幂等键以及原 BYD 父子任务尚未归档而未完成，因此本任务继续保持 open，不能据此归档。
