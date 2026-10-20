@@ -71,7 +71,7 @@ byd 项目采用「生成 → 编辑 → 推送」三步工作台(复用 Project
 
 - [x] AC-1 新建项目可选渠道;选小程序后进入三步工作台,选公众号进入现有四步向导;存量项目行为不变(默认 gzh)。
 - [x] AC-2 小程序项目编辑步可自由编辑文字/标题/配图,保存进版本表;刷新不丢。
-- [x] AC-3 小程序项目推送步可见 Agent 状态/预检/车友会表单,推送成功显示草稿 ID;Agent 离线/预检失败时禁推送并给出中文指引(沿用 10-16 语义)。
+- [ ] AC-3 小程序项目推送步可见 Agent 状态/预检/车友会表单,推送成功显示草稿 ID;Agent 离线/预检失败时禁推送并给出中文指引(沿用 10-16 语义)。
 - [x] AC-4 活动发文:填官方活动要求+个人情况后生成文章落入编辑器(可再编辑后推送);两项必填校验;生成失败有中文错误提示。
 - [x] AC-5 推送内容与公众号内容解耦:同一账号下「小程序项目」payload 来自该项目版本表,不引用任何 gzh 项目内容。
 - [x] AC-6 gzh 项目发布步不再出现小程序面板;小程序编辑/推送全程不触碰公众号状态机与 publish 列。
@@ -100,3 +100,28 @@ byd 项目采用「生成 → 编辑 → 推送」三步工作台(复用 Project
 - 质量检查修复（trellis-check）：推送服务对 byd 的状态门禁分流（原 `VERSIONS_READY` 会阻断手写→推送）、空正文只存标题、采纳 persist 注入、viewer 配图入口禁用、生成防重入、轮询关闭全局 toast 等。
 - 自动化：`mvn test` **1188 用例全绿**（含新增生成/推送门禁单测）；`npm run build` 通过。
 - 未验证/留待真机：浏览器端到端交互、Windows Agent 真机推送、活动文 prompt 质量主观验收。
+
+---
+
+## 完成态审计记录（2026-10-21）
+
+- 实现提交：`dec0bf1 feat(10-19): 渠道化发布——自由编辑区与王朝小程序三步工作台`（31 files，1,880 insertions）；当前分支后续提交继续在其上演进。
+- AC-1/AC-6：代码与只读页面核对通过。`/projects/new` 同时提供公众号/王朝小程序渠道；项目中已有 `byd-generate`/`byd-editor`/`byd-push` 三步路由与 gzh 四步路由，`ProjectLayout` 做渠道守卫；`/projects/64/publish` 未见 BYD 面板，`/projects/67/byd-push` 显示 BYD 面板。
+- AC-2：`BydEditorStep.vue` 提供标题、正文编辑器与配图入口，保存走版本正文/标题接口；此前 2026-10-19 接口冒烟记录保存与刷新链路通过。**尚无本轮完整浏览器交互脚本覆盖“编辑→保存→刷新不丢”。**
+- AC-3：项目 67 只读状态显示 `channel=byd_miniapp`、`status=DRAFT`、非空 `currentVersionId`/`lastJobId`/`lastDraftId`；最近任务 `SUCCESS`，Agent 在线（v1.1.0），页面显示三步、预检/车友会/成功推送提示。**页面实际渲染“草稿 ID：-”**：`BydDynastyPanel.vue:75` 只读 `job.result?.draftId`，但状态接口顶层已有 `lastDraftId`，形成已验证的 UI/数据契约不一致。最小修复建议：成功态回退读取 `state.lastDraftId`，并补一条前端契约测试；未修改产品代码。故 AC-3 暂时取消勾选。
+- AC-4：生成页两项必填、异步生成与中文失败提示由实现和既有后端单测覆盖；**活动文 prompt 质量未验证**，不能由“生成成功”或既有 BYD 任务 SUCCESS 推断。
+- AC-5：推送 payload 编译使用项目 `current_version_id` 对应版本；gzh/BYD 用户侧接口渠道门禁已有单测。
+- AC-7：2026-10-21 `mvn test` 通过（1247/0/0/0），`frontend/npm run build` 通过（4242 modules，25.05s）；`docs/spec/channel.md`、`publish.md`、`project-lifecycle.md` 已同步。
+- 浏览器 E2E 结论：**未通过**。本轮只做了只读页面/API 状态核对，没有执行完整创建→编辑→保存→生成→推送 E2E；现有 Playwright 仍有公众号发布页期待 BYD 面板的陈旧断言（定向 3 passed / 1 failed）。
+- Agent 真机推送结论：**已有历史 SUCCESS 任务与在线 Agent 证据，但成功页草稿 ID 展示不一致，AC-3 不能判定完成**。
+- Prompt 质量结论：**未验证**；需要人工查看生成标题/正文是否符合活动要求、个人情况和 BYD 车友会语气，另做主观验收记录。
+- 结论：**保留 open，不归档**。
+
+---
+
+## 草稿 ID 缺陷修复记录（2026-10-21）
+
+- 已修复 `frontend/src/components/publish/BydDynastyPanel.vue` 成功态草稿 ID 展示：优先读取 `job.result.draftId`；仅当旧响应没有 `result` 且 `lastJobId` 与当前任务一致时，才回退 `state.lastDraftId`，避免串用更早任务的草稿 ID。
+- 新增 Playwright 契约覆盖：`frontend/tests/smoke/project-steps.spec.js` 验证 `result.draftId` 优先级、同任务旧响应回退、任务不匹配/结果缺字段时不得回退，并确认 BYD 面板只在 `/projects/:id/byd-push` 挂载。
+- 定向执行 `npx playwright test tests/smoke/project-steps.spec.js`：9 passed。
+- 本记录仅补充修复证据；最终归档由前一审计子任务统一复核，本任务不自行归档。

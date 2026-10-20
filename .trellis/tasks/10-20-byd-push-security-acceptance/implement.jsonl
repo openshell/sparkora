@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/byd-miniapp-push.md", "reason": "BYD 推送契约是安全验收的权威依据"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "安全验收必须使用 Mock/临时数据且不可破坏生产状态"}
+{"file": ".trellis/spec/backend/container-deployment.md", "reason": "若运行时变更需按容器部署契约验证与回滚"}
+{"file": "docs/deploy.md", "reason": "部署后健康检查与回滚流程的权威说明"}

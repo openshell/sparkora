@@ -54,15 +54,28 @@
 
 ## Acceptance Criteria
 
-- [ ] AC-1 所有联调场景有记录。
-- [ ] AC-2 异常场景全部阻止 MMKV 写入或给出明确恢复指引。
-- [ ] AC-3 Agent token 校验与任务归属验证通过。
-- [ ] AC-4 BYD 推送状态与公众号发布状态隔离。
-- [ ] AC-5 正常真机推送至少成功一次。
-- [ ] AC-6 备份文件可用来恢复或比对。
-- [ ] AC-7 `mvn test` 与前端构建均通过。
+- [x] AC-1 所有联调场景有记录。
+- [x] AC-2 异常场景全部阻止 MMKV 写入或给出明确恢复指引。
+- [ ] AC-3 Agent token 校验与任务归属验证通过（错误 token/归属已通过；过期 token 无 TTL，保留）。
+- [x] AC-4 BYD 推送状态与公众号发布状态隔离。
+- [x] AC-5 正常真机推送至少成功一次。
+- [x] AC-6 备份文件可用来恢复或比对。
+- [x] AC-7 `mvn test` 与前端构建均通过。
 - [ ] AC-8 输出最终部署 / 启动 / 使用说明。
 
 ## Notes
 
 - 本任务不新增大功能，重点是收口和验收。
+
+---
+
+## 验收证据记录（2026-10-21）
+
+- 验收矩阵：`.trellis/tasks/10-20-byd-push-security-acceptance/research/acceptance-matrix.md`，逐项覆盖 R1-1～R1-10、R2、R3、R4 和 AC-1～AC-8。
+- R1：Agent 离线、微信进程、MMKV 缺失/异常、图片上传失败、20 条草稿、跨 Agent/跨用户归属和并发领取均有 Mock 或临时文件测试；真实进程中断使用“写入后校验失败并恢复备份”的替代验证，未声称覆盖断电/杀进程。
+- R2：错误、空、未配置 Token 被拒绝；任务领取和媒体下载按 owner/Agent 校验；服务端不向 Agent 下发任意命令；服务端不返回用户本机路径；日志脱敏有测试。**静态 Agent Token 没有 TTL/过期机制，过期 Token 边界不能判定为已验证，保留为后续安全项。**
+- R3：备份、恢复、BYD/公众号状态隔离和离线发现有证据；**RUNNING 任务没有超时租约/reaper，create-job 没有 API 幂等键**，超时重试和跨标签页重复点击仍保留风险。
+- R4：`push-history.jsonl` 有两条真实 SUCCESS 记录；最近一条为 2026-10-20 18:35:13，`draftCount=6`、`serverReported=true`。没有打开真实草稿箱人工核对标题/正文/图片顺序/车友会标签，也没有视频真机记录。
+- 测试：后端 `mvn test` 通过（1248/0/0/0）；Agent `python -m pytest -q` 通过（60 passed）；前端 `npm run build` 通过（4242 modules，26.71s）；Playwright 定向 `project-steps.spec.js` 通过（9 passed，11.5s）。Playwright 全量首轮 27 passed / 24 failed，24 个失败均为缺少 `*-win32.png` Windows 视觉基线，不是 smoke/logic 失败；生成本地基线后重跑 52 passed，但这些基线未提交，不能视为干净 checkout 的全量通过。
+- 部署：本轮按用户要求未 commit/push/deploy；前端运行时文件有变更，若上线需重建 frontend 镜像。2026-10-21 只读检查远程为 `fix/knowledge-car-sync`@`491c8c9`，backend healthy/frontend 200/backend 401，但远程 tracked 工作区存在无关脏改动；主会话必须先处理并推送明确目标提交，再执行部署健康检查。AC-8 因此保持未勾选。
+- 归档：未执行归档；由主会话在 final check 后统一处理。

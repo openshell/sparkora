@@ -23,7 +23,8 @@
     "10-16-windows-local-agent",
     "10-16-publish-channel-ui",
     "10-16-integration-security-validation",
-    "10-19-agent-control-panel"
+    "10-19-agent-control-panel",
+    "10-20-miniapp-media-push"
   ],
   "parent": null,
   "relatedFiles": [],
