@@ -32,6 +32,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -63,6 +64,8 @@ class BydDynastyPushServiceTest {
         props = new BydDynastyProperties();
         props.setAgentToken("agent-secret");
         props.setAgentOwnerUserId(7L);
+        props.setDefaultClubId("220");
+        props.setDefaultClubTitle("四川迪友会");
         service = new BydDynastyPushService(projectMapper, versionMapper, mediaService,
                 agentMapper, jobMapper, props, new ObjectMapper());
     }
@@ -407,6 +410,328 @@ class BydDynastyPushServiceTest {
         assertEquals(Boolean.TRUE, result.get("agentOnline"));
         assertEquals("local-win", result.get("agentId"));
         assertEquals(Boolean.TRUE, result.get("agentPreflightReady"));
+    }
+
+    @Test
+    void state返回完整成对选项并忽略半套项目历史() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.selectList(any())).thenReturn(List.of());
+
+        Map<String, Object> result = service.state(88L, 7L);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> options = (List<Map<String, Object>>) result.get("clubTagOptions");
+        assertEquals(1, options.size());
+        assertEquals("220", options.get(0).get("clubId"));
+        assertEquals("四川迪友会", options.get(0).get("clubTitle"));
+        assertEquals("220", result.get("clubId"));
+        assertEquals("四川迪友会", result.get("clubTitle"));
+    }
+
+    @Test
+    void state包含完整项目历史对并以项目对为初始选择() {
+        ArticleProjectEntity p = project();
+        p.setBydDynastyClubId("330");
+        p.setBydDynastyClubTitle("项目车友会");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.selectList(any())).thenReturn(List.of());
+
+        Map<String, Object> result = service.state(88L, 7L);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> options = (List<Map<String, Object>>) result.get("clubTagOptions");
+        assertEquals(2, options.size());
+        assertEquals(Map.of("clubId", "220", "clubTitle", "四川迪友会"), options.get(0));
+        assertEquals(Map.of("clubId", "330", "clubTitle", "项目车友会"), options.get(1));
+        assertEquals("330", result.get("clubId"));
+        assertEquals("项目车友会", result.get("clubTitle"));
+    }
+
+    @Test
+    void state选项按完整对去重() {
+        ArticleProjectEntity p = project();
+        p.setBydDynastyClubId("220");
+        p.setBydDynastyClubTitle("四川迪友会");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.selectList(any())).thenReturn(List.of());
+
+        Map<String, Object> result = service.state(88L, 7L);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> options = (List<Map<String, Object>>) result.get("clubTagOptions");
+        assertEquals(1, options.size());
+    }
+
+    @Test
+    void 请求未指定时完整项目对优先于默认对() {
+        ArticleProjectEntity p = project();
+        p.setBydDynastyClubId("330");
+        p.setBydDynastyClubTitle("项目车友会");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, new BydPushJobCreateRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("330", payload.get("clubId"));
+        assertEquals("项目车友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 项目对不完整时回退到完整默认对() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, new BydPushJobCreateRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("220", payload.get("clubId"));
+        assertEquals("四川迪友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 项目与默认对都不完整时不生成半套字段() {
+        props.setDefaultClubId(null);
+        props.setDefaultClubTitle(null);
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, new BydPushJobCreateRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertTrue(payload.containsKey("clubId"));
+        assertTrue(payload.containsKey("clubTitle"));
+        assertNull(payload.get("clubId"));
+        assertNull(payload.get("clubTitle"));
+    }
+
+    @Test
+    void 显式不使用车友会标签时不回退项目或默认标签() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseClubTag(false);
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertNull(payload.get("clubId"));
+        assertNull(payload.get("clubTitle"));
+    }
+
+    @Test
+    void 显式使用车友会标签但未提供成对字段时返回中文400且不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseClubTag(true);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("必须提供完整"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 显式不使用车友会标签但提供成对字段时返回中文400且不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = createRequest();
+        req.setUseClubTag(false);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("不能再提供标签字段"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void legacy客户端未传useClubTag时保持项目优先语义() {
+        ArticleProjectEntity p = project();
+        p.setBydDynastyClubId("330");
+        p.setBydDynastyClubTitle("项目车友会");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        assertNull(req.getUseClubTag());
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("330", payload.get("clubId"));
+        assertEquals("项目车友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 请求只提供半套车友会标签时返回中文400且不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+
+        BydPushJobCreateRequest onlyId = new BydPushJobCreateRequest();
+        onlyId.setClubId("220");
+        IllegalArgumentException idError = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, onlyId, 7L));
+        assertTrue(idError.getMessage().contains("必须成对选择"));
+
+        BydPushJobCreateRequest onlyTitle = new BydPushJobCreateRequest();
+        onlyTitle.setClubTitle("四川迪友会");
+        IllegalArgumentException titleError = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, onlyTitle, 7L));
+        assertTrue(titleError.getMessage().contains("必须成对选择"));
+
+        verify(agentMapper, never()).selectList(any());
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 请求成对标签不在可用选项时返回中文400且不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setClubId("999");
+        req.setClubTitle("未知车友会");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("不可用"));
+        verify(agentMapper, never()).selectList(any());
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 推送成功按同一v2payload成对回写项目标签() {
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        BydDynastyPushJobEntity job = runningJob();
+        job.setPayloadJson("{\"payloadVersion\":2,\"clubId\":\"330\",\"clubTitle\":\"项目车友会\"}");
+        when(jobMapper.selectOne(any())).thenReturn(job);
+        when(jobMapper.update(isNull(), any())).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydAgentResultRequest req = new BydAgentResultRequest();
+        req.setAgentId("local-win");
+        req.setSuccess(true);
+
+        service.reportResult("job-id", req);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(projectMapper).update(isNull(), captor.capture());
+        String sqlSet = captor.getValue().getSqlSet();
+        assertTrue(sqlSet.contains("byd_dynasty_club_id"));
+        assertTrue(sqlSet.contains("byd_dynasty_club_title"));
+        assertTrue(captor.getValue().getParamNameValuePairs().containsValue("330"));
+        assertTrue(captor.getValue().getParamNameValuePairs().containsValue("项目车友会"));
+    }
+
+    @Test
+    void 推送成功且本次不使用标签时清空项目历史对() {
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        BydDynastyPushJobEntity job = runningJob();
+        job.setPayloadJson("{\"payloadVersion\":2,\"clubId\":null,\"clubTitle\":null}");
+        when(jobMapper.selectOne(any())).thenReturn(job);
+        when(jobMapper.update(isNull(), any())).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydAgentResultRequest req = new BydAgentResultRequest();
+        req.setAgentId("local-win");
+        req.setSuccess(true);
+
+        service.reportResult("job-id", req);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(projectMapper).update(isNull(), captor.capture());
+        String sqlSet = captor.getValue().getSqlSet();
+        assertTrue(sqlSet.contains("byd_dynasty_club_id"), sqlSet);
+        assertTrue(sqlSet.contains("byd_dynasty_club_title"), sqlSet);
+        long nullValues = captor.getValue().getParamNameValuePairs().values().stream()
+                .filter(value -> value == null).count();
+        assertTrue(nullValues >= 3, captor.getValue().getParamNameValuePairs().toString());
+    }
+
+    @Test
+    void 推送失败不修改项目历史标签() {
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        BydDynastyPushJobEntity job = runningJob();
+        job.setPayloadJson("{\"payloadVersion\":2,\"clubId\":\"330\",\"clubTitle\":\"项目车友会\"}");
+        when(jobMapper.selectOne(any())).thenReturn(job);
+        when(jobMapper.update(isNull(), any())).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydAgentResultRequest req = new BydAgentResultRequest();
+        req.setAgentId("local-win");
+        req.setSuccess(false);
+        req.setError("草稿写入失败");
+
+        service.reportResult("job-id", req);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(projectMapper).update(isNull(), captor.capture());
+        String sqlSet = captor.getValue().getSqlSet();
+        assertFalse(sqlSet.contains("byd_dynasty_club_id"));
+        assertFalse(sqlSet.contains("byd_dynasty_club_title"));
+    }
+
+    @Test
+    void legacyV1成功任务不回写或清空项目标签() {
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        BydDynastyPushJobEntity job = runningJob();
+        job.setPayloadJson("{\"payloadVersion\":1,\"title\":\"旧任务\",\"messages\":[]}");
+        when(jobMapper.selectOne(any())).thenReturn(job);
+        when(jobMapper.update(isNull(), any())).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydAgentResultRequest req = new BydAgentResultRequest();
+        req.setAgentId("local-win");
+        req.setSuccess(true);
+
+        service.reportResult("job-id", req);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<ArticleProjectEntity>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(projectMapper).update(isNull(), captor.capture());
+        String sqlSet = captor.getValue().getSqlSet();
+        assertFalse(sqlSet.contains("byd_dynasty_club_id"));
+        assertFalse(sqlSet.contains("byd_dynasty_club_title"));
     }
 
     @Test

@@ -45,12 +45,14 @@
     </div>
 
     <div class="club-form">
-      <el-form label-width="72px" @submit.prevent>
-        <el-form-item label="车友会">
-          <el-input v-model="clubId" maxlength="20" placeholder="如 220；留空用默认" :disabled="!editorOrAbove || submitting" />
-        </el-form-item>
-        <el-form-item label="标签名">
-          <el-input v-model="clubTitle" maxlength="80" placeholder="如 四川迪友会；留空用默认" :disabled="!editorOrAbove || submitting" />
+      <el-form label-width="96px" @submit.prevent>
+        <el-form-item label="车友会标签">
+          <el-select v-model="selectedClubKey" clearable placeholder="不使用" class="club-tag-select"
+                     :disabled="!editorOrAbove || submitting || !clubTagOptions.length" @change="onClubTagChange">
+            <el-option v-for="option in clubTagOptions" :key="clubTagKey(option)"
+                       :label="option.clubTitle" :value="clubTagKey(option)" />
+          </el-select>
+          <span v-if="!clubTagOptions.length" class="club-empty-tip">暂无可用的完整车友会标签，可继续选择“不使用”。</span>
         </el-form-item>
       </el-form>
       <p class="safety-tip">
@@ -99,8 +101,8 @@ const loaded = ref(false)
 const loading = ref(false)
 const loadError = ref('')
 const submitting = ref(false)
-const clubId = ref('')
-const clubTitle = ref('')
+const selectedClubKey = ref('')
+const clubSelectionTouched = ref(false)
 const state = ref({
   agentConfigured: false,
   agentOnline: false,
@@ -110,6 +112,7 @@ const state = ref({
   agentPreflightReady: false,
   agentPreflight: null,
   agentDisabledReason: null,
+  clubTagOptions: [],
   clubId: null,
   clubTitle: null,
   publishedAt: null,
@@ -129,6 +132,8 @@ const preflightErrors = computed(() => {
   return []
 })
 const wechatRunning = computed(() => (checks.value.wechatProcessesRunning || []).length > 0)
+const clubTagOptions = computed(() => Array.isArray(state.value.clubTagOptions) ? state.value.clubTagOptions : [])
+const selectedClubTag = computed(() => clubTagOptions.value.find(option => clubTagKey(option) === selectedClubKey.value) || null)
 const job = computed(() => state.value.latestJob)
 const canCreate = computed(() => editor.value && preflightReady.value && mediaReady.value && !job.value?.status?.match?.(/^(PENDING|RUNNING)$/))
 
@@ -137,15 +142,32 @@ const statusLabel = (value) => ({
   PENDING: '待领取', RUNNING: '执行中', SUCCESS: '成功', FAILED: '失败'
 }[value] || value || '-')
 
+const clubTagKey = (option) => JSON.stringify([String(option.clubId), String(option.clubTitle)])
+const findClubTagOption = (clubId, clubTitle) => clubTagOptions.value.find(
+  option => option.clubId === clubId && option.clubTitle === clubTitle
+) || null
+
+function onClubTagChange() {
+  clubSelectionTouched.value = true
+  if (selectedClubKey.value && !selectedClubTag.value) selectedClubKey.value = ''
+}
+
 async function loadState(showError = false) {
   loading.value = loading.value || !loaded.value
   try {
     const res = await bydApi.state(props.projectId)
     if (res.code !== 0 || !res.data) throw new Error(res.msg || '查询 BYD 推送状态失败')
     const data = res.data
-    state.value = { ...state.value, ...data }
-    clubId.value = data.clubId || clubId.value || ''
-    clubTitle.value = data.clubTitle || clubTitle.value || ''
+    const options = Array.isArray(data.clubTagOptions)
+      ? data.clubTagOptions.filter(option => option?.clubId && option?.clubTitle)
+      : []
+    state.value = { ...state.value, ...data, clubTagOptions: options }
+    if (clubSelectionTouched.value) {
+      if (selectedClubKey.value && !selectedClubTag.value) selectedClubKey.value = ''
+    } else {
+      const preferred = findClubTagOption(data.clubId, data.clubTitle)
+      selectedClubKey.value = preferred ? clubTagKey(preferred) : ''
+    }
     loaded.value = true
     loadError.value = ''
   } catch (error) {
@@ -159,9 +181,11 @@ async function loadState(showError = false) {
 async function createJob() {
   submitting.value = true
   try {
+    const clubTag = selectedClubTag.value
     const res = await bydApi.createJob(props.projectId, {
-      clubId: clubId.value.trim() || null,
-      clubTitle: clubTitle.value.trim() || null
+      useClubTag: !!clubTag,
+      clubId: clubTag?.clubId || null,
+      clubTitle: clubTag?.clubTitle || null
     })
     if (res.code !== 0 || !res.data) throw new Error(res.msg || '创建 BYD 推送任务失败')
     const data = res.data
@@ -213,6 +237,8 @@ onBeforeUnmount(stopPolling)
 .agent-grid > div { padding: 10px; border: 1px solid var(--line, #ededed); border-radius: 8px; background: var(--soft, #fafafa); }
 .agent-grid span:first-child { display: block; color: var(--faint, #8a8f98); font-size: 12px; margin-bottom: 4px; }
 .club-form { border-top: 1px solid var(--line, #ededed); padding-top: 14px; }
+.club-tag-select { width: min(360px, 100%); }
+.club-empty-tip { display: block; color: var(--faint, #8a8f98); font-size: 12px; line-height: 1.5; margin-top: 6px; }
 .safety-tip { color: var(--faint, #8a8f98); font-size: 12px; line-height: 1.5; margin: 8px 0 10px; }
 .job-status { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--soft, #f6fff8); border: 1px solid var(--ok, #67c23a); }
 .job-status.job-failed { background: #fff6f6; border-color: var(--danger, #f56c6c); }

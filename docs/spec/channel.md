@@ -60,7 +60,8 @@ CREATE TABLE sparkora_byd_dynasty_media (
 | POST | `/api/projects` | ADMIN/EDITOR | `ProjectRequest` + `channel`（可选，缺省 `gzh`；只允许 `gzh`/`byd_miniapp`） | `R<Long>` 项目 id。`gzh`：`topic` 必填、仿写约束生效；`byd_miniapp`：`topic` 可空、忽略仿写参数，创建后立即建空草稿版本 |
 | POST | `/api/projects/{id}/byd-dynasty/generate` | ADMIN/EDITOR | `{activityBrief ≤20000, personalInfo ≤5000}`，均必填 | `{started:true, status:"GENERATING_VERSIONS"}`；非小程序项目/字段缺失/生成中 → `R.fail(400)` 中文原因 |
 | GET | `/api/projects/{id}/byd-dynasty/generate-state` | 三角色 | — | `{generating, lastError?, currentVersionId}`；生成完成后 `currentVersionId` 指向新版本 |
-| POST | `/api/projects/{id}/byd-dynasty/push-jobs` | ADMIN/EDITOR | `{clubId?, clubTitle?}` | Server 从 `current_version_id` 编译 payload v2（`text/img/video` + media 清单），本机 Agent 领取执行。**严格门禁**：仅 `channel == byd_miniapp` 可调用；`gzh` 一律中文 400。小程序不套公众号状态机，但必须有当前版本且正文非空。payload 不注入封面。 |
+| GET | `/api/projects/{id}/byd-dynasty/state` | 三角色 | — | 返回 Agent 预检/最近任务，以及 `clubTagOptions: [{clubId, clubTitle}]`；`clubId` / `clubTitle` 为当前完整 pair 的初始选择。半套默认/项目值不得作为选项。 |
+| POST | `/api/projects/{id}/byd-dynasty/push-jobs` | ADMIN/EDITOR | `{useClubTag?: boolean, clubId?: string, clubTitle?: string}` | Server 从 `current_version_id` 编译 payload v2（`text/img/video` + media 清单），本机 Agent 领取执行。`useClubTag=true` 时 pair 必须完整且精确匹配可用选项；`false` 表示显式不使用且不得带非空 pair；省略时保留旧客户端 project/default 回退。成功 v2 任务才回写项目标签 pair。**严格门禁**：仅 `channel == byd_miniapp` 可调用；`gzh` 一律中文 400。payload 不注入封面。 |
 
 ### 2.1 活动发文生成（方式二）
 

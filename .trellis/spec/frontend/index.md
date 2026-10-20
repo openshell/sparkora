@@ -583,3 +583,28 @@ insertMarkdown(`![图片](sparkora-byd-media:${media.mediaId})`)
 ```
 
 ---
+## BYD 车友会标签选择（10-20）
+
+- “车友会标签”是一个业务对象，`clubId` 是内部标识，`clubTitle` 是显示名称；页面不得拆成两个可独立编辑的输入框。
+- 选项来自 `state.clubTagOptions`，禁止在 Vue 中硬编码 ID/名称。下拉值必须绑定完整 pair key，避免同一个 `clubId` 对应多个标题时显示与提交不一致。
+- 页面必须显式提交 `useClubTag`：选中标签时为 `true` 并同时提交完整 pair；清空选择时为 `false`，不能依赖两个空字段表达“不使用”。
+- `useClubTag=false` 不得继续携带非空 `clubId` / `clubTitle`；服务端会拒绝冲突请求。
+- 刷新/轮询时保留用户当前选择；若选项已不再可用则清空选择，不能提交未知 pair 或半套 pair。
+
+**Wrong**：
+
+```js
+await bydApi.createJob(projectId, { clubId: null, clubTitle: null })
+```
+
+**Correct**：
+
+```js
+await bydApi.createJob(projectId, {
+  useClubTag: !!clubTag,
+  clubId: clubTag?.clubId || null,
+  clubTitle: clubTag?.clubTitle || null
+})
+```
+
+---

@@ -48,6 +48,12 @@ public class BydDynastyProperties {
         return agentToken != null && !agentToken.isBlank() && agentOwnerUserId != null;
     }
 
+    /** 车友会标签只有 id 与名称同时配置时才可作为一个完整选项使用。 */
+    public boolean hasCompleteDefaultClubTag() {
+        return defaultClubId != null && !defaultClubId.isBlank()
+                && defaultClubTitle != null && !defaultClubTitle.isBlank();
+    }
+
     public Path mediaStorageRoot() {
         return Paths.get(mediaStorageDir == null ? "./data/byd-staging" : mediaStorageDir)
                 .toAbsolutePath().normalize();

@@ -127,6 +127,128 @@ def test_compile_messages_adds_sibling_after_image():
     assert result[2]["msg_style"]["sibling"] == result[1]["id"]
 
 
+def test_build_draft_uses_complete_payload_club_pair(tmp_path: Path):
+    config = history_config(tmp_path)
+    config.club_id = "LOCAL-1"
+    config.club_title = "本地车友会"
+    payload = {
+        "payloadVersion": 2,
+        "title": "成对标签",
+        "messages": [{"type": "text", "content": "正文"}],
+        "clubId": "220",
+        "clubTitle": "四川迪友会",
+    }
+
+    draft = agent.build_draft(payload, agent.compile_messages(payload, {}), config)
+
+    assert draft["clubId"] == "220"
+    assert draft["clubTitle"] == "四川迪友会"
+
+
+def test_build_draft_legacy_v1_falls_back_to_complete_local_pair(tmp_path: Path):
+    config = history_config(tmp_path)
+    config.club_id = "LOCAL-1"
+    config.club_title = "本地车友会"
+    payload = {
+        "payloadVersion": 1,
+        "title": "旧任务",
+        "messages": [{"type": "text", "content": "正文"}],
+    }
+
+    draft = agent.build_draft(payload, agent.compile_messages(payload, {}), config)
+
+    assert draft["clubId"] == "LOCAL-1"
+    assert draft["clubTitle"] == "本地车友会"
+
+
+def test_build_draft_v2_explicit_no_tag_overrides_complete_local_pair(tmp_path: Path):
+    config = history_config(tmp_path)
+    config.club_id = "LOCAL-1"
+    config.club_title = "本地车友会"
+    payload = {
+        "payloadVersion": 2,
+        "title": "不使用标签",
+        "messages": [{"type": "text", "content": "正文"}],
+        "clubId": None,
+        "clubTitle": "",
+    }
+
+    draft = agent.build_draft(payload, agent.compile_messages(payload, {}), config)
+
+    assert draft["clubId"] == ""
+    assert draft["clubTitle"] == ""
+
+
+def test_build_draft_rejects_payload_with_only_one_club_key_present(tmp_path: Path):
+    config = history_config(tmp_path)
+    config.club_id = "LOCAL-1"
+    config.club_title = "本地车友会"
+    payload = {
+        "payloadVersion": 2,
+        "title": "缺少标签名字段",
+        "messages": [{"type": "text", "content": "正文"}],
+        "clubId": "220",
+    }
+
+    with pytest.raises(agent.AgentError, match="任务中的车友会标签不完整"):
+        agent.build_draft(payload, agent.compile_messages(payload, {}), config)
+
+
+def test_build_draft_rejects_partial_payload_club_pair(tmp_path: Path):
+    config = history_config(tmp_path)
+    config.club_id = "LOCAL-1"
+    config.club_title = "本地车友会"
+    payload = {
+        "payloadVersion": 2,
+        "title": "半套标签",
+        "messages": [{"type": "text", "content": "正文"}],
+        "clubId": "220",
+        "clubTitle": "",
+    }
+
+    with pytest.raises(agent.AgentError, match="任务中的车友会标签不完整"):
+        agent.build_draft(payload, agent.compile_messages(payload, {}), config)
+
+
+def test_build_draft_rejects_partial_local_club_pair_when_fallback_needed(tmp_path: Path):
+    config = history_config(tmp_path)
+    config.club_id = "LOCAL-1"
+    config.club_title = ""
+    payload = {
+        "payloadVersion": 2,
+        "title": "本地半套标签",
+        "messages": [{"type": "text", "content": "正文"}],
+    }
+
+    with pytest.raises(agent.AgentError, match="本地车友会标签配置不完整"):
+        agent.build_draft(payload, agent.compile_messages(payload, {}), config)
+
+
+def test_partial_club_pair_does_not_write_mmkv(tmp_path: Path, monkeypatch):
+    config = history_config(tmp_path)
+    payload = {
+        "payloadVersion": 2,
+        "jobId": "job-partial-club",
+        "title": "半套标签",
+        "messages": [{"type": "text", "content": "正文"}],
+        "clubId": "220",
+        "clubTitle": "",
+    }
+    monkeypatch.setattr(agent, "upload_payload_media", lambda *args: ({}, []))
+    write_called = False
+
+    def unexpected_write(*args):
+        nonlocal write_called
+        write_called = True
+        return 1
+
+    monkeypatch.setattr(agent, "write_mmkv", unexpected_write)
+
+    with pytest.raises(agent.AgentError, match="任务中的车友会标签不完整"):
+        agent.execute_job(config, payload)
+    assert write_called is False
+
+
 def test_write_mmkv_with_text_payload(tmp_path: Path):
     mmkv_dir = tmp_path / "mmkv"
     backup_dir = tmp_path / "backup"

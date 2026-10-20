@@ -29,6 +29,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -259,8 +260,13 @@ public class BydDynastyPushService {
         data.put("agentPreflight", agent == null || agent.getLastPreflightJson() == null ? null : parseJson(agent.getLastPreflightJson()));
         data.put("agentDisabledReason", disabledReason());
 
-        data.put("clubId", project.getBydDynastyClubId());
-        data.put("clubTitle", project.getBydDynastyClubTitle());
+        List<ClubTag> clubTags = availableClubTags(project);
+        List<Map<String, Object>> clubTagOptions = new ArrayList<>();
+        for (ClubTag clubTag : clubTags) clubTagOptions.add(clubTagMap(clubTag));
+        ClubTag initialClubTag = initialClubTag(project);
+        data.put("clubTagOptions", clubTagOptions);
+        data.put("clubId", initialClubTag == null ? null : initialClubTag.clubId());
+        data.put("clubTitle", initialClubTag == null ? null : initialClubTag.clubTitle());
         data.put("publishedAt", project.getBydDynastyPublishedAt());
         data.put("lastJobId", project.getBydDynastyLastJobId());
         data.put("lastDraftId", project.getBydDynastyLastDraftId());
@@ -279,6 +285,7 @@ public class BydDynastyPushService {
 
         ArticleProjectEntity project = requireBydProject(projectId, true);
         ArticleVersionEntity version = requireVersion(project);
+        ClubTag clubTag = resolveClubTag(req, project);
         markStaleAgentsOffline();
         BydDynastyAgentEntity agent = currentOnlineAgent(createdBy);
         if (agent == null) throw new IllegalStateException("BYD 本地 Agent 未注册或离线，请先在本机启动 Agent 并完成注册");
@@ -287,10 +294,8 @@ public class BydDynastyPushService {
 
         String jobId = uuid32();
         String draftId = uuid32();
-        String clubId = firstNonBlank(req == null ? null : req.getClubId(), project.getBydDynastyClubId(), props.getDefaultClubId());
-        String clubTitle = firstNonBlank(req == null ? null : req.getClubTitle(), project.getBydDynastyClubTitle(), props.getDefaultClubTitle());
         BuiltPayload built = buildPayload(jobId, projectId, version.getId(), draftId,
-                version.getTitle(), version.getContentMd(), clubId, clubTitle);
+                version.getTitle(), version.getContentMd(), clubTag);
         Map<String, Object> payload = built.payload();
 
         BydDynastyPushJobEntity job = new BydDynastyPushJobEntity();
@@ -336,7 +341,12 @@ public class BydDynastyPushService {
                 .set("updated_at", LocalDateTime.now());
         if (req.getDraftId() != null && !req.getDraftId().isBlank()) uw.set("byd_dynasty_last_draft_id", req.getDraftId());
         if (req.getDraftCount() != null) uw.set("byd_dynasty_last_draft_count", req.getDraftCount());
-        // club 字段在任务创建时不落项目，改为只在成功后回写，避免失败任务污染选择。
+        JsonNode payload = successPayload(job);
+        if (payload != null && payload.path("payloadVersion").asInt(0) == PAYLOAD_VERSION) {
+            ClubTag clubTag = normalizeClubTag(jsonText(payload, "clubId"), jsonText(payload, "clubTitle"));
+            uw.set("byd_dynasty_club_id", clubTag == null ? null : clubTag.clubId());
+            uw.set("byd_dynasty_club_title", clubTag == null ? null : clubTag.clubTitle());
+        }
         projectMapper.update(null, uw);
     }
 
@@ -368,8 +378,98 @@ public class BydDynastyPushService {
         return data;
     }
 
+    private ClubTag defaultClubTag() {
+        if (!props.hasCompleteDefaultClubTag()) return null;
+        return new ClubTag(props.getDefaultClubId().trim(), props.getDefaultClubTitle().trim());
+    }
+
+    private ClubTag completeClubTag(String clubId, String clubTitle) {
+        String normalizedId = blankToNull(clubId);
+        String normalizedTitle = blankToNull(clubTitle);
+        return normalizedId == null || normalizedTitle == null
+                ? null : new ClubTag(normalizedId, normalizedTitle);
+    }
+
+    private ClubTag normalizeClubTag(String clubId, String clubTitle) {
+        String normalizedId = blankToNull(clubId);
+        String normalizedTitle = blankToNull(clubTitle);
+        if (normalizedId == null && normalizedTitle == null) return null;
+        if (normalizedId == null || normalizedTitle == null) {
+            throw new IllegalArgumentException("车友会标签必须成对选择，不能只提供车友会 ID 或标签名");
+        }
+        return new ClubTag(normalizedId, normalizedTitle);
+    }
+
+    private List<ClubTag> availableClubTags(ArticleProjectEntity project) {
+        LinkedHashSet<ClubTag> options = new LinkedHashSet<>();
+        ClubTag defaultTag = defaultClubTag();
+        if (defaultTag != null) options.add(defaultTag);
+        ClubTag projectTag = completeClubTag(project.getBydDynastyClubId(), project.getBydDynastyClubTitle());
+        if (projectTag != null) options.add(projectTag);
+        return new ArrayList<>(options);
+    }
+
+    private ClubTag initialClubTag(ArticleProjectEntity project) {
+        ClubTag projectTag = completeClubTag(project.getBydDynastyClubId(), project.getBydDynastyClubTitle());
+        return projectTag == null ? defaultClubTag() : projectTag;
+    }
+
+    private ClubTag resolveClubTag(BydPushJobCreateRequest req, ArticleProjectEntity project) {
+        String requestClubId = req == null ? null : req.getClubId();
+        String requestClubTitle = req == null ? null : req.getClubTitle();
+        Boolean useClubTag = req == null ? null : req.getUseClubTag();
+
+        if (Boolean.FALSE.equals(useClubTag)) {
+            ClubTag supplied = normalizeClubTag(requestClubId, requestClubTitle);
+            if (supplied != null) {
+                throw new IllegalArgumentException("明确选择不使用车友会标签时不能再提供标签字段");
+            }
+            return null;
+        }
+
+        ClubTag requested = normalizeClubTag(requestClubId, requestClubTitle);
+        if (Boolean.TRUE.equals(useClubTag)) {
+            if (requested == null) {
+                throw new IllegalArgumentException("明确使用车友会标签时必须提供完整的车友会 ID 与标签名");
+            }
+            return requireAvailableClubTag(requested, project);
+        }
+
+        if (requested != null) return requireAvailableClubTag(requested, project);
+        ClubTag projectTag = completeClubTag(project.getBydDynastyClubId(), project.getBydDynastyClubTitle());
+        return projectTag == null ? defaultClubTag() : projectTag;
+    }
+
+    private ClubTag requireAvailableClubTag(ClubTag requested, ArticleProjectEntity project) {
+        if (!availableClubTags(project).contains(requested)) {
+            throw new IllegalArgumentException("所选车友会标签不可用，请刷新后重新选择");
+        }
+        return requested;
+    }
+
+    private Map<String, Object> clubTagMap(ClubTag clubTag) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("clubId", clubTag.clubId());
+        item.put("clubTitle", clubTag.clubTitle());
+        return item;
+    }
+
+    private JsonNode successPayload(BydDynastyPushJobEntity job) {
+        if (job.getPayloadJson() == null || job.getPayloadJson().isBlank()) return null;
+        try {
+            return json.readTree(job.getPayloadJson());
+        } catch (Exception e) {
+            throw new IllegalStateException("任务 payload 格式损坏，无法回写车友会标签", e);
+        }
+    }
+
+    private String jsonText(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value.asText();
+    }
+
     private BuiltPayload buildPayload(String jobId, Long projectId, Long versionId, String draftId,
-                                             String title, String contentMd, String clubId, String clubTitle) {
+                                             String title, String contentMd, ClubTag clubTag) {
         List<BydDynastyPlainTextRenderer.Block> blocks = BydDynastyPlainTextRenderer.compile(contentMd);
         List<Map<String, Object>> messages = new ArrayList<>();
         List<Map<String, Object>> media = new ArrayList<>();
@@ -441,8 +541,8 @@ public class BydDynastyPushService {
         payload.put("title", cleanTitle.isBlank() ? "无标题" : cleanTitle);
         payload.put("messages", messages);
         payload.put("media", media);
-        payload.put("clubId", blankToNull(clubId));
-        payload.put("clubTitle", blankToNull(clubTitle));
+        payload.put("clubId", clubTag == null ? null : clubTag.clubId());
+        payload.put("clubTitle", clubTag == null ? null : clubTag.clubTitle());
         return new BuiltPayload(payload);
     }
 
@@ -621,13 +721,6 @@ public class BydDynastyPushService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) return value.trim();
-        }
-        return null;
-    }
-
     private Long toLongQuietly(String value) {
         if (value == null || value.isBlank()) return null;
         try {
@@ -648,6 +741,9 @@ public class BydDynastyPushService {
     private String truncate(String value) {
         String msg = value == null ? "未知错误" : value.replaceAll("\\s+", " ").trim();
         return msg.length() <= MAX_ERROR ? msg : msg.substring(0, MAX_ERROR) + "…";
+    }
+
+    private record ClubTag(String clubId, String clubTitle) {
     }
 
     private record BuiltPayload(Map<String, Object> payload) {

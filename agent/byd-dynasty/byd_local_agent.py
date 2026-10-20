@@ -1110,9 +1110,42 @@ def compile_messages(payload: dict[str, Any], uploaded_media: dict[str, Any]) ->
     return messages
 
 
+def _club_pair_value(value: object, source: str) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise AgentError(f"{source}的车友会标签字段格式不正确")
+    return str(value).strip()
+
+
+def resolve_club_tag(payload: dict[str, Any], config: AgentConfig) -> tuple[str, str]:
+    has_payload_id = "clubId" in payload
+    has_payload_title = "clubTitle" in payload
+    if has_payload_id != has_payload_title:
+        raise AgentError("任务中的车友会标签不完整，已拒绝写入 MMKV")
+    if has_payload_id:
+        payload_id = _club_pair_value(payload.get("clubId"), "任务 payload")
+        payload_title = _club_pair_value(payload.get("clubTitle"), "任务 payload")
+        if bool(payload_id) != bool(payload_title):
+            raise AgentError("任务中的车友会标签不完整，已拒绝写入 MMKV")
+        if payload_id and payload_title:
+            return payload_id, payload_title
+        return "", ""
+
+    local_id = _club_pair_value(config.club_id, "本机配置")
+    local_title = _club_pair_value(config.club_title, "本机配置")
+    if bool(local_id) != bool(local_title):
+        raise AgentError(
+            "本地车友会标签配置不完整，请同时配置 "
+            "BYD_DYNASTY_CLUB_ID 与 BYD_DYNASTY_CLUB_TITLE"
+        )
+    if local_id and local_title:
+        return local_id, local_title
+    return "", ""
+
+
 def build_draft(payload: dict[str, Any], messages: list[dict[str, Any]], config: AgentConfig) -> dict[str, Any]:
-    club_id = payload.get("clubId") or config.club_id or ""
-    club_title = payload.get("clubTitle") or config.club_title or ""
+    club_id, club_title = resolve_club_tag(payload, config)
     return {
         "publishType": "article",
         "message": messages,
@@ -1349,6 +1382,7 @@ def execute_job(config: AgentConfig, payload: dict[str, Any]) -> tuple[dict[str,
         raise AgentError("任务 payload 版本格式不正确") from exc
     if payload_version not in {1, PAYLOAD_VERSION}:
         raise AgentError("任务 payload 版本不兼容，请升级本机 Agent 后重试")
+    resolve_club_tag(payload, config)
     logs: dict[str, Any] = {
         "payloadVersion": payload_version,
         "imageUploadCount": 0,

@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/10-20-byd-club-tag-pairing/research/code-evidence.md","reason":"Current UI, service, Agent, protocol, and persistence evidence with file anchors."}
+{"file":".trellis/spec/backend/byd-miniapp-push.md","reason":"BYD payload, channel isolation, media, and Agent contract that must not regress."}
+{"file":".trellis/spec/frontend/index.md","reason":"Vue/API conventions for the single-selector and build verification."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Atomic data contract across frontend, server, persistence, and Agent boundaries."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend validation and test conventions."}

@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/10-20-byd-club-tag-pairing/prd.md","reason":"Acceptance criteria and deployment scope to verify."}
+{"file":".trellis/tasks/10-20-byd-club-tag-pairing/design.md","reason":"Expected atomic pair contract across all layers."}
+{"file":".trellis/spec/backend/byd-miniapp-push.md","reason":"Regression checks for BYD payload v2, media, and channel invariants."}
+{"file":".trellis/spec/backend/container-deployment.md","reason":"Remote image rebuild, health, and rollback verification."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify all producers/consumers agree on the pair contract."}
