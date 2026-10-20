@@ -13,20 +13,22 @@
         </div>
         <div v-if="!libraryImages.length" class="img-pop-empty">无匹配图片：到「图库」页上传，或用下方 AI 生成</div>
         <template v-else>
-          <div class="img-pop-tip">点击图片插入到编辑器光标处；正文里没引用的插图不会出现在文章中</div>
+          <div class="img-pop-tip">
+            {{ bydMode ? '点击图片注册为 BYD 媒体并插入 token；最终由本机 Agent 上传比亚迪 CDN。' : '点击图片插入到编辑器光标处；正文里没引用的插图不会出现在文章中' }}
+          </div>
           <div class="img-pop-grid" v-infinite-scroll="loadMoreLibrary" :infinite-scroll-disabled="libLoading"
                :infinite-scroll-distance="80" :infinite-scroll-immediate-check="false">
             <div v-for="img in libraryImages" :key="img.id" class="img-pop-cell"
                  :class="{ inserted: insertedUrls.has(originUrl(img)) }">
               <div class="img-pop-thumb-wrap" @click="emit('insert', img)">
                 <el-image :src="imgUrl(img)" fit="cover" class="img-pop-thumb" />
-                <span v-if="img.id === coverImageId" class="img-pop-cover">封面</span>
+                <span v-if="!bydMode && img.id === coverImageId" class="img-pop-cover">封面</span>
                 <span v-if="insertedUrls.has(originUrl(img))" class="img-pop-check">✓</span>
                 <div class="img-pop-hover">
                   <el-icon><Plus /></el-icon> 插入正文
                 </div>
               </div>
-              <div class="img-pop-actions">
+              <div v-if="!bydMode" class="img-pop-actions">
                 <el-button size="small" :type="img.id === coverImageId ? 'success' : 'default'"
                            :disabled="img.id === coverImageId || busy" @click="emit('set-cover', img.id)">
                   {{ img.id === coverImageId ? '✓ 封面' : '设为封面' }}
@@ -42,7 +44,7 @@
            `model-value` 传「抽屉打开且停在 AI tab」：粘贴监听只在 AI 生图 tab 可见时生效。 -->
       <el-tab-pane label="AI 生图" name="ai">
         <AiImageDrawer :model-value="modelValue && imgTab === 'ai'" mode="preview" :project-id="projectId"
-                       show-cover-action
+                       :show-cover-action="!bydMode"
                        @insert="(img) => emit('insert', img)" @set-cover="(id) => emit('set-cover', id)"
                        @generated="(list, meta) => emit('generated', list, meta)" />
       </el-tab-pane>
@@ -61,7 +63,7 @@
           </el-button>
         </div>
         <div class="img-pop-tip">
-          系统只给建议，点「插入到此段」或「全部采用」才会写入正文；不会自动插图。
+          {{ bydMode ? '建议图会先注册为 BYD 媒体，再插入正文 token；不会自动插图。' : '系统只给建议，点「插入到此段」或「全部采用」才会写入正文；不会自动插图。' }}
           门槛默认 0.4（对齐后端校准值），建议偏少时再调低。
         </div>
 
@@ -143,17 +145,21 @@ const props = defineProps({
   modelValue: { type: Boolean, default: false },
   projectId: { type: [String, Number], default: null },
   busy: { type: Boolean, default: false },
+  mediaMode: { type: String, default: 'gzh' },
   insertedUrls: { type: Object, default: () => new Set() },
   coverImageId: { type: [String, Number], default: null },
   snapshot: { type: Object, default: null },
   isEditorReady: { type: Function, default: null },
   insertAtAnchor: { type: Function, default: null },
   refreshSnapshot: { type: Function, default: null },
-  saveContent: { type: Function, default: null }
+  saveContent: { type: Function, default: null },
+  // BYD 模式由 BydEditorStep 注入：注册图库/AI 图片为 BYD 媒体，返回 { target, rollback }
+  prepareMediaForInsertion: { type: Function, default: null }
 })
 const emit = defineEmits(['update:modelValue', 'update:busy', 'insert', 'set-cover', 'generated'])
 
 const imgTab = ref('library')
+const bydMode = computed(() => props.mediaMode === 'byd')
 
 // 共享忙碌标记：父持有单 ref（封面操作与建议采用互斥）；此处以可写 computed 桥接
 const busy = computed({
@@ -190,7 +196,11 @@ const {
   insertAtAnchor: (headingPath, md) => (props.insertAtAnchor ? props.insertAtAnchor(headingPath, md) : false),
   originUrl,
   refreshSnapshot: () => (props.refreshSnapshot ? props.refreshSnapshot() : Promise.resolve()),
-  saveContent: () => (props.saveContent ? props.saveContent() : Promise.resolve())
+  saveContent: () => (props.saveContent ? props.saveContent() : Promise.resolve()),
+  // 未传回调时必须保持 null，否则组合函数会误判为 BYD 外部登记模式。
+  prepareMediaForInsertion: bydMode.value && props.prepareMediaForInsertion
+    ? (img) => props.prepareMediaForInsertion(img)
+    : null
 })
 
 // S10:抽屉首次打开时拉图库分页(后续打开仅在空态时重拉,避免打断滚动位置)

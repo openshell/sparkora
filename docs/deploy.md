@@ -105,6 +105,7 @@ docker compose restart backend
 | `/app/data/images` | `IMAGE_STORAGE_DIR`；S6 起图片不落本地，仅作根目录 |
 | `/app/data/tmp/preview` | wenyan 渲染临时 md（`PreviewService.createTempMd`） |
 | `/app/data/tmp/wenyan-themes` | 社区主题 CSS 启动物化（`WenyanThemeCatalog`） |
+| `/app/data/byd-staging` | `BYD_MEDIA_STORAGE_DIR`；BYD 小程序正文图片/视频暂存，Agent 下载后上传比亚迪 CDN |
 
 `docker compose down && docker compose up -d` 后上述目录内容仍在，无需重新 `mvn`/`npm` 构建。
 
@@ -146,10 +147,36 @@ docker compose build backend && docker compose up -d backend
 
 - **产线**：`docker compose up -d --build`（本文件；代码变动后必须重建）。
 - **本地热重载联调**：`./dev.sh start|stop|restart|status|logs`（见 [AGENTS.md「Commands」](../AGENTS.md)），行为与容器化改造前完全一致。
-- 两者端口独立、互不干扰；本任务未改动 `dev.sh` / `application.yml` / `frontend/vite.config.js` / 任何 Java、Vue 源码。
+- 两者端口独立、互不干扰；本地联调配置不替代产线镜像，新增环境变量和迁移仍须在部署主机验证。
 
 ---
 
-## 9. 回滚
+## 9. BYD 小程序正文媒体上线
+
+BYD 小程序与公众号使用两套媒体链路，不得混用：
+
+- `byd_miniapp`：浏览器 → Sparkora BYD 暂存 → Windows Local Agent → 比亚迪 CDN → MMKV 草稿；
+- `gzh`：浏览器 → 七牛 → `sparkora-img:` → wenyan-server 发布。
+
+BYD 链路的图片和视频**不经过七牛**。已有图库图片使用兼容注册路径，Agent 仍会下载该图片并重新上传比亚迪 CDN。
+
+发布前必须确认：
+
+1. `./data/byd-staging` 位于 `./data:/app/data` 持久化卷内，容器内路径为 `/app/data/byd-staging`；
+2. Flyway 已成功应用 `V25__byd_dynasty_media.sql`；
+3. nginx 的 BYD 原始流上传例外已生效：仅 `/api/projects/<project>/byd-dynasty/media/<media>/content` 放宽到 `310m`，并启用 `proxy_request_buffering off`；其他 `/api/` 请求仍为 15MB；
+4. Windows Local Agent 已独立升级到支持 payload v2 的版本，且能同时发送 `X-Agent-Token` 与 `X-Agent-Id`；
+5. 服务端与 Agent 的图片上限（20MB）、视频上限（300MB）、视频时长（2–120 秒）和正文视频数量（最多 3 个）保持一致；
+6. 未启用真实推送前，先用图片、视频各一篇创建草稿并核对 MMKV 结果。
+
+发布后验收至少覆盖：
+
+- backend healthy、frontend 可访问、`/api` 反代正常；
+- BYD 图片与视频草稿均成功，图片/视频消息保留 sibling 空文本；
+- 视频字段包含 `attachment|mediapreview|duration`；
+- 公众号带图文章仍走七牛与 `sparkora-img:`，发布链路无回归；
+- 过期媒体和超过一小时的孤立 `.part` 文件可被清理任务回收。
+
+## 10. 回滚
 
 纯新增文件，对现有代码零侵入。回滚 = `docker compose down` + 删除 `Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf.template`、`frontend/.dockerignore`、`docker-compose.yml`、`.dockerignore`、`docs/deploy.md`，并还原 `.env.example` / `README.md` / `AGENTS.md` / `docs/README.md` / `docs/spec/overview.md` 的相应段落。`dev.sh` 部署路径始终可用。

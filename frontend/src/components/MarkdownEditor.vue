@@ -6,19 +6,25 @@
 /**
  * MarkdownEditor(CodeMirror 6,原版 @wenyan-md/ui 的 MarkdownEditor 同款引擎)。
  * 仅在本组件挂载时动态 import CodeMirror chunk;
- * 粘贴图片(09-27-preview-clipboard-image)→ 前端会话暂存 + 插入占位 token `![](sparkora-img:<id>)`,
- * 不再即时上传七牛;预览用本地 blob 投影,点预览页「去发布」时才统一上传替换(见 utils/pendingImageStore.js)。
- * 衍生自 wenyan 项目(caol64/wenyan-ui,Apache-2.0);本组件为 Vue 3 重写,视觉适配 sparkora 变量。
+ * 显式 `mediaMode` 默认 `gzh`：粘贴图片走前端会话暂存 + `sparkora-img:<id>`，不再即时上传七牛；
+ * 预览用本地 blob 投影，点预览页「去发布」时才统一上传替换（见 utils/pendingImageStore.js）。
+ * BYD 传入 `mediaMode="byd"` 并注入 `mediaUploadHandler`，上传成功后插入 `sparkora-byd-media:<id>`，
+ * 不触碰公众号 pendingImageStore。衍生自 wenyan 项目(caol64/wenyan-ui,Apache-2.0)；本组件为 Vue 3 重写。
  */
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { add as addPendingImage } from '../utils/pendingImageStore'
+import { imageMediaMarkdown } from '../utils/bydMediaRefs'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
-  projectId: { type: [String, Number], default: null }
+  projectId: { type: [String, Number], default: null },
+  // 显式媒体模式：默认公众号行为；只有 BydEditorStep 传 byd。
+  mediaMode: { type: String, default: 'gzh' },
+  // BYD 模式注入。签名：(file, { onProgress, signal }) => Promise<{ mediaId }>
+  mediaUploadHandler: { type: Function, default: null }
 })
-const emit = defineEmits(['update:modelValue', 'ready', 'scroll'])
+const emit = defineEmits(['update:modelValue', 'ready', 'scroll', 'media-inserted', 'media-insert-failed'])
 
 const host = ref(null)
 let view = null
@@ -113,7 +119,35 @@ const extOfMime = (mime) => {
  * - 一次粘贴多张逐张登记并各自插入 `![](sparkora-img:<id>)`;
  * - 本地即时预览由 usePreviewRender 把 token src 投影为 blob URL(不落库);
  * - 上传唯一触发点 = 预览页「去发布」(见 composables/usePendingImageFlush.js)。
+ *
+ * BYD 模式（10-20-miniapp-media-push）不复用 pendingImageStore / 七牛：图片交由父组件注入的
+ * mediaUploadHandler 直接上传 BYD 暂存，成功后只插入 `sparkora-byd-media:<mediaId>`。
  */
+const handleBydPastedImage = async (img) => {
+  if (props.projectId == null || props.projectId === '') {
+    ElMessage.warning('项目内才能插入图片，请先保存项目')
+    return
+  }
+  if (typeof props.mediaUploadHandler !== 'function') {
+    ElMessage.error('BYD 图片上传通道未配置，请刷新页面后重试')
+    return
+  }
+  try {
+    const media = await props.mediaUploadHandler(img, { onProgress: () => {} })
+    const mediaId = media?.mediaId ?? media?.data?.mediaId
+    if (!mediaId) throw new Error('图片上传返回缺少 mediaId')
+    if (!insertAtCursor(imageMediaMarkdown(mediaId))) {
+      emit('media-insert-failed', { type: 'image', mediaId })
+      throw new Error('编辑器未就绪，图片未插入')
+    }
+    emit('media-inserted', { type: 'image', mediaId })
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      ElMessage.error(error?.response?.data?.msg || error?.message || 'BYD 图片上传失败，请重试')
+    }
+  }
+}
+
 const makePasteHandler = (EditorView) => {
   return EditorView.domEventHandlers({
     paste: (event) => {
@@ -122,6 +156,16 @@ const makePasteHandler = (EditorView) => {
       const images = [...files].filter(f => f.type.startsWith('image/'))
       if (!images.length) return false
       event.preventDefault()
+
+      if (props.mediaMode === 'byd') {
+        // 串行上传，保证一次粘贴多图时正文 token 顺序与剪贴板一致。
+        void (async () => {
+          for (const img of images) await handleBydPastedImage(img)
+        })()
+        return true
+      }
+
+      // gzh 默认路径：保持既有 pendingImageStore + sparkora-img 行为不变。
       images.forEach(img => {
         if (props.projectId == null || props.projectId === '') {
           ElMessage.warning('项目内才能插入图片,请先保存项目')

@@ -46,7 +46,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 把文章 Markdown 编译为比亚迪王朝小程序可接受的纯文本块和图片块。
+ * 把文章 Markdown 编译为比亚迪王朝小程序可接受的纯文本、图片和视频块。
  *
  * <p>该类是纯组件：不依赖 Spring、数据库、HTTP 或本机 Agent。Markdown 语法解析交给
  * commonmark-java，HTML 片段交给 Jsoup；这里只实现面向小程序的产品化输出策略。</p>
@@ -88,18 +88,27 @@ final class BydDynastyPlainTextRenderer {
     private BydDynastyPlainTextRenderer() {
     }
 
-    /** 有序内容块：文本或独立图片。 */
-    sealed interface Block permits TextBlock, ImageBlock {
+    private static final String IMAGE_TOKEN_PREFIX = "sparkora-byd-media:";
+    private static final String VIDEO_TOKEN_PREFIX = "sparkora-byd-video:";
+    private static final String GZH_TOKEN_PREFIX = "sparkora-img:";
+
+    /** 有序内容块：文本或独立媒体。 */
+    sealed interface Block permits TextBlock, ImageBlock, VideoBlock {
     }
 
     record TextBlock(String text) implements Block {
     }
 
-    record ImageBlock(String url) implements Block {
+    /** target 为 BYD 暂存 mediaId，或仅作历史兼容的 http(s) URL。 */
+    record ImageBlock(String target) implements Block {
+    }
+
+    /** target 为 BYD 暂存视频 mediaId。 */
+    record VideoBlock(String target) implements Block {
     }
 
     /**
-     * 编译正文。文本与图片按 Markdown 中出现顺序返回；空输入返回空列表。
+     * 编译正文。文本、图片与视频按 Markdown 中出现顺序返回；空输入返回空列表。
      */
     static List<Block> compile(String markdown) {
         String source = markdown == null ? "" : markdown;
@@ -122,12 +131,43 @@ final class BydDynastyPlainTextRenderer {
         int cursor = 0;
         while (matcher.find()) {
             appendText(blocks, rendered.substring(cursor, matcher.start()));
-            String url = decodeUrl(matcher.group(1));
-            if (url != null && !url.isBlank()) blocks.add(new ImageBlock(url));
+            String target = decodeUrl(matcher.group(1));
+            blocks.add(classifyMedia(target));
             cursor = matcher.end();
         }
         appendText(blocks, rendered == null ? "" : rendered.substring(cursor));
         return blocks;
+    }
+
+    private static Block classifyMedia(String target) {
+        if (target == null || target.isBlank()) {
+            throw new IllegalArgumentException("正文媒体缺少目标地址，请删除后重新插入");
+        }
+        if (target.startsWith(GZH_TOKEN_PREFIX)) {
+            throw new IllegalArgumentException("公众号暂存图片不能用于比亚迪小程序，请删除后重新插入");
+        }
+        if (target.startsWith(IMAGE_TOKEN_PREFIX)) {
+            return new ImageBlock(requireMediaId(target.substring(IMAGE_TOKEN_PREFIX.length())));
+        }
+        if (target.startsWith(VIDEO_TOKEN_PREFIX)) {
+            return new VideoBlock(requireMediaId(target.substring(VIDEO_TOKEN_PREFIX.length())));
+        }
+        if (startsWithIgnoreCase(target, "http://") || startsWithIgnoreCase(target, "https://")) {
+            return new ImageBlock(target);
+        }
+        throw new IllegalArgumentException("正文媒体地址不受支持，请删除后重新插入");
+    }
+
+    private static String requireMediaId(String value) {
+        String id = value == null ? "" : value.trim();
+        if (!id.matches("[A-Za-z0-9_-]{1,64}")) {
+            throw new IllegalArgumentException("正文媒体标识无效，请删除后重新插入");
+        }
+        return id;
+    }
+
+    private static boolean startsWithIgnoreCase(String value, String prefix) {
+        return value.regionMatches(true, 0, prefix, 0, prefix.length());
     }
 
     private static void appendText(List<Block> blocks, String raw) {
@@ -284,7 +324,7 @@ final class BydDynastyPlainTextRenderer {
         public void visit(Image image) {
             if (stripNewlines()) return;
             String destination = image.getDestination();
-            if (destination != null && !destination.isBlank()) writer.write(sentinel(destination));
+            writer.write(sentinel(destination == null ? "" : destination));
         }
 
         @Override

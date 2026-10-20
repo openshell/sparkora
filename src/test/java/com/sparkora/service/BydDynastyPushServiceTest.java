@@ -6,9 +6,9 @@ import com.sparkora.config.BydDynastyProperties;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.domain.entity.BydDynastyAgentEntity;
+import com.sparkora.domain.entity.BydDynastyMediaEntity;
 import com.sparkora.domain.entity.BydDynastyPushJobEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
-import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.BydDynastyAgentMapper;
 import com.sparkora.mapper.BydDynastyPushJobMapper;
@@ -24,29 +24,34 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * BYD 王朝推送契约核心单测：Agent Token、离线防误发、payload 编译、BYD 字段隔离。
- */
+/** BYD 推送 payload v2、渠道门禁、媒体映射与任务状态契约测试。 */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class BydDynastyPushServiceTest {
 
     @Mock ArticleProjectMapper projectMapper;
     @Mock ArticleVersionMapper versionMapper;
-    @Mock ArticleVersionImageMapper versionImageMapper;
-    @Mock ImageService imageService;
+    @Mock BydDynastyMediaService mediaService;
     @Mock BydDynastyAgentMapper agentMapper;
     @Mock BydDynastyPushJobMapper jobMapper;
 
@@ -58,8 +63,8 @@ class BydDynastyPushServiceTest {
         props = new BydDynastyProperties();
         props.setAgentToken("agent-secret");
         props.setAgentOwnerUserId(7L);
-        service = new BydDynastyPushService(projectMapper, versionMapper, versionImageMapper,
-                imageService, agentMapper, jobMapper, props, new ObjectMapper());
+        service = new BydDynastyPushService(projectMapper, versionMapper, mediaService,
+                agentMapper, jobMapper, props, new ObjectMapper());
     }
 
     @Test
@@ -86,11 +91,24 @@ class BydDynastyPushServiceTest {
         assertEquals(Boolean.TRUE, result.get("preflightReady"));
         assertEquals(7L, result.get("ownerUserId"));
         assertEquals("local-win", result.get("agentId"));
-
         ArgumentCaptor<BydDynastyAgentEntity> captor = ArgumentCaptor.forClass(BydDynastyAgentEntity.class);
         verify(agentMapper).insert(captor.capture());
         assertEquals("ONLINE", captor.getValue().getStatus());
         assertTrue(captor.getValue().getLastPreflightJson().contains("\"ready\":true"));
+    }
+
+    @Test
+    void gzh项目的state_createJob_getJob全部拒绝且不落任务() {
+        ArticleProjectEntity p = project();
+        p.setChannel("gzh");
+        when(projectMapper.selectById(88L)).thenReturn(p);
+
+        assertThrows(IllegalArgumentException.class, () -> service.state(88L, 7L));
+        assertThrows(IllegalArgumentException.class, () -> service.createJob(88L, createRequest(), 7L));
+        assertThrows(IllegalArgumentException.class, () -> service.getJob(88L, "job-id"));
+
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(jobMapper, never()).selectOne(any());
     }
 
     @Test
@@ -108,47 +126,19 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void 小程序项目DRAFT状态只要有版本即可创建推送任务() {
+    void payloadV2按正文顺序映射图片视频且不注入封面() {
         ArticleProjectEntity p = project();
-        p.setChannel("byd_miniapp");
         p.setStatus("DRAFT");
-        when(projectMapper.selectById(88L)).thenReturn(p);
-        when(versionMapper.selectById(99L)).thenReturn(version("手写正文"));
-        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
-        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
-        when(projectMapper.update(isNull(), any())).thenReturn(1);
-
-        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
-
-        assertEquals("PENDING", data.get("status"));
-        verify(jobMapper).insert(any(BydDynastyPushJobEntity.class));
-    }
-
-    @Test
-    void 公众号项目仍要求版本就绪才可推送() {
-        ArticleProjectEntity p = project();
-        p.setChannel("gzh");
-        p.setStatus("DRAFT");
-        when(projectMapper.selectById(88L)).thenReturn(p);
-        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
-
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> service.createJob(88L, createRequest(), 7L));
-        assertTrue(ex.getMessage().contains("版本就绪后才可创建"));
-        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
-    }
-
-    @Test
-    void payload清洗Markdown和HTML且不泄露本机MMKV路径() {
         String markdown = "# 第一段\n\n**粗体** 和 [链接](https://example.com/x)<br>第二行\n\n"
-                + "![插图](https://qiniu.local/p1.jpg)\n";
-        when(projectMapper.selectById(88L)).thenReturn(project());
+                + "![插图](sparkora-byd-media:image_01)\n\n尾段\n\n![视频](sparkora-byd-video:video-01)";
+        when(projectMapper.selectById(88L)).thenReturn(p);
         when(versionMapper.selectById(99L)).thenReturn(version(markdown));
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
+        when(mediaService.requireReadyForPush(88L, "image_01", BydDynastyMediaService.TYPE_IMAGE))
+                .thenReturn(image("image_01", BydDynastyMediaService.SOURCE_STAGED));
+        when(mediaService.requireReadyForPush(88L, "video-01", BydDynastyMediaService.TYPE_VIDEO))
+                .thenReturn(video("video-01"));
         when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
         when(projectMapper.update(isNull(), any())).thenReturn(1);
 
@@ -156,37 +146,159 @@ class BydDynastyPushServiceTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = (Map<String, Object>) data.get("payload");
-        assertEquals(1, payload.get("payloadVersion"));
+        assertEquals(2, payload.get("payloadVersion"));
         assertEquals("文章标题", payload.get("title"));
         assertEquals("220", payload.get("clubId"));
         assertEquals("四川迪友会", payload.get("clubTitle"));
         assertNotNull(payload.get("draftId"));
         assertNotNull(payload.get("jobId"));
+        assertFalse(payload.containsKey("cover"));
+        assertFalse(payload.containsKey("images"));
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) payload.get("messages");
-        assertEquals(3, messages.size());
-        assertEquals(Map.of("type", "img", "imageRef", "COVER-3"), messages.get(0));
-        assertEquals("text", messages.get(1).get("type"));
-        String content = (String) messages.get(1).get("content");
-        assertTrue(content.contains("第一段"), content);
-        assertTrue(content.contains("粗体"), content);
-        assertTrue(content.contains("链接"), content);
-        assertTrue(content.contains("第二行"), content);
-        assertFalse(content.contains("#"), content);
-        assertFalse(content.contains("**"), content);
-        assertFalse(content.contains("https://"), content);
-        assertEquals(Map.of("type", "img", "imageRef", "BODY-1"), messages.get(2));
+        assertEquals(4, messages.size(), messages.toString());
+        assertEquals("text", messages.get(0).get("type"));
+        String text = (String) messages.get(0).get("content");
+        assertTrue(text.contains("第一段"));
+        assertTrue(text.contains("粗体"));
+        assertTrue(text.contains("链接"));
+        assertTrue(text.contains("第二行"));
+        assertFalse(text.contains("#"));
+        assertFalse(text.contains("**"));
+        assertFalse(text.contains("https://"));
+        assertEquals(Map.of("type", "img", "mediaRef", "MEDIA-1"), messages.get(1));
+        assertEquals("text", messages.get(2).get("type"));
+        assertEquals(Map.of("type", "video", "mediaRef", "MEDIA-2"), messages.get(3));
 
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> images = (List<Map<String, Object>>) payload.get("images");
-        assertEquals(2, images.size());
-        assertEquals("COVER-3", images.get(0).get("id"));
-        assertEquals("BODY-1", images.get(1).get("id"));
+        List<Map<String, Object>> media = (List<Map<String, Object>>) payload.get("media");
+        assertEquals(2, media.size(), media.toString());
+        assertEquals("MEDIA-1", media.get(0).get("id"));
+        assertEquals("image_01", media.get(0).get("mediaId"));
+        assertEquals("image", media.get(0).get("type"));
+        assertEquals("STAGED", media.get(0).get("sourceType"));
+        assertTrue(((String) media.get(0).get("downloadPath")).endsWith("/media/image_01"));
+        assertEquals("MEDIA-2", media.get(1).get("id"));
+        assertEquals("video", media.get(1).get("type"));
+        assertEquals(new BigDecimal("12.300"), media.get(1).get("durationSeconds"));
+
         String raw = data.toString();
+        assertFalse(raw.contains("COVER-"));
         assertFalse(raw.toLowerCase().contains("mmkv"));
         assertFalse(raw.toLowerCase().contains("usrmmkvstorage"));
+        verify(mediaService).extendLifetimeForJob(anyList(), any(LocalDateTime.class));
         verify(jobMapper).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
+    void 图库URL媒体使用URL下载而不暴露任务下载路径() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("![图](sparkora-byd-media:image_02)"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(mediaService.requireReadyForPush(88L, "image_02", BydDynastyMediaService.TYPE_IMAGE))
+                .thenReturn(image("image_02", BydDynastyMediaService.SOURCE_URL));
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> media = (List<Map<String, Object>>) payload.get("media");
+        assertEquals("URL", media.get(0).get("sourceType"));
+        assertEquals("https://images.example/gallery.jpg", media.get(0).get("url"));
+        assertFalse(media.get(0).containsKey("downloadPath"));
+    }
+
+    @Test
+    void 历史HTTP图片URL继续编译为URL媒体() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("![图](https://legacy.example/only.jpg)"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) payload.get("messages");
+        assertEquals(List.of(Map.of("type", "img", "mediaRef", "MEDIA-1")), messages);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> media = (List<Map<String, Object>>) payload.get("media");
+        assertEquals("URL", media.get(0).get("sourceType"));
+        assertEquals("https://legacy.example/only.jpg", media.get(0).get("url"));
+        verify(mediaService, never()).requireReadyForPush(any(), anyString(), anyString());
+    }
+
+    @Test
+    void 四个视频在落任务前被拒绝且最多只解析三个() {
+        String markdown = "![v1](sparkora-byd-video:v1)\n\n![v2](sparkora-byd-video:v2)\n\n"
+                + "![v3](sparkora-byd-video:v3)\n\n![v4](sparkora-byd-video:v4)";
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version(markdown));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(mediaService.requireReadyForPush(eq(88L), anyString(), eq(BydDynastyMediaService.TYPE_VIDEO)))
+                .thenReturn(video("v"));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, createRequest(), 7L));
+
+        assertTrue(ex.getMessage().contains("最多支持 3 个视频"), ex.getMessage());
+        verify(mediaService, times(3)).requireReadyForPush(eq(88L), anyString(), eq(BydDynastyMediaService.TYPE_VIDEO));
+        verify(mediaService, never()).extendLifetimeForJob(anyList(), any(LocalDateTime.class));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
+    void 媒体不存在或已过期时不插入任务() {
+        assertMediaFailure(new IllegalArgumentException("正文引用的媒体不存在或已过期"));
+    }
+
+    @Test
+    void 跨项目媒体时不插入任务() {
+        assertMediaFailure(new IllegalArgumentException("正文媒体不属于当前项目"));
+    }
+
+    @Test
+    void 媒体类型错误时不插入任务() {
+        assertMediaFailure(new IllegalArgumentException("正文媒体类型不匹配"));
+    }
+
+    @Test
+    void 公众号token在创建任务前拒绝() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("![图](sparkora-img:gzh-token)"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, createRequest(), 7L));
+        assertTrue(ex.getMessage().contains("公众号暂存图片"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+    }
+
+    @Test
+    void 只有图片的正文仍可创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("![图](sparkora-byd-media:image_03)"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(mediaService.requireReadyForPush(88L, "image_03", BydDynastyMediaService.TYPE_IMAGE))
+                .thenReturn(image("image_03", BydDynastyMediaService.SOURCE_STAGED));
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) payload.get("messages");
+        assertEquals(1, messages.size(), messages.toString());
+        assertEquals(Map.of("type", "img", "mediaRef", "MEDIA-1"), messages.get(0));
     }
 
     @Test
@@ -197,37 +309,12 @@ class BydDynastyPushServiceTest {
         when(versionMapper.selectById(99L)).thenReturn(v);
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
         when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
-        when(projectMapper.update(isNull(), any())).thenReturn(1);
 
         Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
-
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = (Map<String, Object>) data.get("payload");
         assertEquals("标题 副标题", payload.get("title"));
-    }
-
-    @Test
-    void 只有图片的正文仍可创建任务() {
-        when(projectMapper.selectById(88L)).thenReturn(project());
-        when(versionMapper.selectById(99L)).thenReturn(version("![图](https://qiniu.local/only.jpg)"));
-        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
-        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
-        when(projectMapper.update(isNull(), any())).thenReturn(1);
-
-        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> messages = (List<Map<String, Object>>) payload.get("messages");
-        assertEquals(2, messages.size(), messages.toString());
-        assertEquals(Map.of("type", "img", "imageRef", "COVER-3"), messages.get(0));
-        assertEquals(Map.of("type", "img", "imageRef", "BODY-1"), messages.get(1));
-        verify(jobMapper).insert(any(BydDynastyPushJobEntity.class));
     }
 
     @Test
@@ -239,7 +326,6 @@ class BydDynastyPushServiceTest {
 
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> service.createJob(88L, createRequest(), 7L));
-
         assertTrue(ex.getMessage().contains("正文内容为空"), ex.getMessage());
         verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
         verify(projectMapper, never()).update(isNull(), any());
@@ -253,9 +339,7 @@ class BydDynastyPushServiceTest {
         when(versionMapper.selectById(99L)).thenReturn(v);
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(imageService.publicUrl(3L)).thenReturn("https://qiniu.local/cover.jpg");
         when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
-        when(projectMapper.update(isNull(), any())).thenReturn(1);
 
         service.createJob(88L, createRequest(), 7L);
 
@@ -266,12 +350,7 @@ class BydDynastyPushServiceTest {
     @Test
     void agent结果成功只写BYD字段不触碰公众号字段() {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        BydDynastyPushJobEntity job = new BydDynastyPushJobEntity();
-        job.setId(11L);
-        job.setJobId("job-id");
-        job.setProjectId(88L);
-        job.setAgentId(3L);
-        job.setStatus("RUNNING");
+        BydDynastyPushJobEntity job = runningJob();
         when(jobMapper.selectOne(any())).thenReturn(job);
         when(jobMapper.update(isNull(), any())).thenReturn(1);
         when(projectMapper.update(isNull(), any())).thenReturn(1);
@@ -292,7 +371,6 @@ class BydDynastyPushServiceTest {
         String sqlSet = captor.getValue().getSqlSet();
         assertTrue(sqlSet.contains("byd_dynasty_last_job_id"));
         assertTrue(sqlSet.contains("byd_dynasty_published_at"));
-        // 去掉 BYD 前缀后再检查，避免 byd_dynasty_published_at 的包含式断言误判。
         String publicSqlSet = sqlSet.replaceAll("(?i)byd_dynasty_[a-z_]+", "");
         assertFalse(publicSqlSet.contains("publish_media_id"));
         assertFalse(publicSqlSet.contains("publish_theme"));
@@ -303,11 +381,8 @@ class BydDynastyPushServiceTest {
     @Test
     void 其他agent不能重复上报同一任务() {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        BydDynastyPushJobEntity job = new BydDynastyPushJobEntity();
-        job.setJobId("job-id");
+        BydDynastyPushJobEntity job = runningJob();
         job.setAgentId(99L);
-        job.setStatus("RUNNING");
-        job.setProjectId(88L);
         when(jobMapper.selectOne(any())).thenReturn(job);
 
         BydAgentResultRequest req = new BydAgentResultRequest();
@@ -325,6 +400,7 @@ class BydDynastyPushServiceTest {
         when(projectMapper.selectById(88L)).thenReturn(p);
         when(agentMapper.selectList(any())).thenReturn(List.of());
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.selectList(any())).thenReturn(List.of());
 
         Map<String, Object> result = service.state(88L, 7L);
 
@@ -341,16 +417,12 @@ class BydDynastyPushServiceTest {
         pending.setId(12L);
         pending.setJobId("job-id");
         pending.setStatus("PENDING");
-        BydDynastyPushJobEntity running = new BydDynastyPushJobEntity();
+        BydDynastyPushJobEntity running = runningJob();
         running.setId(12L);
-        running.setJobId("job-id");
-        running.setAgentId(3L);
-        running.setStatus("RUNNING");
         when(jobMapper.selectList(any())).thenReturn(List.of(pending));
         when(jobMapper.update(isNull(), any())).thenReturn(1);
         when(jobMapper.selectById(12L)).thenReturn(running);
 
-        @SuppressWarnings("unchecked")
         Map<String, Object> result = service.claimJob(request());
         assertEquals(Boolean.TRUE, result.get("claimed"));
 
@@ -366,6 +438,22 @@ class BydDynastyPushServiceTest {
         assertTrue(sqlSet.contains("claimed_at"));
     }
 
+    private void assertMediaFailure(RuntimeException failure) {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("![图](sparkora-byd-media:bad_media)"));
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(mediaService.requireReadyForPush(88L, "bad_media", BydDynastyMediaService.TYPE_IMAGE))
+                .thenThrow(failure);
+
+        RuntimeException ex = assertThrows(failure.getClass(),
+                () -> service.createJob(88L, createRequest(), 7L));
+        assertTrue(ex.getMessage().contains(failure.getMessage()));
+        verify(mediaService, never()).extendLifetimeForJob(anyList(), any(LocalDateTime.class));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
     private com.sparkora.web.dto.BydAgentClaimRequest request() {
         var req = new com.sparkora.web.dto.BydAgentClaimRequest();
         req.setAgentId("local-win");
@@ -375,6 +463,7 @@ class BydDynastyPushServiceTest {
     private ArticleProjectEntity project() {
         ArticleProjectEntity p = new ArticleProjectEntity();
         p.setId(88L);
+        p.setChannel("byd_miniapp");
         p.setStatus("VERSIONS_READY");
         p.setCurrentVersionId(99L);
         p.setCreatedBy("7");
@@ -400,6 +489,54 @@ class BydDynastyPushServiceTest {
         a.setLastSeenAt(LocalDateTime.now());
         a.setLastPreflightJson("{\"ready\":true}");
         return a;
+    }
+
+    private BydDynastyPushJobEntity runningJob() {
+        BydDynastyPushJobEntity job = new BydDynastyPushJobEntity();
+        job.setId(11L);
+        job.setJobId("job-id");
+        job.setProjectId(88L);
+        job.setAgentId(3L);
+        job.setStatus("RUNNING");
+        return job;
+    }
+
+    private BydDynastyMediaEntity image(String mediaId, String sourceKind) {
+        BydDynastyMediaEntity media = media(mediaId, BydDynastyMediaService.TYPE_IMAGE);
+        media.setSourceKind(sourceKind);
+        media.setMimeType("image/jpeg");
+        media.setFileName("photo.jpg");
+        media.setByteSize(BydDynastyMediaService.SOURCE_URL.equals(sourceKind) ? 0L : 345_678L);
+        if (BydDynastyMediaService.SOURCE_URL.equals(sourceKind)) {
+            media.setSourceUrl("https://images.example/gallery.jpg");
+        } else {
+            media.setStoragePath("88/photo.jpg");
+        }
+        return media;
+    }
+
+    private BydDynastyMediaEntity video(String mediaId) {
+        BydDynastyMediaEntity media = media(mediaId, BydDynastyMediaService.TYPE_VIDEO);
+        media.setSourceKind(BydDynastyMediaService.SOURCE_STAGED);
+        media.setMimeType("video/mp4");
+        media.setFileName("clip.mp4");
+        media.setByteSize(12_345_678L);
+        media.setStoragePath("88/clip.mp4");
+        media.setDurationSeconds(new BigDecimal("12.300"));
+        return media;
+    }
+
+    private BydDynastyMediaEntity media(String mediaId, String type) {
+        BydDynastyMediaEntity media = new BydDynastyMediaEntity();
+        media.setId((long) Math.abs(mediaId.hashCode()) + 1);
+        media.setMediaId(mediaId);
+        media.setProjectId(88L);
+        media.setMediaType(type);
+        media.setStorageState(BydDynastyMediaService.STATE_READY);
+        media.setWidth(1200);
+        media.setHeight(800);
+        media.setExpiresAt(LocalDateTime.now().plusHours(1));
+        return media;
     }
 
     private BydPushJobCreateRequest createRequest() {

@@ -8,9 +8,9 @@ import com.sparkora.config.BydDynastyProperties;
 import com.sparkora.domain.entity.ArticleProjectEntity;
 import com.sparkora.domain.entity.ArticleVersionEntity;
 import com.sparkora.domain.entity.BydDynastyAgentEntity;
+import com.sparkora.domain.entity.BydDynastyMediaEntity;
 import com.sparkora.domain.entity.BydDynastyPushJobEntity;
 import com.sparkora.mapper.ArticleProjectMapper;
-import com.sparkora.mapper.ArticleVersionImageMapper;
 import com.sparkora.mapper.ArticleVersionMapper;
 import com.sparkora.mapper.BydDynastyAgentMapper;
 import com.sparkora.mapper.BydDynastyPushJobMapper;
@@ -23,6 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -39,22 +40,20 @@ import java.util.UUID;
  * 上传与草稿写入全部由本机 Agent 执行。这样既避免服务器直写用户本机微信文件，也不把
  * MMKV 逆向逻辑引入服务端。</p>
  *
- * <p>安全边界：payload 只包含文章内容与可公网访问的图片源 URL，禁止携带本机 MMKV 路径、
- * MMKV 加密材料或任意命令。Agent 只能领取绑定用户的任务，且必须通过任务状态原子更新领取。</p>
+ * <p>安全边界：payload 只包含文章内容和受控媒体引用，禁止携带本机 MMKV 路径、MMKV 加密材料
+ * 或任意命令。Agent 只能领取绑定用户的任务，且必须通过任务状态原子更新领取。</p>
  */
 @Slf4j
 @Service
 public class BydDynastyPushService {
 
-    private static final int PAYLOAD_VERSION = 1;
-    /** 10-19:王朝小程序渠道项目不走公众号状态机（自由编辑完即推），推送只要求有当前版本。 */
+    private static final int PAYLOAD_VERSION = 2;
     private static final String CHANNEL_BYD_MINIAPP = "byd_miniapp";
     private static final int MAX_ERROR = 990;
 
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
-    private final ArticleVersionImageMapper versionImageMapper;
-    private final ImageService imageService;
+    private final BydDynastyMediaService mediaService;
     private final BydDynastyAgentMapper agentMapper;
     private final BydDynastyPushJobMapper jobMapper;
     private final BydDynastyProperties props;
@@ -62,16 +61,14 @@ public class BydDynastyPushService {
 
     public BydDynastyPushService(ArticleProjectMapper projectMapper,
                                  ArticleVersionMapper versionMapper,
-                                 ArticleVersionImageMapper versionImageMapper,
-                                 ImageService imageService,
+                                 BydDynastyMediaService mediaService,
                                  BydDynastyAgentMapper agentMapper,
                                  BydDynastyPushJobMapper jobMapper,
                                  BydDynastyProperties props,
                                  ObjectMapper json) {
         this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
-        this.versionImageMapper = versionImageMapper;
-        this.imageService = imageService;
+        this.mediaService = mediaService;
         this.agentMapper = agentMapper;
         this.jobMapper = jobMapper;
         this.props = props;
@@ -245,7 +242,7 @@ public class BydDynastyPushService {
     // ==================== 用户侧任务 ====================
 
     public Map<String, Object> state(Long projectId, Long currentUserId) {
-        ArticleProjectEntity project = requireProject(projectId, false);
+        ArticleProjectEntity project = requireBydProject(projectId, false);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("projectId", project.getId());
         data.put("agentConfigured", props.agentConfigured());
@@ -280,7 +277,7 @@ public class BydDynastyPushService {
         if (createdBy == null) throw new IllegalStateException("未登录或缺少用户 id");
         if (!props.agentConfigured()) throw new IllegalStateException(disabledReason());
 
-        ArticleProjectEntity project = requireProject(projectId, true);
+        ArticleProjectEntity project = requireBydProject(projectId, true);
         ArticleVersionEntity version = requireVersion(project);
         markStaleAgentsOffline();
         BydDynastyAgentEntity agent = currentOnlineAgent(createdBy);
@@ -292,8 +289,9 @@ public class BydDynastyPushService {
         String draftId = uuid32();
         String clubId = firstNonBlank(req == null ? null : req.getClubId(), project.getBydDynastyClubId(), props.getDefaultClubId());
         String clubTitle = firstNonBlank(req == null ? null : req.getClubTitle(), project.getBydDynastyClubTitle(), props.getDefaultClubTitle());
-        Map<String, Object> payload = buildPayload(jobId, projectId, version.getId(), draftId,
-                version.getTitle(), version.getContentMd(), clubId, clubTitle, version.getCoverImageId());
+        BuiltPayload built = buildPayload(jobId, projectId, version.getId(), draftId,
+                version.getTitle(), version.getContentMd(), clubId, clubTitle);
+        Map<String, Object> payload = built.payload();
 
         BydDynastyPushJobEntity job = new BydDynastyPushJobEntity();
         job.setJobId(jobId);
@@ -319,7 +317,7 @@ public class BydDynastyPushService {
     }
 
     public Map<String, Object> getJob(Long projectId, String jobId) {
-        requireProject(projectId, false);
+        requireBydProject(projectId, false);
         BydDynastyPushJobEntity job = jobMapper.selectOne(new QueryWrapper<BydDynastyPushJobEntity>()
                 .eq("project_id", projectId)
                 .eq("job_id", safe(jobId)));
@@ -370,25 +368,68 @@ public class BydDynastyPushService {
         return data;
     }
 
-    private Map<String, Object> buildPayload(String jobId, Long projectId, Long versionId, String draftId,
-                                             String title, String contentMd, String clubId, String clubTitle,
-                                             Long coverImageId) {
-        SafeBody body = compileBody(contentMd);
-        List<Map<String, Object>> images = new ArrayList<>();
+    private BuiltPayload buildPayload(String jobId, Long projectId, Long versionId, String draftId,
+                                             String title, String contentMd, String clubId, String clubTitle) {
+        List<BydDynastyPlainTextRenderer.Block> blocks = BydDynastyPlainTextRenderer.compile(contentMd);
+        List<Map<String, Object>> messages = new ArrayList<>();
+        List<Map<String, Object>> media = new ArrayList<>();
+        Map<String, Integer> mediaRefs = new LinkedHashMap<>();
+        Map<String, Integer> legacyRefs = new LinkedHashMap<>();
+        Map<String, BydDynastyMediaEntity> referenced = new LinkedHashMap<>();
+        int videoCount = 0;
 
-        if (coverImageId != null) {
-            String coverUrl = imageService.publicUrl(coverImageId);
-            String ref = "COVER-" + coverImageId;
-            images.add(imageSource(ref, coverUrl, "COVER"));
-            if (!body.imageRefs.contains(ref)) body.messages.add(0, Map.of("type", "img", "imageRef", ref));
+        for (BydDynastyPlainTextRenderer.Block block : blocks) {
+            if (block instanceof BydDynastyPlainTextRenderer.TextBlock text) {
+                messages.add(Map.of("type", "text", "content", text.text()));
+                continue;
+            }
+            if (block instanceof BydDynastyPlainTextRenderer.ImageBlock image) {
+                String target = image.target();
+                int ref;
+                if (isHttpUrl(target)) {
+                    ref = legacyRefs.computeIfAbsent(target, ignored -> {
+                        int id = media.size() + 1;
+                        media.add(legacyImageMedia("MEDIA-" + id, target));
+                        return id;
+                    });
+                } else {
+                    BydDynastyMediaEntity row = mediaService.requireReadyForPush(
+                            projectId, target, BydDynastyMediaService.TYPE_IMAGE);
+                    referenced.putIfAbsent(target, row);
+                    Integer existing = mediaRefs.get(target);
+                    if (existing == null) {
+                        existing = media.size() + 1;
+                        mediaRefs.put(target, existing);
+                        media.add(stagedMediaPayload("MEDIA-" + existing, row, jobId));
+                    }
+                    ref = existing;
+                }
+                messages.add(Map.of("type", "img", "mediaRef", "MEDIA-" + ref));
+                continue;
+            }
+            if (block instanceof BydDynastyPlainTextRenderer.VideoBlock video) {
+                videoCount++;
+                int maxVideos = Math.max(0, props.getMediaMaxVideos());
+                if (videoCount > maxVideos) {
+                    throw new IllegalArgumentException("小程序文章最多支持 " + maxVideos + " 个视频");
+                }
+                String target = video.target();
+                BydDynastyMediaEntity row = mediaService.requireReadyForPush(
+                        projectId, target, BydDynastyMediaService.TYPE_VIDEO);
+                referenced.putIfAbsent(target, row);
+                Integer ref = mediaRefs.get(target);
+                if (ref == null) {
+                    ref = media.size() + 1;
+                    mediaRefs.put(target, ref);
+                    media.add(stagedMediaPayload("MEDIA-" + ref, row, jobId));
+                }
+                messages.add(Map.of("type", "video", "mediaRef", "MEDIA-" + ref));
+            }
         }
+        if (messages.isEmpty()) throw new IllegalStateException("正文内容为空，无法编译 BYD 王朝草稿");
 
-        int sequence = 0;
-        for (String sourceUrl : body.inlineImageUrls) {
-            String ref = "BODY-" + (++sequence);
-            images.add(imageSource(ref, sourceUrl, "BODY"));
-        }
-        // 渲染器产出的 BODY-n 引用与 payload.images 中同 ref 的图片来源一一对应。
+        // 只延长实际被 payload 引用的媒体；事务回滚时数据库与任务插入一起回退。
+        mediaService.extendLifetimeForJob(new ArrayList<>(referenced.values()), LocalDateTime.now());
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("payloadVersion", PAYLOAD_VERSION);
@@ -398,39 +439,77 @@ public class BydDynastyPushService {
         payload.put("draftId", draftId);
         String cleanTitle = BydDynastyPlainTextRenderer.renderInline(title);
         payload.put("title", cleanTitle.isBlank() ? "无标题" : cleanTitle);
-        payload.put("messages", body.messages);
-        payload.put("images", images);
+        payload.put("messages", messages);
+        payload.put("media", media);
         payload.put("clubId", blankToNull(clubId));
         payload.put("clubTitle", blankToNull(clubTitle));
-        return payload;
+        return new BuiltPayload(payload);
     }
 
-    /** 把纯文本渲染器的有序块编译成 Agent 认识的 text/img 消息。 */
-    private SafeBody compileBody(String contentMd) {
-        SafeBody body = new SafeBody();
-        int sequence = 0;
-        for (BydDynastyPlainTextRenderer.Block block : BydDynastyPlainTextRenderer.compile(contentMd)) {
-            if (block instanceof BydDynastyPlainTextRenderer.TextBlock text) {
-                body.messages.add(Map.of("type", "text", "content", text.text()));
-            } else if (block instanceof BydDynastyPlainTextRenderer.ImageBlock image) {
-                String ref = "BODY-" + (++sequence);
-                body.inlineImageUrls.add(image.url());
-                body.imageRefs.add(ref);
-                body.messages.add(Map.of("type", "img", "imageRef", ref));
-            }
+    private Map<String, Object> stagedMediaPayload(String ref, BydDynastyMediaEntity row, String jobId) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", ref);
+        item.put("mediaId", row.getMediaId());
+        item.put("type", BydDynastyMediaService.TYPE_VIDEO.equals(row.getMediaType()) ? "video" : "image");
+        item.put("sourceType", row.getSourceKind());
+        if (BydDynastyMediaService.SOURCE_STAGED.equals(row.getSourceKind())) {
+            item.put("downloadPath", "/api/agent/byd-dynasty/jobs/" + jobId + "/media/" + row.getMediaId());
+        } else if (BydDynastyMediaService.SOURCE_URL.equals(row.getSourceKind())) {
+            item.put("url", row.getSourceUrl());
+        } else {
+            throw new IllegalStateException("正文媒体来源类型不合法");
         }
-        if (body.messages.isEmpty()) throw new IllegalStateException("正文内容为空，无法编译 BYD 王朝草稿");
-        return body;
+        item.put("fileName", row.getFileName());
+        item.put("mimeType", row.getMimeType());
+        item.put("byteSize", row.getByteSize());
+        item.put("width", row.getWidth());
+        item.put("height", row.getHeight());
+        if (row.getDurationSeconds() != null) item.put("durationSeconds", row.getDurationSeconds());
+        return item;
     }
 
-    private Map<String, Object> imageSource(String ref, String url, String role) {
-        if (url == null || url.isBlank()) throw new IllegalStateException("图片未转存图床，无法交给本机 Agent 上传");
-        Map<String, Object> source = new LinkedHashMap<>();
-        source.put("id", ref);
-        source.put("sourceType", "URL");
-        source.put("url", url);
-        source.put("role", role);
-        return source;
+    /** 历史正文中的 http(s) 图片仅作兼容入口，最终仍由 Agent 下载并上传 BYD CDN。 */
+    private Map<String, Object> legacyImageMedia(String ref, String url) {
+        if (!isHttpUrl(url)) throw new IllegalArgumentException("正文图片地址不是有效的 http(s) URL");
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", ref);
+        item.put("type", "image");
+        item.put("sourceType", BydDynastyMediaService.SOURCE_URL);
+        item.put("url", url);
+        item.put("fileName", legacyFileName(url));
+        item.put("mimeType", legacyImageMime(url));
+        item.put("byteSize", 0L);
+        return item;
+    }
+
+    private String legacyFileName(String url) {
+        try {
+            String path = URI.create(url).getPath();
+            if (path != null && !path.isBlank()) {
+                String name = path.substring(path.lastIndexOf('/') + 1);
+                if (!name.isBlank()) return name.length() <= 255 ? name : name.substring(name.length() - 255);
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        return "legacy-image";
+    }
+
+    private String legacyImageMime(String url) {
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains(".png")) return "image/png";
+        if (lower.contains(".webp")) return "image/webp";
+        return "image/jpeg";
+    }
+
+    private boolean isHttpUrl(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            URI uri = URI.create(value);
+            return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    && uri.getHost() != null;
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
     }
 
     private BydDynastyAgentEntity currentOnlineAgent(Long ownerUserId) {
@@ -457,18 +536,16 @@ public class BydDynastyPushService {
         }
     }
 
-    private ArticleProjectEntity requireProject(Long projectId, boolean requirePublishable) {
+    private ArticleProjectEntity requireBydProject(Long projectId, boolean requirePublishable) {
         if (projectId == null) throw new IllegalArgumentException("项目 id 不能为空");
         ArticleProjectEntity project = projectMapper.selectById(projectId);
         if (project == null) throw new IllegalArgumentException("项目不存在");
-        if (!requirePublishable) return project;
-        if (project.getCurrentVersionId() == null) throw new IllegalStateException("尚未选定正文版本，无法创建 BYD 推送任务");
-        // 10-19:小程序项目在编辑步保存正文不改项目状态（DRAFT 起），因此不套公众号状态机门禁；
-        // 公众号渠道保持原契约（版本就绪/已发草稿才可推），既有 gzh 调用零回归。
-        if (CHANNEL_BYD_MINIAPP.equals(project.getChannel())) return project;
-        String status = project.getStatus();
-        if (!"VERSIONS_READY".equals(status) && !"PUBLISHED_DRAFT".equals(status))
-            throw new IllegalStateException("项目状态为 " + status + "，版本就绪后才可创建 BYD 推送任务");
+        if (!CHANNEL_BYD_MINIAPP.equals(project.getChannel())) {
+            throw new IllegalArgumentException("仅比亚迪王朝小程序项目可执行该操作");
+        }
+        if (requirePublishable && project.getCurrentVersionId() == null) {
+            throw new IllegalStateException("尚未选定正文版本，无法创建 BYD 推送任务");
+        }
         return project;
     }
 
@@ -573,10 +650,6 @@ public class BydDynastyPushService {
         return msg.length() <= MAX_ERROR ? msg : msg.substring(0, MAX_ERROR) + "…";
     }
 
-    /** 服务内部临时集合容器，避免多输出参数暴露到公共类型。 */
-    private static final class SafeBody {
-        private final ArrayList<Map<String, Object>> messages = new ArrayList<>();
-        private final ArrayList<String> inlineImageUrls = new ArrayList<>();
-        private final ArrayList<String> imageRefs = new ArrayList<>();
+    private record BuiltPayload(Map<String, Object> payload) {
     }
 }

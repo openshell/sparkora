@@ -19,8 +19,10 @@ import { projectApi, imageApi } from '../api'
  *   - saveContent: () => Promise（persist:采纳结算后保存正文;宿主注入唯一保存通道(StepPreview.saveContent,
  *     实为静默变体 saveContentSilent,10-12 R1:成功提示抑制、失败警示仍由宿主完成）,
  *     本组合函数不感知其实现——此处只吞结果与异常,不改变采纳成功口径）
+ *   - prepareMediaForInsertion?: (img) => Promise<{ target: string, rollback?: () => Promise }>
+ *     （可选；BYD 模式注入 from-image 注册，返回专用 token 目标与插入失败回滚回调。未传时保持公众号关联表路径）
  */
-export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEditorReady, insertAtAnchor, originUrl, refreshSnapshot, saveContent }) {
+export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEditorReady, insertAtAnchor, originUrl, refreshSnapshot, saveContent, prepareMediaForInsertion = null }) {
   const sugGroups = ref([])          // 按锚点分组的建议: [{anchorKey,anchorIndex,headingPath,anchorText,candidates[]}]
   const sugLoading = ref(false)
   const sugLoaded = ref(false)       // 是否已生成过(区分「未生成」/「生成后无候选」空态)
@@ -59,29 +61,45 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
     } catch (e) { /* 标签清单仅为可选预过滤,失败忽略 */ }
   }
 
-  /** 单张采用(用户批准):① 登记插图关联行(保证发布页计数+防误删) ② markdown 插入锚点处(保证真正渲染)。
-   *  二者均幂等;两处都写才自洽——只写 markdown 则发布计数错/图片可能被误删,只写登记则根本不渲染。
-   *  注意:① 是可失败的网络/鉴权写,故先做①——失败时正文原样不动,不会留下「已插正文、未登记」的隐性不一致。 */
+  /** 单张采用(用户批准):先完成媒体登记，再插入 markdown；插入失败时回滚本次登记。
+   *  默认仍是公众号路径（body_image 关联行）；BYD 通过 prepareMediaForInsertion 注入
+   *  from-image 注册，返回 `{ target, rollback }`，不写公众号关联表。 */
   const adoptSuggestion = async (group, img, silent) => {
     // candidates 是 ImageSearchHit(record), 其 id 字段名是 imageId(不是 id)——用错会退化成 /images/undefined/body → 400
     const imageId = img?.imageId ?? img?.id
     const url = originUrl(img)
     if (imageId == null) throw new Error('候选图缺少 id,无法登记插图')
-    if (!url) throw new Error('候选图缺少图床 URL,无法插入正文')
+    const useExternalRegistration = typeof prepareMediaForInsertion === 'function'
+    if (!useExternalRegistration && !url) throw new Error('候选图缺少图床 URL,无法插入正文')
     // 编辑器不可用则直接失败:否则会「登记了但是没插进正文」,发布页计数虚高
     if (typeof insertAtAnchor !== 'function' || (isEditorReady && !isEditorReady())) {
       throw new Error('编辑器未就绪,请稍后重试')
     }
-    const md = `\n![](${url})\n`
-    // 是否本次新登记:用于回滚判定——已登记过的图不能因「② 插入失败」被移除(会误删用户既有插图)。
-    // 同时看会话内已采用集合:同名图在两组里重复采用时,快照可能尚未刷新,不能误判为「本次新登记」。
-    const alreadyRegistered = (getSnapshot()?.bodyImageIds || []).map(String).includes(String(imageId))
-        || sugAdopted.value.has(imageId)
-    // ① 登记插图关联行(幂等;失败则正文原样不动)
-    const res = await imageApi.addBodyImage(projectIdRef.value, imageId)
-    if (res.code !== 0) throw new Error(res.msg || '登记插图失败')
-    // ② 插入正文:优先按锚点标题定位;找不到标题时编辑器内部退回光标处(不丢内容)。
-    //    ② 未插入或抛错则回滚 ①——「两处都写」不能只写一半
+
+    let md = ''
+    let rollback = null
+    let alreadyRegistered = false
+    if (useExternalRegistration) {
+      const prepared = await prepareMediaForInsertion(img)
+      rollback = typeof prepared?.rollback === 'function' ? prepared.rollback : null
+      const target = String(prepared?.target || '')
+      if (!target) {
+        if (rollback) {
+          try { await rollback() } catch (ignored) { /* 回滚失败由过期清理兜底 */ }
+        }
+        throw new Error('BYD 媒体登记返回缺少 token')
+      }
+      md = `\n![图片](${target})\n`
+    } else {
+      md = `\n![](${url})\n`
+      // 是否本次新登记:用于回滚判定——已登记过的图不能因插入失败被移除(会误删用户既有插图)。
+      alreadyRegistered = (getSnapshot()?.bodyImageIds || []).map(String).includes(String(imageId))
+          || sugAdopted.value.has(imageId)
+      const res = await imageApi.addBodyImage(projectIdRef.value, imageId)
+      if (res.code !== 0) throw new Error(res.msg || '登记插图失败')
+    }
+
+    // 插入正文:优先按锚点标题定位;找不到标题时编辑器内部退回光标处(不丢内容)。
     let inserted = false
     try {
       inserted = insertAtAnchor(group.headingPath, md) !== false
@@ -89,15 +107,19 @@ export function usePreviewSuggestions(projectIdRef, { busy, getSnapshot, isEdito
       inserted = false
     }
     if (!inserted) {
-      if (!alreadyRegistered) {
+      if (rollback) {
+        try { await rollback() } catch (ignored) { /* 回滚失败由过期清理兜底 */ }
+      } else if (!alreadyRegistered) {
         try { await imageApi.removeBodyImage(projectIdRef.value, imageId) } catch (ignored) { /* 回滚失败:留给用户手动移除 */ }
       }
-      throw new Error('插入正文失败（编辑器未就绪），已回滚登记，请重试')
+      throw new Error(useExternalRegistration
+        ? '插入正文失败（编辑器未就绪），已回滚媒体登记，请重试'
+        : '插入正文失败（编辑器未就绪），已回滚登记，请重试')
     }
     const next = new Set(sugAdopted.value)
     next.add(imageId)
     sugAdopted.value = next
-    if (!silent) ElMessage.success('已插入到正文并登记插图')
+    if (!silent) ElMessage.success(useExternalRegistration ? '已插入到正文' : '已插入到正文并登记插图')
   }
 
   /** 采纳结算后的正文落库(persist,10-11-img-suggest-adopt-persist):消除「关联行已落、content_md 未落」的半状态窗口。

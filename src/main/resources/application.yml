@@ -112,6 +112,14 @@ sparkora:
       heartbeat-timeout-ms: ${BYD_DYNASTY_AGENT_HEARTBEAT_TIMEOUT_MS:60000}
       default-club-id: ${BYD_DYNASTY_CLUB_ID:}
       default-club-title: ${BYD_DYNASTY_CLUB_TITLE:}
+      # 10-20: BYD 正文媒体暂存。目录必须位于 ./data:/app/data 数据卷内。
+      media-storage-dir: ${BYD_MEDIA_STORAGE_DIR:./data/byd-staging}
+      media-max-image-mb: ${BYD_MEDIA_MAX_IMAGE_MB:20}
+      media-max-video-mb: ${BYD_MEDIA_MAX_VIDEO_MB:300}
+      media-max-videos: ${BYD_MEDIA_MAX_VIDEOS:3}
+      media-ttl-hours: ${BYD_MEDIA_TTL_HOURS:168}
+      media-job-retention-hours: ${BYD_MEDIA_JOB_RETENTION_HOURS:72}
+      media-cleanup-cron: ${BYD_MEDIA_CLEANUP_CRON:0 17 * * * ?}
   ai:
     base-url: ${AI_BASE_URL:https://axo.caiqz.cn}
     api-key: ${AI_API_KEY:}

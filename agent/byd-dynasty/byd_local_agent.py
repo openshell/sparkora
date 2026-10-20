@@ -2,8 +2,8 @@
 """Sparkora BYD Dynasty Windows Local Agent.
 
 The Sparkora Server owns authorization, job state, and auditing. This Windows
-program owns local-only work: environment checks, BYD image upload, MMKV
-draft append, backup, verification, and result reporting.
+program owns local-only work: environment checks, BYD image/video upload,
+MMKV draft append, backup, verification, and result reporting.
 """
 
 from __future__ import annotations
@@ -26,7 +26,8 @@ import tempfile
 import time
 import zlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+from urllib.parse import quote
 
 import requests
 from Crypto.Cipher import AES
@@ -36,13 +37,19 @@ try:
 except ImportError:
     Image = None
 
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.1.0"
 APP_ID = "wxa28c31d4ff7ae869"
 DRAFT_KEY = "platformDrafts"
-PAYLOAD_VERSION = 1
+PAYLOAD_VERSION = 2
 MAX_ERROR_LENGTH = 800
 MAX_IMAGE_EDGE = 1920
 JPEG_QUALITY = 88
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_VIDEO_BYTES = 300 * 1024 * 1024
+MIN_VIDEO_DURATION_SECONDS = 2.0
+MAX_VIDEO_DURATION_SECONDS = 120.0
+MAX_VIDEOS = 3
+MEDIA_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 NONCE_CHARS = "ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678"
 DEFAULT_WECHAT_PROCESSES = {"wechat.exe", "weixin.exe", "wechatapp.exe", "wechatappex.exe"}
 WORK_DIR = Path(__file__).with_name("work")
@@ -72,6 +79,9 @@ class AgentConfig:
         self.club_title = _optional(raw, "BYD_DYNASTY_CLUB_TITLE")
         backup_dir = _optional(raw, "BYD_DYNASTY_BACKUP_DIR")
         self.backup_dir = backup_dir or str(Path(self.mmkv_dir).parent / "sparkora-agent-backup")
+        self.media_temp_dir = _optional(raw, "BYD_DYNASTY_MEDIA_TEMP_DIR") or str(WORK_DIR / "media")
+        self.max_image_bytes = int(_optional(raw, "BYD_DYNASTY_MAX_IMAGE_MB", "20") or 20) * 1024 * 1024
+        self.max_video_bytes = int(_optional(raw, "BYD_DYNASTY_MAX_VIDEO_MB", "300") or 300) * 1024 * 1024
         self.min_free_disk_mb = int(_optional(raw, "BYD_DYNASTY_MIN_FREE_DISK_MB", "200") or 200)
         self.heartbeat_interval = float(_optional(raw, "BYD_DYNASTY_HEARTBEAT_INTERVAL_SECONDS", "20") or 20)
         self.poll_interval = float(_optional(raw, "BYD_DYNASTY_POLL_INTERVAL_SECONDS", "5") or 5)
@@ -127,6 +137,7 @@ def safe_error_text(error: object, config: AgentConfig | None = None) -> str | N
             config.upload_app_key,
             config.mmkv_dir,
             config.backup_dir,
+            config.media_temp_dir,
         ):
             if secret and len(str(secret)) >= 4:
                 text = text.replace(str(secret), "<已隐藏>")
@@ -434,10 +445,14 @@ def append_mmkv(main: bytes, crc: bytes, new_record: bytes) -> tuple[bytes, byte
     return new_main, bytes(new_crc)
 
 
-def backup_files(config: AgentConfig, logs: dict[str, Any] | None = None) -> list[str]:
+def backup_files(
+    config: AgentConfig,
+    logs: dict[str, Any] | None = None,
+    timestamp: str | None = None,
+) -> list[str]:
     backup_dir = Path(config.backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    timestamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
     saved: list[str] = []
     for suffix in ("", ".crc"):
         source = config.main_file if suffix == "" else config.crc_file
@@ -459,13 +474,13 @@ def _verify_bytes(main: bytes, crc: bytes, draft: dict[str, Any]) -> list[dict[s
     if not matching:
         raise AgentError("MMKV 写入后校验失败：未找到本次 draftId")
     item = matching[-1]
+    if item.get("publishType") != "article":
+        raise AgentError("MMKV 写入后校验失败：文章草稿类型不一致")
+    if "materials" in item or "surfacePlot" in item:
+        raise AgentError("MMKV 写入后校验失败：草稿包含不允许的附加字段")
     expected_messages = draft.get("message", [])
     if item.get("titleText") != draft.get("titleText") or item.get("message") != expected_messages:
         raise AgentError("MMKV 写入后校验失败：标题或消息不一致")
-    expected_urls = [m.get("msg_content") for m in expected_messages if m.get("msg_type") == "img"]
-    actual_urls = [m.get("msg_content") for m in item.get("message", []) if m.get("msg_type") == "img"]
-    if expected_urls != actual_urls:
-        raise AgentError("MMKV 写入后校验失败：图片 URL 不一致")
     return drafts
 
 
@@ -482,7 +497,7 @@ def write_mmkv(config: AgentConfig, draft: dict[str, Any], logs: dict[str, Any])
     backup_dir = Path(config.backup_dir)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     try:
-        saved = backup_files(config)
+        saved = backup_files(config, timestamp=timestamp)
     except Exception as exc:
         raise AgentError(f"MMKV 备份失败，已停止写入：{type(exc).__name__}") from exc
     logs["backupFiles"] = saved
@@ -494,19 +509,23 @@ def write_mmkv(config: AgentConfig, draft: dict[str, Any], logs: dict[str, Any])
     try:
         config.main_file.write_bytes(new_main)
         config.crc_file.write_bytes(new_crc)
-    except Exception:
-        restore_files(config, backup_dir, timestamp)
-        raise AgentError("MMKV 写入失败，已从备份恢复原文件")
-
-    final_main = config.main_file.read_bytes()
-    final_crc = config.crc_file.read_bytes()
-    final_drafts = _verify_bytes(final_main, final_crc, draft)
+        final_main = config.main_file.read_bytes()
+        final_crc = config.crc_file.read_bytes()
+        final_drafts = _verify_bytes(final_main, final_crc, draft)
+    except Exception as exc:
+        try:
+            restore_files(config, backup_dir, timestamp)
+        except Exception as restore_exc:
+            raise AgentError("MMKV 写入后校验失败，且备份恢复失败，请立即人工检查") from restore_exc
+        if isinstance(exc, AgentError):
+            raise AgentError(f"{exc}，已从备份恢复原文件") from exc
+        raise AgentError("MMKV 写入失败，已从备份恢复原文件") from exc
     logs["mmkvDraftCountBefore"] = len(old_drafts)
     logs["mmkvDraftCountAfter"] = len(final_drafts)
     return len(final_drafts)
 
 
-# ============================== BYD image upload ==============================
+# ============================== BYD media upload ==============================
 
 def upload_headers(config: AgentConfig) -> dict[str, str]:
     nonce = "".join(random.choices(NONCE_CHARS, k=16))
@@ -523,11 +542,34 @@ def upload_headers(config: AgentConfig) -> dict[str, str]:
 
 def fetch_image(source_url: str) -> bytes:
     try:
-        response = requests.get(source_url, timeout=30, headers={"User-Agent": "Sparkora-BYD-Agent/1.0"})
+        response = requests.get(
+            source_url,
+            timeout=30,
+            headers={"User-Agent": "Sparkora-BYD-Agent/2.0"},
+            stream=True,
+        )
         response.raise_for_status()
+        length = response.headers.get("Content-Length")
+        if length:
+            try:
+                if int(length) > MAX_IMAGE_BYTES:
+                    raise AgentError("任务图片超过 20MB 限制")
+            except ValueError:
+                pass
+        content = bytearray()
+        for chunk in response.iter_content(chunk_size=MEDIA_DOWNLOAD_CHUNK_SIZE):
+            if not chunk:
+                continue
+            content.extend(chunk)
+            if len(content) > MAX_IMAGE_BYTES:
+                raise AgentError("任务图片超过 20MB 限制")
+        return bytes(content)
     except requests.RequestException as exc:
         raise AgentError("下载任务图片失败，请检查图片源是否可访问") from exc
-    return response.content
+    finally:
+        close = getattr(locals().get("response"), "close", None)
+        if close:
+            close()
 
 
 def normalize_jpeg(raw: bytes, filename: str) -> tuple[bytes, str]:
@@ -553,41 +595,415 @@ def normalize_jpeg(raw: bytes, filename: str) -> tuple[bytes, str]:
 
 
 def upload_image(config: AgentConfig, raw: bytes, filename: str, mime: str) -> str:
-    suffix = Path(filename).suffix or ".jpg"
     temp_path = None
     try:
-        with tempfile.NamedTemporaryFile(prefix="sparkora-byd-", suffix=suffix, delete=False) as fp:
+        temp_dir = Path(config.media_temp_dir)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix="sparkora-byd-", suffix=".jpg", dir=temp_dir, delete=False) as fp:
             temp_path = Path(fp.name)
             fp.write(raw)
-        body = {
-            "module": "xxl_platform",
-            "mediaType": "image",
-            "path": str(temp_path).lower(),
-            "session_id": config.upload_session_id,
-        }
-        response = requests.post(
-            config.upload_url,
-            headers=upload_headers(config),
-            data=body,
-            files={"buffer": (filename, raw, mime)},
-            timeout=60,
-        )
-        response.raise_for_status()
-        result = response.json()
-        if result.get("ret") != 200:
-            raise AgentError(f"BYD 图片上传接口返回失败：{result.get('msg') or result.get('ret')}")
-        url = str(((result.get("data") or {}).get("attachment") or "")).strip()
+        safe_name = Path(filename or "image").name
+        jpeg_name = f"{Path(safe_name).stem or 'image'}.jpg"
+        result = _post_byd_media(config, temp_path, jpeg_name, "image", mime)
+        url = str(result.get("attachment") or "").strip()
         if not url:
             raise AgentError("BYD 图片上传成功但未返回附件 URL")
         return url
-    except requests.RequestException as exc:
-        raise AgentError(f"BYD 图片上传网络失败：{filename}") from exc
     finally:
         if temp_path and temp_path.exists():
             try:
                 temp_path.unlink()
             except OSError:
                 pass
+
+
+def _job_media_download_path(job_id: str, media_id: str) -> str:
+    safe_job_id = quote(str(job_id), safe="")
+    safe_media_id = quote(str(media_id), safe="")
+    return f"/api/agent/byd-dynasty/jobs/{safe_job_id}/media/{safe_media_id}"
+
+
+def download_media_file(
+    config: AgentConfig,
+    media: dict[str, Any],
+    job_id: str,
+    max_bytes: int,
+) -> Path:
+    """Download one payload media item to a bounded temporary file."""
+    media_id = str(media.get("mediaId") or media.get("id") or "").strip()
+    if not media_id:
+        raise AgentError("任务媒体缺少 mediaId")
+    source_type = str(media.get("sourceType") or "").upper()
+    if source_type == "STAGED":
+        if not job_id:
+            raise AgentError("任务缺少 jobId，无法下载暂存媒体")
+        expected_path = _job_media_download_path(job_id, media_id)
+        declared_path = str(media.get("downloadPath") or "").strip()
+        if declared_path and declared_path != expected_path:
+            raise AgentError("任务媒体下载路径不合法")
+        url = f"{config.base_url}{expected_path}"
+        headers = {
+            "X-Agent-Token": config.agent_token,
+            "X-Agent-Id": config.agent_id,
+            "User-Agent": "Sparkora-BYD-Agent/2.0",
+        }
+    elif source_type == "URL":
+        url = str(media.get("url") or media.get("sourceUrl") or "").strip()
+        if not url.startswith(("http://", "https://")):
+            raise AgentError("历史图片 URL 无效")
+        headers = {"User-Agent": "Sparkora-BYD-Agent/2.0"}
+    else:
+        raise AgentError("任务媒体来源类型不支持")
+
+    temp_dir = Path(config.media_temp_dir)
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix="sparkora-byd-media-", dir=temp_dir, delete=False) as fp:
+            temp_path = Path(fp.name)
+    except OSError as exc:
+        raise AgentError("媒体临时目录不可写") from exc
+
+    response = None
+    try:
+        response = requests.get(url, headers=headers, stream=True, timeout=(15, 180))
+        response.raise_for_status()
+        declared_length = response.headers.get("Content-Length")
+        if declared_length is not None:
+            try:
+                if int(declared_length) > max_bytes:
+                    raise AgentError("任务媒体超过大小限制")
+            except ValueError:
+                pass
+        written = 0
+        with temp_path.open("wb") as output:
+            for chunk in response.iter_content(chunk_size=MEDIA_DOWNLOAD_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > max_bytes:
+                    raise AgentError("任务媒体超过大小限制")
+                output.write(chunk)
+        if written <= 0:
+            raise AgentError("任务媒体下载为空")
+        return temp_path
+    except AgentError:
+        temp_path.unlink(missing_ok=True)
+        raise
+    except requests.RequestException as exc:
+        temp_path.unlink(missing_ok=True)
+        raise AgentError("下载任务媒体失败，请联系管理员检查媒体暂存状态") from exc
+    except OSError as exc:
+        temp_path.unlink(missing_ok=True)
+        raise AgentError("媒体临时文件写入失败") from exc
+    finally:
+        close = getattr(response, "close", None)
+        if close:
+            close()
+
+
+def _iter_mp4_boxes(
+    source: Any,
+    start: int,
+    end: int,
+) -> Iterator[tuple[bytes, int, int, int, int]]:
+    position = start
+    while position < end:
+        if end - position < 8:
+            raise AgentError("MP4 文件结构损坏")
+        source.seek(position)
+        header = source.read(8)
+        if len(header) != 8:
+            raise AgentError("MP4 文件结构损坏")
+        size, box_type = struct.unpack(">I4s", header)
+        header_size = 8
+        if size == 1:
+            extended = source.read(8)
+            if len(extended) != 8:
+                raise AgentError("MP4 文件结构损坏")
+            size = struct.unpack(">Q", extended)[0]
+            header_size = 16
+        elif size == 0:
+            size = end - position
+        if size < header_size or position + size > end:
+            raise AgentError("MP4 文件结构损坏")
+        yield box_type, position + header_size, position + size, position, position + size
+        position += size
+
+
+def _parse_mvhd(source: Any, start: int, end: int) -> float:
+    source.seek(start)
+    payload = source.read(min(32, end - start))
+    if len(payload) < 20:
+        raise AgentError("MP4 缺少完整视频时长信息")
+    version = payload[0]
+    if version not in {0, 1}:
+        raise AgentError("MP4 视频时长版本不支持")
+    if version == 1:
+        if len(payload) < 32:
+            raise AgentError("MP4 缺少完整视频时长信息")
+        timescale = struct.unpack_from(">I", payload, 20)[0]
+        duration = struct.unpack_from(">Q", payload, 24)[0]
+    else:
+        timescale = struct.unpack_from(">I", payload, 12)[0]
+        duration = struct.unpack_from(">I", payload, 16)[0]
+    if timescale <= 0 or duration <= 0 or duration == 0xFFFFFFFF:
+        raise AgentError("MP4 视频时长无效")
+    return duration / timescale
+
+
+def _parse_tkhd_dimensions(source: Any, start: int, end: int) -> tuple[int, int]:
+    source.seek(start)
+    payload = source.read(min(96, end - start))
+    if not payload:
+        raise AgentError("MP4 缺少视频尺寸信息")
+    version = payload[0]
+    if version not in {0, 1}:
+        return 0, 0
+    width_offset = 88 if version == 1 else 76
+    height_offset = width_offset + 4
+    if len(payload) < height_offset + 4:
+        return 0, 0
+    width = struct.unpack_from(">I", payload, width_offset)[0] >> 16
+    height = struct.unpack_from(">I", payload, height_offset)[0] >> 16
+    return int(width), int(height)
+
+
+def read_mp4_metadata(path: Path) -> dict[str, float | int]:
+    """Read duration and dimensions from ISO BMFF boxes without ffmpeg."""
+    try:
+        file_size = path.stat().st_size
+        if file_size <= 0:
+            raise AgentError("MP4 视频为空")
+        with path.open("rb") as source:
+            ftyp_found = False
+            moov_range: tuple[int, int] | None = None
+            for box_type, start, end, _box_start, _box_end in _iter_mp4_boxes(source, 0, file_size):
+                if box_type == b"ftyp":
+                    ftyp_found = True
+                elif box_type == b"moov" and moov_range is None:
+                    moov_range = (start, end)
+            if not ftyp_found:
+                raise AgentError("视频不是有效的 MP4 文件")
+            if moov_range is None:
+                raise AgentError("MP4 文件缺少 moov 元数据")
+
+            duration: float | None = None
+            dimensions: list[tuple[int, int]] = []
+            for box_type, start, end, _box_start, _box_end in _iter_mp4_boxes(source, *moov_range):
+                if box_type == b"mvhd":
+                    duration = _parse_mvhd(source, start, end)
+                elif box_type == b"trak":
+                    for child_type, child_start, child_end, _child_start, _child_end in _iter_mp4_boxes(source, start, end):
+                        if child_type == b"tkhd":
+                            width, height = _parse_tkhd_dimensions(source, child_start, child_end)
+                            if width > 0 and height > 0:
+                                dimensions.append((width, height))
+            if duration is None:
+                raise AgentError("MP4 文件缺少视频时长信息")
+            if not dimensions:
+                raise AgentError("MP4 文件缺少视频尺寸信息")
+            width, height = max(dimensions, key=lambda item: item[0] * item[1])
+            return {"durationSeconds": round(float(duration), 3), "width": width, "height": height}
+    except AgentError:
+        raise
+    except (OSError, struct.error, ValueError) as exc:
+        raise AgentError("MP4 文件解析失败") from exc
+
+
+def validate_video_file(config: AgentConfig, path: Path, filename: str) -> dict[str, float | int]:
+    safe_name = Path(filename or "").name
+    if Path(safe_name).suffix.lower() != ".mp4":
+        raise AgentError("视频必须为 MP4 格式")
+    try:
+        byte_size = path.stat().st_size
+    except OSError as exc:
+        raise AgentError("视频临时文件不可读") from exc
+    hard_limit = min(config.max_video_bytes, MAX_VIDEO_BYTES)
+    if byte_size <= 0 or byte_size > hard_limit:
+        raise AgentError("视频大小超过 300MB 限制")
+    metadata = read_mp4_metadata(path)
+    duration = float(metadata["durationSeconds"])
+    if duration < MIN_VIDEO_DURATION_SECONDS or duration > MAX_VIDEO_DURATION_SECONDS:
+        raise AgentError("视频时长必须为 2–120 秒")
+    if int(metadata["width"]) <= 0 or int(metadata["height"]) <= 0:
+        raise AgentError("视频宽高无效")
+    return metadata
+
+
+def _post_byd_media(
+    config: AgentConfig,
+    path: Path,
+    filename: str,
+    media_type: str,
+    mime: str,
+    width: int | None = None,
+    height: int | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "module": "xxl_platform",
+        "mediaType": media_type,
+        "path": str(path).lower(),
+        "session_id": config.upload_session_id,
+    }
+    if media_type == "video":
+        if not width or not height:
+            raise AgentError("视频上传缺少宽高信息")
+        body["width"] = str(width)
+        body["height"] = str(height)
+    timeout = 600 if media_type == "video" else 120
+    try:
+        with path.open("rb") as input_file:
+            response = requests.post(
+                config.upload_url,
+                headers=upload_headers(config),
+                data=body,
+                files={"buffer": (filename, input_file, mime)},
+                timeout=timeout,
+            )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise AgentError(f"BYD {media_type} 上传网络失败") from exc
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise AgentError(f"BYD {media_type} 上传接口返回非法 JSON") from exc
+    if not isinstance(result, dict):
+        raise AgentError(f"BYD {media_type} 上传接口返回格式不正确")
+    if str(result.get("ret")) != "200":
+        raise AgentError(f"BYD {media_type} 上传接口返回失败：{result.get('msg') or result.get('ret')}")
+    data = result.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def upload_video_file(
+    config: AgentConfig,
+    path: Path,
+    filename: str,
+    width: int,
+    height: int,
+) -> dict[str, str]:
+    result = _post_byd_media(config, path, filename, "video", "video/mp4", width, height)
+    attachment = str(result.get("attachment") or "").strip()
+    preview = str(result.get("mediapreview") or "").strip()
+    if not attachment or not preview:
+        raise AgentError("BYD 视频上传成功但缺少附件或封面 URL")
+    return {"attachment": attachment, "mediapreview": preview}
+
+
+def upload_payload_media(
+    config: AgentConfig,
+    payload: dict[str, Any],
+    logs: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    media_items = payload.get("media") or []
+    if not isinstance(media_items, list):
+        raise AgentError("任务 payload 媒体清单格式不正确")
+    media_by_id: dict[str, dict[str, Any]] = {}
+    for item in media_items:
+        if not isinstance(item, dict):
+            continue
+        media_id = str(item.get("id") or "").strip()
+        if media_id:
+            if media_id in media_by_id:
+                raise AgentError("任务 payload 包含重复媒体标识")
+            media_by_id[media_id] = item
+
+    ordered_refs: list[str] = []
+    expected_types: dict[str, str] = {}
+    video_count = 0
+    for raw_message in payload.get("messages") or []:
+        if not isinstance(raw_message, dict):
+            continue
+        message_type = raw_message.get("type")
+        if message_type not in {"img", "video"}:
+            continue
+        ref = str(raw_message.get("mediaRef") or "").strip()
+        if not ref:
+            raise AgentError("任务正文媒体缺少引用标识")
+        expected_type = "image" if message_type == "img" else "video"
+        previous_type = expected_types.get(ref)
+        if previous_type and previous_type != expected_type:
+            raise AgentError("任务正文媒体类型不一致")
+        expected_types[ref] = expected_type
+        if message_type == "video":
+            video_count += 1
+        if ref not in ordered_refs:
+            ordered_refs.append(ref)
+    if video_count > MAX_VIDEOS:
+        raise AgentError("小程序文章最多支持 3 个视频")
+
+    job_id = str(payload.get("jobId") or "").strip()
+    uploaded: dict[str, dict[str, Any]] = {}
+    uploaded_image_urls: list[str] = []
+    image_count = 0
+    uploaded_video_count = 0
+    for index, ref in enumerate(ordered_refs, start=1):
+        media = media_by_id.get(ref)
+        if media is None:
+            raise AgentError(f"任务 payload 缺少媒体源：{ref}")
+        media_type = str(media.get("type") or "").lower()
+        expected_type = expected_types[ref]
+        if media_type != expected_type:
+            raise AgentError("任务 payload 媒体类型与正文引用不匹配")
+        source_type = str(media.get("sourceType") or "").upper()
+        if media_type == "video" and source_type != "STAGED":
+            raise AgentError("视频媒体必须来自 BYD 暂存")
+        if media_type == "image" and source_type not in {"STAGED", "URL"}:
+            raise AgentError("图片媒体来源类型不支持")
+
+        filename = Path(str(media.get("fileName") or f"{ref}.jpg")).name
+        max_bytes = min(
+            config.max_video_bytes if media_type == "video" else config.max_image_bytes,
+            MAX_VIDEO_BYTES if media_type == "video" else MAX_IMAGE_BYTES,
+        )
+        source_path = download_media_file(config, media, job_id, max_bytes)
+        try:
+            if media_type == "image":
+                try:
+                    raw = source_path.read_bytes()
+                except OSError as exc:
+                    raise AgentError("图片临时文件读取失败") from exc
+                compressed, mime = normalize_jpeg(raw, filename)
+                if len(compressed) > min(config.max_image_bytes, MAX_IMAGE_BYTES):
+                    raise AgentError("压缩后的图片超过 20MB 限制")
+                attachment = upload_image(config, compressed, filename, mime)
+                uploaded[ref] = {"mediaType": "image", "attachment": attachment}
+                uploaded_image_urls.append(attachment)
+                image_count += 1
+            else:
+                metadata = validate_video_file(config, source_path, filename)
+                uploaded_media = upload_video_file(
+                    config,
+                    source_path,
+                    filename,
+                    int(metadata["width"]),
+                    int(metadata["height"]),
+                )
+                uploaded[ref] = {
+                    "mediaType": "video",
+                    "attachment": uploaded_media["attachment"],
+                    "mediapreview": uploaded_media["mediapreview"],
+                    "durationSeconds": metadata["durationSeconds"],
+                }
+                uploaded_video_count += 1
+            log("INFO", f"媒体上传成功：type={media_type} index={index}/{len(ordered_refs)}")
+        finally:
+            source_path.unlink(missing_ok=True)
+
+    logs["imageUploadCount"] = image_count
+    logs["videoUploadCount"] = uploaded_video_count
+    logs["mediaUploadCount"] = len(uploaded)
+    return uploaded, uploaded_image_urls
+
+
+def _format_duration(value: object) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise AgentError("视频时长无效") from exc
+    if number <= 0:
+        raise AgentError("视频时长无效")
+    return f"{number:.3f}".rstrip("0").rstrip(".")
 
 
 def upload_payload_images(config: AgentConfig, images: list[dict[str, Any]], referenced_ids: set[str], logs: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
@@ -616,24 +1032,79 @@ def upload_payload_images(config: AgentConfig, images: list[dict[str, Any]], ref
             time.sleep(random.uniform(0.8, 2.5))
     return urls, uploaded_urls
 
-def compile_messages(payload: dict[str, Any], uploaded_urls: dict[str, str]) -> list[dict[str, Any]]:
+def compile_messages(payload: dict[str, Any], uploaded_media: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compile payload v1/v2 messages into the exact BYD draft message stream."""
+    raw_messages = payload.get("messages") or []
+    version = int(payload.get("payloadVersion") or 0)
+    if version == 0:
+        version = 2 if any(isinstance(item, dict) and item.get("mediaRef") for item in raw_messages) else 1
     messages: list[dict[str, Any]] = []
-    for raw_message in payload.get("messages") or []:
+    video_count = 0
+    for raw_message in raw_messages:
+        if not isinstance(raw_message, dict):
+            raise AgentError("任务消息格式不正确")
         message_type = raw_message.get("type")
         if message_type == "text":
             content = raw_message.get("content")
             if content is None or not str(content).strip():
                 continue
             messages.append({"msg_type": "text", "msg_content": str(content), "msg_style": {}})
-        elif message_type == "img":
-            ref = str(raw_message.get("imageRef", ""))
-            if ref not in uploaded_urls:
+            continue
+
+        if version == 1 and message_type == "img":
+            ref = str(raw_message.get("imageRef") or "")
+            attachment = uploaded_media.get(ref)
+            if not isinstance(attachment, str) or not attachment:
                 raise AgentError(f"图片尚未上传成功，无法写入草稿：{ref}")
-            image_id = nonce32()
-            messages.append({"id": image_id, "msg_type": "img", "msg_content": uploaded_urls[ref]})
-            messages.append({"id": nonce32(), "msg_type": "text", "msg_content": "", "msg_style": {"sibling": image_id}})
-        else:
+            media_message_id = nonce32()
+            messages.append({"msg_type": "img", "msg_content": attachment, "id": media_message_id})
+            messages.append({
+                "msg_type": "text",
+                "msg_style": {"sibling": media_message_id},
+                "msg_content": "",
+                "id": nonce32(),
+            })
+            continue
+
+        if version != 2 or message_type not in {"img", "video"}:
             raise AgentError(f"不支持的任务消息类型：{message_type}")
+        ref = str(raw_message.get("mediaRef") or "")
+        media = uploaded_media.get(ref)
+        if not isinstance(media, dict):
+            raise AgentError(f"媒体尚未上传成功，无法写入草稿：{ref}")
+        attachment = str(media.get("attachment") or "")
+        if not attachment:
+            raise AgentError(f"媒体附件无效，无法写入草稿：{ref}")
+        media_message_id = nonce32()
+        if message_type == "img":
+            if media.get("mediaType") != "image":
+                raise AgentError("图片消息引用了非图片媒体")
+            messages.append({"msg_type": "img", "msg_content": attachment, "id": media_message_id})
+        else:
+            if media.get("mediaType") != "video":
+                raise AgentError("视频消息引用了非视频媒体")
+            video_count += 1
+            if video_count > MAX_VIDEOS:
+                raise AgentError("小程序文章最多支持 3 个视频")
+            preview = str(media.get("mediapreview") or "")
+            if not preview:
+                raise AgentError("视频封面地址缺失，无法写入草稿")
+            duration = _format_duration(media.get("durationSeconds"))
+            messages.append({
+                "msg_type": "video",
+                "msg_content": f"{attachment}|{preview}|{duration}",
+                "src": attachment,
+                "cover": preview,
+                "id": media_message_id,
+                "loadingImg": False,
+                "uploadError": False,
+            })
+        messages.append({
+            "msg_type": "text",
+            "msg_style": {"sibling": media_message_id},
+            "msg_content": "",
+            "id": nonce32(),
+        })
     if not messages:
         raise AgentError("任务正文为空，禁止写入 MMKV")
     return messages
@@ -772,9 +1243,20 @@ def build_preflight(config: AgentConfig, probe_server: bool = True) -> dict[str,
     checks["backupWritable"] = backup_ok
     if not backup_ok:
         errors.append("备份目录不可写，无法安全写入 MMKV")
+    media_temp_ok = directory_writable(Path(config.media_temp_dir))
+    checks["mediaTempWritable"] = media_temp_ok
+    if not media_temp_ok:
+        errors.append("媒体临时目录不可写，无法安全下载任务图片或视频")
     checks["uploadConfigured"] = bool(config.upload_url and config.upload_sign_key and config.upload_session_id)
     checks["agentConfigured"] = bool(config.agent_token and config.agent_id and config.base_url)
     checks["payloadVersion"] = PAYLOAD_VERSION
+    checks["mediaLimits"] = {
+        "maxImageBytes": min(config.max_image_bytes, MAX_IMAGE_BYTES),
+        "maxVideoBytes": min(config.max_video_bytes, MAX_VIDEO_BYTES),
+        "maxVideos": MAX_VIDEOS,
+        "minVideoDurationSeconds": MIN_VIDEO_DURATION_SECONDS,
+        "maxVideoDurationSeconds": MAX_VIDEO_DURATION_SECONDS,
+    }
 
     if probe_server:
         try:
@@ -861,15 +1343,30 @@ def report_result(config: AgentConfig, job_id: str, success: bool, draft_id: str
 # ============================== Job execution ==============================
 
 def execute_job(config: AgentConfig, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    if int(payload.get("payloadVersion") or 0) != PAYLOAD_VERSION:
+    try:
+        payload_version = int(payload.get("payloadVersion") or 1)
+    except (TypeError, ValueError) as exc:
+        raise AgentError("任务 payload 版本格式不正确") from exc
+    if payload_version not in {1, PAYLOAD_VERSION}:
         raise AgentError("任务 payload 版本不兼容，请升级本机 Agent 后重试")
-    logs: dict[str, Any] = {"imageUploadCount": 0}
-    messages = payload.get("messages") or []
-    images = payload.get("images") or []
-    referenced_ids = {str(item.get("imageRef")) for item in messages if item.get("type") == "img" and item.get("imageRef")}
-    urls, uploaded_urls = upload_payload_images(config, images, referenced_ids, logs)
-    logs["imageUploadCount"] = len(uploaded_urls)
-    mmkv_messages = compile_messages(payload, urls)
+    logs: dict[str, Any] = {
+        "payloadVersion": payload_version,
+        "imageUploadCount": 0,
+        "videoUploadCount": 0,
+    }
+    if payload_version == 2:
+        uploaded_media, uploaded_image_urls = upload_payload_media(config, payload, logs)
+    else:
+        messages = payload.get("messages") or []
+        images = payload.get("images") or []
+        referenced_ids = {
+            str(item.get("imageRef"))
+            for item in messages
+            if isinstance(item, dict) and item.get("type") == "img" and item.get("imageRef")
+        }
+        uploaded_media, uploaded_image_urls = upload_payload_images(config, images, referenced_ids, logs)
+        logs["imageUploadCount"] = len(uploaded_image_urls)
+    mmkv_messages = compile_messages(payload, uploaded_media)
     draft = build_draft(payload, mmkv_messages, config)
     draft_count = write_mmkv(config, draft, logs)
     logs["verified"] = True
@@ -877,7 +1374,7 @@ def execute_job(config: AgentConfig, payload: dict[str, Any]) -> tuple[dict[str,
         "success": True,
         "draftId": draft["draftId"],
         "draftCount": draft_count,
-        "uploadedImageUrls": uploaded_urls,
+        "uploadedImageUrls": uploaded_image_urls,
     }, logs
 
 

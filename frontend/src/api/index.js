@@ -284,6 +284,108 @@ export const imageApi = {
   previewOptions: () => http.get('/images/preview-options')
 }
 
+/**
+ * BYD 媒体暂存 API（10-20-miniapp-media-push）。
+ *
+ * uploadRaw 必须使用 XHR 直接 PUT 原始字节流：视频最大 300MB，不能走 multipart，
+ * 也需要浏览器 upload.onprogress。项目/路径校验放在 API 层，页面只调用具名方法。
+ */
+const bydMediaIdPath = (mediaId) => {
+  const id = String(mediaId || '')
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error('媒体标识无效，请刷新页面后重试')
+  return encodeURIComponent(id)
+}
+
+export const bydMediaApi = {
+  reserve: (projectId, payload) =>
+    http.post(`/projects/${projectId}/byd-dynasty/media`, payload || {},
+      { skipGlobalErrorToast: true, timeout: 30000 }),
+  uploadRaw: (projectId, uploadPath, file, options = {}) => new Promise((resolve, reject) => {
+    const path = String(uploadPath || '')
+    const expectedPrefix = `/api/projects/${encodeURIComponent(String(projectId))}/byd-dynasty/media/`
+    const expectedSuffix = '/content'
+    const mediaSegment = path.startsWith(expectedPrefix) && path.endsWith(expectedSuffix)
+      ? path.slice(expectedPrefix.length, -expectedSuffix.length)
+      : ''
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(mediaSegment)) {
+      reject(new Error('媒体上传地址无效，请刷新页面后重试'))
+      return
+    }
+    if (!file) {
+      reject(new Error('请选择要上传的媒体文件'))
+      return
+    }
+
+    const xhr = new XMLHttpRequest()
+    let settled = false
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      options.signal?.removeEventListener?.('abort', onSignalAbort)
+      fn(value)
+    }
+    const parseBody = (text) => {
+      if (!text) return null
+      try { return JSON.parse(text) } catch { return null }
+    }
+    const onSignalAbort = () => {
+      xhr.abort()
+      finish(reject, new DOMException('上传已取消', 'AbortError'))
+    }
+
+    if (options.signal?.aborted) {
+      reject(new DOMException('上传已取消', 'AbortError'))
+      return
+    }
+    options.signal?.addEventListener?.('abort', onSignalAbort, { once: true })
+
+    xhr.open('PUT', path, true)
+    xhr.timeout = 20 * 60 * 1000
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    const token = localStorage.getItem('sparkora_token')
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || typeof options.onProgress !== 'function') return
+      const percent = event.total > 0 ? Math.round((event.loaded / event.total) * 100) : 0
+      options.onProgress(Math.max(0, Math.min(100, percent)))
+    }
+    xhr.onload = () => {
+      const body = parseBody(xhr.responseText)
+      if (xhr.status === 401) {
+        finish(reject, new Error('登录已过期，请重新登录'))
+        return
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        finish(reject, new Error(body?.msg || `媒体上传失败（HTTP ${xhr.status}）`))
+        return
+      }
+      if (!body) {
+        finish(reject, new Error('媒体上传返回内容无法解析'))
+        return
+      }
+      if (body.code != null && body.code !== 0) {
+        finish(reject, new Error(body.msg || '媒体上传失败'))
+        return
+      }
+      finish(resolve, body)
+    }
+    xhr.onerror = () => finish(reject, new Error('媒体上传网络异常，请重试'))
+    xhr.ontimeout = () => finish(reject, new Error('媒体上传超时，请检查网络后重试'))
+    xhr.onabort = () => finish(reject, new DOMException('上传已取消', 'AbortError'))
+    xhr.send(file)
+  }),
+  fromImage: (projectId, imageId) =>
+    http.post(`/projects/${projectId}/byd-dynasty/media/from-image`, { imageId },
+      { skipGlobalErrorToast: true }),
+  get: (projectId, mediaId) =>
+    http.get(`/projects/${projectId}/byd-dynasty/media/${bydMediaIdPath(mediaId)}`,
+      { skipGlobalErrorToast: true }),
+  remove: (projectId, mediaId) =>
+    http.delete(`/projects/${projectId}/byd-dynasty/media/${bydMediaIdPath(mediaId)}`,
+      { skipGlobalErrorToast: true })
+}
+
 // 系统检索设置(09-09-brief-gen-redesign R1):页面控制内部知识库/外部搜索启用;
 // 读 ADMIN/EDITOR,写仅 ADMIN
 export const bydApi = {

@@ -7,7 +7,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * BYD 小程序纯文本渲染契约测试：只验证 Markdown -> 纯文本/图片块的转换，不接触数据库或 MMKV。
+ * BYD 小程序渲染契约测试：验证 Markdown -> 纯文本/图片/视频块，不接触数据库或 MMKV。
  */
 class BydDynastyPlainTextRendererTest {
 
@@ -157,6 +157,47 @@ class BydDynastyPlainTextRendererTest {
         assertEquals(new BydDynastyPlainTextRenderer.TextBlock("后"), blocks.get(4));
         assertFalse(blocks.toString().contains("第一张"));
         assertFalse(blocks.toString().contains("第二张"));
+    }
+
+    @Test
+    void BYD图片和视频token按正文顺序编译为独立媒体块() {
+        List<BydDynastyPlainTextRenderer.Block> blocks = BydDynastyPlainTextRenderer.compile("""
+                开头
+
+                ![图片说明](sparkora-byd-media:image_01)
+
+                中间
+
+                ![视频说明](sparkora-byd-video:video-02)
+
+                结尾
+                """);
+
+        assertEquals(5, blocks.size(), blocks.toString());
+        assertEquals(new BydDynastyPlainTextRenderer.TextBlock("开头"), blocks.get(0));
+        assertEquals(new BydDynastyPlainTextRenderer.ImageBlock("image_01"), blocks.get(1));
+        assertEquals(new BydDynastyPlainTextRenderer.TextBlock("中间"), blocks.get(2));
+        assertEquals(new BydDynastyPlainTextRenderer.VideoBlock("video-02"), blocks.get(3));
+        assertEquals(new BydDynastyPlainTextRenderer.TextBlock("结尾"), blocks.get(4));
+        assertFalse(blocks.toString().contains("图片说明"));
+        assertFalse(blocks.toString().contains("视频说明"));
+    }
+
+    @Test
+    void 公众号暂存图片token在BYD正文中明确拒绝() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> BydDynastyPlainTextRenderer.compile("![图](sparkora-img:gzh-media-id)"));
+
+        assertTrue(ex.getMessage().contains("公众号暂存图片"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("重新插入"), ex.getMessage());
+    }
+
+    @Test
+    void 非法或空媒体目标明确拒绝() {
+        assertThrows(IllegalArgumentException.class,
+                () -> BydDynastyPlainTextRenderer.compile("![图](sparkora-byd-media:)"));
+        assertThrows(IllegalArgumentException.class,
+                () -> BydDynastyPlainTextRenderer.compile("![图](ftp://example.com/a.png)"));
     }
 
     @Test

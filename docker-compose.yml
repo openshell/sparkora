@@ -24,6 +24,8 @@ services:
       - SERVER_PORT=${SERVER_PORT:-5661}
       # 数据盘目录（wenyan 渲染临时文件 + 社区主题 CSS 物化），挂卷持久化
       - IMAGE_STORAGE_DIR=/app/data/images
+      # BYD 小程序媒体暂存目录；位于 ./data:/app/data 持久化卷内
+      - BYD_MEDIA_STORAGE_DIR=/app/data/byd-staging
       - WENYAN_CLI_PATH=wenyan
       # 容器内统一时区（可选，便于日志可读）
       - TZ=Asia/Shanghai

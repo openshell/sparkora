@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/byd-miniapp-push.md","reason":"BYD payload、媒体 token、消息顺序与渠道门禁的目标契约"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"用户侧中文 400、Agent 失败回传和事务回滚错误矩阵"}
+{"file":".trellis/spec/backend/container-deployment.md","reason":"data/byd-staging 卷、Nginx 视频上传上限和部署配置"}
+{"file":"docs/spec/channel.md","reason":"公众号与王朝小程序渠道隔离、接口和媒体链路说明"}
+{"file":".trellis/tasks/10-20-miniapp-media-push/research/protocol-facts.md","reason":"王朝小程序文章图片/视频上传与草稿消息协议事实"}
+{"file":".trellis/tasks/10-20-miniapp-media-push/research/context-checklist.md","reason":"本任务相关的后端/前端/部署/验证精简上下文"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨前端、Server、Agent、MMKV 的消息契约与失败边界检查"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用现有备份/校验/编辑器的同时避免复用公众号媒体语义"}

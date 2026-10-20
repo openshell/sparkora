@@ -555,3 +555,31 @@ const isInline = computed(() => props.mode === 'preview')
 ---
 
 **Language**: All documentation should be written in **English**。本文件按仓库既有习惯使用中文正文说明。
+
+---
+
+## BYD 小程序媒体编辑（10-20）
+
+- 共享 `MarkdownEditor.vue` 必须保留显式 `mediaMode`：默认 `gzh`，BYD 传入 `byd`。默认 gzh 路径继续使用 `sparkora-img:` + `pendingImageStore` + `usePendingImageFlush`，不得因 BYD 改造改变。
+- BYD 模式只插入两种 token：`![图片](sparkora-byd-media:<mediaId>)`、`![视频](sparkora-byd-video:<mediaId>)`；不要复用公众号 `sparkora-img:`。
+- token 解析必须收敛到 `src/utils/bydMediaRefs.js`，编辑器、推送页和测试共用；禁止各页面自行写正则统计图片/视频。
+- BYD 媒体上传由 `BydEditorStep` 注入回调完成，组件内部不得直接依赖 BYD API 或七牛 `imageApi.upload`。
+- BYD 视频入口只接受 MP4，选择后读取 `duration` / `videoWidth` / `videoHeight` 做第一层校验；后端和 Agent 仍必须复核。
+- BYD 配图抽屉不设置封面；小程序文章草稿不持久化封面，不得把封面写进正文。
+- 300MB 视频使用原始流上传，不通过 `imageApi.upload` multipart；Nginx 仅对 BYD 上传 location 放宽请求体。
+
+**Wrong**：
+
+```js
+// BYD 推送前复用公众号暂存图的统一上传
+await flushPendingImages() // -> imageApi.upload -> 七牛
+```
+
+**Correct**：
+
+```js
+const media = await bydMediaApi.upload(projectId, file, { kind: 'image' })
+insertMarkdown(`![图片](sparkora-byd-media:${media.mediaId})`)
+```
+
+---

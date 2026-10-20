@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端测试、回归和提交前质量门禁"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"核查中文错误、失败不落库和 Agent 原子写入"}
+{"file":".trellis/spec/backend/container-deployment.md","reason":"核查卷挂载、Nginx 上限和部署顺序"}
+{"file":"docs/spec/channel.md","reason":"核查两类渠道的七牛/BYD CDN 分流与接口契约一致性"}
+{"file":".trellis/tasks/10-20-miniapp-media-push/research/protocol-facts.md","reason":"逐项核对图片/视频 sibling、视频三段消息和草稿字段"}
+{"file":".trellis/tasks/10-20-miniapp-media-push/research/context-checklist.md","reason":"核查数据库、前端、部署和验证约束的精简检查表"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨层数据流、媒体归属与 Agent 下载鉴权检查"}

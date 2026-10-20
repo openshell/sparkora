@@ -11,10 +11,29 @@
     <el-skeleton v-else-if="!loaded" :rows="8" animated />
 
     <template v-else>
-      <!-- 粘贴图失效警示（与预览页同口径：暂存区不持久化，重载后 token 无法再上传） -->
-      <el-alert v-if="unresolvedTokens.length" class="top-alert" type="warning" :closable="false" show-icon>
+      <el-alert v-if="legacyTokenCount" class="top-alert" type="warning" :closable="false" show-icon>
         <template #title>
-          正文含 {{ unresolvedTokens.length }} 张已失效的粘贴图（页面重载后暂存丢失，无法再上传），请重新粘贴或删除占位。
+          正文含 {{ legacyTokenCount }} 处公众号粘贴图占位（sparkora-img）。BYD 媒体必须重新插入，推送前会阻断。
+        </template>
+      </el-alert>
+      <el-alert v-if="mediaStatusError" class="top-alert" type="error" :closable="false" show-icon>
+        <template #title>
+          BYD 媒体状态查询失败：{{ mediaStatusError }}
+        </template>
+      </el-alert>
+      <el-alert v-if="malformedTokenCount" class="top-alert" type="error" :closable="false" show-icon>
+        <template #title>
+          正文含 {{ malformedTokenCount }} 个无法识别的媒体前缀或损坏 token，请删除后重新插入。
+        </template>
+      </el-alert>
+      <el-alert v-if="!mediaChecking && missingMediaCount" class="top-alert" type="error" :closable="false" show-icon>
+        <template #title>
+          正文含 {{ missingMediaCount }} 个缺失、过期、类型不匹配或已失败的 BYD 媒体，请删除后重新插入。
+        </template>
+      </el-alert>
+      <el-alert v-else-if="!mediaChecking && pendingMediaCount" class="top-alert" type="warning" :closable="false" show-icon>
+        <template #title>
+          有 {{ pendingMediaCount }} 个 BYD 媒体仍在准备中；准备完成前不能进入推送页。
         </template>
       </el-alert>
 
@@ -23,67 +42,102 @@
                   placeholder="文章标题（必填，推送时作为小程序草稿标题）"
                   :disabled="!editorOrAbove || saving" />
         <span class="meta">{{ wordCount }} 字</span>
-        <el-button size="small" :disabled="!editorOrAbove" @click="imgDrawer = true">
+        <el-button size="small" :disabled="!editorOrAbove || uploading" @click="chooseImages">
           <el-icon style="margin-right: 4px"><Picture /></el-icon>
-          配图 {{ imageCount }}<template v-if="pendingCount"> · 待传 {{ pendingCount }}</template>
+          插入图片
         </el-button>
+        <el-button size="small" :disabled="!editorOrAbove || uploading" @click="imgDrawer = true">
+          <el-icon style="margin-right: 4px"><Picture /></el-icon>
+          配图 {{ imageCount }}
+        </el-button>
+        <el-button size="small" :disabled="!editorOrAbove || uploading || videoCount >= BYD_MAX_VIDEOS"
+                  @click="chooseVideo">
+          <el-icon style="margin-right: 4px"><VideoCamera /></el-icon>
+          插入视频 {{ videoCount }}/{{ BYD_MAX_VIDEOS }}
+        </el-button>
+        <input ref="imageInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden
+               @change="onImageInputChange" />
+        <input ref="videoInput" type="file" accept="video/mp4,.mp4" hidden @change="onVideoInputChange" />
         <el-tag v-if="saveState === 'dirty'" type="warning" effect="plain" size="small">未保存</el-tag>
         <el-tag v-else-if="saveState === 'error'" type="danger" effect="plain" size="small">保存失败</el-tag>
         <el-tag v-else-if="savedAt" type="success" effect="plain" size="small">已保存 {{ savedAt }}</el-tag>
       </div>
 
+      <div v-if="uploading" class="upload-strip">
+        <span class="upload-label">{{ uploadState.label }}</span>
+        <el-progress :percentage="uploadState.percent" :stroke-width="6" :show-text="false" />
+        <span class="upload-percent">{{ uploadState.percent }}%</span>
+      </div>
+
       <div class="editor-pane" v-loading="saving">
         <!-- viewer 只读：MarkdownEditor 无 readonly 模式，改用只读多行框展示 -->
         <el-input v-if="!editorOrAbove" v-model="contentMd" type="textarea" :rows="22" readonly class="readonly-body" />
-        <MarkdownEditor v-else ref="editorRef" v-model="contentMd" :project-id="projectId" />
+        <MarkdownEditor v-else ref="editorRef" v-model="contentMd" :project-id="projectId" media-mode="byd"
+                        :media-upload-handler="uploadEditorImage" @media-inserted="onEditorMediaInserted"
+                        @media-insert-failed="onEditorMediaInsertFailed" />
       </div>
 
       <div class="editor-foot" v-if="editorOrAbove">
         <span class="foot-tip">
-          支持 Markdown 与直接粘贴图片；粘贴图会在点「去推送」时统一上传图床。小程序按消息流展示，无需公众号排版主题。
+          支持 Markdown、粘贴/选择图片与 MP4 视频。图片和视频先进入 Sparkora BYD 暂存区，最终由本机 Agent 上传比亚迪 CDN；
+          推送前需保证微信电脑端完全退出。
         </span>
         <span v-if="saveState === 'dirty'" class="foot-dirty">有未保存修改</span>
       </div>
       <p v-else class="readonly-tip">viewer 只读；编辑与推送需要 ADMIN/EDITOR 角色。</p>
     </template>
 
-    <!-- 配图抽屉：图库 / AI 生图 / 智能建议（复用预览页同款能力） -->
+    <!-- 配图抽屉：图库 / AI 生图 / 智能建议；BYD 模式不提供封面操作。 -->
     <PreviewImageDrawer
       v-model="imgDrawer"
       :project-id="projectId"
+      media-mode="byd"
       :busy="busy"
-      :inserted-urls="insertedUrls"
-      :cover-image-id="coverImageId"
+      :inserted-urls="emptyInsertedUrls"
+      :cover-image-id="null"
       :snapshot="imgSnapshot"
       :is-editor-ready="isEditorReady"
       :insert-at-anchor="insertAtAnchor"
+      :prepare-media-for-insertion="prepareBydMediaForInsertion"
       :refresh-snapshot="refreshImgSnapshot"
       :save-content="persistContent"
       @update:busy="(v) => (busy = v)"
-      @insert="insertBodyImage" @set-cover="onSetCover" @generated="onGenerated" />
+      @insert="insertBodyImage" @generated="onGenerated" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { WarningFilled, Picture } from '@element-plus/icons-vue'
-import { imageApi, projectApi } from '../../api'
+import { WarningFilled, Picture, VideoCamera } from '@element-plus/icons-vue'
+import { imageApi, projectApi, bydMediaApi } from '../../api'
 import MarkdownEditor from '../../components/MarkdownEditor.vue'
 import PreviewImageDrawer from '../../components/preview/PreviewImageDrawer.vue'
 import { useUserStore } from '../../store/user'
 import { usePageHeader } from '../../composables/usePageHeader'
-import { usePendingImageFlush } from '../../composables/usePendingImageFlush'
-import { clearOthers, extractTokens, get } from '../../utils/pendingImageStore'
-import { parseBodyImageRefs } from '../../utils/bodyImageRefs'
+import {
+  BYD_IMAGE_PREFIX,
+  BYD_MAX_VIDEOS,
+  imageMediaMarkdown,
+  parseBydMediaRefs,
+  summarizeBydMediaReadiness,
+  videoMediaMarkdown
+} from '../../utils/bydMediaRefs'
+import {
+  mediaFromResponse,
+  mediaStorageState,
+  registerBydImageFromLibrary,
+  removeBydMediaQuietly,
+  uploadBydImage,
+  uploadBydVideo
+} from '../../utils/bydMediaUpload'
 
 /**
- * 王朝小程序工作台 · 编辑步（10-19-channel-editor-publish R3）。
+ * 王朝小程序工作台 · 编辑步（10-20-miniapp-media-push）。
  *
- * 自由编辑区：标题 + MarkdownEditor 正文 + 配图（图库 / AI 生图 / 智能建议 / 粘贴图）。
- * 内容落在现有版本表（currentVersionId），推送链路 buildPayload 原样读取，无需新增字段。
- * 不渲染 wenyan 主题/预览：小程序按消息流展示，无公众号排版概念。
+ * 图片/视频直接上传到 BYD 专用暂存区，正文只保存 BYD token；不再调用公众号
+ * usePendingImageFlush / imageApi.upload。最终由 Server 编排，本机 Agent 上传比亚迪 CDN。
  */
 const props = defineProps({ project: Object })
 const route = useRoute()
@@ -91,7 +145,8 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const projectId = computed(() => route.params.id)
-const editorOrAbove = computed(() => userStore.isEditorOrAbove)
+const editorOrAbove = computed(() => userStore.isEditorOrAbove === true)
+const emptyInsertedUrls = new Set()
 
 const loaded = ref(false)
 const loadError = ref('')
@@ -106,25 +161,178 @@ const savedAt = ref('')
 const saveState = ref('clean') // clean | dirty | error
 const editorReady = ref(false)
 const editorRef = ref(null)
+const imageInput = ref(null)
+const videoInput = ref(null)
 const goingPush = ref(false)
+
+const mediaStatus = ref({})
+const mediaChecking = ref(false)
+const mediaStatusError = ref('')
+const uploadState = ref({ active: 0, percent: 0, label: '' })
+const uploadControllers = new Set()
+const uploading = computed(() => uploadState.value.active > 0)
 
 const dirty = computed(() => contentMd.value !== originalMd.value || title.value !== originalTitle.value)
 const wordCount = computed(() => (contentMd.value || '').replace(/\s/g, '').length)
-const bodyImageRefs = computed(() => parseBodyImageRefs(contentMd.value))
-const imageCount = computed(() => bodyImageRefs.value.urls.length)
-const isPendingToken = (id) => {
-  const e = get(id)
-  return !!e && e.projectId === String(projectId.value)
+const bydRefs = computed(() => parseBydMediaRefs(contentMd.value))
+const imageCount = computed(() => bydRefs.value.imageRefCount)
+const videoCount = computed(() => bydRefs.value.videoRefCount)
+const legacyTokenCount = computed(() => bydRefs.value.legacyTokenIds.length)
+const malformedTokenCount = computed(() => bydRefs.value.malformedTokenCount)
+const allMediaIds = computed(() => bydRefs.value.mediaIds)
+const mediaReadiness = computed(() => summarizeBydMediaReadiness(bydRefs.value.refs, mediaStatus.value))
+const pendingMediaCount = computed(() => mediaReadiness.value.pendingCount)
+const missingMediaCount = computed(() => mediaReadiness.value.missingCount)
+const unreadyMediaCount = computed(() => mediaReadiness.value.unreadyCount)
+
+const setMediaStatus = (media, fallbackState = '') => {
+  if (!media?.mediaId) return
+  mediaStatus.value = {
+    ...mediaStatus.value,
+    [media.mediaId]: { ...media, storageState: mediaStorageState(media) || fallbackState }
+  }
 }
-const pendingCount = computed(() => bodyImageRefs.value.tokenIds.filter(isPendingToken).length)
-const unresolvedTokens = computed(() => extractTokens(contentMd.value).filter((id) => !isPendingToken(id)))
-const insertedUrls = computed(() => new Set(bodyImageRefs.value.urls))
+
+/** 查询正文引用的所有 BYD 媒体，跨项目/过期/未知 token 一律进入失效态。 */
+let mediaCheckPromise = null
+const refreshMediaStatus = ({ notify = false } = {}) => {
+  if (mediaCheckPromise) return mediaCheckPromise
+  const ids = allMediaIds.value
+  mediaStatusError.value = ''
+  if (!ids.length) {
+    mediaStatus.value = {}
+    return Promise.resolve()
+  }
+  mediaChecking.value = true
+  mediaCheckPromise = (async () => {
+    try {
+      const results = await Promise.all(ids.map(async (id) => {
+        try {
+          const res = await bydMediaApi.get(projectId.value, id)
+          const media = mediaFromResponse(res, '查询 BYD 媒体失败')
+          const state = mediaStorageState(media)
+          if (!state) throw new Error('媒体状态缺失')
+          return [id, { ...media, storageState: state }]
+        } catch (error) {
+          const message = error?.response?.data?.msg || error?.message || '媒体不可用'
+          const status = error?.response?.status
+          const state = status === 404 || /不存在|不属于|过期|失效/.test(message) ? 'MISSING' : 'ERROR'
+          return [id, { mediaId: id, storageState: state, errorMessage: message }]
+        }
+      }))
+      // 合并而不是覆盖：上传/插入与一次在途查询并发时，不能丢掉刚写入的 READY 记录。
+      mediaStatus.value = { ...mediaStatus.value, ...Object.fromEntries(results) }
+      if (notify && !mediaReadiness.value.allReady) {
+        ElMessage.warning('仍有媒体缺失或未准备完成，请处理后再推送')
+      }
+    } catch (error) {
+      mediaStatusError.value = error?.response?.data?.msg || error?.message || '媒体状态查询失败'
+      if (notify) ElMessage.error(mediaStatusError.value)
+    } finally {
+      mediaChecking.value = false
+    }
+  })().finally(() => { mediaCheckPromise = null })
+  return mediaCheckPromise
+}
+
+const runUpload = async (label, task) => {
+  const controller = new AbortController()
+  uploadControllers.add(controller)
+  uploadState.value = { active: uploadState.value.active + 1, percent: 0, label }
+  try {
+    return await task({
+      signal: controller.signal,
+      onProgress: (percent) => {
+        uploadState.value = { ...uploadState.value, percent: Number(percent) || 0, label }
+      }
+    })
+  } finally {
+    uploadControllers.delete(controller)
+    uploadState.value = { ...uploadState.value, active: Math.max(0, uploadState.value.active - 1) }
+    if (!uploadState.value.active) uploadState.value = { active: 0, percent: 0, label: '' }
+  }
+}
+
+/** MarkdownEditor 粘贴图片注入点：只上传暂存，token 插入由编辑器完成。 */
+const uploadEditorImage = async (file, options = {}) => {
+  const media = await runUpload('正在上传图片到 BYD 暂存区…', ({ signal, onProgress }) =>
+    uploadBydImage(projectId.value, file, {
+      signal: options.signal || signal,
+      onProgress: (percent) => {
+        onProgress(percent)
+        options.onProgress?.(percent)
+      }
+    }))
+  setMediaStatus(media, 'READY')
+  return media
+}
+
+const onEditorMediaInserted = async () => {
+  await nextTick()
+  if (dirty.value) await persistContent()
+  await refreshMediaStatus()
+}
+
+const onEditorMediaInsertFailed = ({ mediaId } = {}) => {
+  if (mediaId) removeBydMediaQuietly(projectId.value, mediaId)
+}
+
+const chooseImages = () => imageInput.value?.click()
+const chooseVideo = () => {
+  if (videoCount.value >= BYD_MAX_VIDEOS) {
+    ElMessage.warning(`每篇文章最多 ${BYD_MAX_VIDEOS} 个视频`)
+    return
+  }
+  videoInput.value?.click()
+}
+
+const onImageInputChange = async (event) => {
+  const files = [...(event.target.files || [])]
+  event.target.value = ''
+  for (const file of files) {
+    try {
+      const media = await uploadEditorImage(file)
+      if (!editorRef.value?.insertMd?.(imageMediaMarkdown(media.mediaId))) {
+        await removeBydMediaQuietly(projectId.value, media.mediaId)
+        throw new Error('编辑器未就绪，图片未插入')
+      }
+      await nextTick()
+      await persistContent()
+      await refreshMediaStatus()
+    } catch (error) {
+      if (error?.name !== 'AbortError') ElMessage.error(error?.response?.data?.msg || error?.message || '图片上传失败')
+    }
+  }
+}
+
+const onVideoInputChange = async (event) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (videoCount.value >= BYD_MAX_VIDEOS) {
+    ElMessage.warning(`每篇文章最多 ${BYD_MAX_VIDEOS} 个视频`)
+    return
+  }
+  try {
+    const media = await runUpload('正在校验并上传 MP4 视频到 BYD 暂存区…', ({ signal, onProgress }) =>
+      uploadBydVideo(projectId.value, file, { currentVideoCount: videoCount.value, signal, onProgress }))
+    setMediaStatus(media, 'READY')
+    if (!editorRef.value?.insertMd?.(videoMediaMarkdown(media.mediaId))) {
+      await removeBydMediaQuietly(projectId.value, media.mediaId)
+      throw new Error('编辑器未就绪，视频未插入')
+    }
+    await nextTick()
+    await persistContent()
+    await refreshMediaStatus()
+  } catch (error) {
+    if (error?.name !== 'AbortError') ElMessage.error(error?.response?.data?.msg || error?.message || '视频上传失败')
+  }
+}
 
 // ==== 配图抽屉状态（图库 / AI 生图 / 智能建议）====
 const imgDrawer = ref(false)
 const busy = ref(false)
 const imgSnapshot = ref(null)
-const coverImageId = computed(() => imgSnapshot.value?.coverImageId ?? null)
 
 const loadSnapshot = async () => {
   const res = await imageApi.projectImages(projectId.value)
@@ -160,6 +368,9 @@ const loadContent = async () => {
     loaded.value = true
     loadError.value = ''
     editorReady.value = true
+    knownMediaIds = new Set(parseBydMediaRefs(contentMd.value).mediaIds)
+    refsInitialized = true
+    refreshMediaStatus()
     loadSnapshot().catch((e) => console.warn('[sparkora] 小程序配图快照加载失败:', e?.message || e))
   } catch (e) {
     loadError.value = e?.response?.data?.msg || e?.message || '网络异常'
@@ -168,11 +379,9 @@ const loadContent = async () => {
   }
 }
 
-/** 保存正文（静默：供「保存」与暂存图上传编排共用；成功后回写 originalMd 清 dirty）。 */
+/** 保存正文（静默）；成功后才回写 originalMd 清 dirty。 */
 const persistContent = async () => {
   if (!versionId.value) return false
-  // 正文未变化时不打保存接口：新建小程序项目是空正文，只想先存标题时
-  // 后端 PUT content 会以「正文不能为空」拒绝（版本正文契约），标题就永远存不进去。
   if (contentMd.value === originalMd.value) return true
   saving.value = true
   try {
@@ -218,21 +427,9 @@ const saveAll = async () => {
   return true
 }
 
-// 暂存图上传编排：点「去推送」时把正文仍引用的粘贴图统一上传并替换 token（复用预览页同款逻辑）。
-const { flushPendingImages } = usePendingImageFlush({
-  projectId,
-  getContent: () => contentMd.value,
-  setContent: (md) => { contentMd.value = md },
-  isDirty: () => dirty.value,
-  saveContent: () => persistContent(),
-  flushStyle: () => Promise.resolve(),
-  goNext: () => {},
-  isSaving: () => saving.value
-})
-
-/** 去推送：dirty 先保存 → 暂存图转存（内含再保存）→ 跳推送步；任一步失败停留本页。 */
+/** 去推送：先保存，再做 BYD 媒体准备状态门禁；不再上传七牛。 */
 const goPush = async () => {
-  if (goingPush.value || saving.value) return
+  if (goingPush.value || saving.value || uploading.value) return
   if (!editorOrAbove.value) { ElMessage.warning('viewer 只读，推送需要 ADMIN/EDITOR 角色'); return }
   if (dirty.value) {
     const ok = await saveAll()
@@ -240,15 +437,33 @@ const goPush = async () => {
   }
   goingPush.value = true
   try {
-    const { ok, reason, entriesKept, unresolved } = await flushPendingImages()
-    if (!ok) {
-      ElMessage.error(entriesKept
-        ? `${reason}；已上传部分已保留，可直接再点「去推送」重试`
-        : `${reason}（图片未上传，正文仍保留占位，可重试）`)
+    await refreshMediaStatus({ notify: true })
+    if (mediaStatusError.value) {
+      ElMessage.error(mediaStatusError.value)
       return
     }
-    if (unresolved > 0) {
-      ElMessage.error(`正文含 ${unresolved} 处失效的粘贴图占位（刷新后暂存丢失），请删除占位或重新粘贴后再推送`)
+    if (malformedTokenCount.value) {
+      ElMessage.error(`正文含 ${malformedTokenCount.value} 个无法识别的媒体前缀或损坏 token，请删除后重新插入`)
+      return
+    }
+    if (legacyTokenCount.value) {
+      ElMessage.error('正文含公众号粘贴图占位（sparkora-img），请删除或重新插入 BYD 图片后再推送')
+      return
+    }
+    if (missingMediaCount.value) {
+      ElMessage.error(`正文含 ${missingMediaCount.value} 个缺失、过期、类型不匹配或失败的 BYD 媒体，请重新插入后再推送`)
+      return
+    }
+    if (pendingMediaCount.value) {
+      ElMessage.error(`仍有 ${pendingMediaCount.value} 个 BYD 媒体未准备完成，请稍后重试`)
+      return
+    }
+    if (unreadyMediaCount.value) {
+      ElMessage.error(`仍有 ${unreadyMediaCount.value} 个 BYD 媒体状态未知，请刷新后重试`)
+      return
+    }
+    if (videoCount.value > BYD_MAX_VIDEOS) {
+      ElMessage.error(`每篇文章最多 ${BYD_MAX_VIDEOS} 个视频`)
       return
     }
     router.push({ name: 'project-byd-push', params: { id: projectId.value } })
@@ -257,31 +472,54 @@ const goPush = async () => {
   }
 }
 
-// ==== 配图 ====
-const originUrl = (img) => img?.url || ''
-const insertBodyImage = (img) => {
-  editorRef.value?.insertMd?.(`\n![](${originUrl(img)})\n`)
-  if (img?.id) imageApi.addBodyImage(projectId.value, img.id).catch((e) => {
-    console.warn('[byd-editor] 插图登记失败（不影响正文）', e)
-  })
+// ==== 配图：图库/AI 图片必须先注册成 BYD URL 源媒体 ====
+const prepareBydMediaForInsertion = async (img) => {
+  const media = await runUpload('正在注册图库图片为 BYD 媒体…', () => registerBydImageFromLibrary(projectId.value, img))
+  setMediaStatus(media, 'READY')
+  return {
+    target: `${BYD_IMAGE_PREFIX}${media.mediaId}`,
+    rollback: () => removeBydMediaQuietly(projectId.value, media.mediaId)
+  }
+}
+
+const insertBodyImage = async (img) => {
+  if (busy.value) return
+  busy.value = true
+  try {
+    const prepared = await prepareBydMediaForInsertion(img)
+    if (!editorRef.value?.insertMd?.(`\n![图片](${prepared.target})\n`)) {
+      await prepared.rollback?.()
+      throw new Error('编辑器未就绪，图片未插入')
+    }
+    await nextTick()
+    await persistContent()
+    await refreshMediaStatus()
+    try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响正文 */ }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '注册 BYD 图片失败')
+  } finally {
+    busy.value = false
+  }
 }
 const insertAtAnchor = (headingPath, md) => editorRef.value?.insertMdAtAnchor?.(headingPath, md) ?? false
 const isEditorReady = () => !!editorReady.value
-const onSetCover = async (imageId) => {
-  busy.value = true
-  try {
-    const res = await imageApi.setCover(projectId.value, imageId)
-    if (res.code === 0) {
-      ElMessage.success('已设为封面')
-      if (imgSnapshot.value) imgSnapshot.value.coverImageId = imageId
-    } else ElMessage.error(res.msg || '设置失败')
-  } catch (e) {
-    ElMessage.error('设置失败：' + (e.response?.data?.msg || e.message || '网络异常'))
-  } finally { busy.value = false }
-}
 const onGenerated = async () => {
   try { await refreshImgSnapshot() } catch (e) { /* 快照刷新失败不影响生成结果展示 */ }
 }
+
+// 用户删除 token 后 best-effort 清理暂存媒体；失败由过期清理兜底。
+let knownMediaIds = new Set()
+let refsInitialized = false
+watch([() => bydRefs.value.imageIds, () => bydRefs.value.videoIds], () => {
+  const current = new Set(allMediaIds.value)
+  if (refsInitialized) {
+    for (const id of knownMediaIds) {
+      if (!current.has(id)) removeBydMediaQuietly(projectId.value, id)
+    }
+  }
+  knownMediaIds = current
+  refsInitialized = true
+})
 
 // 上下文条：ProjectLayout 持有面包屑，子页只挂动作
 const header = usePageHeader()
@@ -289,13 +527,13 @@ const syncHeader = () => {
   if (!header) return
   header.actions = editorOrAbove.value
     ? [
-        { key: 'save', label: '保存', loading: saving.value, disabled: !loaded.value || !dirty.value || saving.value, onClick: saveAll },
-        { key: 'push', label: '去推送 →', type: 'primary', loading: goingPush.value, disabled: !loaded.value || saving.value, onClick: goPush }
+        { key: 'save', label: '保存', loading: saving.value, disabled: !loaded.value || !dirty.value || saving.value || uploading.value, onClick: saveAll },
+        { key: 'push', label: '去推送 →', type: 'primary', loading: goingPush.value, disabled: !loaded.value || saving.value || uploading.value, onClick: goPush }
       ]
     : []
 }
 syncHeader()
-watch([saving, dirty, goingPush, editorOrAbove, loaded], syncHeader)
+watch([saving, dirty, goingPush, editorOrAbove, loaded, uploading], syncHeader)
 onBeforeRouteLeave(async () => {
   if (header) header.actions = []
   if (!dirty.value) return true
@@ -321,11 +559,14 @@ watch(() => props.project?.currentVersionId, (vid) => {
 }, { immediate: true })
 
 onMounted(() => {
-  // 与预览页同口径：进入工作台清掉其他项目的粘贴图暂存，避免 blob URL 会话级泄漏
-  clearOthers(projectId.value)
+  // BYD token 有服务端持久化元数据，不清理公众号 pendingImageStore；旧 token 由正文门禁提示。
 })
 
-onBeforeUnmount(() => { if (header) header.actions = [] })
+onBeforeUnmount(() => {
+  if (header) header.actions = []
+  for (const controller of uploadControllers) controller.abort()
+  uploadControllers.clear()
+})
 </script>
 
 <style scoped>
@@ -339,6 +580,10 @@ onBeforeUnmount(() => { if (header) header.actions = [] })
 .title-input { max-width: 560px; }
 .title-input :deep(.el-input__inner) { font-size: var(--fs-15); font-weight: 600; }
 .meta { color: var(--muted); font-size: var(--fs-12); white-space: nowrap; }
+
+.upload-strip { display: grid; grid-template-columns: auto minmax(160px, 1fr) 42px; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--soft); }
+.upload-label { font-size: var(--fs-12); color: var(--muted); }
+.upload-percent { font-size: var(--fs-12); color: var(--muted); text-align: right; }
 
 .editor-pane {
   flex: 1;

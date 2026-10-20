@@ -13,6 +13,9 @@
     <el-alert v-else-if="loaded && !preflightReady" type="error" :closable="false" show-icon
               title="本机预检未通过" :description="preflightErrors.join('；')" />
 
+    <el-alert v-if="!mediaReady" type="warning" :closable="false" show-icon
+              title="媒体尚未准备完成，推送已禁用" :description="mediaBlockReason || '请回到编辑步检查正文媒体。'" />
+
     <el-alert v-if="state.lastError" type="error" :closable="false" show-icon title="最近一次 BYD 推送失败" :description="state.lastError" />
 
     <div v-if="state.publishedAt" class="state-success">
@@ -23,6 +26,13 @@
     <div v-else-if="preflightReady" class="state-ready">
       <el-icon color="var(--ok)"><SuccessFilled /></el-icon>
       <span>Agent 已在线且本地预检通过，可以创建推送任务。</span>
+    </div>
+
+    <div class="media-summary">
+      <el-tag size="small" effect="plain" :type="Number(mediaSummary.imageCount) ? 'success' : 'info'">图片 {{ Number(mediaSummary.imageCount) || 0 }}</el-tag>
+      <el-tag size="small" effect="plain" :type="Number(mediaSummary.videoCount) ? 'success' : 'info'">视频 {{ Number(mediaSummary.videoCount) || 0 }}</el-tag>
+      <el-tag v-if="Number(mediaSummary.pendingCount)" size="small" type="warning" effect="plain">待准备 {{ Number(mediaSummary.pendingCount) }}</el-tag>
+      <el-tag v-if="Number(mediaSummary.unresolvedCount)" size="small" type="danger" effect="plain">失效 {{ Number(mediaSummary.unresolvedCount) }}</el-tag>
     </div>
 
     <div class="agent-grid">
@@ -60,7 +70,7 @@
       <div class="job-meta">
         <span v-if="job.status === 'RUNNING'">本机 Agent 正在执行，请保持微信完全退出。</span>
         <span v-else-if="job.status === 'PENDING'">等待本机 Agent 领取。</span>
-        <span v-else-if="job.status === 'SUCCESS'">草稿 ID：<code>{{ job.result?.draftId || job.result?.draftId }}</code></span>
+        <span v-else-if="job.status === 'SUCCESS'">草稿 ID：<code>{{ job.result?.draftId || '-' }}</code></span>
         <span v-else-if="job.status === 'FAILED'">{{ job.errorMessage || '本机执行失败' }}</span>
       </div>
     </div>
@@ -76,11 +86,15 @@ import { useUserStore } from '../../store/user'
 
 const props = defineProps({
   projectId: { type: [Number, String], required: true },
-  editorOrAbove: { type: Boolean, default: false }
+  editorOrAbove: { type: Boolean, default: false },
+  mediaReady: { type: Boolean, default: false },
+  mediaBlockReason: { type: String, default: '' },
+  mediaSummary: { type: Object, default: () => ({ imageCount: 0, videoCount: 0, pendingCount: 0, unresolvedCount: 0, unreadyCount: 0 }) }
 })
 
 const userStore = useUserStore()
-const editor = computed(() => props.editorOrAbove || userStore.isEditorOrAbove)
+const editor = computed(() => props.editorOrAbove === true || userStore.isEditorOrAbove === true)
+const mediaReady = computed(() => props.mediaReady === true)
 const loaded = ref(false)
 const loading = ref(false)
 const loadError = ref('')
@@ -116,7 +130,7 @@ const preflightErrors = computed(() => {
 })
 const wechatRunning = computed(() => (checks.value.wechatProcessesRunning || []).length > 0)
 const job = computed(() => state.value.latestJob)
-const canCreate = computed(() => editor.value && preflightReady.value && !job.value?.status?.match?.(/^(PENDING|RUNNING)$/))
+const canCreate = computed(() => editor.value && preflightReady.value && mediaReady.value && !job.value?.status?.match?.(/^(PENDING|RUNNING)$/))
 
 const shortTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-'
 const statusLabel = (value) => ({
@@ -193,6 +207,7 @@ onBeforeUnmount(stopPolling)
 .panel-title { font-size: 16px; font-weight: 600; }
 .panel-hint { color: var(--faint, #8a8f98); font-size: 12px; }
 .byd-panel .el-alert + .el-alert { margin-top: 10px; }
+.media-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .state-success, .state-ready { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
 .agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 .agent-grid > div { padding: 10px; border: 1px solid var(--line, #ededed); border-radius: 8px; background: var(--soft, #fafafa); }

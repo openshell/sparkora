@@ -4,9 +4,9 @@
 
 - 注册/心跳 Sparkora Server；
 - 完成本地预检；
-- 从 Sparkora 任务 payload 获取图片、压缩并上传 BYD 图片接口；
+- 从 Sparkora 任务 payload 流式下载 BYD 暂存图片/视频，压缩图片并上传 BYD 媒体接口；
 - 备份 BYD 小程序 MMKV 文件；
-- 向小程序草稿箱追加草稿；
+- 按正文顺序向小程序草稿箱追加文字、图片和视频草稿消息；
 - 重新解析 MMKV 并校验本次结果；
 - 将成功/失败结果回传 Sparkora Server。
 
@@ -96,13 +96,18 @@ python .\byd_local_agent.py once
 | `SPARKORA_AGENT_TOKEN` | 与服务端 `BYD_DYNASTY_AGENT_TOKEN` 相同 |
 | `SPARKORA_AGENT_ID` | 本机稳定 Agent ID |
 | `BYD_DYNASTY_MMKV_DIR` | BYD 小程序 `usrmmkvstorage0` 目录 |
-| `BYD_DYNASTY_UPLOAD_URL` | BYD 图片上传地址 |
+| `BYD_DYNASTY_UPLOAD_URL` | BYD 图片/视频上传地址 |
 | `BYD_DYNASTY_UPLOAD_SIGN_KEY` | BYD 上传签名密钥 |
 | `BYD_DYNASTY_UPLOAD_SESSION_ID` | BYD 上传会话 ID |
 
 可选：`BYD_DYNASTY_CLUB_ID`、`BYD_DYNASTY_CLUB_TITLE`、`BYD_DYNASTY_BACKUP_DIR`、
+`BYD_DYNASTY_MEDIA_TEMP_DIR`、`BYD_DYNASTY_MAX_IMAGE_MB`、`BYD_DYNASTY_MAX_VIDEO_MB`、
 `BYD_DYNASTY_MIN_FREE_DISK_MB`、`BYD_DYNASTY_HEARTBEAT_INTERVAL_SECONDS`、
 `BYD_DYNASTY_POLL_INTERVAL_SECONDS`。
+
+图片默认上限 20MB；视频默认上限 300MB、时长 2–120 秒且正文最多 3 个。
+`BYD_DYNASTY_MEDIA_TEMP_DIR` 留空时使用 Agent 目录下的 `work/media`，预检会确认该目录可写。
+暂存媒体只从 `SPARKORA_BASE_URL` 下的任务范围下载接口获取，不接受 payload 给出的任意绝对下载地址；历史图库 URL 仅用于兼容旧任务图片。
 
 ## 预检
 
@@ -114,15 +119,19 @@ Agent 会检查：
 - 微信相关进程已完全退出；
 - 磁盘剩余空间；
 - 备份目录可写；
+- 媒体临时目录可写；
+- payload v2、BYD 上传配置和 300MB/20MB 媒体上限；
 - Sparkora Server 可访问。
 
 预检结果会上传到 Sparkora Server；JSON 中不包含本机路径。
 
 ## 写入与备份
 
-写入前一定会备份 MMKV 主文件和 `.crc` 文件。写入后 Agent 会重新解密解析
-`platformDrafts`，校验本次 `draftId`、标题、消息序列和图片 URL。若落盘失败，
-会尝试恢复备份并回传 FAILED。写草稿前必须完全退出微信，包括系统托盘。
+写入前一定会备份 MMKV 主文件和 `.crc` 文件。Agent 会先完成全部媒体下载、视频
+MP4 box 解析校验和 CDN 上传，任一媒体失败都不会进入 MMKV 写入。写入后会重新
+解密解析 `platformDrafts`，精确比较完整 `message`（含图片/视频 sibling 空文本、
+视频 `src`、`cover`、`loadingImg`、`uploadError` 和时长字段）。若落盘或校验失败，
+会恢复备份并回传 FAILED。写草稿前必须完全退出微信，包括系统托盘。
 
 ## 故障排查
 
@@ -131,7 +140,7 @@ Agent 会检查：
 - Agent 启动后立即退出：打开「运行日志」，先检查 `config.env` 是否缺失必填项。
 - 显示微信进程仍在运行：从系统托盘完全退出微信，并结束
   `WeChatAppEx.exe` / `Weixin.exe` 后再重新预检。
-- 点击安全停止后仍显示运行中：如果 Agent 正在上传图片或写入 MMKV，控制面板
+- 点击安全停止后仍显示运行中：如果 Agent 正在上传图片/视频或写入 MMKV，控制面板
   会提示「任务完成后退出」。不要手动结束进程，等待当前任务结束。
 - 推送历史没有新增记录：检查 `work/push-history.jsonl` 是否可写；历史写入失败
   不会中断任务执行。
@@ -142,5 +151,6 @@ Agent 会检查：
 
 - `config.env` 只保存在本机，不能提交到 Git；
 - 不要将 Agent Token、MMKV 路径、上传签名密钥写入任务 payload；
+- 不要配置或信任任意绝对媒体下载 URL；暂存媒体必须走 Sparkora 任务范围接口；
 - `config.env` 与备份目录应备份在可信位置；
 - 建议创建专用 Windows 用户或最少权限目录运行 Agent。
