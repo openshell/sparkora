@@ -176,11 +176,13 @@ for (const scenario of [
     name: 'does not reuse lastDraftId when the job id does not match',
     lastJobId: 'older-job',
     result: null,
+    expectedDraftId: '-',
   },
   {
-    name: 'does not reuse lastDraftId when the current result has no draftId',
+    name: 'reuses lastDraftId when the same job result has no draftId',
     lastJobId: 'job-2',
     result: { draftCount: 6 },
+    expectedDraftId: 'stale-draft-from-older-job',
   },
 ]) {
   test(`BYD panel ${scenario.name}`, async ({ page }) => {
@@ -226,7 +228,10 @@ for (const scenario of [
     }))
     await page.setViewportSize(SMOKE_VIEWPORT)
     await page.goto('/projects/1/byd-push')
-    await expect(page.getByText('草稿 ID：-', { exact: true })).toBeVisible()
-    await expect(page.getByText('草稿 ID：stale-draft-from-older-job', { exact: true })).toHaveCount(0)
+    await expect(page.getByText(`草稿 ID：${scenario.expectedDraftId}`, { exact: true })).toBeVisible()
+    if (scenario.expectedDraftId === '-') {
+      await expect(page.getByText('草稿 ID：stale-draft-from-older-job', { exact: true })).toHaveCount(0)
+    }
+    await expect(page.getByText('草稿数量').locator('..')).toContainText('2')
   })
 }

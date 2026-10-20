@@ -39,7 +39,7 @@
       <div><span>Agent</span><code>{{ state.agentId || '未连接' }}</code></div>
       <div><span>机器</span><span>{{ state.agentMachineName || '-' }}</span></div>
       <div><span>Agent 版本</span><span>{{ state.agentVersion || '-' }}</span></div>
-      <div><span>草稿数量</span><span>{{ preflight.mmkvDraftCount ?? '-' }}</span></div>
+      <div><span>草稿数量</span><span>{{ checks.mmkvDraftCount ?? '-' }}</span></div>
       <div><span>微信进程</span><span>{{ wechatRunning ? '运行中' : '已退出' }}</span></div>
       <div><span>预检</span><span>{{ preflightReady ? '通过' : '未通过' }}</span></div>
     </div>
@@ -137,14 +137,12 @@ const circleConfigured = computed(() => state.value.circleConfigured === true &&
 const circleDisabledReason = computed(() => state.value.circleDisabledReason
   || '服务端未配置完整的 BYD 小程序圈子 ID 和圈子名称')
 const job = computed(() => state.value.latestJob)
-// 成功态优先使用任务回传结果；历史任务/旧响应可能只在 state 顶层提供 lastDraftId。
+// 成功态优先使用任务回传结果；旧响应可能只在项目状态中原子保存了同任务 draftId。
 const successDraftId = computed(() => {
   const resultDraftId = job.value?.result?.draftId
   if (resultDraftId) return resultDraftId
-  const legacyFallbackMatches = job.value?.result == null
-    && !!job.value?.jobId
-    && job.value.jobId === state.value.lastJobId
-  return legacyFallbackMatches && state.value.lastDraftId ? state.value.lastDraftId : '-'
+  const sameJob = !!job.value?.jobId && job.value.jobId === state.value.lastJobId
+  return sameJob && state.value.lastDraftId ? state.value.lastDraftId : '-'
 })
 const canCreate = computed(() => editor.value && preflightReady.value && mediaReady.value && !job.value?.status?.match?.(/^(PENDING|RUNNING)$/))
 
