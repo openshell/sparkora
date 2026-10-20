@@ -177,12 +177,18 @@ for (const scenario of [
     lastJobId: 'older-job',
     result: null,
     expectedDraftId: '-',
+    preflightChecks: { wechatProcessesRunning: [], mmkvDraftCount: 2 },
+    lastDraftCount: 6,
+    expectedDraftCount: '2',
   },
   {
     name: 'reuses lastDraftId when the same job result has no draftId',
     lastJobId: 'job-2',
     result: { draftCount: 6 },
     expectedDraftId: 'stale-draft-from-older-job',
+    preflightChecks: { wechatProcessesRunning: [] },
+    lastDraftCount: 6,
+    expectedDraftCount: '6',
   },
 ]) {
   test(`BYD panel ${scenario.name}`, async ({ page }) => {
@@ -208,7 +214,7 @@ for (const scenario of [
           agentPreflightReady: true,
           agentPreflight: {
             ready: true,
-            checks: { wechatProcessesRunning: [], mmkvDraftCount: 2 },
+            checks: scenario.preflightChecks,
             errors: [],
           },
           agentDisabledReason: null,
@@ -221,6 +227,7 @@ for (const scenario of [
           publishedAt: '2026-10-20T18:35:14+08:00',
           lastJobId: scenario.lastJobId,
           lastDraftId: 'stale-draft-from-older-job',
+          lastDraftCount: scenario.lastDraftCount,
           lastError: null,
           latestJob: { jobId: 'job-2', status: 'SUCCESS', result: scenario.result },
         },
@@ -232,6 +239,6 @@ for (const scenario of [
     if (scenario.expectedDraftId === '-') {
       await expect(page.getByText('草稿 ID：stale-draft-from-older-job', { exact: true })).toHaveCount(0)
     }
-    await expect(page.getByText('草稿数量').locator('..')).toContainText('2')
+    await expect(page.getByText('草稿数量').locator('..')).toContainText(scenario.expectedDraftCount)
   })
 }

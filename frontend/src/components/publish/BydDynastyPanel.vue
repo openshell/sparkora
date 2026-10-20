@@ -39,7 +39,7 @@
       <div><span>Agent</span><code>{{ state.agentId || '未连接' }}</code></div>
       <div><span>机器</span><span>{{ state.agentMachineName || '-' }}</span></div>
       <div><span>Agent 版本</span><span>{{ state.agentVersion || '-' }}</span></div>
-      <div><span>草稿数量</span><span>{{ checks.mmkvDraftCount ?? '-' }}</span></div>
+      <div><span>草稿数量</span><span>{{ draftCount }}</span></div>
       <div><span>微信进程</span><span>{{ wechatRunning ? '运行中' : '已退出' }}</span></div>
       <div><span>预检</span><span>{{ preflightReady ? '通过' : '未通过' }}</span></div>
     </div>
@@ -119,12 +119,14 @@ const state = ref({
   publishedAt: null,
   lastError: null,
   lastJobId: null,
+  lastDraftCount: null,
   latestJob: null
 })
 let pollTimer = null
 
 const preflight = computed(() => state.value.agentPreflight || {})
 const checks = computed(() => preflight.value.checks || {})
+const draftCount = computed(() => checks.value.mmkvDraftCount ?? state.value.lastDraftCount ?? '-')
 const preflightReady = computed(() => !!state.value.agentOnline && !!state.value.agentPreflightReady)
 const preflightErrors = computed(() => {
   const errors = preflight.value.errors
