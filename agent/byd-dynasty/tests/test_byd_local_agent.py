@@ -993,3 +993,78 @@ def test_write_mmkv_restores_backup_when_post_write_verification_fails(tmp_path:
     assert config.main_file.read_bytes() == original_main
     assert config.crc_file.read_bytes() == original_crc
     assert len(list(backup_dir.iterdir())) == 2
+
+
+def test_preflight_blocks_missing_mmkv_files(tmp_path: Path, monkeypatch):
+    config = history_config(tmp_path)
+    config.mmkv_dir = str(tmp_path / "missing-mmkv")
+    config.backup_dir = str(tmp_path / "backup")
+    config.media_temp_dir = str(tmp_path / "media")
+    monkeypatch.setattr(agent.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(agent, "wechat_processes_running", lambda config: [])
+
+    preflight = agent.build_preflight(config, probe_server=False)
+
+    assert preflight["ready"] is False
+    assert preflight["checks"]["mmkvMainFileExists"] is False
+    assert preflight["checks"]["mmkvCrcFileExists"] is False
+    assert any("MMKV 主文件或 crc 文件不存在" in item for item in preflight["errors"])
+
+
+def test_preflight_blocks_malformed_mmkv_files(tmp_path: Path, monkeypatch):
+    mmkv_dir = tmp_path / "malformed-mmkv"
+    mmkv_dir.mkdir()
+    (mmkv_dir / agent.APP_ID).write_bytes(b"not-an-mmkv")
+    (mmkv_dir / f"{agent.APP_ID}.crc").write_bytes(b"broken-crc")
+    config = history_config(tmp_path)
+    config.mmkv_dir = str(mmkv_dir)
+    config.backup_dir = str(tmp_path / "backup")
+    config.media_temp_dir = str(tmp_path / "media")
+    monkeypatch.setattr(agent.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(agent, "wechat_processes_running", lambda config: [])
+
+    preflight = agent.build_preflight(config, probe_server=False)
+
+    assert preflight["ready"] is False
+    assert preflight["checks"]["mmkvPlatformDraftsParsable"] is False
+    assert any("MMKV" in item for item in preflight["errors"])
+
+
+def test_preflight_blocks_when_wechat_is_running(tmp_path: Path, monkeypatch):
+    mmkv_dir = tmp_path / "mmkv"
+    mmkv_dir.mkdir()
+    main, crc = build_mmkv([])
+    (mmkv_dir / agent.APP_ID).write_bytes(main)
+    (mmkv_dir / f"{agent.APP_ID}.crc").write_bytes(crc)
+    config = history_config(tmp_path)
+    config.mmkv_dir = str(mmkv_dir)
+    config.backup_dir = str(tmp_path / "backup")
+    config.media_temp_dir = str(tmp_path / "media")
+    monkeypatch.setattr(agent.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(agent, "wechat_processes_running", lambda config: ["weixin.exe"])
+
+    preflight = agent.build_preflight(config, probe_server=False)
+
+    assert preflight["ready"] is False
+    assert preflight["checks"]["wechatProcessesRunning"] == ["weixin.exe"]
+    assert any("完全退出微信" in item for item in preflight["errors"])
+
+
+def test_write_mmkv_rejects_20_drafts_without_modifying_files(tmp_path: Path):
+    mmkv_dir = tmp_path / "mmkv"
+    backup_dir = tmp_path / "backup"
+    mmkv_dir.mkdir()
+    drafts = [{"draftId": f"draft-{index}"} for index in range(20)]
+    main, crc = build_mmkv(drafts)
+    config = history_config(tmp_path)
+    config.mmkv_dir = str(mmkv_dir)
+    config.backup_dir = str(backup_dir)
+    config.main_file.write_bytes(main)
+    config.crc_file.write_bytes(crc)
+
+    with pytest.raises(agent.AgentError, match="20 篇上限"):
+        agent.write_mmkv(config, {"draftId": "new-draft"}, {})
+
+    assert config.main_file.read_bytes() == main
+    assert config.crc_file.read_bytes() == crc
+    assert not backup_dir.exists()

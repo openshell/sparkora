@@ -72,7 +72,7 @@
       <div class="job-meta">
         <span v-if="job.status === 'RUNNING'">本机 Agent 正在执行，请保持微信完全退出。</span>
         <span v-else-if="job.status === 'PENDING'">等待本机 Agent 领取。</span>
-        <span v-else-if="job.status === 'SUCCESS'">草稿 ID：<code>{{ job.result?.draftId || '-' }}</code></span>
+        <span v-else-if="job.status === 'SUCCESS'">草稿 ID：<code>{{ successDraftId }}</code></span>
         <span v-else-if="job.status === 'FAILED'">{{ job.errorMessage || '本机执行失败' }}</span>
       </div>
     </div>
@@ -137,6 +137,15 @@ const circleConfigured = computed(() => state.value.circleConfigured === true &&
 const circleDisabledReason = computed(() => state.value.circleDisabledReason
   || '服务端未配置完整的 BYD 小程序圈子 ID 和圈子名称')
 const job = computed(() => state.value.latestJob)
+// 成功态优先使用任务回传结果；历史任务/旧响应可能只在 state 顶层提供 lastDraftId。
+const successDraftId = computed(() => {
+  const resultDraftId = job.value?.result?.draftId
+  if (resultDraftId) return resultDraftId
+  const legacyFallbackMatches = job.value?.result == null
+    && !!job.value?.jobId
+    && job.value.jobId === state.value.lastJobId
+  return legacyFallbackMatches && state.value.lastDraftId ? state.value.lastDraftId : '-'
+})
 const canCreate = computed(() => editor.value && preflightReady.value && mediaReady.value && !job.value?.status?.match?.(/^(PENDING|RUNNING)$/))
 
 const shortTime = (value) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-'

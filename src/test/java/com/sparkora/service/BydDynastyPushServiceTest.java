@@ -397,6 +397,33 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
+    void 同一agent不能重复上报已结束任务() {
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        BydDynastyPushJobEntity job = runningJob();
+        job.setStatus("SUCCESS");
+        when(jobMapper.selectOne(any())).thenReturn(job);
+        when(jobMapper.update(isNull(), any())).thenReturn(0);
+        BydAgentResultRequest req = new BydAgentResultRequest();
+        req.setAgentId("local-win");
+        req.setSuccess(true);
+        req.setDraftId("already-written");
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.reportResult("job-id", req));
+        assertTrue(ex.getMessage().contains("不能重复上报"));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<UpdateWrapper<BydDynastyPushJobEntity>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(UpdateWrapper.class);
+        verify(jobMapper).update(isNull(), captor.capture());
+        String segment = captor.getValue().getSqlSegment();
+        assertTrue(segment.contains("status"));
+        assertTrue(segment.contains("agent_id"));
+        assertTrue(captor.getValue().getParamNameValuePairs().containsValue("RUNNING"));
+        assertTrue(captor.getValue().getParamNameValuePairs().containsValue(3L));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
     void 状态查询使用当前登录用户id而不是项目createdBy字符串() {
         ArticleProjectEntity p = project();
         p.setCreatedBy("admin");
