@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify no production data or real MMKV is touched and all cleanup paths are covered by tests."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify payload v1, cover insertion, image ordering, and Agent message compatibility."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify parser/renderer ownership is centralized and no old regex policy remains."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify empty cleaned content fails before job insertion with a Chinese message."}

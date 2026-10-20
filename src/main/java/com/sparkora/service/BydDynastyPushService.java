@@ -28,10 +28,9 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;import java.util.Map;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * BYD 王朝小程序本地推送编排服务。
@@ -50,8 +49,6 @@ public class BydDynastyPushService {
     private static final int PAYLOAD_VERSION = 1;
     /** 10-19:王朝小程序渠道项目不走公众号状态机（自由编辑完即推），推送只要求有当前版本。 */
     private static final String CHANNEL_BYD_MINIAPP = "byd_miniapp";
-    /** BYD 草稿记录中的 draftId 常见为 32 位随机字符，与 UUID 去横线形态一致。 */
-    private static final Pattern MD_IMAGE = Pattern.compile("!\\[[^\\]]*]\\(([^)]+)\\)");
     private static final int MAX_ERROR = 990;
 
     private final ArticleProjectMapper projectMapper;
@@ -376,7 +373,7 @@ public class BydDynastyPushService {
     private Map<String, Object> buildPayload(String jobId, Long projectId, Long versionId, String draftId,
                                              String title, String contentMd, String clubId, String clubTitle,
                                              Long coverImageId) {
-        SafeBody body = parseMessages(contentMd, "cover-" + projectId);
+        SafeBody body = compileBody(contentMd);
         List<Map<String, Object>> images = new ArrayList<>();
 
         if (coverImageId != null) {
@@ -391,7 +388,7 @@ public class BydDynastyPushService {
             String ref = "BODY-" + (++sequence);
             images.add(imageSource(ref, sourceUrl, "BODY"));
         }
-        // parseMessages 里的 imageRef 指向 BODY-n；把 image source 合并进 payload.images。
+        // 渲染器产出的 BODY-n 引用与 payload.images 中同 ref 的图片来源一一对应。
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("payloadVersion", PAYLOAD_VERSION);
@@ -399,7 +396,8 @@ public class BydDynastyPushService {
         payload.put("projectId", projectId);
         payload.put("versionId", versionId);
         payload.put("draftId", draftId);
-        payload.put("title", title == null || title.isBlank() ? "无标题" : title.trim());
+        String cleanTitle = BydDynastyPlainTextRenderer.renderInline(title);
+        payload.put("title", cleanTitle.isBlank() ? "无标题" : cleanTitle);
         payload.put("messages", body.messages);
         payload.put("images", images);
         payload.put("clubId", blankToNull(clubId));
@@ -407,30 +405,22 @@ public class BydDynastyPushService {
         return payload;
     }
 
-    private SafeBody parseMessages(String contentMd, String unusedContext) {
-        SafeBody result = new SafeBody();
-        String markdown = contentMd == null ? "" : contentMd.replace("<br>", "\n");
-        Matcher matcher = MD_IMAGE.matcher(markdown);
-        int cursor = 0;
+    /** 把纯文本渲染器的有序块编译成 Agent 认识的 text/img 消息。 */
+    private SafeBody compileBody(String contentMd) {
+        SafeBody body = new SafeBody();
         int sequence = 0;
-        while (matcher.find()) {
-            String text = markdown.substring(cursor, matcher.start());
-            appendText(result, text);
-            String url = matcher.group(1).trim();
-            String ref = "BODY-" + (++sequence);
-            result.inlineImageUrls.add(url);
-            result.imageRefs.add(ref);
-            result.messages.add(Map.of("type", "img", "imageRef", ref));
-            cursor = matcher.end();
+        for (BydDynastyPlainTextRenderer.Block block : BydDynastyPlainTextRenderer.compile(contentMd)) {
+            if (block instanceof BydDynastyPlainTextRenderer.TextBlock text) {
+                body.messages.add(Map.of("type", "text", "content", text.text()));
+            } else if (block instanceof BydDynastyPlainTextRenderer.ImageBlock image) {
+                String ref = "BODY-" + (++sequence);
+                body.inlineImageUrls.add(image.url());
+                body.imageRefs.add(ref);
+                body.messages.add(Map.of("type", "img", "imageRef", ref));
+            }
         }
-        appendText(result, markdown.substring(cursor));
-        if (result.messages.isEmpty()) throw new IllegalStateException("正文内容为空，无法编译 BYD 王朝草稿");
-        return result;
-    }
-
-    private void appendText(SafeBody body, String rawText) {
-        String text = normalizeText(rawText);
-        if (!text.isBlank()) body.messages.add(Map.of("type", "text", "content", text));
+        if (body.messages.isEmpty()) throw new IllegalStateException("正文内容为空，无法编译 BYD 王朝草稿");
+        return body;
     }
 
     private Map<String, Object> imageSource(String ref, String url, String role) {
@@ -441,14 +431,6 @@ public class BydDynastyPushService {
         source.put("url", url);
         source.put("role", role);
         return source;
-    }
-
-    private String normalizeText(String text) {
-        String value = text.replaceAll("\r\n", "\n").trim();
-        value = value.replaceAll("(?m)^#{1,6}\\s*", "");
-        value = value.replace("**", "").replace("`", "");
-        value = value.replaceAll("\n{3,}", "\n\n");
-        return value;
     }
 
     private BydDynastyAgentEntity currentOnlineAgent(Long ownerUserId) {

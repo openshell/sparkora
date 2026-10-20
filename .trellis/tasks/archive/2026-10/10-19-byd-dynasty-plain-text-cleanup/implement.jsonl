@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Keep content cleanup pure, test with mocks, do not modify production data, and preserve rollback."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Preserve the service-to-Agent payload contract while changing the Markdown-to-text boundary."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Use commonmark-java and TextContentRenderer rather than duplicating a Markdown parser."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Keep the existing Chinese service errors for empty or invalid content."}
