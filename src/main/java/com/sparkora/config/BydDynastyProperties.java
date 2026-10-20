@@ -24,7 +24,7 @@ public class BydDynastyProperties {
     /** 心跳超时；超过后注册表记为 OFFLINE。 */
     private long heartbeatTimeoutMs = 60000;
 
-    /** BYD 车友会默认标签；可为空。 */
+    /** BYD 小程序固定圈子；两项必须同时配置，对应草稿协议 clubId/clubTitle。 */
     private String defaultClubId;
     private String defaultClubTitle;
 
@@ -48,7 +48,7 @@ public class BydDynastyProperties {
         return agentToken != null && !agentToken.isBlank() && agentOwnerUserId != null;
     }
 
-    /** 车友会标签只有 id 与名称同时配置时才可作为一个完整选项使用。 */
+    /** 圈子 ID 与名称同时配置时才可作为完整固定圈子使用。 */
     public boolean hasCompleteDefaultClubTag() {
         return defaultClubId != null && !defaultClubId.isBlank()
                 && defaultClubTitle != null && !defaultClubTitle.isBlank();

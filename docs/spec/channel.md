@@ -60,8 +60,8 @@ CREATE TABLE sparkora_byd_dynasty_media (
 | POST | `/api/projects` | ADMIN/EDITOR | `ProjectRequest` + `channel`（可选，缺省 `gzh`；只允许 `gzh`/`byd_miniapp`） | `R<Long>` 项目 id。`gzh`：`topic` 必填、仿写约束生效；`byd_miniapp`：`topic` 可空、忽略仿写参数，创建后立即建空草稿版本 |
 | POST | `/api/projects/{id}/byd-dynasty/generate` | ADMIN/EDITOR | `{activityBrief ≤20000, personalInfo ≤5000}`，均必填 | `{started:true, status:"GENERATING_VERSIONS"}`；非小程序项目/字段缺失/生成中 → `R.fail(400)` 中文原因 |
 | GET | `/api/projects/{id}/byd-dynasty/generate-state` | 三角色 | — | `{generating, lastError?, currentVersionId}`；生成完成后 `currentVersionId` 指向新版本 |
-| GET | `/api/projects/{id}/byd-dynasty/state` | 三角色 | — | 返回 Agent 预检/最近任务，以及 `clubTagOptions: [{clubId, clubTitle}]`；`clubId` / `clubTitle` 为当前完整 pair 的初始选择。半套默认/项目值不得作为选项。 |
-| POST | `/api/projects/{id}/byd-dynasty/push-jobs` | ADMIN/EDITOR | `{useClubTag?: boolean, clubId?: string, clubTitle?: string}` | Server 从 `current_version_id` 编译 payload v2（`text/img/video` + media 清单），本机 Agent 领取执行。`useClubTag=true` 时 pair 必须完整且精确匹配可用选项；`false` 表示显式不使用且不得带非空 pair；省略时保留旧客户端 project/default 回退。成功 v2 任务才回写项目标签 pair。**严格门禁**：仅 `channel == byd_miniapp` 可调用；`gzh` 一律中文 400。payload 不注入封面。 |
+| GET | `/api/projects/{id}/byd-dynasty/state` | 三角色 | — | 返回 Agent 预检/最近任务，以及 `circleConfigured`、`circleId`、`circleTitle`、`circleDisabledReason`。固定圈子唯一来源是服务端 `BYD_DYNASTY_CLUB_ID` / `BYD_DYNASTY_CLUB_TITLE`；项目历史不作为第二选项。兼容字段 `clubId` / `clubTitle` 与 0/1 个 `clubTagOptions` 仅服务旧页面。 |
+| POST | `/api/projects/{id}/byd-dynasty/push-jobs` | ADMIN/EDITOR | `{useCircle: boolean}`；旧客户端兼容 `{useClubTag?: boolean, clubId?: string, clubTitle?: string}` | Server 从 `current_version_id` 编译 payload v2（`text/img/video` + media 清单），本机 Agent 领取执行。`useCircle=true` 使用服务端固定圈子；`false` 写入显式空 pair。旧版 pair 只能匹配当前固定圈子，冲突拒绝。成功 v2 任务才将实际圈子对回写项目审计字段。**严格门禁**：仅 `channel == byd_miniapp` 可调用；`gzh` 一律中文 400。payload 不注入封面。 |
 
 ### 2.1 活动发文生成（方式二）
 

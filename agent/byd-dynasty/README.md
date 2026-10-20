@@ -105,6 +105,11 @@ python .\byd_local_agent.py once
 `BYD_DYNASTY_MIN_FREE_DISK_MB`、`BYD_DYNASTY_HEARTBEAT_INTERVAL_SECONDS`、
 `BYD_DYNASTY_POLL_INTERVAL_SECONDS`。
 
+`BYD_DYNASTY_CLUB_ID` / `BYD_DYNASTY_CLUB_TITLE` 是 BYD 草稿协议字段
+`clubId` / `clubTitle` 的旧 payload v1 本机兜底，不是发布页的圈子目录或选项来源。
+两项必须同时配置或同时留空。payload v2 总会显式包含 `clubId` / `clubTitle` 两个键；用户选择携带时为完整圈子对，选择不携带时
+两项均为 `null`，Agent 不会回退到本机配置。发布页的固定圈子只来自服务端配置。
+
 图片默认上限 20MB；视频默认上限 300MB、时长 2–120 秒且正文最多 3 个。
 `BYD_DYNASTY_MEDIA_TEMP_DIR` 留空时使用 Agent 目录下的 `work/media`，预检会确认该目录可写。
 暂存媒体只从 `SPARKORA_BASE_URL` 下的任务范围下载接口获取，不接受 payload 给出的任意绝对下载地址；历史图库 URL 仅用于兼容旧任务图片。

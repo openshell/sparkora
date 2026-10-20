@@ -583,27 +583,30 @@ insertMarkdown(`![图片](sparkora-byd-media:${media.mediaId})`)
 ```
 
 ---
-## BYD 车友会标签选择（10-20）
+## BYD 固定圈子开关（10-20）
 
-- “车友会标签”是一个业务对象，`clubId` 是内部标识，`clubTitle` 是显示名称；页面不得拆成两个可独立编辑的输入框。
-- 选项来自 `state.clubTagOptions`，禁止在 Vue 中硬编码 ID/名称。下拉值必须绑定完整 pair key，避免同一个 `clubId` 对应多个标题时显示与提交不一致。
-- 页面必须显式提交 `useClubTag`：选中标签时为 `true` 并同时提交完整 pair；清空选择时为 `false`，不能依赖两个空字段表达“不使用”。
-- `useClubTag=false` 不得继续携带非空 `clubId` / `clubTitle`；服务端会拒绝冲突请求。
-- 刷新/轮询时保留用户当前选择；若选项已不再可用则清空选择，不能提交未知 pair 或半套 pair。
+- 用户可见业务对象统一叫“圈子”；`clubId` / `clubTitle` 只是 BYD 草稿协议字段，不对用户暴露为两个输入。
+- 发布页只展示一个服务端固定圈子的名称和一个“携带圈子”开关，不使用多选项下拉框，也不从项目历史生成选项。
+- `state.circleConfigured=true` 时开关默认开启；`false` 时开关强制关闭、禁用，并显示 `circleDisabledReason`，但仍允许创建不携带圈子的任务。
+- 轮询时保留用户已手动切换的选择；若配置失效立即关闭开关，不能继续提交携带圈子。
+- 新建任务只提交 `{ useCircle: boolean }`；不得提交客户端选择的 `clubId` / `clubTitle`。
+- 旧版 `useClubTag` 与 pair 字段仅由服务端兼容；新前端不生成这些字段。
 
 **Wrong**：
 
 ```js
-await bydApi.createJob(projectId, { clubId: null, clubTitle: null })
+await bydApi.createJob(projectId, {
+  useClubTag: !!clubTag,
+  clubId: clubTag?.clubId,
+  clubTitle: clubTag?.clubTitle
+})
 ```
 
 **Correct**：
 
 ```js
 await bydApi.createJob(projectId, {
-  useClubTag: !!clubTag,
-  clubId: clubTag?.clubId || null,
-  clubTitle: clubTag?.clubTitle || null
+  useCircle: circleConfigured.value && includeCircle.value
 })
 ```
 

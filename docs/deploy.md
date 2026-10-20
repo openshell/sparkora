@@ -165,9 +165,10 @@ BYD 链路的图片和视频**不经过七牛**。已有图库图片使用兼容
 1. `./data/byd-staging` 位于 `./data:/app/data` 持久化卷内，容器内路径为 `/app/data/byd-staging`；
 2. Flyway 已成功应用 `V25__byd_dynasty_media.sql`；
 3. nginx 的 BYD 原始流上传例外已生效：仅 `/api/projects/<project>/byd-dynasty/media/<media>/content` 放宽到 `310m`，并启用 `proxy_request_buffering off`；其他 `/api/` 请求仍为 15MB；
-4. Windows Local Agent 已独立升级到支持 payload v2 的版本，且能同时发送 `X-Agent-Token` 与 `X-Agent-Id`；
-5. 服务端与 Agent 的图片上限（20MB）、视频上限（300MB）、视频时长（2–120 秒）和正文视频数量（最多 3 个）保持一致；
-6. 未启用真实推送前，先用图片、视频各一篇创建草稿并核对 MMKV 结果。
+4. 服务端 `.env` 的 `BYD_DYNASTY_CLUB_ID` / `BYD_DYNASTY_CLUB_TITLE` 同时配置为唯一固定圈子；这两项是 BYD 草稿协议 `clubId` / `clubTitle` 的来源，不是多圈子目录。配置不完整时部署仍可健康启动，但页面只能创建“不携带圈子”的任务；
+5. Windows Local Agent 已独立升级到支持 payload v2 的版本，且能同时发送 `X-Agent-Token` 与 `X-Agent-Id`；
+6. 服务端与 Agent 的图片上限（20MB）、视频上限（300MB）、视频时长（2–120 秒）和正文视频数量（最多 3 个）保持一致；
+7. 未启用真实推送前，先用图片、视频各一篇创建草稿并核对 MMKV 结果。
 
 发布后验收至少覆盖：
 

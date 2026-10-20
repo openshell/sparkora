@@ -44,15 +44,15 @@
       <div><span>预检</span><span>{{ preflightReady ? '通过' : '未通过' }}</span></div>
     </div>
 
-    <div class="club-form">
+    <div class="circle-form">
       <el-form label-width="96px" @submit.prevent>
-        <el-form-item label="车友会标签">
-          <el-select v-model="selectedClubKey" clearable placeholder="不使用" class="club-tag-select"
-                     :disabled="!editorOrAbove || submitting || !clubTagOptions.length" @change="onClubTagChange">
-            <el-option v-for="option in clubTagOptions" :key="clubTagKey(option)"
-                       :label="option.clubTitle" :value="clubTagKey(option)" />
-          </el-select>
-          <span v-if="!clubTagOptions.length" class="club-empty-tip">暂无可用的完整车友会标签，可继续选择“不使用”。</span>
+        <el-form-item label="圈子">
+          <div class="circle-control">
+            <el-switch v-model="includeCircle" active-text="携带圈子"
+                       :disabled="!editor || submitting || !circleConfigured" @change="onCircleChange" />
+            <span v-if="circleConfigured" class="circle-name">圈子：{{ state.circleTitle }}</span>
+            <span v-else class="circle-missing-tip">{{ circleDisabledReason }}</span>
+          </div>
         </el-form-item>
       </el-form>
       <p class="safety-tip">
@@ -101,8 +101,8 @@ const loaded = ref(false)
 const loading = ref(false)
 const loadError = ref('')
 const submitting = ref(false)
-const selectedClubKey = ref('')
-const clubSelectionTouched = ref(false)
+const includeCircle = ref(false)
+const circleSelectionTouched = ref(false)
 const state = ref({
   agentConfigured: false,
   agentOnline: false,
@@ -112,9 +112,10 @@ const state = ref({
   agentPreflightReady: false,
   agentPreflight: null,
   agentDisabledReason: null,
-  clubTagOptions: [],
-  clubId: null,
-  clubTitle: null,
+  circleConfigured: false,
+  circleId: null,
+  circleTitle: null,
+  circleDisabledReason: null,
   publishedAt: null,
   lastError: null,
   lastJobId: null,
@@ -132,8 +133,9 @@ const preflightErrors = computed(() => {
   return []
 })
 const wechatRunning = computed(() => (checks.value.wechatProcessesRunning || []).length > 0)
-const clubTagOptions = computed(() => Array.isArray(state.value.clubTagOptions) ? state.value.clubTagOptions : [])
-const selectedClubTag = computed(() => clubTagOptions.value.find(option => clubTagKey(option) === selectedClubKey.value) || null)
+const circleConfigured = computed(() => state.value.circleConfigured === true && !!state.value.circleId && !!state.value.circleTitle)
+const circleDisabledReason = computed(() => state.value.circleDisabledReason
+  || '服务端未配置完整的 BYD 小程序圈子 ID 和圈子名称')
 const job = computed(() => state.value.latestJob)
 const canCreate = computed(() => editor.value && preflightReady.value && mediaReady.value && !job.value?.status?.match?.(/^(PENDING|RUNNING)$/))
 
@@ -142,14 +144,9 @@ const statusLabel = (value) => ({
   PENDING: '待领取', RUNNING: '执行中', SUCCESS: '成功', FAILED: '失败'
 }[value] || value || '-')
 
-const clubTagKey = (option) => JSON.stringify([String(option.clubId), String(option.clubTitle)])
-const findClubTagOption = (clubId, clubTitle) => clubTagOptions.value.find(
-  option => option.clubId === clubId && option.clubTitle === clubTitle
-) || null
-
-function onClubTagChange() {
-  clubSelectionTouched.value = true
-  if (selectedClubKey.value && !selectedClubTag.value) selectedClubKey.value = ''
+function onCircleChange(value) {
+  circleSelectionTouched.value = true
+  if (value && !circleConfigured.value) includeCircle.value = false
 }
 
 async function loadState(showError = false) {
@@ -158,15 +155,12 @@ async function loadState(showError = false) {
     const res = await bydApi.state(props.projectId)
     if (res.code !== 0 || !res.data) throw new Error(res.msg || '查询 BYD 推送状态失败')
     const data = res.data
-    const options = Array.isArray(data.clubTagOptions)
-      ? data.clubTagOptions.filter(option => option?.clubId && option?.clubTitle)
-      : []
-    state.value = { ...state.value, ...data, clubTagOptions: options }
-    if (clubSelectionTouched.value) {
-      if (selectedClubKey.value && !selectedClubTag.value) selectedClubKey.value = ''
-    } else {
-      const preferred = findClubTagOption(data.clubId, data.clubTitle)
-      selectedClubKey.value = preferred ? clubTagKey(preferred) : ''
+    state.value = { ...state.value, ...data }
+    if (data.circleConfigured !== true || !data.circleId || !data.circleTitle) {
+      // 配置失效时绝不保留“携带圈子”的待提交状态。
+      includeCircle.value = false
+    } else if (!circleSelectionTouched.value) {
+      includeCircle.value = true
     }
     loaded.value = true
     loadError.value = ''
@@ -181,11 +175,8 @@ async function loadState(showError = false) {
 async function createJob() {
   submitting.value = true
   try {
-    const clubTag = selectedClubTag.value
     const res = await bydApi.createJob(props.projectId, {
-      useClubTag: !!clubTag,
-      clubId: clubTag?.clubId || null,
-      clubTitle: clubTag?.clubTitle || null
+      useCircle: circleConfigured.value && includeCircle.value
     })
     if (res.code !== 0 || !res.data) throw new Error(res.msg || '创建 BYD 推送任务失败')
     const data = res.data
@@ -236,9 +227,10 @@ onBeforeUnmount(stopPolling)
 .agent-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
 .agent-grid > div { padding: 10px; border: 1px solid var(--line, #ededed); border-radius: 8px; background: var(--soft, #fafafa); }
 .agent-grid span:first-child { display: block; color: var(--faint, #8a8f98); font-size: 12px; margin-bottom: 4px; }
-.club-form { border-top: 1px solid var(--line, #ededed); padding-top: 14px; }
-.club-tag-select { width: min(360px, 100%); }
-.club-empty-tip { display: block; color: var(--faint, #8a8f98); font-size: 12px; line-height: 1.5; margin-top: 6px; }
+.circle-form { border-top: 1px solid var(--line, #ededed); padding-top: 14px; }
+.circle-control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.circle-name { color: var(--text, #303133); font-weight: 500; }
+.circle-missing-tip { color: var(--warning, #e6a23c); font-size: 12px; line-height: 1.5; }
 .safety-tip { color: var(--faint, #8a8f98); font-size: 12px; line-height: 1.5; margin: 8px 0 10px; }
 .job-status { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: var(--soft, #f6fff8); border: 1px solid var(--ok, #67c23a); }
 .job-status.job-failed { background: #fff6f6; border-color: var(--danger, #f56c6c); }

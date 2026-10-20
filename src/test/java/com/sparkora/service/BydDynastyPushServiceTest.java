@@ -413,25 +413,7 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void state返回完整成对选项并忽略半套项目历史() {
-        when(projectMapper.selectById(88L)).thenReturn(project());
-        when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        when(jobMapper.selectList(any())).thenReturn(List.of());
-
-        Map<String, Object> result = service.state(88L, 7L);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> options = (List<Map<String, Object>>) result.get("clubTagOptions");
-        assertEquals(1, options.size());
-        assertEquals("220", options.get(0).get("clubId"));
-        assertEquals("四川迪友会", options.get(0).get("clubTitle"));
-        assertEquals("220", result.get("clubId"));
-        assertEquals("四川迪友会", result.get("clubTitle"));
-    }
-
-    @Test
-    void state包含完整项目历史对并以项目对为初始选择() {
+    void state只返回服务端固定圈子并忽略项目历史() {
         ArticleProjectEntity p = project();
         p.setBydDynastyClubId("330");
         p.setBydDynastyClubTitle("项目车友会");
@@ -442,20 +424,24 @@ class BydDynastyPushServiceTest {
 
         Map<String, Object> result = service.state(88L, 7L);
 
+        assertEquals(Boolean.TRUE, result.get("circleConfigured"));
+        assertEquals("220", result.get("circleId"));
+        assertEquals("四川迪友会", result.get("circleTitle"));
+        assertNull(result.get("circleDisabledReason"));
+        assertEquals("220", result.get("clubId"));
+        assertEquals("四川迪友会", result.get("clubTitle"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> options = (List<Map<String, Object>>) result.get("clubTagOptions");
-        assertEquals(2, options.size());
-        assertEquals(Map.of("clubId", "220", "clubTitle", "四川迪友会"), options.get(0));
-        assertEquals(Map.of("clubId", "330", "clubTitle", "项目车友会"), options.get(1));
-        assertEquals("330", result.get("clubId"));
-        assertEquals("项目车友会", result.get("clubTitle"));
+        assertEquals(List.of(Map.of("clubId", "220", "clubTitle", "四川迪友会")), options);
     }
 
     @Test
-    void state选项按完整对去重() {
+    void state固定圈子配置不完整时明确禁用且不回退项目历史() {
+        props.setDefaultClubId(null);
+        props.setDefaultClubTitle(null);
         ArticleProjectEntity p = project();
-        p.setBydDynastyClubId("220");
-        p.setBydDynastyClubTitle("四川迪友会");
+        p.setBydDynastyClubId("330");
+        p.setBydDynastyClubTitle("项目车友会");
         when(projectMapper.selectById(88L)).thenReturn(p);
         when(agentMapper.selectList(any())).thenReturn(List.of());
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
@@ -463,13 +449,61 @@ class BydDynastyPushServiceTest {
 
         Map<String, Object> result = service.state(88L, 7L);
 
+        assertEquals(Boolean.FALSE, result.get("circleConfigured"));
+        assertNull(result.get("circleId"));
+        assertNull(result.get("circleTitle"));
+        assertEquals("服务端未配置完整的 BYD 小程序圈子 ID 和圈子名称", result.get("circleDisabledReason"));
+        assertNull(result.get("clubId"));
+        assertNull(result.get("clubTitle"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> options = (List<Map<String, Object>>) result.get("clubTagOptions");
-        assertEquals(1, options.size());
+        assertTrue(options.isEmpty());
     }
 
     @Test
-    void 请求未指定时完整项目对优先于默认对() {
+    void 新请求选择携带圈子时只使用服务端固定圈子() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseCircle(true);
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("220", payload.get("clubId"));
+        assertEquals("四川迪友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 新请求关闭圈子时payload显式写入空对() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseCircle(false);
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertTrue(payload.containsKey("clubId"));
+        assertTrue(payload.containsKey("clubTitle"));
+        assertNull(payload.get("clubId"));
+        assertNull(payload.get("clubTitle"));
+    }
+
+    @Test
+    void 新请求关闭圈子时固定配置不完整仍可创建() {
+        props.setDefaultClubId(null);
+        props.setDefaultClubTitle(null);
         ArticleProjectEntity p = project();
         p.setBydDynastyClubId("330");
         p.setBydDynastyClubTitle("项目车友会");
@@ -479,18 +513,198 @@ class BydDynastyPushServiceTest {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
         when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseCircle(false);
 
-        Map<String, Object> data = service.createJob(88L, new BydPushJobCreateRequest(), 7L);
+        Map<String, Object> data = service.createJob(88L, req, 7L);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = (Map<String, Object>) data.get("payload");
-        assertEquals("330", payload.get("clubId"));
-        assertEquals("项目车友会", payload.get("clubTitle"));
+        assertTrue(payload.containsKey("clubId"));
+        assertTrue(payload.containsKey("clubTitle"));
+        assertNull(payload.get("clubId"));
+        assertNull(payload.get("clubTitle"));
     }
 
     @Test
-    void 项目对不完整时回退到完整默认对() {
+    void 新请求选择携带圈子但固定配置不完整时返回中文400且不创建任务() {
+        props.setDefaultClubId(null);
+        props.setDefaultClubTitle(null);
         when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseCircle(true);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("未配置完整的 BYD 小程序圈子"));
+        verify(agentMapper, never()).selectList(any());
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 新请求关闭圈子但携带非空旧版pair时返回中文400且不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = createRequest();
+        req.setUseCircle(false);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("不能再提供圈子字段"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 新请求携带圈子但旧版pair冲突时返回中文400且不创建任务() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseCircle(true);
+        req.setClubId("999");
+        req.setClubTitle("未知圈子");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("固定圈子不一致"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 新请求携带圈子时匹配旧版pair可兼容() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = createRequest();
+        req.setUseCircle(true);
+        req.setUseClubTag(true);
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("220", payload.get("clubId"));
+        assertEquals("四川迪友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 旧版useClubTag匹配固定圈子时兼容() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = createRequest();
+        req.setUseClubTag(true);
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("220", payload.get("clubId"));
+        assertEquals("四川迪友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 旧版useClubTag与固定圈子冲突时返回中文400() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseClubTag(true);
+        req.setClubId("999");
+        req.setClubTitle("未知圈子");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("固定圈子不一致"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 旧版useClubTag关闭时不接受非空pair() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = createRequest();
+        req.setUseClubTag(false);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("不能再提供圈子字段"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void 旧版useClubTag关闭且不提供pair时payload写入空对() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseClubTag(false);
+
+        Map<String, Object> data = service.createJob(88L, req, 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertTrue(payload.containsKey("clubId"));
+        assertTrue(payload.containsKey("clubTitle"));
+        assertNull(payload.get("clubId"));
+        assertNull(payload.get("clubTitle"));
+    }
+
+    @Test
+    void 旧版useClubTag携带但未提供pair时返回中文400() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
+        req.setUseClubTag(true);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createJob(88L, req, 7L));
+
+        assertTrue(ex.getMessage().contains("必须提供完整的圈子"));
+        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
+        verify(projectMapper, never()).update(isNull(), any());
+    }
+    @Test
+    void 旧版仅提供匹配pair时只使用固定圈子() {
+        when(projectMapper.selectById(88L)).thenReturn(project());
+        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
+        when(agentMapper.selectList(any())).thenReturn(List.of());
+        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
+        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
+        when(projectMapper.update(isNull(), any())).thenReturn(1);
+
+        Map<String, Object> data = service.createJob(88L, createRequest(), 7L);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
+        assertEquals("220", payload.get("clubId"));
+        assertEquals("四川迪友会", payload.get("clubTitle"));
+    }
+
+    @Test
+    void 未指定圈子选择时完整项目历史不再覆盖固定圈子() {
+        ArticleProjectEntity p = project();
+        p.setBydDynastyClubId("330");
+        p.setBydDynastyClubTitle("项目车友会");
+        when(projectMapper.selectById(88L)).thenReturn(p);
         when(versionMapper.selectById(99L)).thenReturn(version("正文"));
         when(agentMapper.selectList(any())).thenReturn(List.of());
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
@@ -506,10 +720,13 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void 项目与默认对都不完整时不生成半套字段() {
+    void 固定配置缺失且未指定选择时不生成半套字段() {
         props.setDefaultClubId(null);
         props.setDefaultClubTitle(null);
-        when(projectMapper.selectById(88L)).thenReturn(project());
+        ArticleProjectEntity p = project();
+        p.setBydDynastyClubId("330");
+        p.setBydDynastyClubTitle("项目车友会");
+        when(projectMapper.selectById(88L)).thenReturn(p);
         when(versionMapper.selectById(99L)).thenReturn(version("正文"));
         when(agentMapper.selectList(any())).thenReturn(List.of());
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
@@ -527,117 +744,30 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void 显式不使用车友会标签时不回退项目或默认标签() {
-        when(projectMapper.selectById(88L)).thenReturn(project());
-        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
-        when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
-        when(projectMapper.update(isNull(), any())).thenReturn(1);
-        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
-        req.setUseClubTag(false);
-
-        Map<String, Object> data = service.createJob(88L, req, 7L);
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
-        assertNull(payload.get("clubId"));
-        assertNull(payload.get("clubTitle"));
-    }
-
-    @Test
-    void 显式使用车友会标签但未提供成对字段时返回中文400且不创建任务() {
-        when(projectMapper.selectById(88L)).thenReturn(project());
-        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
-        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
-        req.setUseClubTag(true);
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.createJob(88L, req, 7L));
-
-        assertTrue(ex.getMessage().contains("必须提供完整"));
-        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
-        verify(projectMapper, never()).update(isNull(), any());
-    }
-
-    @Test
-    void 显式不使用车友会标签但提供成对字段时返回中文400且不创建任务() {
-        when(projectMapper.selectById(88L)).thenReturn(project());
-        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
-        BydPushJobCreateRequest req = createRequest();
-        req.setUseClubTag(false);
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.createJob(88L, req, 7L));
-
-        assertTrue(ex.getMessage().contains("不能再提供标签字段"));
-        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
-        verify(projectMapper, never()).update(isNull(), any());
-    }
-
-    @Test
-    void legacy客户端未传useClubTag时保持项目优先语义() {
-        ArticleProjectEntity p = project();
-        p.setBydDynastyClubId("330");
-        p.setBydDynastyClubTitle("项目车友会");
-        when(projectMapper.selectById(88L)).thenReturn(p);
-        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
-        when(agentMapper.selectList(any())).thenReturn(List.of());
-        when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
-        when(jobMapper.insert(any(BydDynastyPushJobEntity.class))).thenReturn(1);
-        when(projectMapper.update(isNull(), any())).thenReturn(1);
-        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
-        assertNull(req.getUseClubTag());
-
-        Map<String, Object> data = service.createJob(88L, req, 7L);
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> payload = (Map<String, Object>) data.get("payload");
-        assertEquals("330", payload.get("clubId"));
-        assertEquals("项目车友会", payload.get("clubTitle"));
-    }
-
-    @Test
-    void 请求只提供半套车友会标签时返回中文400且不创建任务() {
+    void 请求只提供半套圈子信息时返回中文400且不创建任务() {
         when(projectMapper.selectById(88L)).thenReturn(project());
         when(versionMapper.selectById(99L)).thenReturn(version("正文"));
 
         BydPushJobCreateRequest onlyId = new BydPushJobCreateRequest();
+        onlyId.setUseCircle(true);
         onlyId.setClubId("220");
         IllegalArgumentException idError = assertThrows(IllegalArgumentException.class,
                 () -> service.createJob(88L, onlyId, 7L));
-        assertTrue(idError.getMessage().contains("必须成对选择"));
+        assertTrue(idError.getMessage().contains("圈子信息必须成对提供"));
 
         BydPushJobCreateRequest onlyTitle = new BydPushJobCreateRequest();
+        onlyTitle.setUseClubTag(true);
         onlyTitle.setClubTitle("四川迪友会");
         IllegalArgumentException titleError = assertThrows(IllegalArgumentException.class,
                 () -> service.createJob(88L, onlyTitle, 7L));
-        assertTrue(titleError.getMessage().contains("必须成对选择"));
+        assertTrue(titleError.getMessage().contains("圈子信息必须成对提供"));
 
         verify(agentMapper, never()).selectList(any());
         verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
         verify(projectMapper, never()).update(isNull(), any());
     }
-
     @Test
-    void 请求成对标签不在可用选项时返回中文400且不创建任务() {
-        when(projectMapper.selectById(88L)).thenReturn(project());
-        when(versionMapper.selectById(99L)).thenReturn(version("正文"));
-        BydPushJobCreateRequest req = new BydPushJobCreateRequest();
-        req.setClubId("999");
-        req.setClubTitle("未知车友会");
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.createJob(88L, req, 7L));
-
-        assertTrue(ex.getMessage().contains("不可用"));
-        verify(agentMapper, never()).selectList(any());
-        verify(jobMapper, never()).insert(any(BydDynastyPushJobEntity.class));
-        verify(projectMapper, never()).update(isNull(), any());
-    }
-
-    @Test
-    void 推送成功按同一v2payload成对回写项目标签() {
+    void 推送成功按同一v2payload成对回写圈子审计信息() {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         BydDynastyPushJobEntity job = runningJob();
         job.setPayloadJson("{\"payloadVersion\":2,\"clubId\":\"330\",\"clubTitle\":\"项目车友会\"}");
@@ -662,7 +792,7 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void 推送成功且本次不使用标签时清空项目历史对() {
+    void 推送成功且本次不携带圈子时清空项目历史对() {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         BydDynastyPushJobEntity job = runningJob();
         job.setPayloadJson("{\"payloadVersion\":2,\"clubId\":null,\"clubTitle\":null}");
@@ -688,7 +818,7 @@ class BydDynastyPushServiceTest {
     }
 
     @Test
-    void 推送失败不修改项目历史标签() {
+    void 推送失败不修改项目历史圈子() {
         when(agentMapper.selectOne(any())).thenReturn(onlineAgent());
         BydDynastyPushJobEntity job = runningJob();
         job.setPayloadJson("{\"payloadVersion\":2,\"clubId\":\"330\",\"clubTitle\":\"项目车友会\"}");

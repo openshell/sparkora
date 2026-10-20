@@ -104,7 +104,7 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 **规避**：
 - 语法解析用 commonmark-java（core + gfm-tables + gfm-strikethrough + task-list-items + autolink），版本统一由 `pom.xml` 的 `commonmark.version` 固定。
 - HTML 片段复用项目已有 Jsoup，不引入第二个 HTML 解析器；`script/style/iframe/object/embed/noscript/template` 整体删除。
-- 渲染器输出有序 `TextBlock`/`ImageBlock`；Service 只负责分配 `BODY-n`、`COVER-{imageId}` 和 payload v1，不得再写第二套清洗规则。
+- 渲染器输出有序 `TextBlock`/`ImageBlock`/`VideoBlock`；Service 只负责校验/登记暂存媒体、分配 `MEDIA-n` 引用并生成 payload v2，不接受封面参数，不得再写第二套清洗规则。
 - 原始 `ArticleVersionEntity.contentMd/title` 只读；清洗后无文本且无图片时，在任务落库前抛中文错误。
 - 测试一律用 Mock，禁止读写真实 MMKV 或创建真实 BYD 草稿。
 
@@ -120,4 +120,4 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 - [ ] 新增/改动的 `@Component` 若有多构造器，是否显式 `@Autowired` 标注生产构造器（并加装配守卫测试）？
 - [ ] 新增外部站点采集配置前，是否真机验证可达（非仅凭 HTTP 200；JS 站点走渲染 HTML `cleaned_html`；WAF 验证码站点不保留死栏目）？
 - [ ] 小程序推送正文是否只经过 `BydDynastyPlainTextRenderer`，未新增正则清洗分支？
-- [ ] payload 是否仍为 v1 的 `text`/`img` 契约，Local Agent 无需升级？
+- [ ] payload 是否保持 v2 的 `text`/`img`/`video` 契约且 `clubId`/`clubTitle` 双键语义不变，Local Agent 兼容性是否已核对？

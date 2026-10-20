@@ -29,7 +29,7 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
+
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,6 +51,8 @@ public class BydDynastyPushService {
     private static final int PAYLOAD_VERSION = 2;
     private static final String CHANNEL_BYD_MINIAPP = "byd_miniapp";
     private static final int MAX_ERROR = 990;
+    private static final String CIRCLE_DISABLED_REASON =
+            "服务端未配置完整的 BYD 小程序圈子 ID 和圈子名称";
 
     private final ArticleProjectMapper projectMapper;
     private final ArticleVersionMapper versionMapper;
@@ -260,13 +262,18 @@ public class BydDynastyPushService {
         data.put("agentPreflight", agent == null || agent.getLastPreflightJson() == null ? null : parseJson(agent.getLastPreflightJson()));
         data.put("agentDisabledReason", disabledReason());
 
-        List<ClubTag> clubTags = availableClubTags(project);
+        ClubTag fixedCircle = defaultClubTag();
+        boolean circleConfigured = fixedCircle != null;
         List<Map<String, Object>> clubTagOptions = new ArrayList<>();
-        for (ClubTag clubTag : clubTags) clubTagOptions.add(clubTagMap(clubTag));
-        ClubTag initialClubTag = initialClubTag(project);
+        if (circleConfigured) clubTagOptions.add(clubTagMap(fixedCircle));
+        data.put("circleConfigured", circleConfigured);
+        data.put("circleId", circleConfigured ? fixedCircle.clubId() : null);
+        data.put("circleTitle", circleConfigured ? fixedCircle.clubTitle() : null);
+        data.put("circleDisabledReason", circleConfigured ? null : CIRCLE_DISABLED_REASON);
+        // 兼容已打开的旧页面：它仍读取单元素 options 和 clubId/clubTitle。
         data.put("clubTagOptions", clubTagOptions);
-        data.put("clubId", initialClubTag == null ? null : initialClubTag.clubId());
-        data.put("clubTitle", initialClubTag == null ? null : initialClubTag.clubTitle());
+        data.put("clubId", circleConfigured ? fixedCircle.clubId() : null);
+        data.put("clubTitle", circleConfigured ? fixedCircle.clubTitle() : null);
         data.put("publishedAt", project.getBydDynastyPublishedAt());
         data.put("lastJobId", project.getBydDynastyLastJobId());
         data.put("lastDraftId", project.getBydDynastyLastDraftId());
@@ -285,7 +292,7 @@ public class BydDynastyPushService {
 
         ArticleProjectEntity project = requireBydProject(projectId, true);
         ArticleVersionEntity version = requireVersion(project);
-        ClubTag clubTag = resolveClubTag(req, project);
+        ClubTag clubTag = resolveClubTag(req);
         markStaleAgentsOffline();
         BydDynastyAgentEntity agent = currentOnlineAgent(createdBy);
         if (agent == null) throw new IllegalStateException("BYD 本地 Agent 未注册或离线，请先在本机启动 Agent 并完成注册");
@@ -383,68 +390,62 @@ public class BydDynastyPushService {
         return new ClubTag(props.getDefaultClubId().trim(), props.getDefaultClubTitle().trim());
     }
 
-    private ClubTag completeClubTag(String clubId, String clubTitle) {
-        String normalizedId = blankToNull(clubId);
-        String normalizedTitle = blankToNull(clubTitle);
-        return normalizedId == null || normalizedTitle == null
-                ? null : new ClubTag(normalizedId, normalizedTitle);
-    }
 
     private ClubTag normalizeClubTag(String clubId, String clubTitle) {
         String normalizedId = blankToNull(clubId);
         String normalizedTitle = blankToNull(clubTitle);
         if (normalizedId == null && normalizedTitle == null) return null;
         if (normalizedId == null || normalizedTitle == null) {
-            throw new IllegalArgumentException("车友会标签必须成对选择，不能只提供车友会 ID 或标签名");
+            throw new IllegalArgumentException("圈子信息必须成对提供，不能只提供 ID 或名称");
         }
         return new ClubTag(normalizedId, normalizedTitle);
     }
 
-    private List<ClubTag> availableClubTags(ArticleProjectEntity project) {
-        LinkedHashSet<ClubTag> options = new LinkedHashSet<>();
-        ClubTag defaultTag = defaultClubTag();
-        if (defaultTag != null) options.add(defaultTag);
-        ClubTag projectTag = completeClubTag(project.getBydDynastyClubId(), project.getBydDynastyClubTitle());
-        if (projectTag != null) options.add(projectTag);
-        return new ArrayList<>(options);
-    }
-
-    private ClubTag initialClubTag(ArticleProjectEntity project) {
-        ClubTag projectTag = completeClubTag(project.getBydDynastyClubId(), project.getBydDynastyClubTitle());
-        return projectTag == null ? defaultClubTag() : projectTag;
-    }
-
-    private ClubTag resolveClubTag(BydPushJobCreateRequest req, ArticleProjectEntity project) {
+    private ClubTag resolveClubTag(BydPushJobCreateRequest req) {
         String requestClubId = req == null ? null : req.getClubId();
         String requestClubTitle = req == null ? null : req.getClubTitle();
-        Boolean useClubTag = req == null ? null : req.getUseClubTag();
+        Boolean useCircle = req == null ? null : req.getUseCircle();
+        Boolean legacyUseClubTag = req == null ? null : req.getUseClubTag();
+        ClubTag requested = normalizeClubTag(requestClubId, requestClubTitle);
 
-        if (Boolean.FALSE.equals(useClubTag)) {
-            ClubTag supplied = normalizeClubTag(requestClubId, requestClubTitle);
-            if (supplied != null) {
-                throw new IllegalArgumentException("明确选择不使用车友会标签时不能再提供标签字段");
+        if (useCircle != null) {
+            if (legacyUseClubTag != null && !useCircle.equals(legacyUseClubTag)) {
+                throw new IllegalArgumentException("圈子选择参数冲突，请刷新后重试");
+            }
+            if (!useCircle) {
+                if (requested != null) {
+                    throw new IllegalArgumentException("明确选择不携带圈子时不能再提供圈子字段");
+                }
+                return null;
+            }
+            return requireConfiguredCircle(requested);
+        }
+
+        if (Boolean.FALSE.equals(legacyUseClubTag)) {
+            if (requested != null) {
+                throw new IllegalArgumentException("明确选择不携带圈子时不能再提供圈子字段");
             }
             return null;
         }
-
-        ClubTag requested = normalizeClubTag(requestClubId, requestClubTitle);
-        if (Boolean.TRUE.equals(useClubTag)) {
+        if (Boolean.TRUE.equals(legacyUseClubTag)) {
             if (requested == null) {
-                throw new IllegalArgumentException("明确使用车友会标签时必须提供完整的车友会 ID 与标签名");
+                throw new IllegalArgumentException("旧版请求选择携带圈子时必须提供完整的圈子 ID 与名称");
             }
-            return requireAvailableClubTag(requested, project);
+            return requireConfiguredCircle(requested);
         }
-
-        if (requested != null) return requireAvailableClubTag(requested, project);
-        ClubTag projectTag = completeClubTag(project.getBydDynastyClubId(), project.getBydDynastyClubTitle());
-        return projectTag == null ? defaultClubTag() : projectTag;
+        if (requested != null) return requireConfiguredCircle(requested);
+        return defaultClubTag();
     }
 
-    private ClubTag requireAvailableClubTag(ClubTag requested, ArticleProjectEntity project) {
-        if (!availableClubTags(project).contains(requested)) {
-            throw new IllegalArgumentException("所选车友会标签不可用，请刷新后重新选择");
+    private ClubTag requireConfiguredCircle(ClubTag requested) {
+        ClubTag fixedCircle = defaultClubTag();
+        if (fixedCircle == null) {
+            throw new IllegalArgumentException("服务端未配置完整的 BYD 小程序圈子，当前不能携带圈子");
         }
-        return requested;
+        if (requested != null && !fixedCircle.equals(requested)) {
+            throw new IllegalArgumentException("请求中的圈子与服务端固定圈子不一致，请刷新后重试");
+        }
+        return fixedCircle;
     }
 
     private Map<String, Object> clubTagMap(ClubTag clubTag) {
@@ -459,7 +460,7 @@ public class BydDynastyPushService {
         try {
             return json.readTree(job.getPayloadJson());
         } catch (Exception e) {
-            throw new IllegalStateException("任务 payload 格式损坏，无法回写车友会标签", e);
+            throw new IllegalStateException("任务 payload 格式损坏，无法回写圈子审计信息", e);
         }
     }
 

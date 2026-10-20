@@ -155,11 +155,11 @@ multipart field: buffer
 | 仅文本/仅图片/仅视频 | 允许创建 payload |
 | 版本有封面 | 忽略，不注入消息 |
 
-## 8.1 Scenario: 车友会标签成对选择与回写
+## 8.1 Scenario: 固定圈子可选携带与回写
 
 ### 1. Scope / Trigger
 
-修改 BYD 推送页车友会选择、`push-jobs` 请求、项目 `byd_dynasty_club_*` 字段或 Agent 草稿标签时触发。`clubId` 与 `clubTitle` 是同一个“车友会标签”的内部 ID 和显示名称，不是两个独立业务选项。
+修改 BYD 推送页圈子开关、`push-jobs` 请求、项目 `byd_dynasty_club_*` 审计字段或 Agent 草稿圈子字段时触发。用户可见业务对象是“圈子”；`clubId` / `clubTitle` 只是 BYD 草稿协议字段，不是两个独立业务选项。
 
 ### 2. Signatures
 
@@ -168,52 +168,62 @@ GET  /api/projects/{id}/byd-dynasty/state
 POST /api/projects/{id}/byd-dynasty/push-jobs
 ```
 
-- `GET state` 返回 `clubTagOptions: [{clubId, clubTitle}]`，以及兼容字段 `clubId` / `clubTitle` 作为初始选择。
-- `POST push-jobs` 请求：
+- `GET state` 权威字段：
   ```json
-  {"useClubTag": true, "clubId": "220", "clubTitle": "四川迪友会"}
+  {"circleConfigured": true, "circleId": "220", "circleTitle": "四川迪友会", "circleDisabledReason": null}
   ```
-- payload v2 顶层继续保存：
+- 配置不完整时 `circleConfigured=false`、`circleId/circleTitle=null`，`circleDisabledReason` 明确提示服务端未配置完整圈子。
+- 旧页面兼容字段：同一个固定圈的 `clubId` / `clubTitle`，以及 0 或 1 个 `clubTagOptions`。项目历史圈子不是第二个选项。
+- 新 `POST push-jobs` 请求：
+  ```json
+  {"useCircle": true}
+  ```
+- payload v2 顶层继续保存 BYD 协议字段：
   ```json
   {"clubId": "220", "clubTitle": "四川迪友会"}
   ```
-- 不使用时两个 payload 字段都存在且为 `null`，用于与旧任务缺少字段的语义区分。
+- 不携带圈子时两个 payload 字段都存在且为 `null`，用于与旧任务缺少字段的语义区分。
 
 ### 3. Contracts
 
-- 可用选项只包括完整的默认配置对和完整的项目历史对；半套值必须忽略。
-- `useClubTag=true`：必须提供完整 pair，且必须精确匹配一个可用选项。
-- `useClubTag=false`：显式不使用；如同时提供非空 pair 则拒绝。
-- `useClubTag=null`：旧客户端兼容；成对请求优先，否则完整项目历史优先，再否则完整默认值。
-- 成功 v2 任务将 payload 中的精确 pair 回写项目；失败任务不修改；v1 成功任务缺少两个 key 时也不修改。
+- 固定圈子唯一来源是 `BydDynastyProperties.defaultClubId/defaultClubTitle`；二者都非空才算完整配置。
+- `useCircle=true`：服务端读取固定圈子；前端提交的旧版 pair 若存在必须与固定圈子匹配。
+- `useCircle=false`：创建显式空 pair；不得同时携带非空旧版 pair。
+- `useCircle` 缺省：保留旧客户端兼容。`useClubTag=true` 的完整 pair、或仅提交的完整 pair，都必须匹配当前固定圈子；`useClubTag=false` 不得带非空 pair。没有选择字段时使用完整固定圈子，否则使用空 pair。
+- 项目历史 `byd_dynasty_club_*` 只作最近一次成功任务审计，不参与 state 选项或创建请求解析。
+- 成功 v2 任务将 payload 中实际圈子对回写项目；失败任务不修改；v1 成功任务缺少两个 key 时也不修改。
 - Agent 必须区分“两个 key 都不存在”和“两个 key 都存在但为空”：
   - 都不存在：旧 v1 兼容，允许使用完整本地配置。
-  - 都存在且为空：显式不使用，禁止回退本地配置。
+  - 都存在且为空：显式不携带圈子，禁止回退本地配置。
   - 只存在一个或只有一个非空：拒绝写 MMKV。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 行为 |
 | --- | --- |
+| `useCircle=true` 且固定配置完整 | 使用服务端固定 pair |
+| `useCircle=true` 且固定配置不完整 | 中文 400，不创建 job |
+| `useCircle=false` | payload 的 `clubId` / `clubTitle` 均显式为 null |
+| `useCircle=false` 且固定配置不完整 | 仍可创建不携带圈子的任务 |
+| `useCircle=false` 但携带非空旧版 pair | 中文 400，不创建 job |
+| `useCircle=true` 与旧版 pair 冲突 | 中文 400，不创建 job |
+| 旧版 `useClubTag=true` 但 pair 不完整 | 中文 400，不创建 job |
+| 旧版 pair 与固定圈子不一致 | 中文 400，不创建 job |
 | 请求只提供 `clubId` 或只提供 `clubTitle` | 中文 400，不创建 job |
-| `useClubTag=true` 但 pair 不完整 | 中文 400，不创建 job |
-| pair 不匹配任何可用选项 | 中文 400，不创建 job |
-| `useClubTag=false` 但携带非空 pair | 中文 400，不创建 job |
-| 项目历史 pair 不完整 | 忽略该 pair，回退完整默认对 |
-| v2 payload 的 pair key 存在但为空 | Agent 写入空标签，不回退本地配置 |
+| v2 payload 的 pair key 存在但为空 | Agent 写入空圈子字段，不回退本地配置 |
 | Agent 收到半套 payload 或半套本地配置 | 明确中文错误，不写 MMKV |
 
 ### 5. Good/Base/Bad Cases
 
-- Good：选择“四川迪友会”时，页面只显示一个选择器，payload 与草稿均为 `220 + 四川迪友会`。
-- Base：选择“不使用”且服务端配置了默认标签，payload 仍写入两个空值，成功回写后清空项目标签。
-- Bad：分别对 ID 和名称执行 `firstNonBlank` 或逐字段 `or` 回退，导致 `220 + 另一个名称`。
+- Good：配置为 `220 / 四川迪友会` 时，页面显示“圈子：四川迪友会”和默认开启的“携带圈子”开关。
+- Base：关闭开关后 payload 仍包含两个空 key，Agent 写空圈子字段；成功回写会清空项目审计 pair。
+- Bad：把项目历史圈子加入 state 选项，或逐字段从请求、项目、默认配置回退，产生过期或半套 pair。
 
 ### 6. Tests Required
 
-- Java：`clubTagOptions`、完整项目对优先级、显式不使用、半套/未知 pair 拒绝、无副作用失败、成功 v2 回写、v1 不回写。
+- Java：固定圈子 state 字段、忽略项目历史、`useCircle` true/false、配置缺失、旧版 pair 匹配/冲突、半套 pair、无副作用失败、成功 v2 回写、v1 不回写。
 - Agent pytest：完整 payload pair、完整本地回退、显式空 pair 覆盖本地配置、缺失 key 的 v1 兼容、半套 payload/config 拒绝且不写 MMKV。
-- 前端构建：单个选择器、完整 pair key、`useClubTag` 与 pair 同时提交。
+- 前端构建：单开关、默认开启、配置缺失禁用、轮询保留/失效关闭，以及只提交 `useCircle`。
 
 ### 7. Wrong vs Correct
 
@@ -227,7 +237,7 @@ String clubTitle = firstNonBlank(req.getClubTitle(), project.getClubTitle(), pro
 #### Correct
 
 ```java
-ClubTag pair = resolveClubTag(req, project); // atomic request/project/default resolution
+ClubTag pair = resolveClubTag(req); // fixed config + legacy compatibility
 payload.put("clubId", pair == null ? null : pair.clubId());
 payload.put("clubTitle", pair == null ? null : pair.clubTitle());
 ```

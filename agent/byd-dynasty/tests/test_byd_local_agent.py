@@ -190,7 +190,7 @@ def test_build_draft_rejects_payload_with_only_one_club_key_present(tmp_path: Pa
         "clubId": "220",
     }
 
-    with pytest.raises(agent.AgentError, match="任务中的车友会标签不完整"):
+    with pytest.raises(agent.AgentError, match="任务中的圈子不完整"):
         agent.build_draft(payload, agent.compile_messages(payload, {}), config)
 
 
@@ -206,7 +206,7 @@ def test_build_draft_rejects_partial_payload_club_pair(tmp_path: Path):
         "clubTitle": "",
     }
 
-    with pytest.raises(agent.AgentError, match="任务中的车友会标签不完整"):
+    with pytest.raises(agent.AgentError, match="任务中的圈子不完整"):
         agent.build_draft(payload, agent.compile_messages(payload, {}), config)
 
 
@@ -220,7 +220,7 @@ def test_build_draft_rejects_partial_local_club_pair_when_fallback_needed(tmp_pa
         "messages": [{"type": "text", "content": "正文"}],
     }
 
-    with pytest.raises(agent.AgentError, match="本地车友会标签配置不完整"):
+    with pytest.raises(agent.AgentError, match="本地圈子配置不完整"):
         agent.build_draft(payload, agent.compile_messages(payload, {}), config)
 
 
@@ -244,7 +244,7 @@ def test_partial_club_pair_does_not_write_mmkv(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(agent, "write_mmkv", unexpected_write)
 
-    with pytest.raises(agent.AgentError, match="任务中的车友会标签不完整"):
+    with pytest.raises(agent.AgentError, match="任务中的圈子不完整"):
         agent.execute_job(config, payload)
     assert write_called is False
 
