@@ -131,7 +131,7 @@ protected void persistImages(CarModelEntity model, GoodsInfoDto.Item item)
 
 卡片：
 
-- 缩略图 `coverUrlOf(row)`（封面优先，回退 `introImageUrls[0]`），`fit="contain"` + 纸色底 + 内边距，避免透明 PNG 被裁切。
+- 缩略图 `coverUrlOf(row)`（封面优先，回退 `introImageUrls[0]`）：主图 `fit="contain"` + 纸色底 + 内边距，避免透明 PNG 被裁切；回退详情图时改用 `fit="cover"` + `object-position: top` 裁出长图顶部（详情图实测 1080×12657～1920×38853，contain 会缩成窄条）。
 - 状态标签 + 最后成功时间；失败时展示 `lastSyncError`（卡片内截断 + tooltip）。
 - 操作：详情、同步、失败时「重试」、删除。
 - 无图统一占位图标。
@@ -140,7 +140,7 @@ protected void persistImages(CarModelEntity model, GoodsInfoDto.Item item)
 
 `CarDetail.vue` 增加：
 
-- Hero 区：封面（无则首图）大图；无图隐藏。
+- Hero 区：封面（无则详情图首图顶部裁剪）大图；无图隐藏。
 - 图集：`introImageUrls` 缩略图行，`el-image` 用 `preview-src-list` 指向原图 URL。
 - 卖点：`features` 为 JSON 字符串，解析为 chips；解析失败静默不渲染。
 - 失败状态：`lastSyncError` 以 `el-alert` 展示。
@@ -158,7 +158,7 @@ protected void persistImages(CarModelEntity model, GoodsInfoDto.Item item)
 
 ## 5. 兼容与迁移
 
-- `cover_image_id` 对存量行为 NULL；前端回退逻辑保证旧数据展示不变（仍显示详情图首图）。
+- `cover_image_id` 对存量行为 NULL；前端回退逻辑保证旧数据不出现窄条（详情图首图顶部裁剪）。
 - 存量封面补齐：部署后由 ADMIN/EDITOR 在知识中心「运维 → 图片补入库」触发一次 `IMAGE_BACKFILL`；该任务已具备内容哈希去重，可重复执行。
 - `intro_images` 字段语义不变；封面独立字段不参与正文配图/向量域。
 - `http.js` 已拆包，所有调用读 `res.data`。

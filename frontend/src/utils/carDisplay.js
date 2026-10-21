@@ -13,6 +13,17 @@ export function coverUrlOf(row) {
   return Array.isArray(intro) && intro.length ? intro[0] || '' : ''
 }
 
+/**
+ * 当前展示的是否为「无主图 → 详情图首图」回退。
+ *
+ * 详情图是超长竖图（实测 1080×12657～1920×38853），不能按 contain 整张塞进卡片，
+ * 否则会缩成一条窄缝；回退时由视图改为 cover + object-position: top，裁出长图顶部。
+ */
+export function coverIsFallback(row) {
+  return !!row && !row.coverImageUrl
+    && Array.isArray(row.introImageUrls) && !!row.introImageUrls[0]
+}
+
 /** 卖点字段兼容 JSON 字符串 / 数组两态；解析失败/空值返回 []。 */
 export function parseFeatures(raw) {
   if (Array.isArray(raw)) return raw.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim())

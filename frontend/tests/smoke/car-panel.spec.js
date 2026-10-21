@@ -32,6 +32,11 @@ test('car tab renders cover fallback, stats and failure reason', async ({ page }
   // 封面优先 / 无封面回退详情图首图
   await expect(cards.nth(0).locator('img').first()).toHaveAttribute('src', 'https://img.example.com/cover.png')
   await expect(cards.nth(1).locator('img').first()).toHaveAttribute('src', 'https://img.example.com/detail1.png')
+  // 主图 contain；回退详情图改为顶部裁剪（cover + object-position: top），避免长图缩成窄条
+  await expect(cards.nth(0).locator('img').first()).toHaveCSS('object-fit', 'contain')
+  await expect(cards.nth(1).locator('.thumb')).toHaveClass(/thumb--fallback/)
+  await expect(cards.nth(1).locator('img').first()).toHaveCSS('object-fit', 'cover')
+  await expect(cards.nth(1).locator('img').first()).toHaveCSS('object-position', '50% 0%')
 
   // 失败原因可见（截断容器）
   await expect(page.locator('.c-error')).toContainText('官网采集失败')

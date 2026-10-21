@@ -108,8 +108,9 @@
         </div>
         <div v-else class="car-grid">
           <div v-for="row in filtered" :key="row.id" class="car-card" :class="{ selected: selectedIds.includes(row.id) }">
-            <div class="thumb" @click="goDetail(row)">
-              <el-image v-if="coverUrlOf(row)" :src="coverUrlOf(row)" fit="contain" lazy class="cover-img" />
+            <div class="thumb" :class="{ 'thumb--fallback': coverIsFallback(row) }" @click="goDetail(row)">
+              <el-image v-if="coverUrlOf(row)" :src="coverUrlOf(row)"
+                :fit="coverIsFallback(row) ? 'cover' : 'contain'" lazy class="cover-img" />
               <div v-else class="thumb-ph"><el-icon :size="22"><Van /></el-icon></div>
               <el-checkbox v-if="user.isEditorOrAbove" class="pick" :model-value="selectedIds.includes(row.id)"
                 title="选择该车型" @click.stop @change="toggleSelect(row)" />
@@ -158,7 +159,7 @@ import { Search, Refresh, WarningFilled, Van, Setting } from '@element-plus/icon
 import CarJobPanel from '../../components/car/CarJobPanel.vue'
 import CarCatalogDrawer from '../../components/car/CarCatalogDrawer.vue'
 import { useCarSyncJob } from '../../composables/useCarSyncJob'
-import { coverUrlOf, formatPrice, sortCars, statusMeta } from '../../utils/carDisplay'
+import { coverIsFallback, coverUrlOf, formatPrice, sortCars, statusMeta } from '../../utils/carDisplay'
 
 const user = useUserStore()
 const router = useRouter()
@@ -445,7 +446,8 @@ onBeforeUnmount(stopPoll)
 .car-card.selected { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-weak); }
 .thumb { position: relative; aspect-ratio: 4 / 3; background: var(--paper); cursor: pointer; padding: 10px; }
 .thumb :deep(.el-image), .cover-img { width: 100%; height: 100%; }
-.thumb :deep(.el-image__inner) { object-fit: contain; }
+.thumb :deep(.el-image__inner) { object-position: center; }
+.thumb--fallback :deep(.el-image__inner) { object-position: top center; }
 .thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); }
 .pick { position: absolute; top: 6px; left: 8px; padding: 2px 4px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--card) 82%, transparent); }
 .sk-thumb { width: 100%; height: 140px; }

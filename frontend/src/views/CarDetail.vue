@@ -40,7 +40,8 @@
 
         <!-- Hero 封面（无封面回退详情图首图；均无图则隐藏） -->
         <div v-if="heroUrl" class="hero">
-          <el-image :src="heroUrl" fit="contain" class="hero-img" :preview-src-list="galleryUrls"
+          <el-image :src="heroUrl" :fit="heroIsFallback ? 'cover' : 'contain'" class="hero-img"
+            :class="{ 'hero-img--fallback': heroIsFallback }" :preview-src-list="galleryUrls"
             preview-teleported hide-on-click-modal />
         </div>
 
@@ -121,7 +122,7 @@ import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage } from 'element-plus'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
-import { coverUrlOf, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
+import { coverIsFallback, coverUrlOf, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
 
 const route = useRoute()
 const user = useUserStore()
@@ -138,6 +139,7 @@ const answer = ref('')
 const hits = ref([])
 
 const heroUrl = computed(() => (detail.value ? coverUrlOf(detail.value.model) : ''))
+const heroIsFallback = computed(() => (detail.value ? coverIsFallback(detail.value.model) : false))
 const introUrls = computed(() => {
   const urls = detail.value?.model?.introImageUrls
   return Array.isArray(urls) ? urls.filter(Boolean) : []
@@ -240,7 +242,8 @@ onMounted(load)
   justify-content: center;
 }
 .hero-img { width: 100%; max-width: 680px; height: 320px; }
-.hero-img :deep(.el-image__inner) { object-fit: contain; }
+.hero-img :deep(.el-image__inner) { object-position: center; }
+.hero-img--fallback :deep(.el-image__inner) { object-position: top center; }
 
 .feature-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .feature-label { font-size: 13px; color: var(--muted); }
@@ -254,6 +257,7 @@ onMounted(load)
   border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: var(--paper); padding: 4px;
 }
+.gallery-thumb :deep(.el-image__inner) { object-position: top center; }
 
 .version-bar { display: flex; align-items: center; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
 .v-label { color: var(--muted); font-size: 13px; }

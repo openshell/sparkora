@@ -13,7 +13,7 @@
 | 项 | 契约 |
 |---|---|
 | `car_model.intro_images` | **语义 = 图库 `image_asset.id` 列表 JSON**（非 URL）；存量旧数据可能为 URL 数组，双读兼容 |
-| `introImageUrls` | 非持久化派生字段（`@TableField(exist=false)`）：`list()`/`detail()` 由 `introImages` 实时解析——数字 id → `ImageService.publicUrl`，`http` 开头原样保留，解析失败跳过；前端车型卡片取 `coverUrlOf(row)`（封面优先，回退 `introImageUrls[0]`） |
+| `introImageUrls` | 非持久化派生字段（`@TableField(exist=false)`）：`list()`/`detail()` 由 `introImages` 实时解析——数字 id → `ImageService.publicUrl`，`http` 开头原样保留，解析失败跳过；前端车型卡片取 `coverUrlOf(row)`（封面优先，无封面回退 `introImageUrls[0]` 并按顶部裁剪展示） |
 | `car_model.cover_image_id` | **封面图库资产 id**（`BIGINT`，Flyway `V26__car_model_cover_image.sql`；10-21 新增，NULL = 无封面）。来源：官网 `goodsInfo.img` 主体图（透明 PNG）转存；与 `intro_images` 详情图集**分离、互不覆盖** |
 | `coverImageUrl` | 非持久化派生字段（`@TableField(exist=false)`）：由 `coverImageId` 实时解析为图床公网 URL；解析失败/无封面为 `null`，**不回退详情图**（保证「封面覆盖」统计真实，回退由前端展示层完成） |
 | 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块；并按 `modelId` 物理清理单表 store（`deleteByCarModel`，兜底历史逻辑删除残留；**10-03 E6 前为 `sparkora_car_doc_embedding`，已退役**）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
@@ -23,7 +23,7 @@
 
 - `intro_images` 字段级：图库资产 id 列表（JSON 字符串，TEXT 列），由 `CarModelService.persistImages` 在同步时转存图库后写入（单图失败不阻断）；标签 `车型-<车型名>`（见 [image.md](../image.md)「BYD 图片自动分类」）。**10-15 存量回填后统一收敛为 id 列表语义**（旧 URL 数组随 IMAGE_BACKFILL/增量轻回填自然替换）。
 - 封面字段级：`cover_image_id` 由 `persistImages` 从 `goodsInfo.img` 转存后写入，命名 `<车型名>-cover.<ext>`，标签 `[车型-<车型名>, 车型主图]`，`source=byd`、`project_id=null`、`created_by=system`。空 `img` 或下载失败**不冲写旧封面**。
-- `introImageUrls`/`coverImageUrl` 与 `introImages`/`coverImageId` 的区别是前端常见 bug 来源：**不要把持久化 id 字段当 URL 用**；`coverImageUrl` 为空时由前端 `coverUrlOf` 回退详情图首图。
+- `introImageUrls`/`coverImageUrl` 与 `introImages`/`coverImageId` 的区别是前端常见 bug 来源：**不要把持久化 id 字段当 URL 用**；`coverImageUrl` 为空时由前端 `coverUrlOf` 回退详情图首图，`coverIsFallback` 标记回退态，长图用 `object-fit: cover` + `object-position: top` 裁出顶部，避免整张竖图缩成窄条。
 
 ---
 
@@ -104,10 +104,10 @@
 
 ## 6. 前端
 
-- `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改，见 [center.md](center.md)）：搜索/网络/状态（含「无封面」）/排序（最近同步·名称·价格）/刷新；统计条为「全部·已同步·失败·同步中·封面覆盖」；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图；`fit="contain"` + 纸色底）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）。
+- `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改，见 [center.md](center.md)）：搜索/网络/状态（含「无封面」）/排序（最近同步·名称·价格）/刷新；统计条为「全部·已同步·失败·同步中·封面覆盖」；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图）；主图 `fit="contain"` + 纸色底，回退详情图时 `fit="cover"` + 顶部对齐裁剪（`object-position: top`）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）。
 - 内聚同步（R4）：`components/car/CarCatalogDrawer.vue`（抽屉内加载官网目录 + 同步选中 + 图片补入库）、`CarCatalogGrid.vue`（目录网格/筛选/全选，纯展示）、`CarJobPanel.vue`（任务进度 + 失败/备注明细 + 重试；`can-retry` 控写权限）。任务由 `composables/useCarSyncJob.js` 统一轮询（2s、终态停止、连续 3 次失败停止；`beginStart`/`cancelStart` 覆盖 createJob 请求在途 → 首次轮询的防重窗口；`recoverLatest` 只恢复 `startedAt` 60 分钟内的 RUNNING（陈旧 RUNNING 不阻塞新建，与后端 `SYNC_STALE_MS` 同口径），否则展示 24h 内最近终态任务）。
 - `views/CarSync.vue`（`/car/sync` 保留）：复用上述三组件 + composable，页面内直接展示目录网格；删除重复的轮询/任务面板实现；同步/补入库按钮按 EDITOR+ 显隐。
-- `views/CarDetail.vue`：Hero 封面（无则详情图首图，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；同步后刷新详情。
+- `views/CarDetail.vue`：Hero 封面（无则详情图首图顶部裁剪，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；同步后刷新详情。
 - `utils/carDisplay.js`：`coverUrlOf` / `parseFeatures` / `formatPrice` / `sortCars` / `statusMeta` 纯函数（卡片、详情、同步页共用）。
 - ~~`views/CarLibrary.vue`~~ 已不存在（其能力由知识中心车型 Tab 承接）。
 - `api/index.js` 的 `carApi`。

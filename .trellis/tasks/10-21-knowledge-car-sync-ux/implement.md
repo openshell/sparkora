@@ -39,7 +39,7 @@
 - [x] E2 统计条改为：全部、已同步、失败、同步中、封面覆盖；移除 `imageApi.list` 请求。
 - [x] E3 接入 `CarJobPanel` + `useCarSyncJob`；挂载时 `recoverLatest()`，创建任务后 `startPoll`。
 - [x] E4 批量选择（checkbox 恒定可见，EDITOR+）、批量同步、批量删除（`Promise.allSettled` + 汇总提示）。
-- [x] E5 卡片缩略图 `coverUrlOf` + `fit="contain"` + 纸色底；失败原因 tooltip；失败卡片显示「重试」。
+- [x] E5 卡片缩略图 `coverUrlOf` + 主图 `fit="contain"` + 纸色底；无主图回退详情图时 `fit="cover"` + 顶部裁剪；失败原因 tooltip；失败卡片显示「重试」。
 - [x] E6 空态/骨架/错误三态与清除筛选、筛选结果数。
 - [x] E7 删除确认文案补充「不删除共享图库资产」。
 
@@ -50,14 +50,14 @@
 
 ### G. 详情页
 
-- [x] G1 `CarDetail.vue` 增加 Hero 封面（无则首图）、图集（原图 `preview-src-list`）、卖点 chips。
+- [x] G1 `CarDetail.vue` 增加 Hero 封面（无则详情图首图顶部裁剪）、图集（原图 `preview-src-list`）、卖点 chips。
 - [x] G2 增加 `lastSyncError` 告警；同步后刷新详情。
 - [x] G3 图片缺失/features 解析失败静默降级，不破版。
 
 ### H. E2E 与文档
 
 - [x] H1 `frontend/tests/fixtures/index.js` 增加 `/api/car/models`、`/api/car/catalog`、`/api/car/sync/jobs` 的 mock。
-- [x] H1b `frontend/tests/smoke/car-panel.spec.js`：车型 Tab 封面优先/详情图回退、统计条口径（含封面覆盖 1/2）、失败原因展示、「无封面」筛选与清除筛选。
+- [x] H1b `frontend/tests/smoke/car-panel.spec.js`：车型 Tab 封面优先/详情图回退、主图 contain 与回退图 cover+top、统计条口径（含封面覆盖 1/2）、失败原因展示、「无封面」筛选与清除筛选。
 - [x] H2 `docs/spec/knowledge/car.md`：`cover_image_id`/`coverImageUrl` 字段、同步/回填链路、接口与前端更新。
 - [x] H3 `docs/spec/knowledge/center.md`：车型 Tab 新能力与运维入口。
 - [x] H4 `docs/spec/image.md`：封面标签 `车型主图` 与 BYD 图片来源说明。
@@ -65,18 +65,18 @@
 ### I. 最终验证
 
 - [x] I1 `mvn -q -DskipTests compile`
-- [x] I2 `mvn test`（1182 passed）
+- [x] I2 `mvn test`（合并 main 后 1263 passed）
 - [x] I3 `cd frontend && npm run build`
 - [x] I4 `cd frontend && npx playwright test tests/smoke/console-noise.spec.js`
-- [ ] I5 手动：`./dev.sh restart backend` + 前端热更新 → 运维「图片补入库」→ 抽查封面/失败状态/任务恢复。
-- [x] I6 对照 PRD 验收清单逐条勾选，记录未覆盖项（仅 I5 真机回填待环境；本地 5661 被产线容器占用）。
+- [x] I5 产线「图片补入库」job 9：57/57 成功；46 台有 `img` 车型写入封面（与官网 `img` SHA-256 一致），11 台官网空条目无主图、回退详情图顶部裁剪。
+- [x] I6 对照 PRD 验收清单逐条勾选；数据事实与无主图兜底口径已记录。
 
 ## 风险文件与回滚点
 
 - `src/main/resources/db/migration/V26__car_model_cover_image.sql`：版本号与未合并 BYD 分支 V24/V25 的协调；迁移只加列，回滚保留列即可。
 - `CarModelService.java`（717 行）：图片落库与状态回写集中改动，改动后先跑 `CarModelBackfillImagesTest`。
 - `CarSyncJobService.java`：失败回写包裹 try/catch，避免影响任务终态。
-- `CarKnowledgePanel.vue`（300 行）重写：保留原三态与轮询清理；新组件先落地再替换。
+- `CarKnowledgePanel.vue`（469 行）重写：保留原三态与轮询清理；新组件先落地再替换。
 - `CarSync.vue` 复用改造：若回归成本高，可保留旧实现，仅知识中心使用新组件（回滚点）。
 - Flyway 合并顺序：若 V24/V25 尚未合入 main，本任务 V26 先合入后可能使 BYD 分支迁移被判 ignored；合并前需协调。
 
