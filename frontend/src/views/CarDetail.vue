@@ -31,6 +31,9 @@
               @click="onSync">
               <el-icon class="btn-icon"><Refresh /></el-icon>同步
             </el-button>
+            <el-button v-if="user.isEditorOrAbove && hasRawGroups" :loading="cleaning" @click="onClean">
+              重新清洗
+            </el-button>
             <el-button @click="$router.push('/knowledge')">返回</el-button>
           </div>
         </div>
@@ -43,6 +46,11 @@
         <el-alert v-else-if="detail.model.lastSyncError" class="sync-error" type="error" :closable="false" show-icon
           title="最近一次同步失败">
           <template #default><span class="sync-error-text">{{ detail.model.lastSyncError }}</span></template>
+        </el-alert>
+
+        <el-alert v-if="hasRawGroups" class="sync-error" type="info" :closable="false" show-icon
+          title="部分参数尚未清洗，当前展示原始值">
+          <template #default><span class="sync-error-text">清洗结果只影响详情展示、参数块与写作取值，不会修改原始参数；可点「重新清洗」或使用「运维 → 补全清洗参数」。</span></template>
         </el-alert>
 
         <!-- Hero 封面（无封面回退详情图首图；均无图则隐藏） -->
@@ -83,7 +91,7 @@
             <template #title>
               <span class="group-title">{{ g.group.groupName }}</span>
             </template>
-            <el-table :data="g.cleans" size="small">
+            <el-table :data="displayRows(g)" size="small">
               <el-table-column prop="paramKey" label="参数" min-width="200" />
               <el-table-column label="值" min-width="240">
                 <template #default="{ row }">
@@ -127,7 +135,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { carApi } from '../api'
 import { useUserStore } from '../store/user'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { coverIsFallback, coverUrlOf, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
 
@@ -138,6 +146,7 @@ const loading = ref(false)
 const error = ref('')
 const detail = ref(null)
 const syncing = ref(false)
+const cleaning = ref(false)
 const curVersion = ref(null)
 const openGroups = ref([])
 const question = ref('')
@@ -161,6 +170,27 @@ const galleryUrls = computed(() => {
   return list
 })
 const featureList = computed(() => parseFeatures(detail.value?.model?.features))
+const hasRawGroups = computed(() => !!detail.value?.groups?.some(g =>
+  !(g.cleans && g.cleans.length) && g.params && g.params.length))
+
+/** 清洗为空时回退原始参数，避免详情页静默空白。 */
+const rawValueOf = (p) => {
+  if (p?.paramValue) return p.paramValue
+  try {
+    const arr = JSON.parse(p?.valuesJson || '[]')
+    if (Array.isArray(arr)) return arr.find(v => v != null && String(v).trim()) || ''
+  } catch { /* ignore */ }
+  return ''
+}
+const displayRows = (g) => {
+  if (g?.cleans?.length) return g.cleans
+  return (g?.params || []).map(p => ({
+    paramKey: p.paramName,
+    paramValue: rawValueOf(p),
+    valueType: 'RAW',
+    raw: true
+  }))
+}
 const sourceStatusMeta = (m) => {
   if (!m) return statusMeta('PENDING')
   if (m.sourceState === 'EMPTY') return { label: '官网无数据', type: 'info' }
@@ -189,6 +219,7 @@ const onVersionChange = () => { load() }
 
 // 清洗后参数值展示(类型化渲染)
 const cleanValue = (row) => {
+  if (row.raw || row.valueType === 'RAW') return row.paramValue || '—'
   if (row.valueType === 'NUMBER') return row.numericValue != null ? `${row.numericValue}${row.unit || ''}` : (row.paramValue || '—')
   if (row.valueType === 'ENUM') return row.enumValue || row.paramValue || '—'
   if (row.valueType === 'LIST') {
@@ -196,7 +227,26 @@ const cleanValue = (row) => {
   }
   return row.paramValue || '—'
 }
-const typeLabel = (t) => ({ STRING: '文本', NUMBER: '数值', BOOLEAN: '布尔', ENUM: '枚举', LIST: '列表' }[t] || t || '—')
+const typeLabel = (t) => ({ STRING: '文本', NUMBER: '数值', BOOLEAN: '布尔', ENUM: '枚举', LIST: '列表', RAW: '原始' }[t] || t || '—')
+
+const onClean = async () => {
+  if (cleaning.value) return
+  try {
+    await ElMessageBox.confirm('基于库内原始参数重跑清洗，不请求官网；会重写本车型的清洗结果。确认执行？',
+      '重新清洗', { type: 'info', confirmButtonText: '开始清洗', cancelButtonText: '取消' })
+  } catch { return }
+  cleaning.value = true
+  try {
+    const res = await carApi.cleanOne(id)
+    if (res.code === 0) ElMessage.success(`清洗完成，生成 ${res.data.cleansAfter || 0} 条`)
+    else ElMessage.error(res.msg || '清洗失败')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e.message || '清洗失败')
+  } finally {
+    cleaning.value = false
+    await load()
+  }
+}
 
 const onSync = async () => {
   if (syncing.value) return

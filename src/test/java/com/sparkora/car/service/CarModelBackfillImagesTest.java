@@ -2,6 +2,7 @@ package com.sparkora.car.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.car.client.BydCmsClient;
+import com.sparkora.car.dto.CleanStats;
 import com.sparkora.car.client.EmbeddingClient;
 import com.sparkora.car.dto.GoodsAttrListDto;
 import com.sparkora.car.dto.GoodsInfoDto;
@@ -42,6 +43,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -77,6 +79,8 @@ class CarModelBackfillImagesTest {
                 new ObjectMapper(), imageService, embeddingClient, vectorStoreService);
         // 单测用内嵌 127.0.0.1 HttpServer 模拟官网图;生产默认下载器只允许 HTTPS + 白名单
         service.setImageDownloader(CarImageDownloader.permissiveForTest());
+        lenient().when(cleanMapper.selectCount(any())).thenReturn(1L);
+        lenient().when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
     }
 
     /** 构造单 item 的 goodsInfo 响应(可指定 introduce 列表)。 */
@@ -97,6 +101,12 @@ class CarModelBackfillImagesTest {
         list.setItems(List.of(item));
         dto.setGoodsinfoList(list);
         return dto;
+    }
+
+    private static CleanStats cleanStats() {
+        CleanStats st = new CleanStats();
+        st.count("RULE");
+        return st;
     }
 
     /** 已存在的库存车型行(goods_id 唯一键)。 */
@@ -200,8 +210,9 @@ class CarModelBackfillImagesTest {
             // 回填域边界:除 goodsInfo + 车型主表写回外,版本/参数分组/参数/清洗/切块/向量零交互
             verify(client, never()).goodsParams(anyString());
             verify(client, never()).goodsAttrList(anyString());
-            verifyNoInteractions(versionMapper, groupMapper, paramMapper, cleanMapper);
-            verifyNoInteractions(cleanService, docService, chunkMapper, vectorStoreService);
+            verifyNoInteractions(versionMapper, groupMapper, paramMapper, cleanService, docService,
+                    chunkMapper, vectorStoreService);
+            verify(cleanMapper, never()).delete(any());
         } finally {
             server.stop(0);
         }

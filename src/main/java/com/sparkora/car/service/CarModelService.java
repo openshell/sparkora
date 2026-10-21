@@ -473,6 +473,7 @@ public class CarModelService {
             java.util.List<String> notes = new ArrayList<>();
             if (!versionsOk) notes.add("版本不完整");
             if (!paramsOk) notes.add("参数不完整");
+            if (stats == null || stats.total() == 0) notes.add("清洗结果为空");
             if (images.failed() > 0) notes.add("图片失败" + images.failed() + "张");
             if (embed != null && embed.failed() > 0) notes.add("向量失败" + embed.failed() + "/" + embed.total() + "块");
             if (notes.isEmpty()) {
@@ -546,6 +547,7 @@ public class CarModelService {
         java.util.List<String> notes = new ArrayList<>();
         if (!versionsOk) notes.add("版本不完整");
         if (!paramsOk) notes.add("参数不完整");
+        if (stats == null || stats.total() == 0) notes.add("清洗结果为空");
         if (embed != null && embed.failed() > 0) notes.add("向量失败" + embed.failed() + "/" + embed.total() + "块(下次增量重试)");
         if (notes.isEmpty()) {
             markSyncSuccess(row.getId(), null);
@@ -933,6 +935,13 @@ public class CarModelService {
     }
 
     /** 官网条目是否带任何图片(主体图或详情图集),用于判断图片指纹未初始化时是否需要真正补图。 */
+    /** 是否已有清洗结果(用于判断图片补入库能否标完整成功)。 */
+    private boolean hasCleanData(Long modelId) {
+        if (modelId == null) return false;
+        Long n = cleanMapper.selectCount(new QueryWrapper<CarParamCleanEntity>().eq("model_id", modelId));
+        return n != null && n > 0;
+    }
+
     private static boolean hasImages(GoodsInfoDto.Item item) {
         if (item == null) return false;
         return (item.getImg() != null && !item.getImg().isBlank())
@@ -959,7 +968,13 @@ public class CarModelService {
             if (r.failed() > 0) {
                 note = (note == null ? "" : note + ";") + "图片失败" + r.failed() + "张";
             }
-            if (r.failed() > 0) {
+            // 图片补入库不是完整同步:没有参数清洗结果时不能冒充 SUCCESS/last_sync_at。
+            // 旧 job 9 正是这样把 7 台「有版本无参数」的车标成了已同步。
+            boolean coreReady = hasCleanData(row.getId());
+            if (!coreReady) {
+                note = (note == null ? "" : note + ";") + "仅图片已补,参数/清洗未同步";
+            }
+            if (r.failed() > 0 || !coreReady) {
                 row.setSyncStatus("PARTIAL");
                 row.setSyncNote(note);
                 row.setLastSyncError(null);

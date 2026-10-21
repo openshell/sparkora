@@ -458,3 +458,11 @@ ALTER TABLE sparkora_article_version DROP COLUMN IF EXISTS body_image_ids;
 - **任务可靠性**：`createJob` 的 `@Transactional` 内不得直接触发 `@Async`（异步线程可能读不到未提交行）；用 `TransactionSynchronization.afterCommit` 或 `@TransactionalEventListener(AFTER_COMMIT)`。全局/按车锁用数据库锁表或 advisory lock，不能依赖同状态 UPDATE。
 - **锁表 TTL**：锁 TTL 应略大于陈旧阈值（当前 70min vs 60min），陈旧任务清理时释放对应 `job:<id>` 全局锁；否则进程崩溃后锁会挡住新任务。
 - **图片下载**：外部 URL 必须 HTTPS + 域名白名单 + 私网/重定向复检；限制字节/像素；严格魔数，未知格式失败而非兜底 png；尺寸用 `ImageReader` 读取，避免 `ImageIO.read` 全量解码超大长图。
+
+
+### 派生清洗数据的补写：先读后删、空源保护、成功覆盖检查（10-21-car-clean-repair）
+
+- 清洗是派生数据但详情页/RAG 直接依赖它：`cleanForModel` 必须先读 `car_param`/`car_version`，参数/版本为空时**保留旧清洗**；所有参数值全空也不得删除。
+- 批量补清洗只处理「有原始参数、清洗为 0」的车型，基于库内参数重跑，不请求官网；补写只写 `car_param_clean`，不触版本/参数/图片/向量。
+- 同步成功不能只看流程跑完：清洗行数为 0 必须落 `PARTIAL`；图片补入库在无清洗结果时也不能标完整 `SUCCESS`/刷新 `last_sync_at`。
+- 清洗值按 `values_json` 下标对齐版本；数量不一致要记录，不伪造缺失版本。

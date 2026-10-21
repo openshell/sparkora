@@ -1,0 +1,5 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "车型清洗/参数/详情/同步契约；补清洗与成功口径必须同步"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "事务边界、派生数据写入与幂等/陈旧自愈约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "派生数据失败不得破坏主数据；验证禁改生产数据"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "详情页三态/表格展示/运维入口与 E2E mock 基线"}
+{"file": "docs/spec/knowledge/center.md", "reason": "知识中心车型 Tab 运维入口与空态文案"}

@@ -74,6 +74,7 @@
 - **运维**：「运维」下拉内「图片补入库（仅缺失/失败）」「全量图片重扫」（EDITOR+）与「重建全部向量」（ADMIN）。图片补入库默认只处理缺失/失败/过期图片，全量重扫需二次确认；写操作按钮按角色显隐（VIEWER 不可见），`CarJobPanel` 的「重试失败项」由 `can-retry` 控制，运行中可请求取消。
 - **图片体验**：主图 `fit="contain"` + 纸色底；无主图回退详情图首图时改为顶部裁剪（`fit="cover"` + `object-position: top`），避免 1 万～3.8 万像素高的详情长图缩成窄条；详情页 Hero、图集原图预览、卖点 chips、失败原因 `el-alert`。
 - 纯函数落位 `utils/carDisplay.js`（`coverUrlOf`/`parseFeatures`/`formatPrice`/`sortCars`/`statusMeta`）。
+- **清洗兜底**：详情页 `cleans` 为空且 `params` 非空时展示原始参数并标注「原始参数/待清洗」；ADMIN/EDITOR 可「重新清洗」，不重新同步官网。
 
 ## 5. 验收清单
 
