@@ -83,19 +83,19 @@
 
 ## Acceptance Criteria
 
-- [ ] 模拟 `goodsInfo.items=[]`、`goodsParams.data=null`、`goodsAttrList.data=[]`：车型版本/参数/清洗/块/向量数量不变，状态为 `EMPTY`，不是 `SUCCESS`。
-- [ ] 模拟部分字段缺失：旧 `name/price/features/intro_images` 保留；图集不被 null 或短列表覆盖。
-- [ ] 模拟 5 张详情图成功 3 张：旧图集不被缩短，任务明细含图片失败 note。
-- [ ] 模拟清洗/embedding 失败：状态 `PARTIAL/FAILED`，`last_sync_at` 不前进，旧向量保留。
-- [ ] 模拟版本/参数插入失败：事务回滚，旧版本/参数保留。
-- [ ] 两个并发同步请求：同一 `goodsId` 只被一个任务处理；另一个返回 409/排队；无重复版本/参数。
-- [ ] 任务执行中抛异常/进程中断：任务不会永久 `RUNNING`；heartbeat 超时后新任务可安全接管。
-- [ ] 只改官网 `img`：封面更新，不触发全量清洗/向量；只改参数：参数/清洗/块更新，图片不动。
-- [ ] 官网返回 429/5xx：有限重试后失败，任务明细可读；catalog 失败不产生空目录任务。
-- [ ] 超大图片/HTML 错误页/内网 URL：被拒绝或跳过，有明确 note，不写入图库，不发生 SSRF。
-- [ ] 57 台体检报告：11 台 `EMPTY`、46 台封面正常、无未解释的版本/参数/向量缺失。
-- [ ] `mvn -q -DskipTests compile`、`mvn test`、`npm run build`、Playwright smoke 全部通过。
-- [ ] 规格文档（`docs/spec/knowledge/car.md`、`.trellis/spec/backend/*`、`.trellis/spec/frontend/*`）同步更新。
+- [x] 模拟 `goodsInfo.items=[]`、`goodsParams.data=null`、`goodsAttrList.data=[]`：车型版本/参数/清洗/块/向量数量不变，状态为 `EMPTY`，不是 `SUCCESS`。
+- [x] 模拟部分字段缺失：旧 `name/price/features/intro_images` 保留；图集不被 null 或短列表覆盖。
+- [x] 模拟 5 张详情图成功 3 张：旧图集不被缩短，任务明细含图片失败 note。
+- [x] 模拟清洗/embedding 失败：状态 `PARTIAL/FAILED`，`last_sync_at` 不前进，旧向量保留。
+- [x] 模拟版本/参数插入失败：事务回滚，旧版本/参数保留。
+- [x] 两个并发同步请求：同一 `goodsId` 只被一个任务处理；另一个返回 409/排队；无重复版本/参数。
+- [x] 任务执行中抛异常/进程中断：任务不会永久 `RUNNING`；heartbeat 超时后新任务可安全接管。
+- [x] 只改官网 `img`：封面更新，不触发全量清洗/向量；只改参数：参数/清洗/块更新，图片不动。
+- [x] 官网返回 429/5xx：有限重试后失败，任务明细可读；catalog 失败不产生空目录任务。
+- [x] 超大图片/HTML 错误页/内网 URL：被拒绝或跳过，有明确 note，不写入图库，不发生 SSRF。
+- [x] 57 台体检报告：11 台 `EMPTY`、46 台封面正常、无未解释的版本/参数/向量缺失。
+- [x] `mvn -q -DskipTests compile`、`mvn test`、`npm run build`、Playwright smoke 全部通过。
+- [x] 规格文档（`docs/spec/knowledge/car.md`、`.trellis/spec/backend/*`、`.trellis/spec/frontend/*`）同步更新。
 
 ## Out of Scope
 

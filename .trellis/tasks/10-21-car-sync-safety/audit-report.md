@@ -44,3 +44,11 @@
 3. 向量对账仍为 `missingCount=0`；任何 embedding 部分失败不得替换旧块，并让任务进入 PARTIAL/FAILED。
 4. 并发同步同一车型返回 409/排队，不产生重复版本/参数。
 5. `car_sync_enabled` 保持 false，手动验证通过后再开定时。
+
+
+## 部署后复核（2026-10-21 15:05）
+
+- V27 已应用；默认图片补入库 job 10 完成（13 台，success=2/skipped=11/failed=0）。
+- 11 台空条目车 `source_state=EMPTY`；版本数与参数组数与部署前逐台一致；`last_sync_at` 未变化；`last_checked_at` 更新。
+- 封面 46/57；向量 412/412、缺失 0；生产车型页统计「0 失败、11 官网无数据」，空数据车同步按钮禁用，console error 0。
+- `carSyncEnabled=false` 保持不变。

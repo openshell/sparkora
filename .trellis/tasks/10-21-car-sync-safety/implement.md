@@ -103,3 +103,14 @@
   - 无主图回退图的派生缩略图（当前卡片仍使用原图；下载器已限制单图 10MB/50MP，超大旧图可能不参与新回填）。
   - 生产数据修复/灰度执行（未改生产库；部署后建议先跑默认「图片补入库」将 11 台标为 EMPTY，并保持 `car_sync_enabled=false` 观察）。
   - 存量 46 台的 params 指纹首次初始化：首次增量仍只补参数指纹、不先重建参数/清洗/块（避免全库重清洗）；部署后建议手动执行一次参数同步或观察后再依赖参数变化检测。图片指纹首次初始化已改为真正补图，失败保持 NULL 并在下一次增量重试。
+
+
+## 生产部署与验收（2026-10-21 15:04–15:05）
+
+- 合并 `fix/car-sync-safety` 到 `main`，合并提交 `08a57f1`；`./deploy.sh --no-pull` 构建并重启 backend/frontend。
+- Flyway：`Migrating schema "public" to version "27 - car sync safety"` / `Successfully applied 1 migration ... now at version v27`。
+- 默认「图片补入库」job 10：13 台（11 台官网空条目 + 2 台官网无图），`success=2, skipped=11, failed=0`，无异常。
+- 验收：57 台 / 46 封面 / 11 台 `EMPTY`；11 台的 versions 与 param groups 数量与部署前完全一致；`last_sync_at` 全部未变化；`last_checked_at` 更新为本次检查时间；向量对账仍 `412/412, missing=0`。
+- 生产 UI（1440×900，admin）：统计「57 全部 / 46 已同步 / 0 失败 / 11 官网无数据 / 0 同步中 / 46/57 封面覆盖」；57 张卡片中 11 张「官网无数据」且同步按钮禁用；console error 0。
+- `carSyncEnabled=false`、`carSyncCron=0 0 3 * * ?`，自动同步保持关闭。
+- 未执行：手动并发压测（单测覆盖）、`rebuildAll` 异步化、无主图缩略图、参数指纹首次全量初始化。
