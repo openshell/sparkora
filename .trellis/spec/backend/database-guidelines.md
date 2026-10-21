@@ -237,7 +237,7 @@ ALTER TABLE sparkora_car_model ADD COLUMN sync_fingerprint VARCHAR(64);  -- NULL
 - **分派表语义固定四分支**：行缺失 → 全量；指纹 NULL → 轻回填（顺带初始化指纹）；一致 → 跳过（**只读比对，零写库零下游调用**，note 可观测）；不一致 → 全量。跳过必须做到「只拉了一次源接口、不写任何行」，单测用 `verifyNoInteractions` 锁死。
 - **指纹必须「摘要→hex」两步走，单测必须有长度断言**（真机验收踩坑）：`sha256Hex(digest(序列化字节))`——若把序列化后的原始字节直接当摘要转 hex，输出长度=原始字节×2（几百字符），写库直接撞列宽 `value too long for type character varying(64)`，任务明细被 `### Error updating database` 长串灌满。单测若断言「`fingerprint == computeXxx(同一输入)`」会**自洽通过**（两侧同一缺陷函数），抓不住——必须补 `matches("[0-9a-f]{64}")` 格式/长度断言。
 - **「源接口空条目」≠「无数据项」**：源接口可能对库存键返回空条目（列表容器在但 items 空）——此时指纹无处计算，须用**库存行快照口径**计算指纹（库内 JSON 字符串先 `readTree` 还原结构后入 canonical），并把库存行里的存量资源 URL 下载兜底入库；官网数据恢复后 goodsInfo 指纹必不匹配快照 → 自动一次全量收敛。
-- **「轻路径」不得复用全量 upsert**：全量 upsert（如 `persistModel`）会把派生列重写成 raw 形态（`intro_images` URL 列表），轻回填只允许走域内方法（`persistIntroImages`）+ 指纹/状态列写回；空源数据（官网无图）早退不冲写，明细带 note。
+- **「轻路径」不得复用全量 upsert**：全量 upsert（如 `persistModel`）会把派生列重写成 raw 形态（`intro_images` URL 列表），轻回填只允许走域内方法（现为 `persistImages`，10-21 起含封面 + 详情图集；原 `persistIntroImages` 已并入）+ 指纹/状态列写回；空源数据（官网无图）早退不冲写，明细带 note。
 - **`NULL` 必须显式定义为「未初始化」并收敛**：存量行为 NULL 时增量自动走轻回填补指纹，全库若干轮后自然收敛，**不需要一次性回填迁移**。
 - **盲区显式接受**：指纹只覆盖单一源接口的稳定字段时，其他接口（如 goodsParams）独立变化不触发增量——写进规格文档并在设置 UI 文案提示，兜底 = 手动全量重跑。
 - **明细 note 与失败条目分离**：备注条目（`{goodsId,name,note}`，无 `error` 键）是成功路径的可观测信息，`retry` 候选必须只取含 `error` 的条目，防「跳过/无图备注被当失败重跑」。

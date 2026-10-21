@@ -70,6 +70,15 @@ export function installMocks(page) {
     // 风格库
     if (p === '/api/styles') return route.fulfill(rOk(DATA.styles));
 
+    // 车型（知识中心「车型」Tab）：列表 / 官网目录 / 同步任务历史。
+    // GET 与 POST 同路径，统一返回空数据即可避免 console-noise 访问 /knowledge 时的业务 404。
+    if (p === '/api/car/models') return route.fulfill(rOk([]));
+    if (p === '/api/car/catalog') return route.fulfill(rOk([]));
+    if (p === '/api/car/sync/jobs') {
+      if (route.request().method() === 'POST') return route.fulfill(rOk({ jobId: 1, jobType: 'SELECTED' }));
+      return route.fulfill(rOk([]));
+    }
+
     return route.fulfill(rFail(404, '未 mock: ' + p));
   });
 }

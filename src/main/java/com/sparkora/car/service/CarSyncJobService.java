@@ -26,7 +26,7 @@ import java.util.Map;
  *
  * job_type 四类:
  *   SELECTED / RETRY        —— 全量 syncOne(既有语义零变化)
- *   IMAGE_BACKFILL          —— 轻回填:仅拉 goodsInfo → persistIntroImages 图片域 + 指纹收敛,不触参数/清洗/向量
+ *   IMAGE_BACKFILL          —— 轻回填:仅拉 goodsInfo → persistImages 图片域(封面+详情图集) + 指纹收敛,不触参数/清洗/向量
  *   INCREMENTAL             —— 增量分派:按 sync_fingerprint 决定 跳过/轻回填/全量(dispatchIncremental)
  *   (SCHEDULED 为旧定时类型历史值,新调度改创建 INCREMENTAL)
  *
@@ -162,12 +162,20 @@ public class CarSyncJobService {
                 }
             } catch (Exception e) {
                 failed++;
+                String err = e.getMessage() == null ? "未知错误" : e.getMessage();
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("goodsId", goodsId);
                 item.put("name", modelName(goodsId));
-                item.put("error", e.getMessage() == null ? "未知错误" : e.getMessage());
+                item.put("error", err);
                 detailItems.add(item);
-                log.warn("车型同步失败 goodsId={}: {}", goodsId, e.getMessage());
+                log.warn("车型同步失败 goodsId={}: {}", goodsId, err);
+                // R2 失败状态可信化:回写车型 FAILED + 失败原因,避免永久停留 SYNCING;
+                // 回写失败仅告警,不覆盖任务原始异常/终态(SELECTED/IMAGE_BACKFILL/INCREMENTAL 同口径)
+                try {
+                    modelService.markSyncFailed(goodsId, err);
+                } catch (Exception ex) {
+                    log.warn("车型失败状态回写失败(忽略) goodsId={}: {}", goodsId, ex.getMessage());
+                }
             }
             // 每完成一个更新一次进度(前端轮询可见)
             job.setSuccess(success);
@@ -253,6 +261,7 @@ public class CarSyncJobService {
         CarModelEntity m = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
         if (m == null) return;
         m.setSyncStatus("SYNCING");
+        m.setLastSyncError(null);   // 新一次同步开始即清空历史失败原因(R2)
         m.setUpdatedAt(LocalDateTime.now());
         modelMapper.updateById(m);
     }

@@ -29,6 +29,15 @@ public class CarModelEntity {
     /** 车型介绍图公网 URL 列表(非持久化;由 introImages 的图库 id 实时解析,供前端直接展示)。 */
     @TableField(exist = false)
     private List<String> introImageUrls;
+    /**
+     * 封面图库资产 id(10-21-knowledge-car-sync-ux):官网 goodsInfo.img 主体图转存后的
+     * sparkora_image_asset.id。NULL = 无封面,前端展示层回退 introImageUrls 首图;
+     * 封面与详情图集(intro_images)分离,互不覆盖。
+     */
+    private Long coverImageId;
+    /** 封面公网 URL(非持久化;由 coverImageId 实时解析,解析失败为 null,不回退详情图)。 */
+    @TableField(exist = false)
+    private String coverImageUrl;
     private String detailPage;     // 官网详情页路径
     private String carRights;      // JSON,购车权益
     private String sourceUrl;      // 来源官网 URL

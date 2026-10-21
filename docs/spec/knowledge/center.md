@@ -28,7 +28,7 @@
 | 文件 | 职责 |
 |---|---|
 | `views/KnowledgeCenter.vue` | 页头 + `el-tabs`；Tab 面板 `v-if` 懒挂载（首访加载、切回保留状态）；`loadedTabs` = `{car,kb,sources,qa}` |
-| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab：`carApi.list()` + 关键词/网络/状态筛选 + 卡片网格；缩略图取 `introImageUrls[0]`；点卡片跳 `/car/:id`；编辑器以上「同步车型」跳 `/car/sync`。**本任务未改动** |
+| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改）：`carApi.list()` + 关键词/网络/状态（含无封面）/排序（最近同步·名称·价格）+ 刷新 + 结果数/清除筛选；统计条「全部·已同步·失败·同步中·封面覆盖」；缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图，`fit="contain"`）；失败原因截断 + tooltip、失败可重试；EDITOR+ 批量选择/同步/删除；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量） |
 | `views/knowledge/KbLibraryPanel.vue` | 知识库 Tab：`kbApi` 列表/新建/编辑/重建/批量导入。**本任务未改动** |
 | `views/knowledge/SourceTab.vue` | 信源 Tab 容器：统一加载 `sourceApi.list()` 供子面板做来源名映射；上部「信源管理 + 采集任务」，下部「信源内容」 |
 | `views/knowledge/SourceManagePanel.vue` | 信源管理：列表（名称/类型/垂直/排期/最近采集状态/栏目数/启停）+ 编辑抽屉（el-form + rules，含**栏目列表** channels[]）+ 启停 switch + 手动触发采集（整源 / 单栏目 `channelId`） |
@@ -64,14 +64,24 @@
 
 ---
 
+### 4.1 车型 Tab 契约（10-21-knowledge-car-sync-ux）
+
+- **同步内聚**：不再强制跳 `/car/sync`；「同步车型」在 Tab 内打开 `components/car/CarCatalogDrawer.vue`（加载官网目录 → 选择 → 同步选中 / 图片补入库）。`/car/sync` 保留并与知识中心复用 `CarCatalogGrid` / `CarJobPanel` / `useCarSyncJob`。
+- **任务恢复**：挂载时 `useCarSyncJob.recoverLatest()`——优先恢复**未过期**的 RUNNING 任务（`startedAt` 60 分钟内，与后端 `SYNC_STALE_MS` 同口径）并继续 2s 轮询；否则展示 24h 内最近**终态**任务。陈旧 RUNNING（JVM 中途死亡遗留）不恢复、不阻塞新建任务。切 Tab/刷新后可继续看到进度；运行中重复发起会被阻止并提示（`beginStart` 在 createJob 请求在途即置忙，覆盖「创建返回→首次轮询」与请求窗口）。
+- **统计口径**：「封面覆盖」= `coverImageUrl` 非空的车型数 / 总数（不再取图库 `source=byd` 全量图片数）。
+- **批量**：EDITOR+ 卡片 checkbox 恒定可见；批量同步按 `goodsId` 建任务，批量删除逐个调用 `carApi.remove`（`Promise.allSettled` 汇总成功/失败），确认文案明确「共享图库资产不会被删除」；同步任务运行中删除按钮禁用（避免与在跑任务竞争同一车型）。
+- **运维**：「运维」下拉内「图片补入库」（EDITOR+，仅图片域、内容哈希去重）与「重建全部向量」（ADMIN，二次确认 + 耗时提示）。写操作按钮按角色显隐（VIEWER 不可见），`CarJobPanel` 的「重试失败项」由 `can-retry` 控制。
+- **图片体验**：卡片/详情主体图 `fit="contain"` + 纸色底；详情页 Hero 封面、图集原图预览、卖点 chips、失败原因 `el-alert`。
+- 纯函数落位 `utils/carDisplay.js`（`coverUrlOf`/`parseFeatures`/`formatPrice`/`sortCars`/`statusMeta`）。
+
 ## 5. 验收清单
 
 - [x] AC1 `/knowledge` 可访问，恰含「车型」「知识库」「信源」「问答」四个 Tab（`router/index.js` + `KnowledgeCenter.vue`）；「新闻」Tab 已移除
-- [x] AC2 车型 Tab 列表/筛选/卡片跳 `/car/:id` 可用，缩略图用 `introImageUrls`（未改动）
+- [x] AC2 车型 Tab 列表/筛选/排序/刷新/卡片跳 `/car/:id` 可用，缩略图用 `coverUrlOf`（封面优先、回退 `introImageUrls[0]`）
 - [x] AC3 知识库 Tab 行为未变（未改动）
 - [x] AC4 信源 Tab：信源列表/编辑/启停/手动采集可用；栏目列表可见并可单栏目采集；采集任务进度/失败明细/重试可用（RUNNING 2s 轮询）
 - [x] AC5 信源内容：分页/关键词/category/source 筛选/详情可用；BYD 新闻在信源内容视图中可访问，同步/切块数/官方原文/轮询对 `source=byd-news` 可用
-- [x] AC6 `/car`、`/kb` 等既有路由与页面未改动；车型/知识库/问答三 Tab 代码与懒加载未改动
+- [x] AC6 `/car`、`/kb` 等既有路由保留；知识库/问答 Tab 代码与懒加载未改动；车型 Tab 于 10-21 完成同步闭环与浏览交互整改
 - [x] AC7 `npm run build` 通过（exit 0）
 - [x] AC8 无 `.vue` 直调 `http`（`grep` 零命中）；轮询定时器 `onBeforeUnmount` 清理
 

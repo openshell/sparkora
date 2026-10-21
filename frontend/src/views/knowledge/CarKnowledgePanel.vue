@@ -1,6 +1,5 @@
 <template>
   <div class="car-panel">
-    <!-- 工具栏：搜索 + 网络筛选 + 状态筛选 + 管理动作（同步 / 重建全部） -->
     <div class="panel-toolbar">
       <el-input v-model="keyword" placeholder="搜索车型 / 网络" clearable class="search">
         <template #prefix><el-icon><Search /></el-icon></template>
@@ -12,21 +11,52 @@
       <el-select v-model="statusFilter" class="filter" placeholder="全部状态">
         <el-option label="全部状态" value="all" />
         <el-option label="已同步" value="SUCCESS" />
-        <el-option label="待同步" value="PENDING" />
-        <el-option label="同步中" value="SYNCING" />
         <el-option label="失败" value="FAILED" />
+        <el-option label="同步中" value="SYNCING" />
+        <el-option label="待同步" value="PENDING" />
+        <el-option label="无封面" value="NONE" />
       </el-select>
+      <el-select v-model="sortKey" class="sort" placeholder="排序">
+        <el-option label="最近同步" value="recent" />
+        <el-option label="名称" value="name" />
+        <el-option label="价格" value="price" />
+      </el-select>
+      <el-button v-if="hasFilter" text class="clear-btn" @click="clearFilters">清除筛选</el-button>
+
       <div class="toolbar-actions">
-        <el-button v-if="user.isEditorOrAbove" @click="$router.push('/car/sync')">
+        <el-button :loading="loading" @click="load">
+          <el-icon class="btn-icon"><Refresh /></el-icon>刷新
+        </el-button>
+        <el-button v-if="user.isEditorOrAbove" type="primary" @click="drawerVisible = true">
           <el-icon class="btn-icon"><Refresh /></el-icon>同步车型
         </el-button>
-        <el-button v-if="user.isAdmin" :loading="rebuildingAll" @click="onRebuildAll">
-          <el-icon class="btn-icon"><MagicStick /></el-icon>重建全部向量
-        </el-button>
+        <el-dropdown v-if="user.isEditorOrAbove" trigger="click" @command="onOps">
+          <el-button>
+            <el-icon class="btn-icon"><Setting /></el-icon>运维
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="backfill">图片补入库</el-dropdown-item>
+              <el-dropdown-item v-if="user.isAdmin" command="rebuild" divided>重建全部向量</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-    <div v-if="loading" class="loading"><el-skeleton :rows="4" animated /></div>
+    <div v-if="loading" class="car-grid skeleton-grid">
+      <div v-for="n in 8" :key="n" class="car-card">
+        <el-skeleton animated>
+          <template #template>
+            <el-skeleton-item variant="image" class="sk-thumb" />
+            <div class="sk-body">
+              <el-skeleton-item variant="h3" style="width: 70%" />
+              <el-skeleton-item variant="text" style="width: 90%; margin-top: 8px" />
+            </div>
+          </template>
+        </el-skeleton>
+      </div>
+    </div>
 
     <div v-else-if="error" class="state-error">
       <el-icon :size="36" color="var(--faint)"><WarningFilled /></el-icon>
@@ -36,211 +66,339 @@
     </div>
 
     <template v-else>
-      <!-- 统计概览条 -->
       <div class="stats-bar">
         <div class="stat"><span class="stat-num">{{ rows.length }}</span><span class="stat-label">全部车型</span></div>
         <div class="stat"><span class="stat-num ok">{{ countBy('SUCCESS') }}</span><span class="stat-label">已同步</span></div>
-        <div class="stat"><span class="stat-num warn">{{ countBy('PENDING') }}</span><span class="stat-label">待同步</span></div>
         <div class="stat"><span class="stat-num err">{{ countBy('FAILED') }}</span><span class="stat-label">失败</span></div>
-        <div class="stat" v-if="bydImageTotal != null">
-          <span class="stat-num">{{ bydImageTotal }}</span><span class="stat-label">车型图已入库</span>
+        <div class="stat"><span class="stat-num warn">{{ countBy('SYNCING') }}</span><span class="stat-label">同步中</span></div>
+        <div class="stat">
+          <span class="stat-num">{{ coverCount }}<span class="stat-sub"> / {{ rows.length }}</span></span>
+          <span class="stat-label">封面覆盖</span>
         </div>
       </div>
 
-      <!-- 同步进度面板 -->
-      <div v-if="job" class="job-panel" :class="jobClass">
-        <div class="job-head">
-          <span class="job-title">
-            <el-icon class="spin" v-if="job.status === 'RUNNING'"><Loading /></el-icon>
-            <el-icon v-else><CircleCheck /></el-icon>
-            {{ jobTitle }}
-          </span>
-          <span class="job-count">{{ job.success }} 成功 · {{ job.failed }} 失败</span>
-        </div>
-        <el-progress v-if="job.status === 'RUNNING'" :percentage="progress" :stroke-width="8" :show-text="false" />
-        <div v-if="job.status === 'RUNNING'" class="job-progress-text">
-          已处理 {{ job.success + job.failed }} / {{ job.total }} 个车型
-        </div>
+      <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove" closable
+        @retry="onRetry" @close="onCloseJob" />
+
+      <div v-if="rows.length" class="result-line">
+        <span>共 {{ rows.length }} 台 · 当前显示 {{ filtered.length }} 台</span>
+        <span v-if="hasFilter" class="filtered-hint">已按筛选条件过滤</span>
       </div>
 
-      <!-- 空态 -->
+      <div v-if="user.isEditorOrAbove && selectedIds.length" class="bulk-bar">
+        <span class="bulk-count">已选 {{ selectedIds.length }} 个</span>
+        <el-button size="small" text type="primary" :loading="bulkSyncing" :disabled="jobBusy" @click="onBulkSync">
+          批量同步
+        </el-button>
+        <el-button size="small" type="danger" plain :loading="bulkDeleting" :disabled="jobBusy"
+          title="同步任务运行中不可删除车型" @click="onBulkDelete">
+          批量删除
+        </el-button>
+        <el-button size="small" text @click="selectedIds = []">清除选择</el-button>
+      </div>
+
       <div v-if="!rows.length" class="empty">
-        <el-empty description="车型库为空。点击工具栏「同步车型」，从比亚迪官网拉取车型数据入库。" />
+        <el-empty description="车型库为空。点击「同步车型」，从比亚迪官网选择车型拉取入库。" />
       </div>
 
       <template v-else>
-        <div v-if="!filtered.length" class="tab-empty">没有符合条件的车型</div>
+        <div v-if="!filtered.length" class="tab-empty">
+          <span>没有符合条件的车型</span>
+          <el-button v-if="hasFilter" text type="primary" @click="clearFilters">清除筛选</el-button>
+        </div>
         <div v-else class="car-grid">
-          <div v-for="row in filtered" :key="row.id" class="car-card">
-            <div class="thumb" @click="$router.push(`/car/${row.id}`)">
-              <el-image v-if="thumbUrl(row)" :src="thumbUrl(row)" fit="cover" lazy />
+          <div v-for="row in filtered" :key="row.id" class="car-card" :class="{ selected: selectedIds.includes(row.id) }">
+            <div class="thumb" @click="goDetail(row)">
+              <el-image v-if="coverUrlOf(row)" :src="coverUrlOf(row)" fit="contain" lazy class="cover-img" />
               <div v-else class="thumb-ph"><el-icon :size="22"><Van /></el-icon></div>
+              <el-checkbox v-if="user.isEditorOrAbove" class="pick" :model-value="selectedIds.includes(row.id)"
+                title="选择该车型" @click.stop @change="toggleSelect(row)" />
             </div>
             <div class="card-body">
-              <div class="c-name serif" @click="$router.push(`/car/${row.id}`)">{{ row.name }}</div>
-              <div class="c-meta">{{ row.salesNetwork || '—' }} · {{ row.priceRange || '价格待同步' }}</div>
+              <div class="c-name serif" @click="goDetail(row)">{{ row.name }}</div>
+              <div class="c-meta">
+                {{ row.salesNetwork || '—' }} · {{ formatPrice(row.priceRange) || '价格待同步' }}
+              </div>
               <div class="c-status">
-                <el-tag size="small" :type="statusTagType(row.syncStatus)" effect="light" round>{{ statusLabel(row.syncStatus) }}</el-tag>
+                <el-tag size="small" :type="statusMeta(row.syncStatus).type" effect="light" round>
+                  {{ statusMeta(row.syncStatus).label }}
+                </el-tag>
                 <span class="c-time">{{ fmtTime(row.lastSyncAt) }}</span>
               </div>
-              <div class="c-actions" v-if="user.isEditorOrAbove">
-                <el-button size="small" text type="primary" @click="$router.push(`/car/${row.id}`)">详情</el-button>
-                <el-button size="small" text :loading="syncingId === row.id" @click="onSyncOne(row)">同步</el-button>
-                <el-button size="small" text type="danger" @click="onDel(row)">删除</el-button>
+              <el-tooltip v-if="row.syncStatus === 'FAILED' && row.lastSyncError"
+                :content="row.lastSyncError" placement="top" :show-after="200">
+                <div class="c-error">{{ row.lastSyncError }}</div>
+              </el-tooltip>
+              <div v-if="user.isEditorOrAbove" class="c-actions">
+                <el-button size="small" text type="primary" @click="goDetail(row)">详情</el-button>
+                <el-button v-if="row.syncStatus === 'FAILED'" size="small" text type="warning"
+                  :loading="syncingId === row.id" :disabled="jobBusy" @click="onSyncOne(row)">重试</el-button>
+                <el-button v-else size="small" text :loading="syncingId === row.id" :disabled="jobBusy"
+                  @click="onSyncOne(row)">同步</el-button>
+                <el-button size="small" text type="danger" :disabled="jobBusy"
+                  title="同步任务运行中不可删除车型" @click="onDel(row)">删除</el-button>
               </div>
             </div>
           </div>
         </div>
       </template>
     </template>
+
+    <CarCatalogDrawer v-model="drawerVisible" :synced-ids="syncedGoodsIds" :busy="jobBusy" @created="onJobCreated" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { carApi, imageApi } from '../../api'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { carApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, WarningFilled, Loading, CircleCheck, Van, MagicStick } from '@element-plus/icons-vue'
+import { Search, Refresh, WarningFilled, Van, Setting } from '@element-plus/icons-vue'
+import CarJobPanel from '../../components/car/CarJobPanel.vue'
+import CarCatalogDrawer from '../../components/car/CarCatalogDrawer.vue'
+import { useCarSyncJob } from '../../composables/useCarSyncJob'
+import { coverUrlOf, formatPrice, sortCars, statusMeta } from '../../utils/carDisplay'
 
 const user = useUserStore()
+const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const rows = ref([])
 const keyword = ref('')
 const networkFilter = ref('all')
 const statusFilter = ref('all')
-// 车型图入库统计(10-15-car-image-backfill):图库 byd 来源 total 轻量展示;加载失败静默,null=不显示
-const bydImageTotal = ref(null)
+const sortKey = ref('recent')
+const drawerVisible = ref(false)
+const selectedIds = ref([])
 
-// 单车型同步任务
 const syncingId = ref(null)
-const job = ref(null)
-const jobId = ref(null)
-// 批量重建全部向量(ADMIN,一次性运维)
+const bulkSyncing = ref(false)
+const bulkDeleting = ref(false)
 const rebuildingAll = ref(false)
-const onRebuildAll = () => {
-  ElMessageBox.confirm('对全部车型重建向量(新切块口径+补齐缺失块),耗时较长(每车型约十几秒),确认执行?', '批量重建向量', { type: 'warning' })
-    .then(async () => {
-      rebuildingAll.value = true
-      try {
-        const res = await carApi.rebuildAll()
-        const st = res.data || {}
-        st.failed > 0
-          ? ElMessage.warning(`重建完成:成功 ${st.success}/${st.total},失败车型 ${st.failed}(id: ${st.failedModelIds})`)
-          : ElMessage.success(`重建完成:${st.success}/${st.total} 个车型已按新口径重建`)
-      } catch (e) {
-        ElMessage.error(e?.response?.data?.msg || '批量重建失败')
-      } finally {
-        rebuildingAll.value = false
-      }
-    }).catch(() => {})
-}
-let pollTimer = null
 
-// 销售网络去重（筛选项数据源）
+const { job, jobId, jobBusy, retrying, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
+
 const networks = computed(() => [...new Set(rows.value.map(r => r.salesNetwork).filter(Boolean))])
+const coverCount = computed(() => rows.value.filter(r => r.coverImageUrl).length)
+const syncedGoodsIds = computed(() => new Set(rows.value.map(r => r.goodsId)))
+
+const hasFilter = computed(() =>
+  !!keyword.value.trim() || networkFilter.value !== 'all' || statusFilter.value !== 'all')
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  return rows.value.filter(r => {
+  const list = rows.value.filter(r => {
     if (kw && !(r.name || '').toLowerCase().includes(kw) && !(r.salesNetwork || '').toLowerCase().includes(kw)) return false
     if (networkFilter.value !== 'all' && r.salesNetwork !== networkFilter.value) return false
+    if (statusFilter.value === 'NONE') return !r.coverImageUrl
     if (statusFilter.value !== 'all' && r.syncStatus !== statusFilter.value) return false
     return true
   })
+  return sortCars(list, sortKey.value)
 })
 
 const countBy = (s) => rows.value.filter(r => r.syncStatus === s).length
-
-// 后端 introImageUrls 已由图库 id 解析为公网 URL，取首图作缩略图
-const thumbUrl = (row) => {
-  const urls = row.introImageUrls
-  return Array.isArray(urls) && urls.length ? urls[0] : ''
-}
-
-const progress = computed(() => {
-  if (!job.value || !job.value.total) return 0
-  return Math.round(((job.value.success + job.value.failed) / job.value.total) * 100)
-})
-const jobTitle = computed(() => {
-  if (!job.value) return ''
-  return { RUNNING: '同步进行中…', SUCCESS: '同步完成', PARTIAL: '部分完成', FAILED: '同步失败' }[job.value.status] || '同步'
-})
-const jobClass = computed(() => job.value?.status?.toLowerCase() || '')
-
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
-const statusLabel = (s) => ({ PENDING: '待同步', SYNCING: '同步中', SUCCESS: '已同步', FAILED: '失败' }[s] || s || '—')
-const statusTagType = (s) => ({ SUCCESS: 'success', FAILED: 'danger', SYNCING: 'warning', PENDING: 'info' }[s] || 'info')
+
+const clearFilters = () => {
+  keyword.value = ''
+  networkFilter.value = 'all'
+  statusFilter.value = 'all'
+}
 
 const load = async () => {
   loading.value = true
   error.value = ''
   try {
     const res = await carApi.list()
-    rows.value = res.data || []
+    if (res.code === 0) rows.value = res.data || []
+    else error.value = res.msg || '车型加载失败'
   } catch (e) {
     error.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
   } finally {
     loading.value = false
   }
-  // 车型图入库统计:轻量取图库 byd 来源 total(size=1 只为拿 total),不阻塞主列表、失败静默
-  imageApi.list({ source: 'byd', size: 1 })
-    .then(res => { if (res.code === 0 && res.data) bydImageTotal.value = res.data.total ?? 0 })
-    .catch(() => {})
 }
 
-// 单车型同步：创建异步任务 + 轮询进度
+const goDetail = (row) => { router.push(`/car/${row.id}`) }
+
+const ensureIdle = () => {
+  if (jobBusy.value) {
+    ElMessage.warning('已有同步任务在运行，请等待完成后再发起')
+    return false
+  }
+  return true
+}
+
+const onJobCreated = ({ jobId: id }) => {
+  if (!id) {
+    cancelStart()
+    ElMessage.error('任务创建响应缺少任务号，请刷新后确认任务列表')
+    return
+  }
+  job.value = null
+  startPoll(id, { onFinished: load })
+}
+
+const onRetry = () => retryCurrent({ onFinished: load })
+
+const onCloseJob = () => {
+  stopPoll()
+  job.value = null
+  jobId.value = null
+}
+
 const onSyncOne = async (row) => {
+  if (!ensureIdle()) return
+  if (syncingId.value != null) return
+  if (!beginStart()) return   // 请求在途即置忙，堵住并发的「批量同步 / 补入库」
   syncingId.value = row.id
   try {
     const res = await carApi.createJob([row.goodsId])
-    if (res.code === 0) {
-      jobId.value = res.data.jobId
-      startPoll()
-    } else ElMessage.error(res.msg || '创建任务失败')
-  } catch (e) { ElMessage.error('创建任务失败：' + (e.message || e)) }
-  finally { syncingId.value = null }
-}
-
-const startPoll = () => {
-  stopPoll()
-  pollTimer = setInterval(poll, 2000)
-  poll()
-}
-
-const poll = async () => {
-  if (!jobId.value) return
-  try {
-    const res = await carApi.getJob(jobId.value)
-    if (res.code === 0) {
-      job.value = res.data
-      if (res.data.status !== 'RUNNING') {
-        stopPoll()
-        if (res.data.status === 'SUCCESS') ElMessage.success(`同步完成，入库 ${res.data.success} 个车型`)
-        else if (res.data.failed > 0) ElMessage.warning(`同步完成，${res.data.success} 成功 / ${res.data.failed} 失败`)
-        await load()
-      }
+    if (res.code === 0) onJobCreated({ jobId: res.data?.jobId })
+    else {
+      cancelStart()
+      ElMessage.error(res.msg || '创建任务失败')
     }
-  } catch (e) { /* 轮询失败静默，下次重试 */ }
+  } catch (e) {
+    cancelStart()
+    ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
+  } finally {
+    syncingId.value = null
+  }
 }
 
-const stopPoll = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+const toggleSelect = (row) => {
+  selectedIds.value = selectedIds.value.includes(row.id)
+    ? selectedIds.value.filter(id => id !== row.id)
+    : [...selectedIds.value, row.id]
+}
+
+const selectedRows = computed(() => rows.value.filter(r => selectedIds.value.includes(r.id)))
+
+const onBulkSync = async () => {
+  if (!ensureIdle()) return
+  if (bulkSyncing.value) return
+  const goodsIds = selectedRows.value.map(r => r.goodsId).filter(Boolean)
+  if (!goodsIds.length) { ElMessage.warning('请选择要同步的车型'); return }
+  if (!beginStart()) return
+  bulkSyncing.value = true
+  try {
+    const res = await carApi.createJob(goodsIds)
+    if (res.code === 0) {
+      selectedIds.value = []
+      onJobCreated({ jobId: res.data?.jobId })
+    } else {
+      cancelStart()
+      ElMessage.error(res.msg || '创建任务失败')
+    }
+  } catch (e) {
+    cancelStart()
+    ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
+  } finally {
+    bulkSyncing.value = false
+  }
+}
+
+const onBulkDelete = async () => {
+  if (bulkDeleting.value) return
+  if (jobBusy.value) { ElMessage.warning('同步任务运行中，请等待完成后再删除'); return }
+  const list = selectedRows.value
+  if (!list.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${list.length} 个车型及其全部参数/向量？共享图库资产不会被删除。`,
+      '批量删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch { return }
+  bulkDeleting.value = true
+  try {
+    const results = await Promise.allSettled(list.map(r => carApi.remove(r.id)))
+    const ok = results.filter(r => r.status === 'fulfilled' && r.value?.code === 0).length
+    const failed = list.length - ok
+    failed > 0
+      ? ElMessage.warning(`已删除 ${ok} 个，${failed} 个失败`)
+      : ElMessage.success(`已删除 ${ok} 个车型`)
+    selectedIds.value = []
+    await load()
+  } finally {
+    bulkDeleting.value = false
+  }
+}
 
 const onDel = async (row) => {
+  if (jobBusy.value) { ElMessage.warning('同步任务运行中，请等待完成后再删除'); return }
   try {
-    await ElMessageBox.confirm(`确认删除车型「${row.name}」及其全部参数/向量？`, '删除', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `确认删除车型「${row.name}」及其全部参数/向量？共享图库资产不会被删除。`,
+      '删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
   } catch { return }
   try {
-    await carApi.remove(row.id)
-    ElMessage.success('已删除')
+    const res = await carApi.remove(row.id)
+    if (res.code === 0) {
+      ElMessage.success('已删除')
+      selectedIds.value = selectedIds.value.filter(id => id !== row.id)
+    } else ElMessage.error(res.msg || '删除失败')
   } catch (e) {
     ElMessage.error(e?.response?.data?.msg || '删除失败')
   }
   await load()
 }
 
-onMounted(load)
+const onBackfill = () => {
+  if (!ensureIdle()) return
+  ElMessageBox.confirm(
+    '为全部存量车型补转官网封面与详情图进图库：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重，不会重复占图床。确认执行？',
+    '图片补入库', { type: 'info', confirmButtonText: '开始补入库', cancelButtonText: '取消' }
+  ).then(async () => {
+    if (!beginStart()) return
+    try {
+      const res = await carApi.createBackfillJob()
+      if (res.code === 0) onJobCreated({ jobId: res.data })
+      else {
+        cancelStart()
+        ElMessage.error(res.msg || '创建任务失败')
+      }
+    } catch (e) {
+      cancelStart()
+      if (e?.response?.status === 403) ElMessage.error('无权限：仅管理员/编辑可创建补入库任务')
+      else ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
+    }
+  }).catch(() => {})
+}
+
+const onRebuildAll = () => {
+  if (rebuildingAll.value) return
+  ElMessageBox.confirm(
+    '对全部车型重建向量（新切块口径 + 补齐缺失块），耗时较长（每车型约十几秒），执行期间请勿重复触发。确认执行？',
+    '重建全部向量', { type: 'warning', confirmButtonText: '开始重建', cancelButtonText: '取消' }
+  ).then(async () => {
+    rebuildingAll.value = true
+    try {
+      const res = await carApi.rebuildAll()
+      const st = res.data || {}
+      st.failed > 0
+        ? ElMessage.warning(`重建完成：成功 ${st.success}/${st.total}，失败车型 ${st.failed}（id: ${st.failedModelIds}）`)
+        : ElMessage.success(`重建完成：${st.success}/${st.total} 个车型已按新口径重建`)
+    } catch (e) {
+      ElMessage.error(e?.response?.data?.msg || '批量重建失败')
+    } finally {
+      rebuildingAll.value = false
+    }
+  }).catch(() => {})
+}
+
+const onOps = (cmd) => {
+  if (cmd === 'backfill') onBackfill()
+  else if (cmd === 'rebuild') onRebuildAll()
+}
+
+onMounted(() => {
+  load()
+  recoverLatest({ onFinished: load })
+})
 onBeforeUnmount(stopPoll)
 </script>
 
@@ -248,53 +406,64 @@ onBeforeUnmount(stopPoll)
 .panel-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .search { width: 240px; }
 .filter { width: 130px; }
+.sort { width: 120px; }
+.clear-btn { margin-left: -4px; }
 .toolbar-actions { margin-left: auto; display: flex; gap: var(--sp-3); }
 .btn-icon { margin-right: 4px; }
-.tab-empty { padding: 40px 0; text-align: center; color: var(--faint); }
+.tab-empty { padding: 40px 0; text-align: center; color: var(--faint); display: flex; flex-direction: column; align-items: center; gap: 4px; }
 
-/* 统计概览条 */
 .stats-bar { display: flex; gap: 24px; padding: 14px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .stat-num { font-family: var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; }
 .stat-num.ok { color: var(--ok); }
 .stat-num.warn { color: var(--warn); }
 .stat-num.err { color: var(--err); }
+.stat-sub { font-size: 13px; color: var(--muted); font-weight: 400; }
 .stat-label { font-size: 12px; color: var(--muted); }
 
+.result-line { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.filtered-hint { color: var(--brand); }
+
+.bulk-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; margin-bottom: 12px;
+  border: 1px solid var(--brand-weak); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--brand-weak) 55%, var(--card));
+}
+.bulk-count { font-size: 13px; font-weight: 600; }
+
 .car-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.skeleton-grid { margin-top: 6px; }
 .car-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--card);
   overflow: hidden;
-  transition: box-shadow .2s;
+  transition: box-shadow .2s, border-color .2s;
 }
 .car-card:hover { box-shadow: var(--shadow-hover); }
-.thumb { position: relative; aspect-ratio: 4 / 3; background: var(--paper); cursor: pointer; }
-.thumb :deep(.el-image) { width: 100%; height: 100%; }
+.car-card.selected { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-weak); }
+.thumb { position: relative; aspect-ratio: 4 / 3; background: var(--paper); cursor: pointer; padding: 10px; }
+.thumb :deep(.el-image), .cover-img { width: 100%; height: 100%; }
+.thumb :deep(.el-image__inner) { object-fit: contain; }
 .thumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.pick { position: absolute; top: 6px; left: 8px; padding: 2px 4px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--card) 82%, transparent); }
+.sk-thumb { width: 100%; height: 140px; }
+.sk-body { padding: 10px 12px 12px; }
+
 .card-body { padding: 10px 12px 12px; }
 .c-name { font-weight: 700; font-size: 15px; line-height: 1.4; cursor: pointer; }
 .c-name:hover { color: var(--brand); }
 .c-meta { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
 .c-status { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 .c-time { font-size: 11px; color: var(--faint); }
-.c-actions { display: flex; justify-content: flex-end; gap: 2px; margin-top: 6px; }
-
-/* 进度面板 */
-.job-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 16px;
-  background: var(--card);
+.c-error {
+  margin-top: 6px; padding: 4px 6px;
+  font-size: 11px; color: var(--err); line-height: 1.5;
+  background: color-mix(in srgb, var(--err) 8%, transparent);
+  border-radius: var(--radius-sm);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-all;
 }
-.job-panel.success { border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
-.job-panel.partial, .job-panel.failed { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
-.job-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.job-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-.job-count { color: var(--muted); font-size: 13px; }
-.job-progress-text { font-size: 12px; color: var(--muted); margin-top: 6px; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.c-actions { display: flex; justify-content: flex-end; gap: 2px; margin-top: 6px; flex-wrap: wrap; }
 </style>
