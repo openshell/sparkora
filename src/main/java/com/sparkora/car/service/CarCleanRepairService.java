@@ -41,11 +41,16 @@ public class CarCleanRepairService {
 
     /** 单车型补清洗（显式调用可重跑；参数为空时 cleanForModel 自身会保留旧结果）。 */
     public CleanRepairResult cleanOne(Long modelId) {
+        return cleanOne(modelId, true);
+    }
+
+    /** allowAi=false 用于批量补清洗：规则未命中直接 FALLBACK，避免逐条 AI 调用。 */
+    public CleanRepairResult cleanOne(Long modelId, boolean allowAi) {
         CarModelEntity model = modelMapper.selectById(modelId);
         if (model == null) throw new IllegalArgumentException("车型不存在");
         long params = countParams(modelId);
         long before = countCleans(modelId);
-        CleanStats stats = cleanService.cleanForModel(modelId);
+        CleanStats stats = cleanService.cleanForModel(modelId, allowAi);
         long after = countCleans(modelId);
         log.info("车型补清洗完成 model={} name={} params={} cleans {}→{} RULE={} AI={} FALLBACK={}",
                 modelId, model.getName(), params, before, after,
@@ -67,7 +72,7 @@ public class CarCleanRepairService {
                 continue;
             }
             try {
-                CleanRepairResult r = cleanOne(m.getId());
+                CleanRepairResult r = cleanOne(m.getId(), false);
                 if (r.cleansAfter() > 0) cleaned++;
                 else skipped++;
             } catch (Exception e) {

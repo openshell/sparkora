@@ -52,6 +52,14 @@ public class CarCleanService {
     /** 清洗某车型的全部参数(先清后插,幂等)。返回清洗方式统计(可观测,供同步任务与统计接口使用)。 */
     @Transactional
     public CleanStats cleanForModel(Long modelId) {
+        return cleanForModel(modelId, true);
+    }
+
+    /**
+     * @param allowAi false = 批量修复模式，规则未命中直接 FALLBACK 原样保留，避免逐条 AI 调用把补清洗拖成小时级。
+     */
+    @Transactional
+    public CleanStats cleanForModel(Long modelId, boolean allowAi) {
         // 10-21-car-clean-repair:先读、后删。参数/版本为空时绝不能清掉已有清洗结果:
         // 旧实现无条件 delete,参数临时为空会把派生数据清空且无报错。
         List<CarVersionEntity> versions = versionMapper.selectList(
@@ -89,23 +97,27 @@ public class CarCleanService {
             for (int i = 0; i < values.size(); i++) {
                 Long versionId = i < versions.size() ? versions.get(i).getId() : null;
                 String raw = values.get(i);
-                ParamCleanResult r = cleanOne(p.getParamName(), raw);
+                ParamCleanResult r = cleanOne(p.getParamName(), raw, allowAi);
                 if (r == null) continue;
                 stats.count(r.getCleanMethod());
                 insertClean(p, versionId, raw, r);
             }
         }
         stats.logSummary(log, modelId);
+        if (!allowAi) log.info("参数清洗批量修复模式(不调用 AI) model={} total={} fallback={}",
+                modelId, stats.total(), stats.getFallback());
         return stats;
     }
 
-    /** 清洗单个值:规则优先,规则覆盖不了走 AI。 */
-    private ParamCleanResult cleanOne(String paramName, String raw) {
+    /** 清洗单个值:规则优先;allowAi=false 时不做 AI 兜底,直接原样 FALLBACK。 */
+    private ParamCleanResult cleanOne(String paramName, String raw, boolean allowAi) {
         ParamCleanResult r = ruleCleaner.clean(paramName, raw);
         if (r != null) return r;
-        // 规则覆盖不了,AI 兜底
-        ParamCleanResult ai = aiCleaner.clean(paramName, raw);
-        if (ai != null) return ai;
+        if (allowAi) {
+            // 规则覆盖不了,AI 兜底
+            ParamCleanResult ai = aiCleaner.clean(paramName, raw);
+            if (ai != null) return ai;
+        }
         // AI 也失败,降级为 STRING 原样;method 标 FALLBACK(区别于规则命中 RULE / AI 兜底 AI,
         // 供清洗质量统计与人工复核定位,勿再误标 RULE)
         ParamCleanResult fallback = new ParamCleanResult();

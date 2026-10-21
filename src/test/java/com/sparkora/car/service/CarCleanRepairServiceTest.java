@@ -59,7 +59,7 @@ class CarCleanRepairServiceTest {
         // cleanMissing 预检 + cleanOne 内部读取:params 恒为 2;cleans 首次为 0,清洗后为 2。
         when(paramMapper.selectCount(any(Wrapper.class))).thenReturn(2L);
         when(cleanMapper.selectCount(any(Wrapper.class))).thenReturn(0L, 0L, 2L);
-        when(cleanService.cleanForModel(7L)).thenReturn(stats());
+        when(cleanService.cleanForModel(7L, false)).thenReturn(stats());
 
         CarCleanRepairService.CleanRepairSummary result = service.cleanMissing();
 
@@ -67,7 +67,7 @@ class CarCleanRepairServiceTest {
         assertEquals(1, result.cleaned());
         assertEquals(0, result.skipped());
         assertEquals(0, result.failed());
-        verify(cleanService).cleanForModel(7L);
+        verify(cleanService).cleanForModel(7L, false);
     }
 
     @Test
@@ -75,7 +75,7 @@ class CarCleanRepairServiceTest {
         when(modelMapper.selectById(7L)).thenReturn(model(7L, "156", "大唐EV"));
         when(paramMapper.selectCount(any(Wrapper.class))).thenReturn(2L);
         when(cleanMapper.selectCount(any(Wrapper.class))).thenReturn(0L, 2L);
-        when(cleanService.cleanForModel(eq(7L))).thenReturn(stats());
+        when(cleanService.cleanForModel(eq(7L), eq(true))).thenReturn(stats());
 
         CarCleanRepairService.CleanRepairResult result = service.cleanOne(7L);
 
