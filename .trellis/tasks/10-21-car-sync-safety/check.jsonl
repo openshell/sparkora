@@ -1,0 +1,6 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "逐条核对 source_state/note/指纹/同步状态/接口契约是否与实现一致"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对迁移可重入、事务边界、按车锁/陈旧自愈是否遵守既有范式"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对空/半响应不写业务表、图片失败不缩短图集、验证不改生产数据"}
+{"file": ".trellis/spec/backend/index.md", "reason": "核对错误映射、DTO 校验、R<T> 语义与测试命令"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 EMPTY 禁用态、任务计数文案、轮询清理与 E2E 断言"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对车型 Tab 的官网无数据/部分失败展示与运维入口描述"}

@@ -15,6 +15,7 @@ export function useCarSyncJob() {
   const job = ref(null)
   const jobId = ref(null)
   const retrying = ref(false)
+  const cancelling = ref(false)
   /** 已创建任务但尚未拿到首次进度：用于堵住 createJob 返回→首次轮询之间的重复发起窗口。 */
   const starting = ref(false)
 
@@ -29,7 +30,11 @@ export function useCarSyncJob() {
 
   const progress = computed(() => {
     if (!job.value || !job.value.total) return 0
-    return Math.round((((job.value.success || 0) + (job.value.failed || 0)) / job.value.total) * 100)
+    const skipped = job.value.skipped != null
+      ? (Number(job.value.skipped) || 0)
+      : 0
+    const processed = (job.value.success || 0) + (job.value.failed || 0) + skipped
+    return Math.round((processed / job.value.total) * 100)
   })
 
   const stopPoll = () => {
@@ -58,12 +63,14 @@ export function useCarSyncJob() {
   const toastFinished = (data) => {
     const type = data?.jobType
     const done = type === 'IMAGE_BACKFILL' ? '图片补入库完成'
-      : type === 'INCREMENTAL' ? '增量同步完成' : '同步完成'
+      : type === 'INCREMENTAL' ? '检查更新完成' : '同步完成'
+    const skipped = Number(data?.skipped || 0)
     if (data?.status === 'SUCCESS') {
-      if (type === 'IMAGE_BACKFILL' || type === 'INCREMENTAL') ElMessage.success(`${done}，处理 ${data.success || 0} 个车型`)
+      if (data?.total && skipped >= data.total) ElMessage.success(`${done}：${skipped} 台无变化`)
+      else if (type === 'IMAGE_BACKFILL' || type === 'INCREMENTAL') ElMessage.success(`${done}，处理 ${data.success || 0} 个车型`)
       else ElMessage.success(`同步完成，入库 ${data.success || 0} 个车型`)
     } else if ((data?.failed || 0) > 0) {
-      ElMessage.warning(`${done}，${data.success || 0} 成功 / ${data.failed} 失败`)
+      ElMessage.warning(`${done}，${data.success || 0} 成功 / ${data.failed} 失败${skipped ? ` / ${skipped} 跳过` : ''}`)
     }
   }
 
@@ -129,7 +136,7 @@ export function useCarSyncJob() {
       const now = Date.now()
       const freshRunning = res.data.find(j => {
         if (j?.status !== 'RUNNING') return false
-        const t = Date.parse(j?.startedAt || j?.createdAt || '')
+        const t = Date.parse(j?.heartbeatAt || j?.startedAt || j?.createdAt || '')
         return Number.isFinite(t) && now - t < RECOVER_STALE_MS
       })
       if (freshRunning) {
@@ -148,6 +155,26 @@ export function useCarSyncJob() {
       }
     } catch {
       // 静默：恢复历史任务失败不影响主列表
+    }
+  }
+
+  /** 请求取消当前运行中任务：后端在当前车型跑完后停止后续。 */
+  const cancelCurrent = async () => {
+    if (!jobId.value || cancelling.value || !jobRunning.value) return false
+    cancelling.value = true
+    try {
+      const res = await carApi.cancelJob(jobId.value)
+      if (res.code === 0) {
+        ElMessage.info('已请求取消：当前车型结束后停止后续（已开始的车型可能仍会完成）')
+        return true
+      }
+      ElMessage.warning(res.msg || '取消失败')
+      return false
+    } catch (e) {
+      ElMessage.warning(e?.response?.data?.msg || '取消失败，请稍后重试')
+      return false
+    } finally {
+      cancelling.value = false
     }
   }
 
@@ -181,6 +208,8 @@ export function useCarSyncJob() {
     starting,
     progress,
     retrying,
+    cancelling,
+    cancelCurrent,
     startPoll,
     stopPoll,
     beginStart,

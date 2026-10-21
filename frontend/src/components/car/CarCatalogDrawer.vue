@@ -110,7 +110,7 @@ const onBackfill = () => {
   if (props.busy) { ElMessage.warning('已有任务在运行，请等待完成后再发起'); return }
   if (backfilling.value) return
   ElMessageBox.confirm(
-    '为全部存量车型补转官网封面与详情图进图库：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重，不会重复占图床。确认执行？',
+    '只补缺失/失败/过期的车型图片（封面 + 详情图集）：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重，不会重复占图床。确认执行？',
     '图片补入库', { type: 'info', confirmButtonText: '开始补入库', cancelButtonText: '取消' }
   ).then(async () => {
     backfilling.value = true

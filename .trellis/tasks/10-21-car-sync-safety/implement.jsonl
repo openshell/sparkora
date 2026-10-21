@@ -1,0 +1,6 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "车型同步/封面/状态/接口的权威契约；本任务改动必须同步字段、状态与任务语义"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移、原子抢占、部分更新、REQUIRES_NEW 自注入、定时任务防重叠与陈旧自愈的既有约定"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端错误处理、验证与质量规范；同步失败/状态机/测试命令必须遵守"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "不可逆副作用隔离、多步写入失败顺序、验证禁改生产数据等质量红线"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "车型页状态提示/任务面板/轮询清理/三态与 E2E 基线"}
+{"file": "docs/spec/knowledge/center.md", "reason": "知识中心车型 Tab 的能力与运维入口描述，source_state/禁用同步需同步更新"}

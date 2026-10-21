@@ -67,10 +67,11 @@
 ### 4.1 车型 Tab 契约（10-21-knowledge-car-sync-ux）
 
 - **同步内聚**：不再强制跳 `/car/sync`；「同步车型」在 Tab 内打开 `components/car/CarCatalogDrawer.vue`（加载官网目录 → 选择 → 同步选中 / 图片补入库）。`/car/sync` 保留并与知识中心复用 `CarCatalogGrid` / `CarJobPanel` / `useCarSyncJob`。
-- **任务恢复**：挂载时 `useCarSyncJob.recoverLatest()`——优先恢复**未过期**的 RUNNING 任务（`startedAt` 60 分钟内，与后端 `SYNC_STALE_MS` 同口径）并继续 2s 轮询；否则展示 24h 内最近**终态**任务。陈旧 RUNNING（JVM 中途死亡遗留）不恢复、不阻塞新建任务。切 Tab/刷新后可继续看到进度；运行中重复发起会被阻止并提示（`beginStart` 在 createJob 请求在途即置忙，覆盖「创建返回→首次轮询」与请求窗口）。
-- **统计口径**：「封面覆盖」= `coverImageUrl` 非空的车型数 / 总数（不再取图库 `source=byd` 全量图片数）。
+- **任务恢复**：挂载时 `useCarSyncJob.recoverLatest()`——优先恢复**未过期**的 RUNNING 任务（`heartbeatAt` 60 分钟内，缺失回退 `startedAt`，与后端 `SYNC_STALE_MS` 同口径）并继续 2s 轮询；否则展示 24h 内最近**终态**任务。陈旧 RUNNING（JVM 中途死亡遗留）不恢复、不阻塞新建任务。切 Tab/刷新后可继续看到进度；运行中重复发起会被阻止并提示（`beginStart` 在 createJob 请求在途即置忙，覆盖「创建返回→首次轮询」与请求窗口）。
+- **统计口径**：「封面覆盖」= `coverImageUrl` 非空的车型数 / 总数（不再取图库 `source=byd` 全量图片数）；10-21 安全整改增加「官网无数据」统计（`sourceState=EMPTY`），并从「失败」中排除，避免同一批空数据车重复计数。
+- **空数据安全**：`sourceState=EMPTY` 的车型显示「官网无数据」，禁用全量同步，提示改用「图片补入库」；批量同步若包含空数据车会直接拦截。任务面板使用 `skipped` 独立计数，全跳过显示「检查完成(无变化)」。
 - **批量**：EDITOR+ 卡片 checkbox 恒定可见；批量同步按 `goodsId` 建任务，批量删除逐个调用 `carApi.remove`（`Promise.allSettled` 汇总成功/失败），确认文案明确「共享图库资产不会被删除」；同步任务运行中删除按钮禁用（避免与在跑任务竞争同一车型）。
-- **运维**：「运维」下拉内「图片补入库」（EDITOR+，仅图片域、内容哈希去重）与「重建全部向量」（ADMIN，二次确认 + 耗时提示）。写操作按钮按角色显隐（VIEWER 不可见），`CarJobPanel` 的「重试失败项」由 `can-retry` 控制。
+- **运维**：「运维」下拉内「图片补入库（仅缺失/失败）」「全量图片重扫」（EDITOR+）与「重建全部向量」（ADMIN）。图片补入库默认只处理缺失/失败/过期图片，全量重扫需二次确认；写操作按钮按角色显隐（VIEWER 不可见），`CarJobPanel` 的「重试失败项」由 `can-retry` 控制，运行中可请求取消。
 - **图片体验**：主图 `fit="contain"` + 纸色底；无主图回退详情图首图时改为顶部裁剪（`fit="cover"` + `object-position: top`），避免 1 万～3.8 万像素高的详情长图缩成窄条；详情页 Hero、图集原图预览、卖点 chips、失败原因 `el-alert`。
 - 纯函数落位 `utils/carDisplay.js`（`coverUrlOf`/`parseFeatures`/`formatPrice`/`sortCars`/`statusMeta`）。
 

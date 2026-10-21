@@ -12,10 +12,14 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -58,6 +62,24 @@ class CarSyncJobServiceStaleTest {
         assertTrue(set.contains("status") && set.contains("finished_at") && set.contains("error_msg"), "SET 列缺失: " + set);
         assertTrue(aw.getParamNameValuePairs().containsValue("FAILED"), "应置 FAILED");
         assertTrue(aw.getParamNameValuePairs().containsValue("运行超时判定为陈旧,自动终止"), "应写陈旧说明");
+    }
+
+    /** 陈旧任务清理必须释放其 `job:<id>` 全局锁,否则崩溃残留锁会挡住新任务直到 TTL 过期。 */
+    @Test
+    void 陈旧清理_释放对应全局锁() throws Exception {
+        CarSyncJobEntity stale = new CarSyncJobEntity();
+        stale.setId(7L);
+        stale.setStatus("RUNNING");
+        when(jobMapper.selectList(any(Wrapper.class))).thenReturn(List.of(stale));
+        when(jobMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        CarSyncLockService lock = mock(CarSyncLockService.class);
+        Field f = CarSyncJobService.class.getDeclaredField("lockService");
+        f.setAccessible(true);
+        f.set(service, lock);
+
+        service.markStaleRunningAsFailed();
+
+        verify(lock).unlock(CarSyncLockService.GLOBAL_JOB_KEY, "job:7");
     }
 
     @Test

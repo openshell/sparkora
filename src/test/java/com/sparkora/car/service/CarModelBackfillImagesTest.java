@@ -3,7 +3,9 @@ package com.sparkora.car.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.car.client.BydCmsClient;
 import com.sparkora.car.client.EmbeddingClient;
+import com.sparkora.car.dto.GoodsAttrListDto;
 import com.sparkora.car.dto.GoodsInfoDto;
+import com.sparkora.car.dto.GoodsParamsDto;
 import com.sparkora.ai.vector.VectorStoreService;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.ImageAssetEntity;
@@ -73,6 +75,8 @@ class CarModelBackfillImagesTest {
         service = new CarModelService(client, modelMapper, versionMapper, groupMapper, paramMapper,
                 cleanMapper, docService, cleanService, chunkMapper, imageMapper, imageStorage,
                 new ObjectMapper(), imageService, embeddingClient, vectorStoreService);
+        // 单测用内嵌 127.0.0.1 HttpServer 模拟官网图;生产默认下载器只允许 HTTPS + 白名单
+        service.setImageDownloader(CarImageDownloader.permissiveForTest());
     }
 
     /** 构造单 item 的 goodsInfo 响应(可指定 introduce 列表)。 */
@@ -124,7 +128,8 @@ class CarModelBackfillImagesTest {
     @Test
     void 回填_有图_persistOrReuse哈希复用_intro_images收敛为id列表() throws Exception {
         // 本地内嵌 HttpServer 模拟官网图片(免外网):返回 PNG 魔数字节
-        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/img.png", (HttpExchange ex) -> {
             ex.getResponseHeaders().add("Content-Type", "image/png");
@@ -168,9 +173,11 @@ class CarModelBackfillImagesTest {
 
     @Test
     void 回填路径_零触碰_版本参数清洗向量域() throws Exception {
-        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/img.png", (HttpExchange ex) -> {
+            ex.getResponseHeaders().add("Content-Type", "image/png");
             ex.sendResponseHeaders(200, png.length);
             try (var os = ex.getResponseBody()) { os.write(png); }
             ex.close();
@@ -203,9 +210,11 @@ class CarModelBackfillImagesTest {
     /** 10-21 R1:仅有主体图(img)、无介绍图的车型也必须写封面(introduce 早退不能带走封面)。 */
     @Test
     void 回填_仅有主体图无介绍图_写封面_不动intro_images() throws Exception {
-        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/cover.png", (HttpExchange ex) -> {
+            ex.getResponseHeaders().add("Content-Type", "image/png");
             ex.sendResponseHeaders(200, png.length);
             try (var os = ex.getResponseBody()) { os.write(png); }
             ex.close();
@@ -246,9 +255,11 @@ class CarModelBackfillImagesTest {
     /** 10-21 R1:官网 img 为空时保留旧封面,只更新详情图集。 */
     @Test
     void 回填_主体图为空_保留旧封面_仅更新详情图集() throws Exception {
-        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/img.png", (HttpExchange ex) -> {
+            ex.getResponseHeaders().add("Content-Type", "image/png");
             ex.sendResponseHeaders(200, png.length);
             try (var os = ex.getResponseBody()) { os.write(png); }
             ex.close();
@@ -295,9 +306,11 @@ class CarModelBackfillImagesTest {
     /** 10-21 R1:全量 syncOne 路径同样写封面(仅有 img 无 introduce)。 */
     @Test
     void 全量同步_有主体图无介绍图_写封面() throws Exception {
-        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/cover.png", (HttpExchange ex) -> {
+            ex.getResponseHeaders().add("Content-Type", "image/png");
             ex.sendResponseHeaders(200, png.length);
             try (var os = ex.getResponseBody()) { os.write(png); }
             ex.close();
@@ -308,9 +321,8 @@ class CarModelBackfillImagesTest {
             CarModelEntity row = rowFor(26L, "26", "大唐EV");
             when(modelMapper.selectOne(any())).thenReturn(row);
             when(client.goodsInfo("26")).thenReturn(infoItem("26", "大唐EV", url, List.of()));
-            when(client.goodsParams("26")).thenReturn(null);
-            when(client.goodsAttrList("26")).thenReturn(null);
-            when(cleanService.cleanForModel(any())).thenReturn(new com.sparkora.car.dto.CleanStats());
+            when(client.goodsParams("26")).thenReturn(params("尺寸参数", "长×宽×高(mm)", "4780×1890×1670"));
+            when(client.goodsAttrList("26")).thenReturn(versions("205领航版"));
             when(imageService.persistOrReuse(any(), eq("png"), any(ImageAssetEntity.class)))
                     .thenAnswer(inv -> {
                         ImageAssetEntity e = new ImageAssetEntity();
@@ -321,7 +333,7 @@ class CarModelBackfillImagesTest {
             service.syncOne("26");
 
             assertEquals(90L, row.getCoverImageId());
-            assertEquals("[]", row.getIntroImages());   // persistModel 写空 introduce 原串,persistImages 不覆写
+            assertNull(row.getIntroImages());   // introduce 为空保留旧图集(persistModel 不再写 raw URL)
             assertEquals("SUCCESS", row.getSyncStatus());
             assertNull(row.getLastSyncError());
         } finally {
@@ -331,11 +343,12 @@ class CarModelBackfillImagesTest {
 
     @Test
     void 回填_行不存在_抛状态异常不复活被删车型() {
-        when(client.goodsInfo("99")).thenReturn(infoItem("99", "已删除车型", List.of()));
         when(modelMapper.selectOne(any())).thenReturn(null);
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
                 () -> service.backfillImages("99"));
+        // 行不存在时连官网都不请求,更不写回任何车型行
+        verify(client, never()).goodsInfo(anyString());
         verify(modelMapper, never()).updateById(any(CarModelEntity.class));
     }
 
@@ -345,9 +358,11 @@ class CarModelBackfillImagesTest {
      */
     @Test
     void 回填_GoodsInfo空条目_存量URL兜底下载入库_快照指纹收敛() throws Exception {
-        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/img.png", (HttpExchange ex) -> {
+            ex.getResponseHeaders().add("Content-Type", "image/png");
             ex.sendResponseHeaders(200, png.length);
             try (var os = ex.getResponseBody()) { os.write(png); }
             ex.close();
@@ -373,7 +388,10 @@ class CarModelBackfillImagesTest {
             // note 必须可观测;intro_images 收敛 id 列表;库存行快照指纹初始化
             assertEquals("官网无数据,已按存量URL兜底入库1张", out.note());
             assertEquals("[77]", row.getIntroImages());
-            assertEquals("SUCCESS", row.getSyncStatus());
+            // 10-21:官网无数据不得算成功同步(不写 SUCCESS / last_sync_at)
+            assertEquals("FAILED", row.getSyncStatus());
+            assertEquals("EMPTY", row.getSourceState());
+            assertNull(row.getLastSyncAt());
             assertNotNull(row.getSyncFingerprint());
             // 快照指纹与 computeRowSnapshotFingerprint(row) 同口径(row 未变时二次计算应一致)
             assertEquals(CarModelService.computeRowSnapshotFingerprint(row), row.getSyncFingerprint());
@@ -401,7 +419,8 @@ class CarModelBackfillImagesTest {
 
         assertEquals("官网无数据,且无存量图可兜底", out.note());
         assertEquals("[]", row.getIntroImages());   // 不冲写
-        assertEquals("SUCCESS", row.getSyncStatus());
+        assertEquals("FAILED", row.getSyncStatus());   // 空数据不算成功
+        assertEquals("EMPTY", row.getSourceState());
         // 快照指纹仍初始化(行非空快照)——官网恢复后指纹不匹配自动全量收敛
         assertNotNull(row.getSyncFingerprint());
         verify(imageService, never()).persistOrReuse(any(), anyString(), any(ImageAssetEntity.class));
@@ -434,7 +453,27 @@ class CarModelBackfillImagesTest {
         d.setId("156");
         d.setName("大唐EV");
         d.setIntroduce(List.of("u2", "u1"));   // introduce 逐项原始顺序敏感
-        assertTrue(!CarModelService.computeFingerprint(c).equals(CarModelService.computeFingerprint(d)),
-                "图片列表顺序变化应改变指纹");
+        // 10-21:基础指纹不再包含图片;图片顺序变化只影响 image_fingerprint
+        assertEquals(CarModelService.computeFingerprint(c), CarModelService.computeFingerprint(d));
+        assertTrue(!CarModelService.computeImageFingerprint(c).equals(CarModelService.computeImageFingerprint(d)),
+                "图片列表顺序变化应改变图片指纹");
+    }
+
+    private static GoodsParamsDto.ParamsData params(String group, String name, String value) {
+        GoodsParamsDto.ParamRow row = new GoodsParamsDto.ParamRow();
+        row.setName(name);
+        row.setValue(List.of(value));
+        GoodsParamsDto.Config cfg = new GoodsParamsDto.Config();
+        cfg.setName(group);
+        cfg.setValue(List.of(row));
+        GoodsParamsDto.ParamsData data = new GoodsParamsDto.ParamsData();
+        data.setConfigs(List.of(cfg));
+        return data;
+    }
+
+    private static List<GoodsAttrListDto.Version> versions(String name) {
+        GoodsAttrListDto.Version v = new GoodsAttrListDto.Version();
+        v.setName(name);
+        return List.of(v);
     }
 }

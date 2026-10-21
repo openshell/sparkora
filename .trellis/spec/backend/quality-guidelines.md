@@ -121,3 +121,8 @@ psql ... -c "UPDATE sparkora_article_version SET content_md='' WHERE id=25"
 - [ ] 新增外部站点采集配置前，是否真机验证可达（非仅凭 HTTP 200；JS 站点走渲染 HTML `cleaned_html`；WAF 验证码站点不保留死栏目）？
 - [ ] 小程序推送正文是否只经过 `BydDynastyPlainTextRenderer`，未新增正则清洗分支？
 - [ ] payload 是否保持 v2 的 `text`/`img`/`video` 契约且 `clubId`/`clubTitle` 双键语义不变，Local Agent 兼容性是否已核对？
+
+
+### Convention: 外部同步先校验、再写入，失败保留旧数据（10-21-car-sync-safety）
+
+空/半响应、业务错误码、部分图片/向量失败都不得先删旧数据再写；必须预检后写，失败保留旧版本/参数/清洗/块/图集，并让任务进入 `PARTIAL/FAILED`。图片失败不得推进图片指纹，否则增量会永久跳过重试。验证用 Mock/临时数据，禁止对生产行做「置空再还原」。

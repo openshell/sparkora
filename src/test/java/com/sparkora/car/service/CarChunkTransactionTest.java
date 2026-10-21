@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -33,9 +34,9 @@ import static org.mockito.Mockito.when;
 /**
  * CAR 写入事务边界单测（09-27 R3/AC6；10-03 E6 旧表退役）。
  *
- * 断言：rebuildForModel 的持久化经自注入代理（self）走独立事务方法 {@code persistCarChunk}；
- * 修复此前 {@code @Transactional insertDocWithEmbedding} 由线程池 lambda 内 this 直调、代理不生效的问题。
- * chunk 插入与向量写入（单表 store）同在 {@code persistCarChunk} 内，不再写旧表。
+ * 断言：rebuildForModel 的持久化经自注入代理（self）走独立事务方法 {@code replaceChunks}
+ * （10-21 两阶段：先全部 embedding，成功后原子替换）；单块 {@code persistCarChunk} 仍保持
+ * REQUIRES_NEW 语义。chunk 插入与向量写入（单表 store）同事务，不再写旧表。
  */
 class CarChunkTransactionTest {
 
@@ -95,8 +96,8 @@ class CarChunkTransactionTest {
 
         service.rebuildForModel(39L);
 
-        // 持久化经代理方法（独立事务边界）；MODEL_INFO 块必有一条
-        verify(spySelf).persistCarChunk(any(CarChunkEntity.class), eq("[0.1,0.2]"));
+        // 10-21:先全部 embedding 再经代理原子替换(独立事务边界);MODEL_INFO 块必有一条
+        verify(spySelf).replaceChunks(eq(39L), anyList(), anyList());
     }
 
     @Test
