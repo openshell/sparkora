@@ -109,13 +109,19 @@ export const carApi = {
   // 创建「图片补入库」任务（10-15-car-image-backfill R1 存量回填）：无参，覆盖全部库存车型；
   // 轻回填只动图片域（下载/哈希去重/图床/打标）+指纹收敛，不触参数/清洗/向量。
   // 注意：返回 R<Long>，data 即 jobId（区别于 createJob 的 {jobId} 包装）；创建需同步落库+触发异步，给 60s 余量
-  createBackfillJob: () => http.post('/car/sync/backfill', null, { timeout: 60000 }),
+  // full=true 显式全库重扫；默认只补缺失/失败/过期图片（2026-10-21 同步安全整改）
+  createBackfillJob: (full = false) => http.post('/car/sync/backfill', null, {
+    params: full ? { mode: 'FULL' } : {},
+    timeout: 60000
+  }),
   // 查询同步任务进度
   getJob: (id) => http.get(`/car/sync/jobs/${id}`),
   // 同步任务历史
   listJobs: () => http.get('/car/sync/jobs'),
   // 重试任务失败项，返回新任务 {jobId}
   retryJob: (id) => http.post(`/car/sync/jobs/${id}/retry`),
+  // 请求取消运行中任务（当前车型跑完后停止后续；非强制中断）
+  cancelJob: (id) => http.post(`/car/sync/jobs/${id}/cancel`),
   // 同步单个车型（详情页用，同步阻塞）
   syncOne: (id) => http.post(`/car/models/${id}/sync`, null, { timeout: 300000 }),
   // 批量重建全部车型向量（ADMIN，一次性运维；耗时=车型数×块数×embedding，放宽超时）

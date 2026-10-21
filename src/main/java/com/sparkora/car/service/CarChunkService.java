@@ -48,7 +48,7 @@ public class CarChunkService {
     private final EmbeddingClient embeddingClient;
     private final EmbeddingBatchRunner batchRunner;
     private final ObjectMapper json;
-    /** 自注入代理（@Lazy）：让 {@link #persistCarChunk} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
+    /** 自注入代理（@Lazy）：让 {@link #replaceChunks} 的 REQUIRES_NEW 事务真的生效（this 调用不走代理）。 */
     @Autowired
     @Lazy
     private CarChunkService self;
@@ -71,33 +71,72 @@ public class CarChunkService {
         this.json = json;
     }
 
-    /** 重建某车型的全部文档块 + 向量(先清后建)。 */
-    public void rebuildForModel(Long modelId) {
-        deleteByModel(modelId);
+    /**
+     * 重建某车型的全部文档块 + 向量(10-21 安全两阶段:先全部 embedding,再原子替换)。
+     *
+     * <p>旧实现「先删旧块/向量再 embedding」:embedding 失败会留下空库,静默丢块。现改为:
+     * <ol>
+     *   <li>按当前参数/清洗构建新块列表(纯计算,无写库);</li>
+     *   <li>全部 embedding 在事务外完成(并发 + 单块重试 1 次);</li>
+     *   <li>任一块失败 → **不替换**旧块/向量,返回 failed 计数(调用方记 PARTIAL);</li>
+     *   <li>全部成功 → {@link #replaceChunks} 在一个事务内删旧+插新。</li>
+     * </ol>
+     * 返回统计供 syncOne/rebuildAll 判定终态,不再静默成功。
+     */
+    public com.sparkora.ai.EmbedStats rebuildForModel(Long modelId) {
         CarModelEntity m = modelMapper.selectById(modelId);
-        if (m == null) return;
+        if (m == null) return new com.sparkora.ai.EmbedStats(0, 0, 0);
 
         List<CarChunkEntity> chunks = new ArrayList<>();
-        // 1) 车型基础信息块
         chunks.add(buildModelInfoChunk(m));
-        // 2) 购车权益块(按条切)
         chunks.addAll(buildRightsChunks(m));
-        // 3) 参数分组块(核心,仅 PARAM_GROUP 粒度)
         chunks.addAll(buildParamGroupChunks(m));
-        // 10-03 E1:填充车型名(写 vector_store metadata.name 用)
         for (CarChunkEntity d : chunks) d.setModelName(m.getName());
+        if (chunks.isEmpty()) {
+            (self == null ? this : self).replaceChunks(modelId, List.of(), List.of());
+            return new com.sparkora.ai.EmbedStats(0, 0, 0);
+        }
 
-        // S6b:embedding 调用并发化(固定小线程池,不随车型数膨胀)+ 单块失败重试 1 次;
-        // 结束输出成功/失败计数,失败块记 sortOrder——消除「静默丢块」与千次串行 HTTP。
-        // 09-27:委托 EmbeddingBatchRunner;embed 在事务外,持久化走 REQUIRES_NEW 独立事务。
+        // 阶段 1:全部 embedding(网络调用在事务外);persistFn 只把向量放入内存,不写库
+        List<String> vectors = new ArrayList<>(java.util.Collections.nCopies(chunks.size(), (String) null));
+        java.util.Map<CarChunkEntity, Integer> idx = new java.util.IdentityHashMap<>();
+        for (int i = 0; i < chunks.size(); i++) idx.put(chunks.get(i), i);
         batchRunner.run(chunks, CarChunkEntity::getChunkText,
-                (chunk, vec) -> (self == null ? this : self).persistCarChunk(chunk, vec),
+                (chunk, vec) -> {
+                    Integer i = idx.get(chunk);
+                    if (i == null) throw new IllegalStateException("块索引缺失");
+                    vectors.set(i, vec);
+                },
                 "model=" + modelId, 4, 1);
+        int failed = 0;
+        for (String v : vectors) if (v == null) failed++;
+        if (failed > 0) {
+            log.warn("车型向量重建未替换(失败 {}/{},旧块/向量保留) model={}", failed, chunks.size(), modelId);
+            return new com.sparkora.ai.EmbedStats(chunks.size(), chunks.size() - failed, failed);
+        }
+
+        // 阶段 2:事务内原子替换(全新块行 + 向量)
+        (self == null ? this : self).replaceChunks(modelId, chunks, vectors);
+        return new com.sparkora.ai.EmbedStats(chunks.size(), chunks.size(), 0);
     }
 
-    /** 删除某车型的全部文档块 + 向量。 */
-    @Transactional
-    public void deleteByModel(Long modelId) {
+    /**
+     * 原子替换车型块 + 向量:先清旧块与 store 向量,再插入新块(同一事务,失败回滚保留旧数据)。
+     * 由 {@link #rebuildForModel} 经自注入代理调用,确保事务生效。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void replaceChunks(Long modelId, List<CarChunkEntity> chunks, List<String> vectors) {
+        deleteByModelInternal(modelId);
+        if (chunks == null) return;
+        for (int i = 0; i < chunks.size(); i++) {
+            CarChunkEntity chunk = chunks.get(i);
+            chunk.setId(null);   // 新块行
+            persistCarChunkInline(chunk, vectors.get(i));
+        }
+    }
+
+    /** 删除块 + 对应 store 向量(不新开事务;供事务内替换与 deleteByModel 复用)。 */
+    private void deleteByModelInternal(Long modelId) {
         List<CarChunkEntity> chunks = chunkMapper.selectList(new QueryWrapper<CarChunkEntity>().eq("model_id", modelId));
         List<Long> chunkIds = new ArrayList<>();
         for (CarChunkEntity d : chunks) {
@@ -109,11 +148,28 @@ public class CarChunkService {
         chunkMapper.delete(new QueryWrapper<CarChunkEntity>().eq("model_id", modelId));
     }
 
+    /** 插入块 + store 向量(调用方已处事务内;不新增代理边界)。 */
+    private void persistCarChunkInline(CarChunkEntity chunk, String vec) {
+        chunk.setCreatedAt(LocalDateTime.now());
+        chunk.setUpdatedAt(LocalDateTime.now());
+        chunkMapper.insert(chunk);
+        if (vectorStoreService != null) {
+            vectorStoreService.upsert(com.sparkora.ai.vector.VectorDomain.CAR.name(), chunk.getId(),
+                    chunk.getModelId(), chunk.getChunkType(), chunk.getModelName(), true,
+                    embeddingClient.modelName(), chunk.getChunkText(), vec);
+        }
+    }
+
+    /** 删除某车型的全部文档块 + 向量。 */
+    @Transactional
+    public void deleteByModel(Long modelId) {
+        deleteByModelInternal(modelId);
+    }
+
     /**
-     * 持久化块 + 向量(先插块行拿 id,再插 embedding)——独立事务边界(09-27 统一):
-     * embedding 网络调用在事务外,此处 REQUIRES_NEW 保证向量插入失败时块行一并回滚(不留孤儿块),
-     * 且不加入调用方环境事务。此前的 {@code @Transactional insertDocWithEmbedding} 由线程池 lambda
-     * 内 this 调用,代理不生效、注解被忽略。
+     * 持久化单个块 + 向量(先插块行拿 id,再写 store)——独立事务边界(09-27 统一)。
+     * 10-21 起 {@link #rebuildForModel} 改用两阶段 {@link #replaceChunks};本方法保留给
+     * 单块写入场景/单测(向量失败时块行一并回滚,不留孤儿块)。
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void persistCarChunk(CarChunkEntity chunk, String vec) {

@@ -48,7 +48,17 @@ public class CarModelEntity {
      * 独立变化不触发(需手动全目录同步兜底)。由 persistModel(全量)/backfillImages(轻回填)统一写入。
      */
     private String syncFingerprint;
+    /** 图片域指纹(10-21):SHA-256(img + introduce),用于「只换图」不触发全量清洗/向量。 */
+    private String imageFingerprint;
+    /** 参数域指纹(10-21):SHA-256(goodsParams + goodsAttrList),用于「只改参数」定向重建。 */
+    private String paramsFingerprint;
     private String syncStatus;     // PENDING/SYNCING/SUCCESS/FAILED
+    /** 官网数据源状态(10-21):OK / EMPTY / INCOMPLETE / STALE;NULL = 存量未标记。 */
+    private String sourceState;
+    /** 最近一次检查/同步的面向用户短说明(如「官网无数据」「部分图片失败」)。 */
+    private String syncNote;
+    /** 最近一次官网检查时间(空数据/跳过也更新);lastSyncAt 只在完整成功后更新。 */
+    private LocalDateTime lastCheckedAt;
     private LocalDateTime lastSyncAt;
     private String lastSyncError;
     private String createdBy;

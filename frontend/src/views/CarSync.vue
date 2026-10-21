@@ -21,8 +21,9 @@
       </div>
 
       <template v-else>
-        <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove" closable
-          @retry="onRetry" @close="onCloseJob" />
+        <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove"
+          :can-cancel="user.isEditorOrAbove" :cancelling="cancelling" closable
+          @retry="onRetry" @cancel="onCancelJob" @close="onCloseJob" />
 
         <div class="sync-bar">
           <span class="hint">从官网在售目录选择车型同步（含参数清洗 / 切块 / 向量）；「图片补入库」只补封面与详情图。</span>
@@ -65,7 +66,7 @@ const selected = ref([])
 const creating = ref(false)
 const backfilling = ref(false)
 
-const { job, jobId, jobBusy, retrying, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
+const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
 
 const load = async () => {
   loading.value = true
@@ -111,7 +112,7 @@ const onBackfill = () => {
   if (jobBusy.value) { ElMessage.warning('已有任务在运行，请等待完成后再发起'); return }
   if (backfilling.value) return
   ElMessageBox.confirm(
-    '为全部存量车型补转官网封面与详情图进图库：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重，不会重复占图床。确认执行？',
+    '只补缺失/失败/过期的车型图片（封面 + 详情图集）：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重，不会重复占图床。确认执行？',
     '图片补入库', { type: 'info', confirmButtonText: '开始补入库', cancelButtonText: '取消' }
   ).then(async () => {
     if (!beginStart()) return
@@ -136,6 +137,7 @@ const onBackfill = () => {
 }
 
 const onRetry = () => retryCurrent({ onFinished: load })
+const onCancelJob = () => cancelCurrent()
 
 const onCloseJob = () => {
   stopPoll()

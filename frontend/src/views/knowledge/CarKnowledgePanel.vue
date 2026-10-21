@@ -14,6 +14,7 @@
         <el-option label="失败" value="FAILED" />
         <el-option label="同步中" value="SYNCING" />
         <el-option label="待同步" value="PENDING" />
+        <el-option label="官网无数据" value="EMPTY" />
         <el-option label="无封面" value="NONE" />
       </el-select>
       <el-select v-model="sortKey" class="sort" placeholder="排序">
@@ -36,7 +37,8 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="backfill">图片补入库</el-dropdown-item>
+              <el-dropdown-item command="backfill">图片补入库（仅缺失/失败）</el-dropdown-item>
+              <el-dropdown-item command="backfillFull" divided>全量图片重扫</el-dropdown-item>
               <el-dropdown-item v-if="user.isAdmin" command="rebuild" divided>重建全部向量</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -70,6 +72,7 @@
         <div class="stat"><span class="stat-num">{{ rows.length }}</span><span class="stat-label">全部车型</span></div>
         <div class="stat"><span class="stat-num ok">{{ countBy('SUCCESS') }}</span><span class="stat-label">已同步</span></div>
         <div class="stat"><span class="stat-num err">{{ countBy('FAILED') }}</span><span class="stat-label">失败</span></div>
+        <div class="stat"><span class="stat-num warn">{{ emptyCount }}</span><span class="stat-label">官网无数据</span></div>
         <div class="stat"><span class="stat-num warn">{{ countBy('SYNCING') }}</span><span class="stat-label">同步中</span></div>
         <div class="stat">
           <span class="stat-num">{{ coverCount }}<span class="stat-sub"> / {{ rows.length }}</span></span>
@@ -77,8 +80,9 @@
         </div>
       </div>
 
-      <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove" closable
-        @retry="onRetry" @close="onCloseJob" />
+      <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove"
+        :can-cancel="user.isEditorOrAbove" :cancelling="cancelling" closable
+        @retry="onRetry" @cancel="onCancelJob" @close="onCloseJob" />
 
       <div v-if="rows.length" class="result-line">
         <span>共 {{ rows.length }} 台 · 当前显示 {{ filtered.length }} 台</span>
@@ -121,10 +125,10 @@
                 {{ row.salesNetwork || '—' }} · {{ formatPrice(row.priceRange) || '价格待同步' }}
               </div>
               <div class="c-status">
-                <el-tag size="small" :type="statusMeta(row.syncStatus).type" effect="light" round>
-                  {{ statusMeta(row.syncStatus).label }}
+                <el-tag size="small" :type="rowStatusMeta(row).type" effect="light" round>
+                  {{ rowStatusMeta(row).label }}
                 </el-tag>
-                <span class="c-time">{{ fmtTime(row.lastSyncAt) }}</span>
+                <span class="c-time">{{ fmtTime(row.lastCheckedAt || row.lastSyncAt) }}</span>
               </div>
               <el-tooltip v-if="row.syncStatus === 'FAILED' && row.lastSyncError"
                 :content="row.lastSyncError" placement="top" :show-after="200">
@@ -132,9 +136,11 @@
               </el-tooltip>
               <div v-if="user.isEditorOrAbove" class="c-actions">
                 <el-button size="small" text type="primary" @click="goDetail(row)">详情</el-button>
-                <el-button v-if="row.syncStatus === 'FAILED'" size="small" text type="warning"
+                <el-button v-if="row.syncStatus === 'FAILED' && row.sourceState !== 'EMPTY'" size="small" text type="warning"
                   :loading="syncingId === row.id" :disabled="jobBusy" @click="onSyncOne(row)">重试</el-button>
-                <el-button v-else size="small" text :loading="syncingId === row.id" :disabled="jobBusy"
+                <el-button v-else size="small" text :loading="syncingId === row.id"
+                  :disabled="jobBusy || row.sourceState === 'EMPTY'"
+                  :title="row.sourceState === 'EMPTY' ? '官网无数据，请使用「图片补入库」；全量同步会保留旧数据但不会补主图' : ''"
                   @click="onSyncOne(row)">同步</el-button>
                 <el-button size="small" text type="danger" :disabled="jobBusy"
                   title="同步任务运行中不可删除车型" @click="onDel(row)">删除</el-button>
@@ -178,10 +184,11 @@ const bulkSyncing = ref(false)
 const bulkDeleting = ref(false)
 const rebuildingAll = ref(false)
 
-const { job, jobId, jobBusy, retrying, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
+const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
 
 const networks = computed(() => [...new Set(rows.value.map(r => r.salesNetwork).filter(Boolean))])
 const coverCount = computed(() => rows.value.filter(r => r.coverImageUrl).length)
+const emptyCount = computed(() => rows.value.filter(r => r.sourceState === 'EMPTY').length)
 const syncedGoodsIds = computed(() => new Set(rows.value.map(r => r.goodsId)))
 
 const hasFilter = computed(() =>
@@ -193,13 +200,26 @@ const filtered = computed(() => {
     if (kw && !(r.name || '').toLowerCase().includes(kw) && !(r.salesNetwork || '').toLowerCase().includes(kw)) return false
     if (networkFilter.value !== 'all' && r.salesNetwork !== networkFilter.value) return false
     if (statusFilter.value === 'NONE') return !r.coverImageUrl
+    if (statusFilter.value === 'EMPTY') return r.sourceState === 'EMPTY'
+    // 官网无数据车 syncStatus 也是 FAILED,但统计口径已从「失败」排除,筛选必须同口径
+    if (statusFilter.value === 'FAILED') return r.syncStatus === 'FAILED' && r.sourceState !== 'EMPTY'
     if (statusFilter.value !== 'all' && r.syncStatus !== statusFilter.value) return false
     return true
   })
   return sortCars(list, sortKey.value)
 })
 
-const countBy = (s) => rows.value.filter(r => r.syncStatus === s).length
+const countBy = (s) => rows.value.filter(r => r.syncStatus === s
+  && !(s === 'FAILED' && r.sourceState === 'EMPTY')).length
+const rowStatusMeta = (row) => {
+  if (!row) return statusMeta('PENDING')
+  if (row.sourceState === 'EMPTY') return { label: '官网无数据', type: 'info' }
+  if (row.sourceState === 'INCOMPLETE' || row.sourceState === 'STALE') {
+    return { label: '数据待复核', type: 'warning' }
+  }
+  if (row.syncStatus === 'PARTIAL') return { label: '部分同步', type: 'warning' }
+  return statusMeta(row.syncStatus)
+}
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 
 const clearFilters = () => {
@@ -243,6 +263,7 @@ const onJobCreated = ({ jobId: id }) => {
 }
 
 const onRetry = () => retryCurrent({ onFinished: load })
+const onCancelJob = () => cancelCurrent()
 
 const onCloseJob = () => {
   stopPoll()
@@ -251,6 +272,10 @@ const onCloseJob = () => {
 }
 
 const onSyncOne = async (row) => {
+  if (row.sourceState === 'EMPTY') {
+    ElMessage.warning('官网无数据，请使用「图片补入库」；全量同步不会补主图')
+    return
+  }
   if (!ensureIdle()) return
   if (syncingId.value != null) return
   if (!beginStart()) return   // 请求在途即置忙，堵住并发的「批量同步 / 补入库」
@@ -281,6 +306,11 @@ const selectedRows = computed(() => rows.value.filter(r => selectedIds.value.inc
 const onBulkSync = async () => {
   if (!ensureIdle()) return
   if (bulkSyncing.value) return
+  const blocked = selectedRows.value.filter(r => r.sourceState === 'EMPTY')
+  if (blocked.length) {
+    ElMessage.warning(`已选车型中有 ${blocked.length} 台官网无数据，请取消选择后使用「图片补入库」`)
+    return
+  }
   const goodsIds = selectedRows.value.map(r => r.goodsId).filter(Boolean)
   if (!goodsIds.length) { ElMessage.warning('请选择要同步的车型'); return }
   if (!beginStart()) return
@@ -348,15 +378,18 @@ const onDel = async (row) => {
   await load()
 }
 
-const onBackfill = () => {
+const onBackfill = (full = false) => {
   if (!ensureIdle()) return
   ElMessageBox.confirm(
-    '为全部存量车型补转官网封面与详情图进图库：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重，不会重复占图床。确认执行？',
-    '图片补入库', { type: 'info', confirmButtonText: '开始补入库', cancelButtonText: '取消' }
+    full
+      ? '全量重扫会重新请求全部车型并下载官网图片；内容哈希去重，不重复占图床，但耗时会明显增加。确认执行？'
+      : '只补缺失/失败/过期的车型图片：仅处理图片域（下载/哈希去重/图床/打标），不重跑参数清洗与向量化；已有图片凭内容哈希去重。确认执行？',
+    full ? '全量图片重扫' : '图片补入库',
+    { type: 'info', confirmButtonText: full ? '开始全量重扫' : '开始补入库', cancelButtonText: '取消' }
   ).then(async () => {
     if (!beginStart()) return
     try {
-      const res = await carApi.createBackfillJob()
+      const res = await carApi.createBackfillJob(full)
       if (res.code === 0) onJobCreated({ jobId: res.data })
       else {
         cancelStart()
@@ -392,7 +425,8 @@ const onRebuildAll = () => {
 }
 
 const onOps = (cmd) => {
-  if (cmd === 'backfill') onBackfill()
+  if (cmd === 'backfill') onBackfill(false)
+  else if (cmd === 'backfillFull') onBackfill(true)
   else if (cmd === 'rebuild') onRebuildAll()
 }
 

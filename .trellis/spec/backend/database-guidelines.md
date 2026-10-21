@@ -111,9 +111,9 @@ public void persistVector(...) { deleteByImageId(id); insert(id, vec); }  // 独
 
 - 任务表**无 `updated_at`**（与生成类实体不同），存活时间戳用 **`started_at`**。
 - 阈值 `SYNC_STALE_MS = 60 * 60 * 1000L`。**不要照搬生成链路的 10 分钟**：全量 56 车型 + 清洗 + embedding 实测可超 20 分钟，10 分钟会把活任务误判为陈旧。
-- 两个方法成对：`markStaleRunningAsFailed()`（`status=RUNNING 且 started_at < now-60min` 原子置 `FAILED` + `finished_at` + `error_msg`）与 `hasFreshRunning()`（只统计 `RUNNING 且 started_at >= now-60min`）。
+- 两个方法成对：`markStaleRunningAsFailed()`（`status=RUNNING` 且 `heartbeat_at < now-60min`（缺失回退 `started_at`）原子置 `FAILED` + `finished_at` + `error_msg`，并释放其 `job:<id>` 全局锁）与 `hasFreshRunning()`（只统计同口径未过期 RUNNING）。
 - Scheduler 编排固定为**先清陈旧、再判新鲜**：`markStaleRunningAsFailed(); if (hasFreshRunning()) return;`。顺序不能反，否则陈旧行仍会在本轮被判为阻塞。
-- 手动 `createJob`/`runJob` 的 `status=RUNNING→RUNNING` 原子锁语义**不变**（自愈只作用于定时路径的判定与清尾）。
+- **10-21 起旧口径已被替代**：`status=RUNNING→RUNNING` 条件更新不是互斥锁（同一状态 UPDATE 仍匹配行）。手动/定时/详情同步统一改为 `sparkora_car_sync_lock` 全局锁 + `car:goods:<id>` 按车锁；`createJob` 在事务提交后经 `afterCommit` 触发 `@Async`；`heartbeat_at` 逐车型更新，`cancel_requested` 请求停止后续。
 - `job_type` 区分来源（`SELECTED` / `RETRY` / `SCHEDULED`），定时触发 `created_by` 走 `SecurityUtil.current()==null → "system"`。
 - 先例：`CarSyncJobService`/`CarSyncScheduler`（车型）、`NewsSyncJobService`/`NewsSyncScheduler`（新闻）。
 
@@ -234,7 +234,7 @@ ALTER TABLE sparkora_car_model ADD COLUMN sync_fingerprint VARCHAR(64);  -- NULL
 ```
 
 - **指纹由「全量写点」与「轻量写点」统一计算写入**（`persistModel` + `backfillImages` → 同一个 `computeFingerprint(item)`）：任何绕过统一写点的路径都会让指纹失真、增量永久误判。序列化用固定字段顺序的 `LinkedHashMap` + 独立 `ObjectMapper`（确定性输出），**顺序敏感字段（列表）天然保序**；派生/展示字段不参与指纹。
-- **分派表语义固定四分支**：行缺失 → 全量；指纹 NULL → 轻回填（顺带初始化指纹）；一致 → 跳过（**只读比对，零写库零下游调用**，note 可观测）；不一致 → 全量。跳过必须做到「只拉了一次源接口、不写任何行」，单测用 `verifyNoInteractions` 锁死。
+- **分派表语义**：行缺失 → 全量；指纹 NULL → 轻回填（顺带初始化指纹）；一致 → 跳过（零下载/零清洗/零嵌入/零下游重建，note 可观测）；不一致 → 按域（基础→全量、仅图片→图片域、仅参数→参数/清洗/块）。10-21 起参数指纹需要 `goodsParams+goodsAttrList`，跳过分支会**只读比对三接口**，并按 PRD R3 只写 `last_checked_at`/`sync_note`（`markChecked`），不得更新业务列（状态/指纹/图集）。单测用 `verifyNoInteractions` 锁死域边界。
 - **指纹必须「摘要→hex」两步走，单测必须有长度断言**（真机验收踩坑）：`sha256Hex(digest(序列化字节))`——若把序列化后的原始字节直接当摘要转 hex，输出长度=原始字节×2（几百字符），写库直接撞列宽 `value too long for type character varying(64)`，任务明细被 `### Error updating database` 长串灌满。单测若断言「`fingerprint == computeXxx(同一输入)`」会**自洽通过**（两侧同一缺陷函数），抓不住——必须补 `matches("[0-9a-f]{64}")` 格式/长度断言。
 - **「源接口空条目」≠「无数据项」**：源接口可能对库存键返回空条目（列表容器在但 items 空）——此时指纹无处计算，须用**库存行快照口径**计算指纹（库内 JSON 字符串先 `readTree` 还原结构后入 canonical），并把库存行里的存量资源 URL 下载兜底入库；官网数据恢复后 goodsInfo 指纹必不匹配快照 → 自动一次全量收敛。
 - **「轻路径」不得复用全量 upsert**：全量 upsert（如 `persistModel`）会把派生列重写成 raw 形态（`intro_images` URL 列表），轻回填只允许走域内方法（现为 `persistImages`，10-21 起含封面 + 详情图集；原 `persistIntroImages` 已并入）+ 指纹/状态列写回；空源数据（官网无图）早退不冲写，明细带 note。
@@ -448,3 +448,13 @@ ALTER TABLE sparkora_article_version DROP COLUMN IF EXISTS body_image_ids;
 **Fix**: 实测基线/迁移/checksum/幂等重启均正常，**保持现状**——升级 Flyway 会偏离「版本走 Boot BOM」约定并带来 Boot 兼容风险；待 Boot 升级抬升 Flyway 版本后自然消除。
 
 **Prevention**: 见到此告警先确认迁移是否实际成功（查 `flyway_schema_history`），不要把告警当失败；仅在确认新语法/类型不兼容时才考虑显式提升 Flyway 版本。
+
+---
+
+### 外部源同步的安全预检与两阶段替换（10-21-car-sync-safety）
+
+- **空/半响应不得先删后写**：外部源返回空 items/data 或业务 code 异常时，必须在任何 delete/update 前中止；只写 `source_state/sync_note/last_checked_at`，保留版本/参数/清洗/块/向量/图集。`sync_fingerprint` 之外拆 `image_fingerprint`/`params_fingerprint`，图片失败不得推进图片指纹。
+- **两阶段替换**：版本/参数用 `persistCore`/`persistParamsCore` 单事务；向量先构建并完成 embedding，全部成功后在事务内替换旧块；图片集全有或全无，部分失败保留旧图集。
+- **任务可靠性**：`createJob` 的 `@Transactional` 内不得直接触发 `@Async`（异步线程可能读不到未提交行）；用 `TransactionSynchronization.afterCommit` 或 `@TransactionalEventListener(AFTER_COMMIT)`。全局/按车锁用数据库锁表或 advisory lock，不能依赖同状态 UPDATE。
+- **锁表 TTL**：锁 TTL 应略大于陈旧阈值（当前 70min vs 60min），陈旧任务清理时释放对应 `job:<id>` 全局锁；否则进程崩溃后锁会挡住新任务。
+- **图片下载**：外部 URL 必须 HTTPS + 域名白名单 + 私网/重定向复检；限制字节/像素；严格魔数，未知格式失败而非兜底 png；尺寸用 `ImageReader` 读取，避免 `ImageIO.read` 全量解码超大长图。

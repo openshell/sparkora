@@ -28,4 +28,10 @@ public class CarProperties {
     private boolean syncEnabled = false;
     /** 定时增量同步 cron(遗留种子:已被运行时设置 sparkora_setting.car_sync_cron 取代;默认每天 03:00)。 */
     private String syncCron = "0 0 3 * * ?";
+    /** 采集失败最大重试次数(仅 429/5xx/网络异常;默认 2)。 */
+    private int retryMax = 2;
+    /** 重试指数退避基准(毫秒,默认 500;带 jitter,上限 30s)。 */
+    private long retryBackoffMs = 500;
+    /** 两次官网调用最小间隔(毫秒,单客户端串行限速;默认 200)。 */
+    private long minIntervalMs = 200;
 }

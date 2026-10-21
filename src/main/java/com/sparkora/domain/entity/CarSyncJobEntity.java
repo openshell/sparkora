@@ -22,9 +22,15 @@ public class CarSyncJobEntity {
     private Integer total;
     private Integer success;
     private Integer failed;
-    private String failedItems;    // JSON:[{goodsId,name,error}]
+    /** 跳过数(10-21):增量「指纹一致」/回填「官网无数据」等,不并入 success。 */
+    private Integer skipped;
+    private String failedItems;    // JSON:[{goodsId,name,error|note}]
     private LocalDateTime startedAt;
     private LocalDateTime finishedAt;
+    /** 心跳时间(10-21):逐车型更新,陈旧判定优先于 started_at。 */
+    private LocalDateTime heartbeatAt;
+    /** 取消请求(10-21):1 = 停止处理后续车型。 */
+    private Integer cancelRequested;
     private String errorMsg;
     private String createdBy;
     private LocalDateTime createdAt;

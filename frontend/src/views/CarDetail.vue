@@ -17,23 +17,30 @@
             <h2>{{ detail.model.name }}</h2>
             <div class="sub-line">
               <el-tag size="small" effect="plain">{{ detail.model.salesNetwork || '—' }}</el-tag>
-              <el-tag size="small" :type="statusMeta(detail.model.syncStatus).type" effect="light" round>
-                {{ statusMeta(detail.model.syncStatus).label }}
+              <el-tag size="small" :type="sourceStatusMeta(detail.model).type" effect="light" round>
+                {{ sourceStatusMeta(detail.model).label }}
               </el-tag>
               <span class="price">{{ formatPrice(detail.model.priceRange) || '价格待同步' }}</span>
-              <span class="last-sync">最近成功：{{ fmtTime(detail.model.lastSyncAt) }}</span>
+              <span class="last-sync">{{ detail.model.sourceState === 'EMPTY' ? '最近检查' : '最近成功' }}：{{ fmtTime(detail.model.lastCheckedAt || detail.model.lastSyncAt) }}</span>
             </div>
           </div>
           <div class="actions">
-            <el-button v-if="user.isEditorOrAbove" type="primary" :loading="syncing" @click="onSync">
+            <el-button v-if="user.isEditorOrAbove" type="primary" :loading="syncing"
+              :disabled="detail.model.sourceState === 'EMPTY'"
+              :title="detail.model.sourceState === 'EMPTY' ? '官网无数据，请使用「图片补入库」' : ''"
+              @click="onSync">
               <el-icon class="btn-icon"><Refresh /></el-icon>同步
             </el-button>
             <el-button @click="$router.push('/knowledge')">返回</el-button>
           </div>
         </div>
 
-        <!-- 同步失败原因（R3）：完整展示，不截断 -->
-        <el-alert v-if="detail.model.lastSyncError" class="sync-error" type="error" :closable="false" show-icon
+        <!-- 官网无数据/同步失败原因：完整展示，不截断 -->
+        <el-alert v-if="detail.model.sourceState === 'EMPTY'" class="sync-error" type="warning" :closable="false" show-icon
+          title="官网无数据，已保留历史车型数据">
+          <template #default><span class="sync-error-text">{{ detail.model.syncNote || '该车型已不在官网在售目录，暂不能全量同步；图片补入库会保留旧数据。' }}</span></template>
+        </el-alert>
+        <el-alert v-else-if="detail.model.lastSyncError" class="sync-error" type="error" :closable="false" show-icon
           title="最近一次同步失败">
           <template #default><span class="sync-error-text">{{ detail.model.lastSyncError }}</span></template>
         </el-alert>
@@ -154,6 +161,15 @@ const galleryUrls = computed(() => {
   return list
 })
 const featureList = computed(() => parseFeatures(detail.value?.model?.features))
+const sourceStatusMeta = (m) => {
+  if (!m) return statusMeta('PENDING')
+  if (m.sourceState === 'EMPTY') return { label: '官网无数据', type: 'info' }
+  if (m.sourceState === 'INCOMPLETE' || m.sourceState === 'STALE') {
+    return { label: '数据待复核', type: 'warning' }
+  }
+  if (m.syncStatus === 'PARTIAL') return { label: '部分同步', type: 'warning' }
+  return statusMeta(m.syncStatus)
+}
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 
 const load = async () => {

@@ -615,3 +615,7 @@ await bydApi.createJob(projectId, {
 ```
 
 ---
+
+### Convention: 同步任务计数与空数据状态（10-21-car-sync-safety）
+
+任务面板必须使用后端 `success/skipped/failed` 三个独立计数；全跳过时标题为「检查完成(无变化)」，不能显示「N 成功 + 跳过 N」让用户误以为处理了两倍。`sourceState=EMPTY` 的车型显示「官网无数据」并禁用全量同步，只保留「图片补入库」；`PARTIAL` 显示 `syncNote`。运行中任务可请求取消，取消文案必须说明「当前车型可能跑完」。

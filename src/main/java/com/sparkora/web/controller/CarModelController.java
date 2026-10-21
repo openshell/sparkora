@@ -48,19 +48,27 @@ public class CarModelController {
         try {
             return R.ok(service.catalog());
         } catch (Exception e) {
-            return R.fail(500, e.getMessage());
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
     }
 
-    /** 创建同步任务。body: {goodsIds:["156","10051"]}。返回 {jobId}。 */
+    /**
+     * 创建同步任务。body: {goodsIds:["156","10051"]}。返回 {jobId}。
+     * 10-21:goodsIds 去重/上限/格式校验失败 → 400;已有运行中任务 → 409。
+     */
     @PostMapping("/sync/jobs")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> createJob(@RequestBody Map<String, List<String>> body) {
         try {
-            Long jobId = jobService.createJob(body.get("goodsIds"), "SELECTED");
+            Long jobId = jobService.createJob(body == null ? null : body.get("goodsIds"), "SELECTED");
             return R.ok(Map.of("jobId", jobId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
         } catch (Exception e) {
-            return R.fail(500, e.getMessage());
+            log.warn("创建车型同步任务失败: {}", e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
     }
 
@@ -71,13 +79,17 @@ public class CarModelController {
      */
     @PostMapping("/sync/backfill")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Long> createBackfillJob() {
+    public R<Long> createBackfillJob(@RequestParam(required = false, defaultValue = "MISSING") String mode) {
         try {
-            return R.ok(jobService.createBackfillJob());
+            // 10-21:默认只补缺失/失败/过期图片;FULL 需显式指定(全库重扫较慢)
+            return R.ok(jobService.createBackfillJob("FULL".equalsIgnoreCase(mode)));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());   // 参数/前置错误(如库内无可回填车型)
+        } catch (IllegalStateException ex) {
+            return R.fail(409, ex.getMessage());
         } catch (Exception e) {
-            return R.fail(500, e.getMessage());
+            log.warn("创建车型图片回填任务失败: {}", e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
     }
 
@@ -104,9 +116,23 @@ public class CarModelController {
         try {
             Long jobId = jobService.retry(id);
             return R.ok(Map.of("jobId", jobId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
         } catch (Exception e) {
-            return R.fail(500, e.getMessage());
+            log.warn("重试车型同步任务失败: {}", e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
+    }
+
+    /** 请求取消运行中任务(停止处理后续车型;已开始的车型会跑完)。 */
+    @PostMapping("/sync/jobs/{id}/cancel")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Void> cancelJob(@PathVariable Long id) {
+        CarSyncJobEntity job = jobService.get(id);
+        if (job == null) return R.fail(404, "任务不存在");
+        return jobService.cancel(id) ? R.ok() : R.fail(409, "任务不在运行中,无法取消");
     }
 
     @GetMapping("/models/{id}")
@@ -139,13 +165,24 @@ public class CarModelController {
         }
         if (m == null) return R.fail(404, "车型不存在");
         try {
-            CarModelService.SyncOutcome outcome = service.syncOne(m.getGoodsId());
+            // 与异步任务逐车型锁同口径:同一车型同时只允许一个同步
+            CarModelService.SyncOutcome outcome = jobService.syncOneExclusive(m.getGoodsId());
             Map<String, Object> data = new java.util.LinkedHashMap<>();
             data.put("model", outcome.model());
             data.put("cleanStats", outcome.cleanStats());
             return R.ok(data);
+        } catch (IllegalStateException e) {
+            // 只把「车型锁冲突」映射为 409;其它 IllegalStateException 仍按失败处理
+            if (e.getMessage() != null && e.getMessage().contains("正在同步")) return R.fail(409, e.getMessage());
+            String err = com.sparkora.car.client.CarSourceException.classify(e);
+            try {
+                service.markSyncFailed(m.getGoodsId(), err);
+            } catch (Exception ex) {
+                log.warn("车型失败状态回写失败(忽略) goodsId={}: {}", m.getGoodsId(), ex.getMessage());
+            }
+            return R.fail(500, err);
         } catch (Exception e) {
-            String err = e.getMessage() == null ? "未知错误" : e.getMessage();
+            String err = com.sparkora.car.client.CarSourceException.classify(e);
             // 回写自身失败仅告警,不覆盖原始错误/响应
             try {
                 service.markSyncFailed(m.getGoodsId(), err);
@@ -162,8 +199,12 @@ public class CarModelController {
         try {
             service.delete(id);
             return R.ok();
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
         } catch (Exception e) {
-            return R.fail(500, e.getMessage());
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
     }
 
@@ -191,7 +232,7 @@ public class CarModelController {
 
     /** 批量重建全部车型向量(一次性运维操作,同步接口;耗时=车型数×块数×embedding)。 */
     @PostMapping("/models/rebuild-all")
-    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    @PreAuthorize("hasRole('ADMIN')")
     public R<Map<String, Object>> rebuildAll() {
         try {
             return R.ok(service.rebuildAll());

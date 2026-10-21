@@ -4,7 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.ai.EmbedStats;
 import com.sparkora.car.client.BydCmsClient;
+import com.sparkora.car.client.CarSourceException;
+import com.sparkora.car.client.SourceIncompleteException;
+import com.sparkora.car.client.SourceUnavailableException;
 import com.sparkora.car.dto.GoodsAttrListDto;
 import com.sparkora.car.dto.GoodsInfoDto;
 import com.sparkora.car.dto.GoodsParamsDto;
@@ -27,16 +31,12 @@ import com.sparkora.mapper.ImageAssetMapper;
 import com.sparkora.security.SecurityUtil;
 import com.sparkora.storage.ImageStorage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.security.MessageDigest;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -77,10 +77,21 @@ public class CarModelService {
     /** 10-03 E1:单表 store 生命周期同步(删除车型按 modelId 兜底物理清)。 */
     private final com.sparkora.ai.vector.VectorStoreService vectorStoreService;
 
-    private final java.net.http.HttpClient imageClient = java.net.http.HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
-            .build();
+    /**
+     * 自注入代理(10-21):让 {@code persistModel/persistVersions/persistParams} 的
+     * {@code @Transactional} 真正生效(同类 this 调用不走 Spring 代理,事务会被静默忽略)。
+     * 单测直接 new 时为 null,调用方退化为 this。
+     */
+    @Autowired
+    @Lazy
+    private CarModelService self;
+
+    /** 图片下载安全边界;单测可注入宽松实现,生产默认 HTTPS + 白名单 + 大小/像素上限。 */
+    private CarImageDownloader imageDownloader = new CarImageDownloader();
+
+    /** 同步/删除互斥锁(字段注入;单测不注入时退化为无锁)。 */
+    @Autowired(required = false)
+    private CarSyncLockService lockService;
 
     public CarModelService(BydCmsClient client, CarModelMapper modelMapper,
                            CarVersionMapper versionMapper, CarParamGroupMapper groupMapper,
@@ -106,6 +117,16 @@ public class CarModelService {
         this.imageService = imageService;
         this.embeddingClient = embeddingClient;
         this.vectorStoreService = vectorStoreService;
+    }
+
+    /** 测试用:注入图片下载器(生产默认 {@link CarImageDownloader})。 */
+    void setImageDownloader(CarImageDownloader downloader) {
+        if (downloader != null) this.imageDownloader = downloader;
+    }
+
+    /** 事务代理(单测 self 为空时退化为 this)。 */
+    private CarModelService tx() {
+        return self == null ? this : self;
     }
 
     /** 车型列表(按 id 倒序)。 */
@@ -153,11 +174,13 @@ public class CarModelService {
         m.setCoverImageUrl(cover == null || cover.isBlank() ? null : cover);
     }
 
-    /** 官网车型目录(供同步页手动选择)。返回 goodsListForSearch 原始 data 数组。 */
+    /**
+     * 官网车型目录(供同步页手动选择)。返回 goodsListForSearch 原始 data 数组。
+     * 10-21:客户端已校验 code/data,失败抛 {@link com.sparkora.car.client.SourceUnavailableException};
+     * 这里不再把故障吞成空目录(否则定时任务会静默「无车可同步」)。
+     */
     public List<Map<String, Object>> catalog() {
-        JsonNode list = client.goodsList();
-        JsonNode data = list.path("data");
-        if (!data.isArray()) return List.of();
+        JsonNode data = client.goodsList();
         List<Map<String, Object>> out = new ArrayList<>();
         for (JsonNode item : data) {
             out.add(json.convertValue(item, Map.class));
@@ -246,13 +269,48 @@ public class CarModelService {
     public void delete(Long id) {
         CarModelEntity m = modelMapper.selectById(id);
         if (m == null) throw new IllegalArgumentException("车型不存在");
-        modelMapper.deleteById(id);
-        versionMapper.delete(new QueryWrapper<CarVersionEntity>().eq("model_id", id));
-        groupMapper.delete(new QueryWrapper<CarParamGroupEntity>().eq("model_id", id));
-        paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", id));
-        docService.deleteByModel(id);
-        // 10-03 E6:旧向量表已退役,仅按 modelId 兜底物理清 store（含历史逻辑删除块残留）
-        if (vectorStoreService != null) vectorStoreService.deleteByCarModel(id);
+        // 与同步互斥:1) 全局任务锁——避免「删完车型后,尚未处理到它的同步任务又用 syncOne 把它复活」;
+        // 2) 按车型锁——避免与详情页阻塞同步竞争同一车型。
+        String globalOwner = lockService == null ? null : lockService.tryLock(CarSyncLockService.GLOBAL_JOB_KEY);
+        if (lockService != null && globalOwner == null) {
+            throw new IllegalStateException("同步任务运行中,请稍后删除");
+        }
+        String lockKey = CarSyncLockService.goodsKey(m.getGoodsId());
+        String owner = lockService == null || m.getGoodsId() == null ? null : lockService.tryLock(lockKey);
+        if (lockService != null && owner == null && m.getGoodsId() != null) {
+            releaseGoodsLockAfterTransaction(CarSyncLockService.GLOBAL_JOB_KEY, globalOwner);
+            throw new IllegalStateException("该车型正在同步,请稍后重试");
+        }
+        try {
+            modelMapper.deleteById(id);
+            versionMapper.delete(new QueryWrapper<CarVersionEntity>().eq("model_id", id));
+            groupMapper.delete(new QueryWrapper<CarParamGroupEntity>().eq("model_id", id));
+            paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", id));
+            docService.deleteByModel(id);
+            // 10-03 E6:旧向量表已退役,仅按 modelId 兜底物理清 store（含历史逻辑删除块残留）
+            if (vectorStoreService != null) vectorStoreService.deleteByCarModel(id);
+        } finally {
+            // 锁的 INSERT/DELETE 参与本方法事务:事务回滚时 finally 里的释放也会被回滚,锁会残留到 TTL。
+            // 因此事务内只登记 afterCompletion 释放,让释放发生在提交/回滚之后(独立自动提交)。
+            releaseGoodsLockAfterTransaction(lockKey, owner);
+            releaseGoodsLockAfterTransaction(CarSyncLockService.GLOBAL_JOB_KEY, globalOwner);
+        }
+    }
+
+    /** 事务结束后释放车型锁;无活动事务时立即释放。 */
+    private void releaseGoodsLockAfterTransaction(String lockKey, String owner) {
+        if (lockService == null || owner == null) return;
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCompletion(int status) {
+                            lockService.unlock(lockKey, owner);
+                        }
+                    });
+        } else {
+            lockService.unlock(lockKey, owner);
+        }
     }
 
     /**
@@ -263,43 +321,245 @@ public class CarModelService {
      */
     public void markSyncFailed(String goodsId, String error) {
         if (goodsId == null || goodsId.isBlank()) return;
-        String msg = (error == null || error.isBlank()) ? "未知错误" : error;
-        if (msg.length() > 500) msg = msg.substring(0, 500);
+        String msg = truncate((error == null || error.isBlank()) ? "未知错误" : error, 500);
         modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
                 .eq("goods_id", goodsId)
                 .set("sync_status", "FAILED")
                 .set("last_sync_error", msg)
+                .set("last_checked_at", LocalDateTime.now())
                 .set("updated_at", LocalDateTime.now()));
+    }
+
+    /**
+     * 官网数据为空/不完整:只更新 source_state / sync_note / last_checked_at(以及 sync_status=FAILED,
+     * 避免旧 SUCCESS 误导),**不动** last_sync_at 与任何业务表(版本/参数/清洗/块/向量/图集)。
+     */
+    public void markSourceIncomplete(String goodsId, String sourceState, String note) {
+        if (goodsId == null || goodsId.isBlank()) return;
+        modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                .eq("goods_id", goodsId)
+                .set("source_state", sourceState)
+                .set("sync_note", truncate(note, 500))
+                .set("sync_status", "FAILED")
+                .set("last_sync_error", truncate(note, 500))
+                .set("last_checked_at", LocalDateTime.now())
+                .set("updated_at", LocalDateTime.now()));
+    }
+
+    /** 完整成功:SUCCESS + last_sync_at + last_checked_at + source_state=OK。 */
+    public void markSyncSuccess(Long modelId, String note) {
+        if (modelId == null) return;
+        LocalDateTime now = LocalDateTime.now();
+        modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                .eq("id", modelId)
+                .set("sync_status", "SUCCESS")
+                .set("source_state", "OK")
+                .set("sync_note", truncate(note, 500))
+                .set("last_sync_error", null)
+                .set("last_sync_at", now)
+                .set("last_checked_at", now)
+                .set("updated_at", now));
+    }
+
+    /** 部分成功(图片/向量部分失败):PARTIAL + note,**不前进** last_sync_at。 */
+    public void markSyncPartial(Long modelId, String note) {
+        if (modelId == null) return;
+        LocalDateTime now = LocalDateTime.now();
+        modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                .eq("id", modelId)
+                .set("sync_status", "PARTIAL")
+                .set("source_state", "OK")
+                .set("sync_note", truncate(note, 500))
+                .set("last_sync_error", null)
+                .set("last_checked_at", now)
+                .set("updated_at", now));
+    }
+
+    /** 只更新检查时间 + note(跳过/无变化),不改同步状态、指纹与 last_sync_at。 */
+    public void markChecked(Long modelId, String note) {
+        if (modelId == null) return;
+        modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                .eq("id", modelId)
+                .set("last_checked_at", LocalDateTime.now())
+                .set("sync_note", truncate(note, 500))
+                .set("updated_at", LocalDateTime.now()));
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /**
+     * 采集异常 → 数据源状态:限流/超时/5xx 等可重试故障标 {@code STALE}(保留旧数据,官网暂不可用);
+     * 其余(业务 code/data 结构异常)标 {@code INCOMPLETE}。两者都只写状态列,不碰业务表。
+     */
+    private static String sourceStateOf(CarSourceException e) {
+        if (e instanceof SourceUnavailableException sue && sue.transientFailure()) return "STALE";
+        return "INCOMPLETE";
     }
 
     /**
      * 同步单个车型(按 goodsId)。幂等:已存在则更新,不存在则新建。
      * 网络采集无事务;入库短事务。由 CarSyncJobService 异步任务驱动。
      *
+     * <p>10-21 安全顺序:先拉三接口并校验(任一无数据/不完整 → 只标记 source_state,零业务写入并抛
+     * {@link SourceIncompleteException});全部完整后才进入写入。SUCCESS 与 last_sync_at 只在
+     * 图片/清洗/向量全链路成功后写;图片或向量部分失败记 PARTIAL。
+     *
      * @return 同步结果:模型 + 清洗方式统计(可观测)。
      */
     public SyncOutcome syncOne(String goodsId) {
-        // 1) 采集(无事务,慢)
-        GoodsInfoDto info = client.goodsInfo(goodsId);
-        GoodsParamsDto.ParamsData params = client.goodsParams(goodsId);
-        List<GoodsAttrListDto.Version> attrs = client.goodsAttrList(goodsId);
+        // 1) 采集(无事务,慢) + 预检;任何空/不完整响应都在写库前中止
+        GoodsInfoDto.Item item;
+        try {
+            item = firstGoodsInfoItem(client.goodsInfo(goodsId));
+        } catch (CarSourceException e) {
+            String state = sourceStateOf(e);
+            markSourceIncomplete(goodsId, state, e.userMessage());
+            throw new SourceIncompleteException(state, e.userMessage(), e.getMessage());
+        }
+        if (item == null) {
+            markSourceIncomplete(goodsId, "EMPTY", "官网无数据");
+            throw new SourceIncompleteException("EMPTY", "官网无数据", "goodsInfo items 为空, goodsId=" + goodsId);
+        }
+        GoodsParamsDto.ParamsData params;
+        List<GoodsAttrListDto.Version> attrs;
+        try {
+            params = client.goodsParams(goodsId);
+            attrs = client.goodsAttrList(goodsId);
+        } catch (CarSourceException e) {
+            String state = sourceStateOf(e);
+            markSourceIncomplete(goodsId, state, e.userMessage());
+            throw new SourceIncompleteException(state, e.userMessage(), e.getMessage());
+        }
+        try {
+            validateSnapshot(item, params, attrs);
+        } catch (SourceIncompleteException e) {
+            markSourceIncomplete(goodsId, e.sourceState(), e.userMessage());
+            throw e;
+        }
 
-        GoodsInfoDto.Item item = (info != null && info.getGoodsinfoList() != null
-                && info.getGoodsinfoList().getItems() != null
-                && !info.getGoodsinfoList().getItems().isEmpty())
-                ? info.getGoodsinfoList().getItems().get(0) : null;
+        CarModelEntity model;
+        try {
+            // 2) 入库(单事务:主表 + 版本 + 参数;网络已在事务外完成)
+            CorePersistResult core = tx().persistCore(goodsId, item, params, attrs);
+            model = core.model();
+            boolean versionsOk = core.versionsOk();
+            boolean paramsOk = core.paramsOk();
+            if (!versionsOk || !paramsOk) {
+                markSyncPartial(model.getId(), "官网版本/参数不完整,已保留旧数据");
+            }
+            // 2.5) 图片(封面 + 详情图集);失败保留旧图集/封面并进入 note
+            ImagePersistResult images = persistImages(model, item);
+            // 3) 清洗参数(规则引擎 + AI 兜底)
+            CleanStats stats = cleanService.cleanForModel(model.getId());
+            // 4) 切分向量化(先构建新块/向量,成功后原子替换;失败保留旧块)
+            EmbedStats embed = docService.rebuildForModel(model.getId());
+            // 5) 指纹收敛:图片失败保留旧 image_fingerprint;向量未全部成功、或版本/参数因空数据
+            //    未真正替换时,**不推进**基础/参数指纹 —— 否则下一次增量会因指纹一致而跳过,
+            //    旧块/旧向量/旧参数永久不补。
+            boolean vectorOk = embed == null || embed.failed() == 0;
+            boolean coreOk = versionsOk && paramsOk;
+            boolean fpOk = vectorOk && coreOk;
+            updateFingerprints(model.getId(), item, params, attrs, images.failed() == 0, fpOk);
+            // 响应实体同步最新指纹(与库里条件写入口径一致)
+            if (fpOk) {
+                model.setSyncFingerprint(computeFingerprint(item));
+                model.setParamsFingerprint(computeParamsFingerprint(params, attrs));
+            }
+            if (images.failed() == 0) model.setImageFingerprint(computeImageFingerprint(item));
 
-        // 2) 入库(短事务)
-        CarModelEntity model = persistModel(goodsId, item);
-        persistVersions(model.getId(), attrs);
-        persistParams(model.getId(), params);
-        // 2.5) 车型图片(封面主体图 + 详情图集)下载转存图床,写入图库(source='byd');单图失败不阻断整车型同步
-        persistImages(model, item);
-        // 3) 清洗参数(规则引擎 + AI 兜底);统计随清洗落库,同步任务记录进 job 明细
-        CleanStats stats = cleanService.cleanForModel(model.getId());
-        // 4) 切分向量化(网络 embedding,无事务;基于清洗后数据)
-        docService.rebuildForModel(model.getId());
-        return new SyncOutcome(model, stats);
+            java.util.List<String> notes = new ArrayList<>();
+            if (!versionsOk) notes.add("版本不完整");
+            if (!paramsOk) notes.add("参数不完整");
+            if (images.failed() > 0) notes.add("图片失败" + images.failed() + "张");
+            if (embed != null && embed.failed() > 0) notes.add("向量失败" + embed.failed() + "/" + embed.total() + "块");
+            if (notes.isEmpty()) {
+                markSyncSuccess(model.getId(), null);
+                model.setSyncStatus("SUCCESS");
+                model.setSyncNote(null);
+            } else {
+                String note = String.join(";", notes);
+                markSyncPartial(model.getId(), note);
+                model.setSyncStatus("PARTIAL");
+                model.setSyncNote(note);
+            }
+            // 响应携带最新派生状态
+            model.setLastCheckedAt(LocalDateTime.now());
+            model.setLastSyncError(null);
+            model.setSourceState("OK");
+            return new SyncOutcome(model, stats);
+        } catch (SourceIncompleteException e) {
+            throw e;
+        } catch (Exception e) {
+            // 写入/清洗/向量失败:落 FAILED + 分类短文案;last_sync_at 不前进
+            String msg = CarSourceException.classify(e);
+            try {
+                markSyncFailed(goodsId, msg);
+            } catch (Exception ex) {
+                log.warn("车型失败状态回写失败(忽略) goodsId={}: {}", goodsId, ex.getMessage());
+            }
+            log.warn("车型同步写入失败 goodsId={}: {}", goodsId, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /** 三接口预检:任一不完整即抛出(由调用方标记 source_state;本方法零写入)。 */
+    static void validateSnapshot(GoodsInfoDto.Item item, GoodsParamsDto.ParamsData params,
+                                 List<GoodsAttrListDto.Version> attrs) {
+        if (item == null || item.getName() == null || item.getName().isBlank()) {
+            throw new SourceIncompleteException("INCOMPLETE", "官网车型信息不完整", "车型名缺失");
+        }
+        if (params == null || params.getConfigs() == null || params.getConfigs().isEmpty()) {
+            throw new SourceIncompleteException("INCOMPLETE", "官网参数数据为空", "goodsParams.configs 为空");
+        }
+        if (attrs == null || attrs.isEmpty()) {
+            throw new SourceIncompleteException("INCOMPLETE", "官网版本数据为空", "goodsAttrList 为空");
+        }
+    }
+
+    /** 参数/版本定向同步(仅参数指纹变化时):不重下图片,仅替换版本/参数/清洗/块。 */
+    public SyncOutcome syncParamsOnly(CarModelEntity row, GoodsInfoDto.Item item,
+                                      GoodsParamsDto.ParamsData params, List<GoodsAttrListDto.Version> attrs) {
+        try {
+            validateSnapshot(item, params, attrs);
+        } catch (SourceIncompleteException e) {
+            markSourceIncomplete(row.getGoodsId(), e.sourceState(), e.userMessage());
+            throw e;
+        }
+        ParamsPersistResult pr = tx().persistParamsCore(row.getId(), params, attrs);
+        boolean versionsOk = pr.versionsOk();
+        boolean paramsOk = pr.paramsOk();
+        CleanStats stats = cleanService.cleanForModel(row.getId());
+        EmbedStats embed = docService.rebuildForModel(row.getId());
+        boolean vectorOk = embed == null || embed.failed() == 0;
+        boolean fpOk = vectorOk && versionsOk && paramsOk;
+        // 图片域本次未参与:仅当已有图片指纹时才写回(未初始化时保持 NULL,交给轻回填收敛)。
+        boolean imageOk = !isBlank(row.getImageFingerprint());
+        updateFingerprints(row.getId(), item, params, attrs, imageOk, fpOk);
+        if (fpOk) {
+            row.setSyncFingerprint(computeFingerprint(item));
+            row.setParamsFingerprint(computeParamsFingerprint(params, attrs));
+        }
+        if (imageOk) row.setImageFingerprint(computeImageFingerprint(item));
+        java.util.List<String> notes = new ArrayList<>();
+        if (!versionsOk) notes.add("版本不完整");
+        if (!paramsOk) notes.add("参数不完整");
+        if (embed != null && embed.failed() > 0) notes.add("向量失败" + embed.failed() + "/" + embed.total() + "块(下次增量重试)");
+        if (notes.isEmpty()) {
+            markSyncSuccess(row.getId(), null);
+            row.setSyncStatus("SUCCESS");
+            row.setSyncNote(null);
+        } else {
+            String note = String.join(";", notes);
+            markSyncPartial(row.getId(), note);
+            row.setSyncStatus("PARTIAL");
+            row.setSyncNote(note);
+        }
+        row.setSourceState("OK");
+        row.setLastCheckedAt(LocalDateTime.now());
+        return new SyncOutcome(row, stats);
     }
 
     /** 同步结果:车型 + 清洗方式统计(供同步任务聚合记录)。 */
@@ -364,8 +624,14 @@ public class CarModelService {
         StringBuilder failedIds = new StringBuilder();
         for (CarModelEntity m : models) {
             try {
-                docService.rebuildForModel(m.getId());
-                okModels++;
+                EmbedStats st = docService.rebuildForModel(m.getId());
+                if (st != null && st.failed() > 0) {
+                    failedModels++;
+                    failedIds.append(m.getId()).append(',');
+                    log.warn("批量重建部分失败 model={} 失败块={}/{}", m.getId(), st.failed(), st.total());
+                } else {
+                    okModels++;
+                }
             } catch (Exception e) {
                 failedModels++;
                 failedIds.append(m.getId()).append(',');
@@ -393,14 +659,36 @@ public class CarModelService {
     private static final ObjectMapper FP_JSON = new ObjectMapper();
 
     /**
-     * 计算官网 goodsInfo 稳定字段指纹(R2 增量调度依据):name/salesNetworkName/vehicleId/
-     * price/features/introduce(逐项原始顺序,Jackson 数组天然保序)/carRights 序列化后
-     * SHA-256 → 64 位 hex。
-     * 包级静态可见:增量分派单测需以同一口径构造「指纹一致/不一致」用例(纯函数,对齐
-     * 「纯算法抽静态方法并单测」先例)。
-     * 已知盲区(设计明示):goodsParams 独立变化不触发增量,需手动全目录同步兜底。
+     * 基础信息指纹(10-21 拆分):name/salesNetworkName/vehicleId/price/features/carRights。
+     * 图片域(introduce/img)移到 {@link #computeImageFingerprint}、参数域移到
+     * {@link #computeParamsFingerprint};base 变化才触发全量同步。
+     *
+     * <p>注意:口径变更会使存量 sync_fingerprint 在部署后首轮不匹配,触发一次全量收敛,之后稳定。
      */
     static String computeFingerprint(GoodsInfoDto.Item item) {
+        if (item == null) return null;
+        try {
+            Map<String, Object> canonical = new LinkedHashMap<>();
+            canonical.put("name", item.getName());
+            canonical.put("salesNetworkName", item.getSalesNetworkName());
+            canonical.put("vehicleId", item.getVehicleId());
+            canonical.put("price", item.getPrice());
+            canonical.put("features", item.getFeatures());
+            canonical.put("carRights", item.getCarRights());
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(FP_JSON.writeValueAsBytes(canonical));
+            return sha256Hex(digest);
+        } catch (Exception e) {
+            throw new IllegalStateException("车型同步指纹计算失败", e);
+        }
+    }
+
+    /**
+     * 旧口径基础指纹(含 introduce):仅用于存量兼容迁移。
+     * 10-21 前 sync_fingerprint 含 introduce;新口径把图片拆到 image_fingerprint。
+     * 若存量值等于旧口径,视为「基础信息未变」——只更新指纹(避免全库一次性重清洗/重嵌入),
+     * 图片变化由 image_fingerprint 判定。
+     */
+    static String computeLegacyFingerprint(GoodsInfoDto.Item item) {
         if (item == null) return null;
         try {
             Map<String, Object> canonical = new LinkedHashMap<>();
@@ -414,8 +702,55 @@ public class CarModelService {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(FP_JSON.writeValueAsBytes(canonical));
             return sha256Hex(digest);
         } catch (Exception e) {
-            throw new IllegalStateException("车型同步指纹计算失败", e);
+            throw new IllegalStateException("车型旧口径指纹计算失败", e);
         }
+    }
+
+    /** 图片域指纹(10-21):SHA-256(img + introduce,逐项原始顺序)。 */
+    static String computeImageFingerprint(GoodsInfoDto.Item item) {
+        if (item == null) return null;
+        try {
+            Map<String, Object> canonical = new LinkedHashMap<>();
+            canonical.put("img", item.getImg());
+            canonical.put("introduce", item.getIntroduce());
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(FP_JSON.writeValueAsBytes(canonical));
+            return sha256Hex(digest);
+        } catch (Exception e) {
+            throw new IllegalStateException("车型图片指纹计算失败", e);
+        }
+    }
+
+    /** 参数域指纹(10-21):SHA-256(goodsParams + goodsAttrList 原始结构,列表顺序敏感)。 */
+    static String computeParamsFingerprint(GoodsParamsDto.ParamsData params, List<GoodsAttrListDto.Version> attrs) {
+        try {
+            Map<String, Object> canonical = new LinkedHashMap<>();
+            canonical.put("params", params);
+            canonical.put("attrs", attrs);
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(FP_JSON.writeValueAsBytes(canonical));
+            return sha256Hex(digest);
+        } catch (Exception e) {
+            throw new IllegalStateException("车型参数指纹计算失败", e);
+        }
+    }
+
+    /**
+     * 统一写三类指纹(全量/定向同步共用)。
+     *
+     * <p>imageOk=false 时保留旧 image_fingerprint:图片下载/入库失败后必须让下一次增量继续重试,
+     * 不能提前把新 hash 写进库造成「指纹已收敛但图片仍是旧图集」的永久跳过。
+     * vectorOk=false(embedding 部分/全部失败,旧块已保留)时**不推进基础/参数指纹**:否则下一次
+     * 增量会因指纹一致而跳过,旧块永远补不上;保留旧指纹可让下一次增量重跑全量/参数域。
+     */
+    private void updateFingerprints(Long modelId, GoodsInfoDto.Item item,
+                                    GoodsParamsDto.ParamsData params, List<GoodsAttrListDto.Version> attrs,
+                                    boolean imageOk, boolean vectorOk) {
+        if (modelId == null) return;
+        modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                .eq("id", modelId)
+                .set(vectorOk, "sync_fingerprint", computeFingerprint(item))
+                .set(imageOk, "image_fingerprint", computeImageFingerprint(item))
+                .set(vectorOk, "params_fingerprint", computeParamsFingerprint(params, attrs))
+                .set("updated_at", LocalDateTime.now()));
     }
 
     /** 取 goodsInfo 首个 item(空响应返回 null,沿 syncOne 判空口径)。 */
@@ -444,9 +779,17 @@ public class CarModelService {
      * @throws IllegalStateException 车型行不存在/已删除(回填范围来自库存行,行缺失说明被并发删除,不复活)
      */
     public IncrementalOutcome backfillImages(String goodsId) {
-        GoodsInfoDto.Item item = firstGoodsInfoItem(client.goodsInfo(goodsId));
         CarModelEntity row = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
         if (row == null) throw new IllegalStateException("车型不存在或已删除,无法轻回填: goodsId=" + goodsId);
+        GoodsInfoDto.Item item;
+        try {
+            item = firstGoodsInfoItem(client.goodsInfo(goodsId));
+        } catch (CarSourceException e) {
+            // 官网不可用:只标 source_state(STALE/INCOMPLETE),不动业务表,也不冒充成功
+            String state = sourceStateOf(e);
+            markSourceIncomplete(goodsId, state, e.userMessage());
+            throw new SourceIncompleteException(state, e.userMessage(), e.getMessage());
+        }
         return backfillInternal(row, item);   // note(官网无图/无数据兜底)由 backfillInternal 生成
     }
 
@@ -461,45 +804,193 @@ public class CarModelService {
     public IncrementalOutcome dispatchIncremental(String goodsId) {
         CarModelEntity row = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
         if (row == null) return new IncrementalOutcome(null, syncOne(goodsId));
-        GoodsInfoDto.Item item = firstGoodsInfoItem(client.goodsInfo(goodsId));
+        GoodsInfoDto.Item item;
+        try {
+            item = firstGoodsInfoItem(client.goodsInfo(goodsId));
+        } catch (CarSourceException e) {
+            // 官网不可用:只标 source_state(STALE/INCOMPLETE),不触业务表,增量任务记失败
+            String state = sourceStateOf(e);
+            markSourceIncomplete(goodsId, state, e.userMessage());
+            throw new SourceIncompleteException(state, e.userMessage(), e.getMessage());
+        }
         String stored = row.getSyncFingerprint();
         if (stored == null || stored.isBlank()) {
-            // 10-15 真机修订:backfillInternal 含「无条目」兜底与 note 生成,item 职责单一化
+            // 存量兼容:基础指纹未初始化 → 轻回填(图片域),不重建参数/清洗/向量
             return backfillInternal(row, item);
         }
-        if (item != null && stored.equals(computeFingerprint(item))) {
+        if (item == null) {
+            if (stored.equals(computeRowSnapshotFingerprint(row))) {
+                // 官网当前无条目且库存快照未变 → 跳过(仅一次 goodsInfo 调用;零下载/零清洗/零嵌入)。
+                // 仍必须如实标 EMPTY:10-15 老口径的存量行可能还是 SUCCESS/NULL,不能继续冒充已同步。
+                markSourceIncomplete(goodsId, "EMPTY", "官网无数据(与上次快照一致)");
+                return new IncrementalOutcome("跳过:官网无数据(与上次快照一致)", null);
+            }
+            return new IncrementalOutcome(null, syncOne(goodsId));
+        }
+
+        // 拉参数/版本用于拆分指纹(参数独立变化也要能发现)
+        GoodsParamsDto.ParamsData params;
+        List<GoodsAttrListDto.Version> attrs;
+        try {
+            params = client.goodsParams(goodsId);
+            attrs = client.goodsAttrList(goodsId);
+            validateSnapshot(item, params, attrs);
+        } catch (CarSourceException e) {
+            // 明确「空/不完整」(SourceIncompleteException)沿其状态;采集不可用按瞬态标 STALE。
+            String state = e instanceof SourceIncompleteException sie ? sie.sourceState() : sourceStateOf(e);
+            String msg = e.userMessage();
+            markSourceIncomplete(goodsId, state, msg);
+            throw new SourceIncompleteException(state, msg, e.getMessage());
+        }
+
+        String baseFp = computeFingerprint(item);
+        String imageFp = computeImageFingerprint(item);
+        String paramsFp = computeParamsFingerprint(params, attrs);
+        // 存量兼容:旧口径(含 introduce)指纹视为基础信息未变,只迁移指纹不触发全量
+        boolean legacyBase = stored.equals(computeLegacyFingerprint(item));
+        boolean baseChanged = !stored.equals(baseFp) && !legacyBase;
+        boolean imageMissing = isBlank(row.getImageFingerprint());
+        boolean paramsMissing = isBlank(row.getParamsFingerprint());
+        boolean imageChanged = !imageMissing && !row.getImageFingerprint().equals(imageFp);
+        boolean paramsChanged = !paramsMissing && !row.getParamsFingerprint().equals(paramsFp);
+
+        if (!baseChanged && !imageChanged && !paramsChanged) {
+            if (imageMissing || paramsMissing || legacyBase) {
+                // 首次拆分/旧口径迁移:参数域只补指纹、不重建(避免存量全量重清洗/重嵌入)。
+                // 图片域不同:若官网有条目图片而指纹未初始化,必须真正补图,且只有全部成功才收敛指纹;
+                // 失败时保持 NULL,保证下一次增量仍会重试(不能只写 hash 造成「图未补、指纹已收敛」)。
+                ImagePersistResult imgResult = null;
+                boolean imageOk = true;
+                if (imageMissing && hasImages(item)) {
+                    imgResult = persistImages(row, item);
+                    imageOk = imgResult.failed() == 0;
+                }
+                modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                        .eq("id", row.getId())
+                        .set("sync_fingerprint", baseFp)
+                        .set(imageOk, "image_fingerprint", imageFp)
+                        .set("params_fingerprint", paramsFp)
+                        .set("last_checked_at", LocalDateTime.now())
+                        .set("updated_at", LocalDateTime.now()));
+                if (imgResult != null) {
+                    String note = imageOk ? null
+                            : "图片失败" + imgResult.failed() + "张(保留旧图集;图片指纹未推进)";
+                    if (imageOk) {
+                        markSyncSuccess(row.getId(), note);
+                        row.setSyncStatus("SUCCESS");
+                    } else {
+                        markSyncPartial(row.getId(), note);
+                        row.setSyncStatus("PARTIAL");
+                    }
+                    row.setSyncNote(note);
+                    if (imageOk) row.setImageFingerprint(imageFp);
+                    row.setSourceState("OK");
+                    row.setLastCheckedAt(LocalDateTime.now());
+                    return new IncrementalOutcome(note, new SyncOutcome(row, null));
+                }
+                return new IncrementalOutcome("跳过:指纹一致(已初始化图片/参数指纹)", null);
+            }
+            markChecked(row.getId(), "跳过:指纹一致");
             return new IncrementalOutcome("跳过:指纹一致", null);
         }
-        if (item == null && stored.equals(computeRowSnapshotFingerprint(row))) {
-            // 官网当前无条目且库存快照未变 → 跳过(每天一次 goodsInfo 调用,零下载/零清洗/零嵌入)
-            return new IncrementalOutcome("跳过:官网无数据(与上次快照一致)", null);
+        if (baseChanged) {
+            // 基础信息变化 → 全量(图片/参数/清洗/向量)
+            return new IncrementalOutcome(null, syncOne(goodsId));
         }
+        if (imageChanged && !paramsChanged) {
+            // 只改图片 → 只更新图片域,不触清洗/向量
+            ImagePersistResult r = persistImages(row, item);
+            // 图片失败时保留旧 image_fingerprint,让下一次增量继续重试;成功才推进指纹。
+            modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                    .eq("id", row.getId())
+                    .set(r.failed() == 0, "image_fingerprint", imageFp)
+                    .set("last_checked_at", LocalDateTime.now())
+                    .set("updated_at", LocalDateTime.now()));
+            if (r.failed() == 0) row.setImageFingerprint(imageFp);
+            String note = r.failed() > 0 ? "图片失败" + r.failed() + "张(保留旧图集)" : null;
+            row.setSyncNote(note);
+            if (r.failed() > 0) {
+                markSyncPartial(row.getId(), note);
+                row.setSyncStatus("PARTIAL");
+            } else {
+                markSyncSuccess(row.getId(), note);
+                row.setSyncStatus("SUCCESS");
+            }
+            row.setSourceState("OK");
+            row.setLastCheckedAt(LocalDateTime.now());
+            return new IncrementalOutcome(note, new SyncOutcome(row, null));
+        }
+        if (paramsChanged && !imageChanged) {
+            // 只改参数/版本 → 只重建参数/清洗/块/向量,图片不动
+            return new IncrementalOutcome(null, syncParamsOnly(row, item, params, attrs));
+        }
+        // 图片 + 参数同时变化 → 全量收敛
         return new IncrementalOutcome(null, syncOne(goodsId));
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    /** 官网条目是否带任何图片(主体图或详情图集),用于判断图片指纹未初始化时是否需要真正补图。 */
+    private static boolean hasImages(GoodsInfoDto.Item item) {
+        if (item == null) return false;
+        return (item.getImg() != null && !item.getImg().isBlank())
+                || (item.getIntroduce() != null && !item.getIntroduce().isEmpty());
     }
 
     /**
      * 轻回填执行体(复用调用方已拉取的 item,免二次网络调用),note 一并在此生成。
      * 有条目:走 persistImages(封面+详情图集,item 口径指纹);无条目:存量 URL 下载兜底 + 库存行快照指纹。
      * 清洗净为 null。
+     *
+     * <p>10-21:无条目(官网无数据)不得写 SUCCESS / last_sync_at,只标 source_state=EMPTY + note;
+     * 有图/无图但 item 存在时,图片补入库成功可标 SUCCESS(与「官网无数据」区分)。
      */
     private IncrementalOutcome backfillInternal(CarModelEntity row, GoodsInfoDto.Item item) {
         String note;
         if (item != null) {
-            persistImages(row, item);   // 封面 + 详情图集;单图失败仅告警不阻断;空字段早退不冲写
+            ImagePersistResult r = persistImages(row, item);   // 封面 + 详情图集;失败保留旧值
+            String imageFp = computeImageFingerprint(item);
             row.setSyncFingerprint(computeFingerprint(item));
+            // 失败保留旧图片指纹,保证下一次补图仍会重试;成功才推进。
+            if (r.failed() == 0) row.setImageFingerprint(imageFp);
             note = (item.getIntroduce() == null || item.getIntroduce().isEmpty()) ? "官网无图" : null;
-        } else {
-            // 10-15 真机发现(10 车型 goodsInfo 返回空条目):无条目 ≠ 无图——用库存行的存量 URL 直接下载兜底。
-            // 指纹用库存行快照口径:官网数据恢复后 goodsInfo 指纹必不匹配 → 增量触发一次全量收敛;
-            // 未恢复时快照一致 → 增量跳过,每天零成本。
-            List<Long> ids = persistLegacyIntroImages(row);
-            if (!ids.isEmpty()) row.setIntroImages(toJson(ids));
-            row.setSyncFingerprint(computeRowSnapshotFingerprint(row));
-            note = ids.isEmpty() ? "官网无数据,且无存量图可兜底" : "官网无数据,已按存量URL兜底入库" + ids.size() + "张";
+            if (r.failed() > 0) {
+                note = (note == null ? "" : note + ";") + "图片失败" + r.failed() + "张";
+            }
+            if (r.failed() > 0) {
+                row.setSyncStatus("PARTIAL");
+                row.setSyncNote(note);
+                row.setLastSyncError(null);
+            } else {
+                row.setSyncStatus("SUCCESS");
+                row.setLastSyncError(null);   // 成功同步清除历史失败原因(R2)
+                row.setLastSyncAt(LocalDateTime.now());
+                row.setSyncNote(note);
+            }
+            row.setSourceState("OK");
+            row.setLastCheckedAt(LocalDateTime.now());
+            row.setUpdatedAt(LocalDateTime.now());
+            modelMapper.updateById(row);
+            return new IncrementalOutcome(note, new SyncOutcome(row, null));
         }
-        row.setSyncStatus("SUCCESS");
-        row.setLastSyncError(null);   // 成功同步清除历史失败原因(R2)
-        row.setLastSyncAt(LocalDateTime.now());
+        // 10-15 真机发现(10 车型 goodsInfo 返回空条目):无条目 ≠ 无图——用库存行的存量 URL 直接下载兜底。
+        // 10-21:这是「官网无数据」,不得算成功同步(不写 SUCCESS / last_sync_at),只标 EMPTY + note。
+        LegacyImageResult legacy = persistLegacyIntroImages(row);
+        if (!legacy.ids().isEmpty()) row.setIntroImages(toJson(legacy.ids()));
+        row.setSyncFingerprint(computeRowSnapshotFingerprint(row));
+        if (legacy.failed() > 0) {
+            note = "官网无数据,存量图部分失败(保留旧图集)";
+        } else {
+            note = legacy.ids().isEmpty() ? "官网无数据,且无存量图可兜底"
+                    : "官网无数据,已按存量URL兜底入库" + legacy.ids().size() + "张";
+        }
+        row.setSourceState("EMPTY");
+        row.setSyncNote(note);
+        row.setSyncStatus("FAILED");
+        row.setLastSyncError(note);
+        row.setLastCheckedAt(LocalDateTime.now());
         row.setUpdatedAt(LocalDateTime.now());
         modelMapper.updateById(row);
         return new IncrementalOutcome(note, new SyncOutcome(row, null));
@@ -510,12 +1001,17 @@ public class CarModelService {
      * (旧管线格式)逐张下载转存,复用与 introduce 图片同口径的入库管线(哈希去重/图床/打标)。
      * 单张失败仅告警;全部失败时回退,不打乱存量 intro_images(空返回由调用方语义收敛)。
      */
-    private List<Long> persistLegacyIntroImages(CarModelEntity row) {
+    private LegacyImageResult persistLegacyIntroImages(CarModelEntity row) {
         List<String> urls = legacyIntroUrls(row);
         List<Long> ids = new ArrayList<>();
         for (String url : urls) persistIntroImageUrl(row, url, ids);
-        return ids;
+        int failed = urls.size() - ids.size();
+        // 部分失败不得用短列表替换旧图集:全部成功才返回 id,否则保留旧数据
+        return failed > 0 ? new LegacyImageResult(List.of(), failed) : new LegacyImageResult(ids, 0);
     }
+
+    /** 存量 URL 兜底结果:成功 id 列表 / 失败张数(失败>0 时 ids 为空、保留旧图集)。 */
+    private record LegacyImageResult(List<Long> ids, int failed) {}
 
     /** 解析存量 intro_images 中的 http URL 项(JSON 数组;已收敛为 id 列表的行返回空)。 */
     private List<String> legacyIntroUrls(CarModelEntity row) {
@@ -537,9 +1033,10 @@ public class CarModelService {
     }
 
     /**
-     * 无条目时库存行快照指纹(与 computeFingerprint 同哈希口径):官网恢复数据后 goodsInfo 指纹
-     * 必不匹配快照 → 增量自动触发一次全量收敛;未恢复则快照一致 → 跳过。features/carRights/
-     * intro_images 库内为 JSON 字符串,统一 readTree 还原后再入 canonical(与 item 口径序列化形状一致)。
+     * 无条目时库存行快照指纹(沿用 10-15 旧口径,**含 introduce**):官网恢复数据后 goodsInfo 指纹
+     * 必不匹配快照(或与旧口径 {@link #computeLegacyFingerprint} 一致、由图片/参数指纹接管)
+     * → 增量自动触发收敛;未恢复则快照一致 → 跳过。features/carRights/intro_images 库内为
+     * JSON 字符串,统一 readTree 还原后再入 canonical(与旧 item 口径序列化形状一致)。
      */
     static String computeRowSnapshotFingerprint(CarModelEntity row) {
         if (row == null) return null;
@@ -575,35 +1072,57 @@ public class CarModelService {
      * 空/失败不冲写既有列(封面为空或下载失败保留旧封面;introduce 为空保留旧图集)。
      * 09-13 image-tags:preset 预设「车型-<车型名>」标签,走统一入库管线自动落标(零额外逻辑)。
      */
-    protected void persistImages(CarModelEntity model, GoodsInfoDto.Item item) {
-        if (item == null) return;
+    protected ImagePersistResult persistImages(CarModelEntity model, GoodsInfoDto.Item item) {
+        if (item == null) return ImagePersistResult.empty();
         boolean changed = false;
-        // 封面:官网主体图(透明 PNG),命名 <name>-cover.<ext>;标签额外带「车型主图」便于图库筛选
+        Long coverId = null;
+        List<String> errors = new ArrayList<>();
+        // failed 记录失败张数(而非错误分类条数),note 里的「图片失败N张」必须准确。
+        int failureCount = 0;
+        // 封面:官网主体图(透明 PNG),命名 <name>-cover.<ext>;标签额外带「车型主图」便于图库筛选。
+        // 下载/入库失败保留旧封面(不冲写)。
         if (item.getImg() != null && !item.getImg().isBlank()) {
-            Long coverId = persistImageToLibrary(model, item.getImg(), model.getName() + "-cover",
+            coverId = persistImageToLibrary(model, item.getImg(), model.getName() + "-cover",
                     List.of("车型-" + model.getName(), "车型主图"));
             if (coverId != null && !coverId.equals(model.getCoverImageId())) {
                 model.setCoverImageId(coverId);
                 changed = true;
+            } else if (coverId == null) {
+                errors.add("封面图失败");
+                failureCount++;
             }
         }
-        // 详情图集:introduce 逐张入库,序号命名 <name>-<n>.<ext>
+        // 详情图集:introduce 逐张入库;全有或全无——任一张失败则不替换旧图集(不得缩短)。
+        List<Long> introIds = null;
         if (item.getIntroduce() != null && !item.getIntroduce().isEmpty()) {
             List<Long> ids = new ArrayList<>();
+            int introFailed = 0;
             for (String url : item.getIntroduce()) {
-                Long id = persistImageToLibrary(model, url, model.getName() + "-" + (ids.size() + 1),
+                Long id = persistImageToLibrary(model, url, model.getName() + "-" + (ids.size() + introFailed + 1),
                         List.of("车型-" + model.getName()));
-                if (id != null) ids.add(id);
+                if (id != null) ids.add(id); else introFailed++;
             }
-            if (!ids.isEmpty()) {
+            if (introFailed > 0) {
+                errors.add("详情图失败" + introFailed + "张(保留旧图集)");
+                failureCount += introFailed;
+            } else if (!ids.isEmpty()) {
                 String json = toJson(ids);
                 if (!json.equals(model.getIntroImages())) {   // 幂等重跑(哈希命中原 id)不产生无效写
                     model.setIntroImages(json);
                     changed = true;
                 }
+                introIds = ids;
             }
         }
         if (changed) modelMapper.updateById(model);
+        return new ImagePersistResult(coverId, introIds, failureCount, errors);
+    }
+
+    /** 图片入库结果:封面 id / 新图集 id(未替换为 null) / 失败数 / 分类短文案。 */
+    public record ImagePersistResult(Long coverId, List<Long> introIds, int failed, List<String> errors) {
+        static ImagePersistResult empty() {
+            return new ImagePersistResult(null, null, 0, List.of());
+        }
     }
 
     /** 单张车型介绍图入库(存量 URL 兜底共用):下载→哈希去重→图床→「车型-名」标签;单图失败仅告警。 */
@@ -622,8 +1141,9 @@ public class CarModelService {
     private Long persistImageToLibrary(CarModelEntity model, String url, String fileNamePrefix, List<String> tags) {
         if (url == null || url.isBlank()) return null;
         try {
-            byte[] bytes = downloadImage(url);
-            String ext = sniffImageExt(bytes);
+            CarImageDownloader.DownloadedImage img = imageDownloader.download(url);
+            byte[] bytes = img.bytes();
+            String ext = img.ext();
             // S10:走 ImageService 统一入库管线（内容哈希去重;同步幂等重跑不重复占图床对象）
             com.sparkora.domain.entity.ImageAssetEntity preset = new com.sparkora.domain.entity.ImageAssetEntity();
             preset.setProjectId(null);                       // 全局图库
@@ -636,33 +1156,10 @@ public class CarModelService {
                     model.getName(), shorten(url), e.getId(), Boolean.TRUE.equals(e.getDedupeHit()));
             return e.getId();
         } catch (Exception ex) {
+            // 完整 URL/堆栈只进日志;任务明细由调用方用分类短文案
             log.warn("比亚迪车型图转存失败(跳过): model={} url={} err={}", model.getName(), shorten(url), ex.getMessage());
             return null;
         }
-    }
-
-    /** 下载图片字节(官网 URL)。 */
-    private byte[] downloadImage(String url) {
-        try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(30)).GET().build();
-            HttpResponse<byte[]> resp = imageClient.send(req, HttpResponse.BodyHandlers.ofByteArray());
-            if (resp.statusCode() != 200) throw new IllegalStateException("HTTP " + resp.statusCode());
-            byte[] bytes = resp.body();
-            if (bytes == null || bytes.length == 0) throw new IllegalStateException("空内容");
-            return bytes;
-        } catch (Exception e) {
-            throw new RuntimeException("下载图片失败: " + e.getMessage(), e);
-        }
-    }
-
-    /** 魔数嗅探图片扩展名(png/jpg/webp),识别不出兜底 png。 */
-    private static String sniffImageExt(byte[] bytes) {
-        if (bytes.length >= 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P') return "png";
-        if (bytes.length >= 3 && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8) return "jpg";
-        if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
-                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') return "webp";
-        return "png";
     }
 
     private static String shorten(String s) {
@@ -670,7 +1167,41 @@ public class CarModelService {
         return s.length() > 100 ? s.substring(0, 100) + "…" : s;
     }
 
-    /** 入库车型主表(幂等 upsert)。 */
+    /** 主表 + 版本 + 参数的一次事务写入结果(版本/参数为空时保留旧数据)。 */
+    public record CorePersistResult(CarModelEntity model, boolean versionsOk, boolean paramsOk) {}
+
+    /** 版本 + 参数的一次事务写入结果。 */
+    public record ParamsPersistResult(boolean versionsOk, boolean paramsOk) {}
+
+    /**
+     * 单事务写入主表 + 版本 + 参数(10-21):任一步失败整体回滚,不留下「新主表 + 旧参数」半套数据。
+     * 网络采集/图片/embedding 必须在此之前或之后(事务外)完成。
+     */
+    @Transactional
+    public CorePersistResult persistCore(String goodsId, GoodsInfoDto.Item item,
+                                         GoodsParamsDto.ParamsData params, List<GoodsAttrListDto.Version> attrs) {
+        CarModelEntity model = persistModel(goodsId, item);
+        boolean versionsOk = persistVersions(model.getId(), attrs);
+        boolean paramsOk = persistParams(model.getId(), params);
+        return new CorePersistResult(model, versionsOk, paramsOk);
+    }
+
+    /** 单事务替换版本 + 参数(定向参数同步用)。 */
+    @Transactional
+    public ParamsPersistResult persistParamsCore(Long modelId, GoodsParamsDto.ParamsData params,
+                                                 List<GoodsAttrListDto.Version> attrs) {
+        boolean versionsOk = persistVersions(modelId, attrs);
+        boolean paramsOk = persistParams(modelId, params);
+        return new ParamsPersistResult(versionsOk, paramsOk);
+    }
+
+    /**
+     * 入库车型主表(幂等 upsert,10-21 安全合并)。
+     *
+     * <p>只合并非空字段:字段缺失时保留旧值,绝不用 null 覆盖 name/salesNetwork/vehicleId/price/
+     * features/carRights/introImages。intro_images 只由 {@link #persistImages} 写图库 asset id,
+     * 本方法不再写 raw URL。SUCCESS/last_sync_at 也从本方法移除(由 syncOne 末尾统一落终态)。
+     */
     @Transactional
     protected CarModelEntity persistModel(String goodsId, GoodsInfoDto.Item item) {
         CarModelEntity m = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
@@ -678,22 +1209,19 @@ public class CarModelService {
         if (isNew) m = new CarModelEntity();
         m.setGoodsId(goodsId);
         if (item != null) {
-            m.setName(item.getName());
-            m.setSalesNetwork(item.getSalesNetworkName());
-            m.setVehicleId(item.getVehicleId());
-            m.setPriceRange(item.getPrice());
-            m.setFeatures(item.getFeatures() == null ? null : toJson(item.getFeatures()));
-            m.setIntroImages(item.getIntroduce() == null ? null : toJson(item.getIntroduce()));
-            m.setDetailPage(item.getDetailPage() == null ? null : item.getDetailPage().get_path());
-            if (item.getCarRights() != null) {
-                m.setCarRights(toJson(item.getCarRights()));
+            if (notBlank(item.getName())) m.setName(item.getName());
+            if (notBlank(item.getSalesNetworkName())) m.setSalesNetwork(item.getSalesNetworkName());
+            if (notBlank(item.getVehicleId())) m.setVehicleId(item.getVehicleId());
+            if (notBlank(item.getPrice())) m.setPriceRange(item.getPrice());
+            if (item.getFeatures() != null && !item.getFeatures().isEmpty()) m.setFeatures(toJson(item.getFeatures()));
+            if (item.getDetailPage() != null && notBlank(item.getDetailPage().get_path())) {
+                m.setDetailPage(item.getDetailPage().get_path());
             }
-            // 10-15 R2:全量路径统一写指纹(增量分派依据;既有 upsert 语义不变,仅加此列写入)
-            m.setSyncFingerprint(computeFingerprint(item));
+            if (item.getCarRights() != null) m.setCarRights(toJson(item.getCarRights()));
+            // 指纹统一在 syncOne 末尾由 updateFingerprints 按「图片/向量是否真正收敛」条件写入。
+            // 不在此提前写 sync_fingerprint:否则向量失败后基础指纹已推进,下一次增量会跳过、旧块永不补齐。
         }
         m.setSourceUrl("https://www.byd.com/cn/parameter-comparison?goodsId=" + goodsId);
-        m.setSyncStatus("SUCCESS");
-        m.setLastSyncAt(LocalDateTime.now());
         m.setLastSyncError(null);
         m.setUpdatedAt(LocalDateTime.now());
         if (isNew) {
@@ -706,39 +1234,56 @@ public class CarModelService {
         return m;
     }
 
-    /** 入库版本(先清后插,幂等)。S6b:同名版本去重(官网接口按模块重复推送版本列表,实测 ×2~×10),只保留首个。 */
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
+    }
+
+    /**
+     * 入库版本(先清后插,幂等)。S6b:同名版本去重(官网接口按模块重复推送版本列表,实测 ×2~×10),只保留首个。
+     *
+     * @return false = 新数据为空/无有效版本,已保留旧数据(不 delete)
+     */
     @Transactional
-    protected void persistVersions(Long modelId, List<GoodsAttrListDto.Version> attrs) {
+    protected boolean persistVersions(Long modelId, List<GoodsAttrListDto.Version> attrs) {
+        if (attrs == null || attrs.isEmpty()) return false;   // 空数据不得先删旧版本
+        List<GoodsAttrListDto.Version> valid = attrs.stream()
+                .filter(v -> v != null && notBlank(v.getName())).toList();
+        if (valid.isEmpty()) return false;
         versionMapper.delete(new QueryWrapper<CarVersionEntity>().eq("model_id", modelId));
-        if (attrs == null) return;
         java.util.Set<String> seen = new java.util.HashSet<>();
         int i = 0;
-        for (GoodsAttrListDto.Version v : attrs) {
-            if (v.getName() == null || v.getName().isBlank()) continue;
-            if (!seen.add(v.getName().trim())) continue;   // 重复版本行跳过(数据源冗余,见 research/flatten-findings.md)
+        for (GoodsAttrListDto.Version v : valid) {
+            if (!seen.add(v.getName().trim())) continue;   // 重复版本行跳过(数据源冗余)
             CarVersionEntity e = new CarVersionEntity();
             e.setModelId(modelId);
             e.setVersionName(v.getName());
-            e.setPrice(v.getPrice() == null ? null : v.getPrice());
+            e.setPrice(v.getPrice());
             e.setPriceRemark(v.getPriceRemark());
             e.setSortOrder(i++);
             e.setCreatedAt(LocalDateTime.now());
             e.setUpdatedAt(LocalDateTime.now());
             versionMapper.insert(e);
         }
+        return true;
     }
 
-    /** 入库参数分组+明细(先清后插,幂等)。S6b:同名分组去重(官网按页签/模块重复推送,车型39 实测 136 组/17 名),只保留首个。 */
+    /**
+     * 入库参数分组+明细(先清后插,幂等)。S6b:同名分组去重。
+     *
+     * @return false = 新数据为空/无有效分组,已保留旧数据(不 delete)
+     */
     @Transactional
-    protected void persistParams(Long modelId, GoodsParamsDto.ParamsData params) {
+    protected boolean persistParams(Long modelId, GoodsParamsDto.ParamsData params) {
+        if (params == null || params.getConfigs() == null || params.getConfigs().isEmpty()) return false;
+        List<GoodsParamsDto.Config> valid = params.getConfigs().stream()
+                .filter(c -> c != null && notBlank(c.getName())).toList();
+        if (valid.isEmpty()) return false;
         groupMapper.delete(new QueryWrapper<CarParamGroupEntity>().eq("model_id", modelId));
         paramMapper.delete(new QueryWrapper<CarParamEntity>().eq("model_id", modelId));
-        if (params == null || params.getConfigs() == null) return;
         java.util.Set<String> seenGroups = new java.util.HashSet<>();
         int gi = 0;
-        for (GoodsParamsDto.Config cfg : params.getConfigs()) {
-            if (cfg.getName() == null || cfg.getName().isBlank()) continue;
-            if (!seenGroups.add(cfg.getName().trim())) continue;   // 重复同名分组整组跳过(参数行与组重复绑定)
+        for (GoodsParamsDto.Config cfg : valid) {
+            if (!seenGroups.add(cfg.getName().trim())) continue;   // 重复同名分组整组跳过
             CarParamGroupEntity g = new CarParamGroupEntity();
             g.setModelId(modelId);
             g.setGroupName(cfg.getName());
@@ -764,6 +1309,7 @@ public class CarModelService {
                 paramMapper.insert(p);
             }
         }
+        return true;
     }
 
     private String toJson(Object o) {

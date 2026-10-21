@@ -227,6 +227,10 @@ sparkora:
     goods-params-url: ${CAR_GOODS_PARAMS_URL:https://site-api.byd.com/domestic-official-api/goods/goodsParams}
     goods-attr-list-url: ${CAR_GOODS_ATTR_LIST_URL:https://cms-api.byd.com/car/byd/cn/getGoodsAttrListForCompareByGoodsId}
     timeout-ms: ${CAR_TIMEOUT_MS:30000}
+    # 采集失败重试(仅 429/5xx/网络异常)与调用限速
+    retry-max: ${CAR_RETRY_MAX:2}
+    retry-backoff-ms: ${CAR_RETRY_BACKOFF_MS:500}
+    min-interval-ms: ${CAR_MIN_INTERVAL_MS:200}
     # goodsParams 接口 HMAC 签名(官网 JS 硬编码,可覆盖)
     hmac-sign-key: ${CAR_HMAC_SIGN_KEY:4a3688a5gcd88g443fga6b7fcb}
     hmac-secret-key: ${CAR_HMAC_SECRET_KEY:fcb8f0ddg5c92g45b7g9d33g04cc55d3be3b}

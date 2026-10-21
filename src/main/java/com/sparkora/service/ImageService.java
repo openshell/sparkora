@@ -23,7 +23,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -864,11 +865,19 @@ public class ImageService {
 
     /** 宽高探测：失败不阻断（留空）。 */
     private void fillSize(ImageAssetEntity e, byte[] bytes) {
-        try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (img != null) {
-                e.setWidth(img.getWidth());
-                e.setHeight(img.getHeight());
+        // 只读尺寸，不 ImageIO.read 全量解码：车型详情长图可达 1920×43353（约 83MP），
+        // 全量解码会占用数百 MB 堆内存，同步任务可能 OOM。
+        try (ImageInputStream iis = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+            if (iis == null) return;
+            java.util.Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) return;
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(iis, true, true);
+                e.setWidth(reader.getWidth(0));
+                e.setHeight(reader.getHeight(0));
+            } finally {
+                reader.dispose();
             }
         } catch (Exception ex) {
             log.debug("读取图片尺寸失败（忽略）: {}", ex.getMessage());

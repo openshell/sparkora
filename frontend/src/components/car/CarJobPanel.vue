@@ -11,6 +11,10 @@
         <span class="job-count">
           {{ job.success || 0 }} 成功 · {{ job.failed || 0 }} 失败<template v-if="skippedCount"> · 跳过 {{ skippedCount }}</template>
         </span>
+        <el-button v-if="canCancel && job.status === 'RUNNING'" text size="small" type="warning"
+          :loading="cancelling" title="停止后续车型（当前车型可能跑完）" @click="$emit('cancel')">
+          取消
+        </el-button>
         <el-button v-if="closable && job.status !== 'RUNNING'" text size="small" class="close-btn"
           title="关闭任务面板" @click="$emit('close')">
           <el-icon><Close /></el-icon>
@@ -20,7 +24,7 @@
 
     <el-progress v-if="job.status === 'RUNNING'" :percentage="progress" :stroke-width="8" :show-text="false" />
     <div v-if="job.status === 'RUNNING'" class="job-progress-text">
-      已处理 {{ (job.success || 0) + (job.failed || 0) }} / {{ job.total || 0 }} 个车型
+      已处理 {{ processedCount }} / {{ job.total || 0 }} 个车型
     </div>
 
     <div v-if="detailItems.length" class="job-failed">
@@ -48,10 +52,13 @@ const props = defineProps({
   retrying: { type: Boolean, default: false },
   closable: { type: Boolean, default: false },
   /** 失败项重试按钮：写接口仅 ADMIN/EDITOR，VIEWER 传入 false 隐藏（后端 @PreAuthorize 兜底）。 */
-  canRetry: { type: Boolean, default: true }
+  canRetry: { type: Boolean, default: true },
+  /** 运行中取消按钮：写接口仅 ADMIN/EDITOR。 */
+  canCancel: { type: Boolean, default: false },
+  cancelling: { type: Boolean, default: false }
 })
 
-defineEmits(['retry', 'close'])
+defineEmits(['retry', 'close', 'cancel'])
 
 const failedItems = computed(() => {
   if (!props.job?.failedItems) return []
@@ -69,18 +76,27 @@ const failedTitle = computed(() =>
   errorItems.value.length && noteItems.value.length ? '任务明细：'
     : errorItems.value.length ? '失败明细：' : '明细备注：')
 
-const skippedCount = computed(() => noteItems.value.filter(f => (f.note || '').startsWith('跳过')).length)
+const skippedCount = computed(() => {
+  if (props.job?.skipped != null) return Number(props.job.skipped) || 0
+  return noteItems.value.filter(f => (f.note || '').startsWith('跳过')).length
+})
+const processedCount = computed(() => (props.job?.success || 0) + (props.job?.failed || 0) + skippedCount.value)
+const allSkipped = computed(() => !!props.job?.total && skippedCount.value >= props.job.total && !(props.job?.failed > 0))
 
 const jobRunning = computed(() => props.job?.status === 'RUNNING')
 
 const progress = computed(() => {
   if (!props.job || !props.job.total) return 0
-  return Math.round((((props.job.success || 0) + (props.job.failed || 0)) / props.job.total) * 100)
+  return Math.round((processedCount.value / props.job.total) * 100)
 })
 
 const jobTitle = computed(() => {
   if (!props.job) return ''
-  return { RUNNING: '同步进行中…', SUCCESS: '同步完成', PARTIAL: '部分完成', FAILED: '同步失败' }[props.job.status] || '同步'
+  if (props.job.status === 'RUNNING') {
+    return props.job.jobType === 'INCREMENTAL' ? '检查更新中…' : '同步进行中…'
+  }
+  if (allSkipped.value) return '检查完成(无变化)'
+  return { SUCCESS: '同步完成', PARTIAL: '部分完成', FAILED: '同步失败' }[props.job.status] || '同步'
 })
 const jobClass = computed(() => props.job?.status?.toLowerCase() || '')
 

@@ -50,7 +50,7 @@ class CarModelControllerSyncTest {
         row.setId(7L);
         row.setGoodsId("156");
         when(service.get(7L)).thenReturn(row);
-        when(service.syncOne("156")).thenThrow(new RuntimeException("官网采集失败"));
+        when(jobService.syncOneExclusive("156")).thenThrow(new RuntimeException("官网采集失败"));
 
         mvc.perform(post("/api/car/models/7/sync"))
                 .andExpect(status().isOk())
@@ -66,7 +66,7 @@ class CarModelControllerSyncTest {
         row.setId(7L);
         row.setGoodsId("156");
         when(service.get(7L)).thenReturn(row);
-        when(service.syncOne("156")).thenThrow(new RuntimeException("官网采集失败"));
+        when(jobService.syncOneExclusive("156")).thenThrow(new RuntimeException("官网采集失败"));
         doThrow(new RuntimeException("db down")).when(service).markSyncFailed(anyString(), anyString());
 
         mvc.perform(post("/api/car/models/7/sync"))
