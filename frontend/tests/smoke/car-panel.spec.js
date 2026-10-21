@@ -56,3 +56,36 @@ test('car tab renders cover fallback, stats and failure reason', async ({ page }
   await page.locator('.clear-btn').click()
   await expect(cards).toHaveCount(2)
 })
+
+
+test('car detail falls back to raw params when cleans are empty', async ({ page }) => {
+  const detail = {
+    model: {
+      id: 14, goodsId: '140', name: '测试车型', salesNetwork: '王朝', priceRange: '115,800 - 145,800',
+      syncStatus: 'SUCCESS', sourceState: 'OK', lastSyncAt: '2026-10-21T09:31:57', lastCheckedAt: null,
+      coverImageUrl: '', coverImageId: null, introImages: '[]', introImageUrls: [],
+      features: '[]', carRights: null
+    },
+    versions: [{ id: 1, versionName: '2026款' }],
+    groups: [{
+      group: { id: 1, groupName: '尺寸参数' },
+      params: [
+        { id: 1, paramName: '轴距(mm)', paramValue: '2820', valuesJson: '["2820"]' },
+        { id: 2, paramName: '长×宽×高(mm)', paramValue: '4780×1890×1670', valuesJson: '["4780×1890×1670"]' }
+      ],
+      cleans: []
+    }]
+  }
+  await page.route('**/api/car/models/14*', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: detail }) }))
+  await page.setViewportSize(SMOKE_VIEWPORT)
+  await page.goto('/car/14')
+  await page.waitForLoadState('networkidle')
+
+  await expect(page.locator('.el-alert').first()).toContainText('尚未清洗')
+  await expect(page.locator('.el-table__row')).toHaveCount(2)
+  await expect(page.locator('.el-table')).toContainText('轴距(mm)')
+  await expect(page.locator('.el-table')).toContainText('2820')
+  await expect(page.locator('.el-table')).toContainText('原始')
+  await expect(page.locator('button', { hasText: '重新清洗' })).toBeVisible()
+})

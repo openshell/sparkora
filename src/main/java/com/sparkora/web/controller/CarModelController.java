@@ -1,6 +1,7 @@
 package com.sparkora.web.controller;
 
 import com.sparkora.car.dto.CarModelDetailDto;
+import com.sparkora.car.service.CarCleanRepairService;
 import com.sparkora.car.service.CarModelService;
 import com.sparkora.car.service.CarRagService;
 import com.sparkora.car.service.CarSyncJobService;
@@ -28,11 +29,14 @@ public class CarModelController {
     private final CarModelService service;
     private final CarRagService ragService;
     private final CarSyncJobService jobService;
+    private final CarCleanRepairService cleanRepairService;
 
-    public CarModelController(CarModelService service, CarRagService ragService, CarSyncJobService jobService) {
+    public CarModelController(CarModelService service, CarRagService ragService, CarSyncJobService jobService,
+                              CarCleanRepairService cleanRepairService) {
         this.service = service;
         this.ragService = ragService;
         this.jobService = jobService;
+        this.cleanRepairService = cleanRepairService;
     }
 
     @GetMapping("/models")
@@ -204,6 +208,32 @@ public class CarModelController {
         } catch (IllegalStateException e) {
             return R.fail(409, e.getMessage());
         } catch (Exception e) {
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
+        }
+    }
+
+    /** 单车型补清洗(仅基于库内参数重跑,不请求官网)。 */
+    @PostMapping("/models/{id}/clean")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<CarCleanRepairService.CleanRepairResult> cleanOne(@PathVariable Long id) {
+        try {
+            return R.ok(cleanRepairService.cleanOne(id));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (Exception e) {
+            log.warn("单车型补清洗失败 id={}: {}", id, e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
+        }
+    }
+
+    /** 全库补清洗:只处理「有原始参数、无清洗结果」的车型,不请求官网。 */
+    @PostMapping("/models/clean-missing")
+    @PreAuthorize("hasRole('ADMIN')")
+    public R<CarCleanRepairService.CleanRepairSummary> cleanMissing() {
+        try {
+            return R.ok(cleanRepairService.cleanMissing());
+        } catch (Exception e) {
+            log.warn("全库补清洗失败: {}", e.getMessage(), e);
             return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
     }

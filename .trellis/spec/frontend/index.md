@@ -619,3 +619,8 @@ await bydApi.createJob(projectId, {
 ### Convention: 同步任务计数与空数据状态（10-21-car-sync-safety）
 
 任务面板必须使用后端 `success/skipped/failed` 三个独立计数；全跳过时标题为「检查完成(无变化)」，不能显示「N 成功 + 跳过 N」让用户误以为处理了两倍。`sourceState=EMPTY` 的车型显示「官网无数据」并禁用全量同步，只保留「图片补入库」；`PARTIAL` 显示 `syncNote`。运行中任务可请求取消，取消文案必须说明「当前车型可能跑完」。
+
+
+### Convention: 详情聚合表缺清洗数据时必须回退原始值（10-21-car-clean-repair）
+
+详情页优先展示 `cleans`；`cleans` 为空但 `params` 非空时，必须展示原始参数并标注「原始参数/待清洗」，类型列显示「原始」，不能静默空白。RAW 行不得伪装成已清洗值；ADMIN/EDITOR 提供「重新清洗」入口。E2E 必须覆盖 `cleans=[] + params 非空` 的回退渲染。

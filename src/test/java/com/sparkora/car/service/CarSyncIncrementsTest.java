@@ -56,6 +56,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -97,8 +98,15 @@ class CarSyncIncrementsTest {
                 new ObjectMapper(), imageService, embeddingClient, vectorStoreService);
         // 单测用内嵌 127.0.0.1 HttpServer 模拟官网图;生产默认下载器只允许 HTTPS + 白名单
         service.setImageDownloader(CarImageDownloader.permissiveForTest());
+        lenient().when(cleanMapper.selectCount(any())).thenReturn(1L);
         // self 为空 → createJob 直调 runJob(同步);jobMapper.selectById 未命中时任务体早退,用例可控
         jobService = new CarSyncJobService(jobMapper, modelMapper, modelServiceMock, new ObjectMapper());
+    }
+
+    private static CleanStats cleanStats() {
+        CleanStats st = new CleanStats();
+        st.count("RULE");
+        return st;
     }
 
     /** 构造单 item 的 goodsInfo 响应(空 introduce = 官网无图语义)。 */
@@ -374,7 +382,7 @@ class CarSyncIncrementsTest {
         when(client.goodsInfo("156")).thenReturn(dto);
         when(client.goodsParams("156")).thenReturn(params());
         when(client.goodsAttrList("156")).thenReturn(versions());
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new com.sparkora.ai.EmbedStats(2, 1, 1));
 
         CarModelService.IncrementalOutcome out = service.dispatchIncremental("156");
@@ -609,7 +617,8 @@ class CarSyncIncrementsTest {
 
     /** 轻回填/跳过分支的域边界断言:参数/清洗/切块/向量域零交互。 */
     private void verifyNoTouchParamsAndCleanAndVector() {
-        verifyNoInteractions(groupMapper, paramMapper, cleanMapper, cleanService, docService, vectorStoreService);
+        verifyNoInteractions(groupMapper, paramMapper, cleanService, docService, vectorStoreService);
+        verify(cleanMapper, never()).delete(any());
     }
 
     /** 有效参数响应(10-21 预检要求非空)。 */

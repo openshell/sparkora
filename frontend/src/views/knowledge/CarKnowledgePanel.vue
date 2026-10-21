@@ -39,6 +39,7 @@
             <el-dropdown-menu>
               <el-dropdown-item command="backfill">图片补入库（仅缺失/失败）</el-dropdown-item>
               <el-dropdown-item command="backfillFull" divided>全量图片重扫</el-dropdown-item>
+              <el-dropdown-item v-if="user.isAdmin" command="cleanMissing" divided>补全清洗参数</el-dropdown-item>
               <el-dropdown-item v-if="user.isAdmin" command="rebuild" divided>重建全部向量</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -183,6 +184,7 @@ const syncingId = ref(null)
 const bulkSyncing = ref(false)
 const bulkDeleting = ref(false)
 const rebuildingAll = ref(false)
+const cleaningMissing = ref(false)
 
 const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
 
@@ -424,9 +426,32 @@ const onRebuildAll = () => {
   }).catch(() => {})
 }
 
+const onCleanMissing = () => {
+  if (cleaningMissing.value) return
+  ElMessageBox.confirm(
+    '只对「有原始参数、清洗结果为空」的车型，基于库内参数重跑清洗；不请求官网、不改版本/参数/图片。确认执行？',
+    '补全清洗参数', { type: 'info', confirmButtonText: '开始补清洗', cancelButtonText: '取消' }
+  ).then(async () => {
+    cleaningMissing.value = true
+    try {
+      const res = await carApi.cleanMissing()
+      const st = res.data || {}
+      st.failed > 0
+        ? ElMessage.warning(`补清洗完成：成功 ${st.cleaned}/${st.total}，失败 ${st.failed}`)
+        : ElMessage.success(`补清洗完成：成功 ${st.cleaned}，跳过 ${st.skipped}`)
+      await load()
+    } catch (e) {
+      ElMessage.error(e?.response?.data?.msg || '补清洗失败')
+    } finally {
+      cleaningMissing.value = false
+    }
+  }).catch(() => {})
+}
+
 const onOps = (cmd) => {
   if (cmd === 'backfill') onBackfill(false)
   else if (cmd === 'backfillFull') onBackfill(true)
+  else if (cmd === 'cleanMissing') onCleanMissing()
   else if (cmd === 'rebuild') onRebuildAll()
 }
 

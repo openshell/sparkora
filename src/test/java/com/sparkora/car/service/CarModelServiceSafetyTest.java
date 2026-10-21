@@ -87,6 +87,12 @@ class CarModelServiceSafetyTest {
         service.setImageDownloader(CarImageDownloader.permissiveForTest());
     }
 
+    private static CleanStats cleanStats() {
+        CleanStats st = new CleanStats();
+        st.count("RULE");
+        return st;
+    }
+
     private static GoodsInfoDto info(String goodsId, String name) {
         GoodsInfoDto.Item item = new GoodsInfoDto.Item();
         item.setId(goodsId);
@@ -238,7 +244,7 @@ class CarModelServiceSafetyTest {
         when(client.goodsInfo("156")).thenReturn(infoOf(item));
         when(client.goodsParams("156")).thenReturn(params());
         when(client.goodsAttrList("156")).thenReturn(versions());
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new EmbedStats(1, 1, 0));
 
         service.syncOne("156");
@@ -313,7 +319,7 @@ class CarModelServiceSafetyTest {
         when(client.goodsInfo("156")).thenReturn(info("156", "新名"));
         when(client.goodsParams("156")).thenReturn(params());
         when(client.goodsAttrList("156")).thenReturn(versions());
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new EmbedStats(2, 1, 1));
 
         service.syncOne("156");
@@ -354,7 +360,7 @@ class CarModelServiceSafetyTest {
         when(client.goodsInfo("156")).thenReturn(info("156", "新名"));
         when(client.goodsParams("156")).thenReturn(params());
         when(client.goodsAttrList("156")).thenReturn(versions());
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new EmbedStats(2, 1, 1));
 
         service.syncOne("156");
@@ -380,7 +386,7 @@ class CarModelServiceSafetyTest {
         GoodsAttrListDto.Version blank = new GoodsAttrListDto.Version();
         blank.setName("  ");
         when(client.goodsAttrList("156")).thenReturn(List.of(blank));
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new EmbedStats(1, 1, 0));
 
         service.syncOne("156");
@@ -482,7 +488,7 @@ class CarModelServiceSafetyTest {
         when(client.goodsInfo("156")).thenReturn(infoOf(item));
         when(client.goodsParams("156")).thenReturn(params());
         when(client.goodsAttrList("156")).thenReturn(versions());
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new EmbedStats(1, 1, 0));
 
         CarModelService.IncrementalOutcome out = service.dispatchIncremental("156");
@@ -506,7 +512,7 @@ class CarModelServiceSafetyTest {
         when(client.goodsInfo("156")).thenReturn(infoOf(item));
         when(client.goodsParams("156")).thenReturn(params());
         when(client.goodsAttrList("156")).thenReturn(versions());
-        when(cleanService.cleanForModel(any())).thenReturn(new CleanStats());
+        when(cleanService.cleanForModel(any())).thenReturn(cleanStats());
         when(docService.rebuildForModel(any())).thenReturn(new EmbedStats(1, 1, 0));
 
         service.syncOne("156");

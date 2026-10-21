@@ -1,0 +1,5 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "核对清洗完成口径、补清洗接口、详情页 raw 回退"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 cleanForModel 空参数不删除、补清洗幂等与事务"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对派生数据修复不触碰主数据、测试不写生产"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对详情页 raw 回退/提示/运维入口与 E2E"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对运维入口与用户可见文案"}

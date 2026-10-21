@@ -126,10 +126,11 @@ public class ParamCleaner {
         return r;
     }
 
-    /** 规范化参数名:去单位括号,如 "轴距(mm)"→"轴距"。 */
+    /** 规范化参数名:去尾部单位括号,如 "轴距(mm)"→"轴距"、"电池容量（kWh）"→"电池容量"。 */
     private String normalizeKey(String paramName) {
         if (paramName == null) return "";
-        String k = paramName.replaceAll("[（(]\\s*[0-9.]+(?:/[0-9.]+)?(?:km/h)?[a-zA-Z%·×/]*\\s*[）)]", "").trim();
+        // 旧正则只匹配「数字开头的单位」,会漏掉轴距(mm)/电池容量（kWh）这类纯字母单位。
+        String k = paramName.replaceAll("[（(]\\s*[^）)]*\\s*[）)]\\s*$", "").trim();
         return k.isEmpty() ? paramName.trim() : k;
     }
 

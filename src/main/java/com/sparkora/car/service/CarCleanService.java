@@ -52,11 +52,27 @@ public class CarCleanService {
     /** 清洗某车型的全部参数(先清后插,幂等)。返回清洗方式统计(可观测,供同步任务与统计接口使用)。 */
     @Transactional
     public CleanStats cleanForModel(Long modelId) {
-        cleanMapper.delete(new QueryWrapper<CarParamCleanEntity>().eq("model_id", modelId));
+        // 10-21-car-clean-repair:先读、后删。参数/版本为空时绝不能清掉已有清洗结果:
+        // 旧实现无条件 delete,参数临时为空会把派生数据清空且无报错。
         List<CarVersionEntity> versions = versionMapper.selectList(
                 new QueryWrapper<CarVersionEntity>().eq("model_id", modelId).orderByAsc("sort_order"));
         List<CarParamEntity> params = paramMapper.selectList(
                 new QueryWrapper<CarParamEntity>().eq("model_id", modelId).orderByAsc("sort_order"));
+        if (params.isEmpty() || versions.isEmpty()) {
+            log.warn("参数清洗跳过(无参数/版本,保留旧清洗) model={} params={} versions={}",
+                    modelId, params.size(), versions.size());
+            return new CleanStats();
+        }
+        // 至少有一个可清洗值才允许删除旧结果;避免 values_json 全空时误清。
+        boolean hasAnyValue = params.stream().anyMatch(p -> {
+            List<String> v = parseValues(p.getValuesJson());
+            return !v.isEmpty() || (p.getParamValue() != null && !p.getParamValue().isBlank());
+        });
+        if (!hasAnyValue) {
+            log.warn("参数清洗跳过(所有参数值均为空,保留旧清洗) model={}", modelId);
+            return new CleanStats();
+        }
+        cleanMapper.delete(new QueryWrapper<CarParamCleanEntity>().eq("model_id", modelId));
 
         CleanStats stats = new CleanStats();
         for (CarParamEntity p : params) {
@@ -64,6 +80,11 @@ public class CarCleanService {
             List<String> values = parseValues(p.getValuesJson());
             if (values.isEmpty() && p.getParamValue() != null) {
                 values = List.of(p.getParamValue());
+            }
+            if (!values.isEmpty() && values.size() != versions.size()) {
+                // 官网各参数可能只返回部分版本值;保留下标语义,但显式记录,便于发现错位。
+                log.debug("参数版本值数量不一致 model={} param={} values={} versions={}",
+                        modelId, p.getParamName(), values.size(), versions.size());
             }
             for (int i = 0; i < values.size(); i++) {
                 Long versionId = i < versions.size() ? versions.get(i).getId() : null;

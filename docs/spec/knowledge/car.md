@@ -100,6 +100,16 @@
 - **图片下载**：HTTPS + 比亚迪/CDN 域名白名单、私网拦截、10MB/50MP 上限、Content-Type/严格魔数、`ImageReader` 只读尺寸；失败写 note 不写图库。
 - **接口**：`POST /api/car/sync/backfill?mode=FULL` 全量重扫；`POST /api/car/sync/jobs/{id}/cancel` 请求取消；`goodsIds` 去重/上限 100/格式校验，错误 400，运行中任务 409。
 
+
+### 4.3 清洗完整性与补清洗（10-21-car-clean-repair）
+
+- **详情页兜底**：`groups[].cleans` 为空但 `params` 非空时，`CarDetail.vue` 展示原始参数并标注「原始参数/待清洗」，不再静默空白；RAW 行类型不伪装成已清洗数据。
+- **补清洗**：`CarCleanRepairService.cleanOne/cleanMissing` 只读库内 `car_param` 重跑 `cleanForModel`，不请求官网、不重建图片；批量只处理 `params>0 && cleans=0`，失败逐台记录、不中断。
+- **删除保护**：`cleanForModel` 先读参数/版本，参数或版本为空时保留旧清洗，不执行 delete；所有参数值均为空同样保留。
+- **成功口径**：全量同步在清洗后校验 `CleanStats.total()>0`，为 0 记「清洗结果为空」并落 `PARTIAL`，不得完整 `SUCCESS`；图片补入库若该车型无清洗结果，只能 `PARTIAL`，不得单独刷新 `last_sync_at`。
+- **版本对齐**：继续按 `values_json` 下标对齐 `car_version.sort_order`；数量不一致只记录日志并保留可清洗值，不伪造缺失版本。
+- **运维**：知识中心「运维 → 补全清洗参数」触发批量补清洗；详情页在 raw 回退时提供「重新清洗」。补清洗后参数块/向量仍是旧的，需按需执行「重建全部向量」。
+
 ## 5. 接口契约（`/api/car`，全部 `R<T>` + 方法级 `@PreAuthorize`）
 
 | 方法 | 路径 | 权限 | 说明 |
@@ -116,6 +126,8 @@
 | POST | `/api/car/models/{id}/sync` | ADMIN/EDITOR | 单车型同步（详情页用，同步阻塞；返回 `{model, cleanStats}`）；车型不存在 404 |
 | POST | `/api/car/sync` | ADMIN/EDITOR | 全量同步**已取消**（S6 重构），恒 `R.fail(400, "全量同步已取消,请在同步页选择车型后同步")` |
 | DELETE | `/api/car/models/{id}` | ADMIN/EDITOR | 删除车型（逻辑删 + 物理清 store 向量，不删图库资产）；同步任务运行中或该车型正在同步返回 409（防任务把已删车型 `syncOne` 复活） |
+| POST | `/api/car/models/{id}/clean` | ADMIN/EDITOR | 仅基于库内原始参数重跑该车型清洗；不请求官网、不改版本/参数/图片/向量；返回前后清洗数 |
+| POST | `/api/car/models/clean-missing` | ADMIN | 批量补清洗「有原始参数、清洗为 0」的车型；逐台返回 cleaned/skipped/failed |
 | GET | `/api/car/models/{id}/clean-stats` | 三角色 | 清洗统计（按 `method`/`valueType` 分组） |
 | GET | `/api/car/models/vector-stats` | 三角色 | 向量对账 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅 `deleted=0`；`embeddedCount` 10-03 E6 起查 `vector_store`，结构不变） |
 | POST | `/api/car/models/rebuild-all` | ADMIN | 逐车型重建向量汇总（同步接口；前端 300s 超时，异步化待后续） |

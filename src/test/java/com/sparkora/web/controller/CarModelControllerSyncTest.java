@@ -1,5 +1,6 @@
 package com.sparkora.web.controller;
 
+import com.sparkora.car.service.CarCleanRepairService;
 import com.sparkora.car.service.CarModelService;
 import com.sparkora.car.service.CarRagService;
 import com.sparkora.car.service.CarSyncJobService;
@@ -34,12 +35,13 @@ class CarModelControllerSyncTest {
     @Mock CarModelService service;
     @Mock CarRagService ragService;
     @Mock CarSyncJobService jobService;
+    @Mock CarCleanRepairService cleanRepairService;
 
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.standaloneSetup(new CarModelController(service, ragService, jobService))
+        mvc = MockMvcBuilders.standaloneSetup(new CarModelController(service, ragService, jobService, cleanRepairService))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
     }
