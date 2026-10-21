@@ -116,7 +116,7 @@ export const carApi = {
   }),
   // 仅基于库内原始参数补清洗（不请求官网）
   cleanOne: (id) => http.post(`/car/models/${id}/clean`, null, { timeout: 300000 }),
-  cleanMissing: () => http.post('/car/models/clean-missing', null, { timeout: 300000 }),
+  cleanMissing: () => http.post('/car/models/clean-missing', null, { timeout: 900000 }),
   // 查询同步任务进度
   getJob: (id) => http.get(`/car/sync/jobs/${id}`),
   // 同步任务历史

@@ -31,12 +31,12 @@
 
 ## E. 生产修复与验证
 
-- [ ] 合并/部署 `fix/car-clean-repair`；保持 `carSyncEnabled=false`。
-- [ ] `clean-missing` 补 35 台；逐台记录失败。
-- [ ] 验证 `/car/14`、`/car/52` 等详情页有参数；清洗数 >0；版本/参数/封面未变。
-- [ ] 对 7 台 + goodsId 163 执行全量同步；11 台 EMPTY 不动。
-- [ ] 复核向量/参数块：受影响车型按需重建；最终 `vector-stats` 无缺失。
-- [ ] 规格文档同步：`docs/spec/knowledge/car.md`、`center.md`、`.trellis/spec/backend`。
+- [x] 合并/部署 `fix/car-clean-repair`；保持 `carSyncEnabled=false`。
+- [x] `clean-missing` 补 35 台；逐台记录失败。
+- [x] 验证 `/car/14`、`/car/52` 等详情页有参数；清洗数 >0；版本/参数/封面未变。
+- [x] 对 7 台 + goodsId 163 执行全量同步；11 台 EMPTY 不动。
+- [x] 复核向量/参数块：受影响车型按需重建；最终 `vector-stats` 无缺失。
+- [x] 规格文档同步：`docs/spec/knowledge/car.md`、`center.md`、`.trellis/spec/backend`。
 
 ## 风险
 
@@ -50,3 +50,15 @@
 - `mvn test`：1309 passed（新增清洗安全/补清洗服务测试，前端 raw 回退 E2E）。
 - `npm run build`：通过；Playwright smoke：32 passed。
 - 待执行：部署、35 台补清洗、8 台空壳全量同步、受影响车型向量重建。
+
+
+## 生产修复结果（2026-10-21 17:22–18:05）
+
+- 部署：`fix/car-clean-repair` 合并 `52ea34a`；后端/前端重建 healthy；`carSyncEnabled=false`。
+- 单台验证：`/models/14/clean` → 202 params，0→1010 cleans，全部 RULE，约 11s。
+- 批量补清洗：首次 AI 兜底版本单模型约 15min 未完成，已中止；改为批量规则优先（不调用 AI，规则未命中 FALLBACK）后重新部署。
+- `POST /models/clean-missing`：`total=57, cleaned=34, skipped=23, failed=0`，耗时约 6m34s；加上手动清理的 id14，全部 **47 台有参数车型均有清洗结果**，`params_but_no_cleans=0`。
+- 全量同步 8 台空壳（job 11）：成功 4（10055/10053/10030/163，其中 163 大汉EV 由 0 版本补到 3 版本/17 组/258 参数）；4 台官网参数为空（10040/10036/10050/10042）标 `INCOMPLETE`，无法补数据，未伪造成功。
+- `/car/14` 生产验证：16 个参数组、202 行表格，无原始回退提示，console error 0。
+- 向量重建：57/57 成功，`chunkCount=952, embeddedCount=952, missingCount=0`（补清洗前 412）。
+- 剩余空壳 10 台：6 台官网 `EMPTY` 无参数 + 4 台官网参数为空的 `INCOMPLETE`；均无官方数据可补。
