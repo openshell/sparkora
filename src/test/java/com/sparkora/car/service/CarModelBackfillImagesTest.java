@@ -77,10 +77,16 @@ class CarModelBackfillImagesTest {
 
     /** 构造单 item 的 goodsInfo 响应(可指定 introduce 列表)。 */
     private static GoodsInfoDto infoItem(String goodsId, String name, List<String> introduce) {
+        return infoItem(goodsId, name, null, introduce);
+    }
+
+    /** 构造单 item 的 goodsInfo 响应(可指定主体图 img + introduce 列表)。 */
+    private static GoodsInfoDto infoItem(String goodsId, String name, String img, List<String> introduce) {
         GoodsInfoDto.Item item = new GoodsInfoDto.Item();
         item.setId(goodsId);
         item.setName(name);
         item.setPrice("239,900 - 309,900");
+        item.setImg(img);
         item.setIntroduce(introduce);
         GoodsInfoDto dto = new GoodsInfoDto();
         GoodsInfoDto.GoodsInfoList list = new GoodsInfoDto.GoodsInfoList();
@@ -189,6 +195,135 @@ class CarModelBackfillImagesTest {
             verify(client, never()).goodsAttrList(anyString());
             verifyNoInteractions(versionMapper, groupMapper, paramMapper, cleanMapper);
             verifyNoInteractions(cleanService, docService, chunkMapper, vectorStoreService);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** 10-21 R1:仅有主体图(img)、无介绍图的车型也必须写封面(introduce 早退不能带走封面)。 */
+    @Test
+    void 回填_仅有主体图无介绍图_写封面_不动intro_images() throws Exception {
+        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/cover.png", (HttpExchange ex) -> {
+            ex.sendResponseHeaders(200, png.length);
+            try (var os = ex.getResponseBody()) { os.write(png); }
+            ex.close();
+        });
+        server.start();
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/cover.png";
+        try {
+            CarModelEntity row = rowFor(23L, "23", "海狮05EV");
+            when(client.goodsInfo("23")).thenReturn(infoItem("23", "海狮05EV", url, List.of()));
+            when(modelMapper.selectOne(any())).thenReturn(row);
+            when(imageService.persistOrReuse(any(), eq("png"), any(ImageAssetEntity.class)))
+                    .thenAnswer(inv -> {
+                        ImageAssetEntity e = new ImageAssetEntity();
+                        e.setId(88L);
+                        return e;
+                    });
+
+            CarModelService.IncrementalOutcome out = service.backfillImages("23");
+
+            assertEquals("官网无图", out.note());          // 详情图为空(封面已单独入库)
+            assertEquals(88L, row.getCoverImageId());      // 封面写入图库资产 id
+            assertNull(row.getIntroImages());              // 无 introduce 不冲写图集
+            assertEquals("SUCCESS", row.getSyncStatus());
+            assertNull(row.getLastSyncError());            // 成功清除历史失败原因
+            // 封面命名与标签契约:<name>-cover.<ext> + [车型-<名>, 车型主图]
+            ArgumentCaptor<ImageAssetEntity> preset = ArgumentCaptor.forClass(ImageAssetEntity.class);
+            verify(imageService).persistOrReuse(any(), eq("png"), preset.capture());
+            assertEquals("海狮05EV-cover.png", preset.getValue().getFileName());
+            assertEquals(List.of("车型-海狮05EV", "车型主图"), preset.getValue().getTags());
+            assertEquals("byd", preset.getValue().getSource());
+            assertNull(preset.getValue().getProjectId());
+            verify(modelMapper, times(2)).updateById(row);   // 封面落库 + 轻回填写指纹/状态
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** 10-21 R1:官网 img 为空时保留旧封面,只更新详情图集。 */
+    @Test
+    void 回填_主体图为空_保留旧封面_仅更新详情图集() throws Exception {
+        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/img.png", (HttpExchange ex) -> {
+            ex.sendResponseHeaders(200, png.length);
+            try (var os = ex.getResponseBody()) { os.write(png); }
+            ex.close();
+        });
+        server.start();
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/img.png";
+        try {
+            CarModelEntity row = rowFor(24L, "24", "汉EV");
+            row.setCoverImageId(5L);   // 旧封面
+            when(client.goodsInfo("24")).thenReturn(infoItem("24", "汉EV", null, List.of(url)));
+            when(modelMapper.selectOne(any())).thenReturn(row);
+            when(imageService.persistOrReuse(any(), eq("png"), any(ImageAssetEntity.class)))
+                    .thenAnswer(inv -> {
+                        ImageAssetEntity e = new ImageAssetEntity();
+                        e.setId(9L);
+                        return e;
+                    });
+
+            service.backfillImages("24");
+
+            assertEquals(5L, row.getCoverImageId(), "img 为空不得冲写旧封面");
+            assertEquals("[9]", row.getIntroImages());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /** 10-21 R1:封面下载/入库失败时保留旧封面,且不产生额外主表写回。 */
+    @Test
+    void 封面入库失败_保留旧封面_不写主表() {
+        CarModelEntity row = rowFor(25L, "25", "唐EV");
+        row.setCoverImageId(5L);
+        // 未监听端口 → 连接拒绝,下载失败(走 warn 跳过分支)
+        GoodsInfoDto.Item item = infoItem("25", "唐EV", "http://127.0.0.1:1/cover.png", List.of())
+                .getGoodsinfoList().getItems().get(0);
+
+        service.persistImages(row, item);
+
+        assertEquals(5L, row.getCoverImageId(), "封面失败不冲写旧封面");
+        verify(imageService, never()).persistOrReuse(any(), anyString(), any(ImageAssetEntity.class));
+        verify(modelMapper, never()).updateById(any(CarModelEntity.class));
+    }
+
+    /** 10-21 R1:全量 syncOne 路径同样写封面(仅有 img 无 introduce)。 */
+    @Test
+    void 全量同步_有主体图无介绍图_写封面() throws Exception {
+        byte[] png = new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.createContext("/cover.png", (HttpExchange ex) -> {
+            ex.sendResponseHeaders(200, png.length);
+            try (var os = ex.getResponseBody()) { os.write(png); }
+            ex.close();
+        });
+        server.start();
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/cover.png";
+        try {
+            CarModelEntity row = rowFor(26L, "26", "大唐EV");
+            when(modelMapper.selectOne(any())).thenReturn(row);
+            when(client.goodsInfo("26")).thenReturn(infoItem("26", "大唐EV", url, List.of()));
+            when(client.goodsParams("26")).thenReturn(null);
+            when(client.goodsAttrList("26")).thenReturn(null);
+            when(cleanService.cleanForModel(any())).thenReturn(new com.sparkora.car.dto.CleanStats());
+            when(imageService.persistOrReuse(any(), eq("png"), any(ImageAssetEntity.class)))
+                    .thenAnswer(inv -> {
+                        ImageAssetEntity e = new ImageAssetEntity();
+                        e.setId(90L);
+                        return e;
+                    });
+
+            service.syncOne("26");
+
+            assertEquals(90L, row.getCoverImageId());
+            assertEquals("[]", row.getIntroImages());   // persistModel 写空 introduce 原串,persistImages 不覆写
+            assertEquals("SUCCESS", row.getSyncStatus());
+            assertNull(row.getLastSyncError());
         } finally {
             server.stop(0);
         }

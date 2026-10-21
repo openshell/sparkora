@@ -1,6 +1,7 @@
 package com.sparkora.car.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.ai.vector.VectorStoreService;
 import com.sparkora.car.client.BydCmsClient;
@@ -30,6 +31,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,6 +43,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -334,6 +337,62 @@ class CarSyncIncrementsTest {
         // 全量路径收尾语义不变:SUCCESS + 明细 JSON(无备注条目)
         assertEquals("SUCCESS", job.getStatus());
         assertEquals("[]", job.getFailedItems());
+    }
+
+    /** 10-21 R2:失败回写只动 sync_status/last_sync_error/updated_at,原因截断 500,不写 last_sync_at。 */
+    @Test
+    void 失败回写_状态FAILED_原因截断500_不动最后成功时间() {
+        service.markSyncFailed("26", "x".repeat(600));
+
+        ArgumentCaptor<Wrapper<CarModelEntity>> captor =
+                (ArgumentCaptor) ArgumentCaptor.forClass(Wrapper.class);
+        verify(modelMapper).update(isNull(), captor.capture());
+        UpdateWrapper<CarModelEntity> uw = (UpdateWrapper<CarModelEntity>) captor.getValue();
+        String sqlSet = uw.getSqlSet();
+        uw.getSqlSegment();   // 物化 WHERE,paramNameValuePairs 装载全部取值
+        assertTrue(sqlSet.contains("sync_status"), "set 含 sync_status");
+        assertTrue(sqlSet.contains("last_sync_error"), "set 含 last_sync_error");
+        assertTrue(sqlSet.contains("updated_at"), "set 含 updated_at");
+        assertFalse(sqlSet.contains("last_sync_at"), "失败不写 last_sync_at(保留最后成功时间)");
+        var values = uw.getParamNameValuePairs().values();
+        assertTrue(values.contains("FAILED"), "状态置 FAILED");
+        String err = (String) values.stream()
+                .filter(v -> v instanceof String s && s.startsWith("xxx"))
+                .findFirst().orElseThrow();
+        assertEquals(500, err.length(), "失败原因截断 500 字符");
+    }
+
+    /** 10-21 R2:任务 catch 分支必须回写车型失败状态(RETRY/SELECTED/IMAGE_BACKFILL/INCREMENTAL 同口径)。 */
+    @Test
+    void 任务失败_回写车型失败状态_任务终态FAILED() {
+        CarSyncJobEntity job = runningJob(4L, "SELECTED");
+        when(jobMapper.selectById(4L)).thenReturn(job);
+        when(jobMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        when(modelServiceMock.syncOne("99")).thenThrow(new RuntimeException("官网采集失败"));
+
+        jobService.runJob(4L, List.of("99"));
+
+        verify(modelServiceMock).markSyncFailed("99", "官网采集失败");
+        assertEquals("FAILED", job.getStatus());
+        assertEquals(1, job.getFailed());
+        assertTrue(job.getFailedItems().contains("官网采集失败"));
+    }
+
+    /** 10-21 R2:失败状态回写自身异常不得中断任务/覆盖原始错误。 */
+    @Test
+    void 失败回写异常_不覆盖原始错误_任务照常收尾() {
+        CarSyncJobEntity job = runningJob(5L, "INCREMENTAL");
+        when(jobMapper.selectById(5L)).thenReturn(job);
+        when(jobMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        when(modelServiceMock.dispatchIncremental("99")).thenThrow(new RuntimeException("官网采集失败"));
+        doThrow(new RuntimeException("db down")).when(modelServiceMock)
+                .markSyncFailed(anyString(), anyString());
+
+        jobService.runJob(5L, List.of("99"));
+
+        assertEquals("FAILED", job.getStatus());
+        assertTrue(job.getFailedItems().contains("官网采集失败"), "明细保留原始错误");
+        assertFalse(job.getFailedItems().contains("db down"), "回写异常不覆盖原始错误");
     }
 
     @Test

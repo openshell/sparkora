@@ -1,6 +1,7 @@
 package com.sparkora.car.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparkora.car.client.BydCmsClient;
@@ -110,16 +111,18 @@ public class CarModelService {
     /** 车型列表(按 id 倒序)。 */
     public List<CarModelEntity> list() {
         List<CarModelEntity> list = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByDesc("id"));
-        for (CarModelEntity m : list) fillIntroImageUrls(m);
+        for (CarModelEntity m : list) fillImageUrls(m);
         return list;
     }
 
     /**
-     * 填充车型介绍图公网 URL 派生字段(非持久化)。
+     * 填充图片公网 URL 派生字段(非持久化):详情图集 introImageUrls + 封面 coverImageUrl。
      * introImages 语义为图库 asset id 列表 JSON;兼容存量旧数据(URL 数组直接保留)。
      * 单个元素解析失败/图片不存在时跳过,不阻断列表。
+     * 封面解析失败/无封面时 coverImageUrl 为 null(不回退详情图首图——「有无封面」统计须真实,
+     * 回退由前端展示层完成)。
      */
-    private void fillIntroImageUrls(CarModelEntity m) {
+    private void fillImageUrls(CarModelEntity m) {
         List<String> urls = new ArrayList<>();
         String raw = m.getIntroImages();
         if (raw != null && !raw.isBlank()) {
@@ -146,6 +149,8 @@ public class CarModelService {
             }
         }
         m.setIntroImageUrls(urls);
+        String cover = imageService.publicUrlQuietly(m.getCoverImageId());
+        m.setCoverImageUrl(cover == null || cover.isBlank() ? null : cover);
     }
 
     /** 官网车型目录(供同步页手动选择)。返回 goodsListForSearch 原始 data 数组。 */
@@ -201,7 +206,7 @@ public class CarModelService {
     public CarModelDetailDto detail(Long id, Long versionId) {
         CarModelEntity m = modelMapper.selectById(id);
         if (m == null) throw new IllegalArgumentException("车型不存在");
-        fillIntroImageUrls(m);
+        fillImageUrls(m);
         CarModelDetailDto dto = new CarModelDetailDto();
         dto.setModel(m);
         List<CarVersionEntity> versions = versionMapper.selectList(
@@ -251,6 +256,23 @@ public class CarModelService {
     }
 
     /**
+     * 同步失败回写(10-21-knowledge-car-sync-ux R2):由同步任务 catch 分支调用,确保车型
+     * 不永久停留「同步中」。只写 sync_status=FAILED / last_sync_error / updated_at,
+     * **不写 last_sync_at**(该字段保留最后成功时间)。error 截断 500 字符(列宽保护)。
+     * 回写自身失败由调用方 try/catch 兜底,不覆盖任务原始异常。
+     */
+    public void markSyncFailed(String goodsId, String error) {
+        if (goodsId == null || goodsId.isBlank()) return;
+        String msg = (error == null || error.isBlank()) ? "未知错误" : error;
+        if (msg.length() > 500) msg = msg.substring(0, 500);
+        modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                .eq("goods_id", goodsId)
+                .set("sync_status", "FAILED")
+                .set("last_sync_error", msg)
+                .set("updated_at", LocalDateTime.now()));
+    }
+
+    /**
      * 同步单个车型(按 goodsId)。幂等:已存在则更新,不存在则新建。
      * 网络采集无事务;入库短事务。由 CarSyncJobService 异步任务驱动。
      *
@@ -271,8 +293,8 @@ public class CarModelService {
         CarModelEntity model = persistModel(goodsId, item);
         persistVersions(model.getId(), attrs);
         persistParams(model.getId(), params);
-        // 2.5) 车型图片下载转存图床,写入图库(source='byd');单图失败不阻断整车型同步
-        persistIntroImages(model, item);
+        // 2.5) 车型图片(封面主体图 + 详情图集)下载转存图床,写入图库(source='byd');单图失败不阻断整车型同步
+        persistImages(model, item);
         // 3) 清洗参数(规则引擎 + AI 兜底);统计随清洗落库,同步任务记录进 job 明细
         CleanStats stats = cleanService.cleanForModel(model.getId());
         // 4) 切分向量化(网络 embedding,无事务;基于清洗后数据)
@@ -413,9 +435,9 @@ public class CarModelService {
 
     /**
      * 轻回填(存量车型图片补入库,R1):仅拉 goodsInfo(不调 goodsParams/goodsAttrList)→
-     * 复用 persistIntroImages(下载/内容哈希去重/图床转存/「车型-名」自动打标)→ 收敛
+     * 复用 persistImages(封面+详情图集;下载/内容哈希去重/图床转存/「车型-名」自动打标)→ 收敛
      * sync_fingerprint + syncStatus=SUCCESS + lastSyncAt。不走 persistModel:版本、参数、
-     * 清洗、向量域零触碰。introduce 为空(官网无图)时 persistIntroImages 早退、不冲写
+     * 清洗、向量域零触碰。introduce 为空(官网无图)时详情图集分支早退、不冲写
      * intro_images,note=「官网无图」供任务明细标注。
      *
      * @return 增量结果:note(官网无图时非空)+ outcome(model + null 清洗统计)
@@ -457,13 +479,13 @@ public class CarModelService {
 
     /**
      * 轻回填执行体(复用调用方已拉取的 item,免二次网络调用),note 一并在此生成。
-     * 有条目:走 persistIntroImages(item 口径指纹);无条目:存量 URL 下载兜底 + 库存行快照指纹。
+     * 有条目:走 persistImages(封面+详情图集,item 口径指纹);无条目:存量 URL 下载兜底 + 库存行快照指纹。
      * 清洗净为 null。
      */
     private IncrementalOutcome backfillInternal(CarModelEntity row, GoodsInfoDto.Item item) {
         String note;
         if (item != null) {
-            persistIntroImages(row, item);   // 单图失败仅告警不阻断(既有语义);空 introduce 早退不冲写
+            persistImages(row, item);   // 封面 + 详情图集;单图失败仅告警不阻断;空字段早退不冲写
             row.setSyncFingerprint(computeFingerprint(item));
             note = (item.getIntroduce() == null || item.getIntroduce().isEmpty()) ? "官网无图" : null;
         } else {
@@ -476,6 +498,7 @@ public class CarModelService {
             note = ids.isEmpty() ? "官网无数据,且无存量图可兜底" : "官网无数据,已按存量URL兜底入库" + ids.size() + "张";
         }
         row.setSyncStatus("SUCCESS");
+        row.setLastSyncError(null);   // 成功同步清除历史失败原因(R2)
         row.setLastSyncAt(LocalDateTime.now());
         row.setUpdatedAt(LocalDateTime.now());
         modelMapper.updateById(row);
@@ -547,41 +570,74 @@ public class CarModelService {
     }
 
     /**
-     * 车型介绍图(introduce URL 列表)下载转存图床,写入 sparkora_image_asset(source='byd',全局图库)。
-     * car_model.intro_images 更新为图库记录 id 列表(JSON 数组)。单图失败仅告警,不阻断整车型同步。
+     * 车型图片统一落库(10-21 R1):封面(goodsInfo.img 主体图)+ 详情图集(goodsInfo.introduce)。
+     * 两者分离、互不覆盖;单图失败仅告警不阻断整车型同步。有任一字段实际变化时统一 updateById 一次。
+     * 空/失败不冲写既有列(封面为空或下载失败保留旧封面;introduce 为空保留旧图集)。
      * 09-13 image-tags:preset 预设「车型-<车型名>」标签,走统一入库管线自动落标(零额外逻辑)。
      */
-    protected void persistIntroImages(CarModelEntity model, GoodsInfoDto.Item item) {
-        if (item == null || item.getIntroduce() == null || item.getIntroduce().isEmpty()) return;
-        List<Long> ids = new ArrayList<>();
-        for (String url : item.getIntroduce()) {
-            persistIntroImageUrl(model, url, ids);
+    protected void persistImages(CarModelEntity model, GoodsInfoDto.Item item) {
+        if (item == null) return;
+        boolean changed = false;
+        // 封面:官网主体图(透明 PNG),命名 <name>-cover.<ext>;标签额外带「车型主图」便于图库筛选
+        if (item.getImg() != null && !item.getImg().isBlank()) {
+            Long coverId = persistImageToLibrary(model, item.getImg(), model.getName() + "-cover",
+                    List.of("车型-" + model.getName(), "车型主图"));
+            if (coverId != null && !coverId.equals(model.getCoverImageId())) {
+                model.setCoverImageId(coverId);
+                changed = true;
+            }
         }
-        if (!ids.isEmpty()) {
-            model.setIntroImages(toJson(ids));
-            modelMapper.updateById(model);
+        // 详情图集:introduce 逐张入库,序号命名 <name>-<n>.<ext>
+        if (item.getIntroduce() != null && !item.getIntroduce().isEmpty()) {
+            List<Long> ids = new ArrayList<>();
+            for (String url : item.getIntroduce()) {
+                Long id = persistImageToLibrary(model, url, model.getName() + "-" + (ids.size() + 1),
+                        List.of("车型-" + model.getName()));
+                if (id != null) ids.add(id);
+            }
+            if (!ids.isEmpty()) {
+                String json = toJson(ids);
+                if (!json.equals(model.getIntroImages())) {   // 幂等重跑(哈希命中原 id)不产生无效写
+                    model.setIntroImages(json);
+                    changed = true;
+                }
+            }
         }
+        if (changed) modelMapper.updateById(model);
     }
 
-    /** 单张车型图入库(introduce 循环体与存量 URL 兜底共用):下载→哈希去重→图床→「车型-名」标签;单图失败仅告警。 */
+    /** 单张车型介绍图入库(存量 URL 兜底共用):下载→哈希去重→图床→「车型-名」标签;单图失败仅告警。 */
     private void persistIntroImageUrl(CarModelEntity model, String url, List<Long> ids) {
-        if (url == null || url.isBlank()) return;
+        Long id = persistImageToLibrary(model, url, model.getName() + "-" + (ids.size() + 1),
+                List.of("车型-" + model.getName()));
+        if (id != null) ids.add(id);
+    }
+
+    /**
+     * 通用单图入库(B1):下载图片 → 魔数嗅探扩展名 → ImageService.persistOrReuse(内容哈希去重 +
+     * 图床转存 + 标签落标)。fileNamePrefix 为不含扩展名的文件名前缀(如 <name>-1 / <name>-cover)。
+     *
+     * @return 图库资产 id;URL 空、下载失败或入库失败时返回 null(仅告警,不阻断调用方)
+     */
+    private Long persistImageToLibrary(CarModelEntity model, String url, String fileNamePrefix, List<String> tags) {
+        if (url == null || url.isBlank()) return null;
         try {
             byte[] bytes = downloadImage(url);
             String ext = sniffImageExt(bytes);
             // S10:走 ImageService 统一入库管线（内容哈希去重;同步幂等重跑不重复占图床对象）
             com.sparkora.domain.entity.ImageAssetEntity preset = new com.sparkora.domain.entity.ImageAssetEntity();
             preset.setProjectId(null);                       // 全局图库
-            preset.setFileName(model.getName() + "-" + (ids.size() + 1) + "." + ext);
+            preset.setFileName(fileNamePrefix + "." + ext);
             preset.setSource("byd");
             preset.setCreatedBy("system");
-            preset.setTags(List.of("车型-" + model.getName()));   // 09-13:自动分类标签(管线自动落标)
+            preset.setTags(tags);                            // 09-13:自动分类标签(管线自动落标)
             ImageAssetEntity e = imageService.persistOrReuse(bytes, ext, preset);
-            ids.add(e.getId());
             log.info("比亚迪车型图已入库 model={} url={} id={} dedupe={}",
                     model.getName(), shorten(url), e.getId(), Boolean.TRUE.equals(e.getDedupeHit()));
+            return e.getId();
         } catch (Exception ex) {
             log.warn("比亚迪车型图转存失败(跳过): model={} url={} err={}", model.getName(), shorten(url), ex.getMessage());
+            return null;
         }
     }
 

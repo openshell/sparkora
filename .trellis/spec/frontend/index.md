@@ -166,7 +166,11 @@ onBeforeRouteLeave(() => { if (header) { header.crumbs = []; header.actions = []
 
 ### Convention: 同步类异步任务前端范式
 
-`createJob` → 拿 `jobId` → `setInterval(2000)` 轮询 `getJob` → 终态（非 `RUNNING`）`stopPoll()` + 刷新列表；`onBeforeUnmount(stopPoll)` 清理定时器。参照 `CarSync.vue` / `NewsKnowledgePanel.vue`。
+`createJob` → 拿 `jobId` → `setInterval(2000)` 轮询 `getJob` → 终态（非 `RUNNING`）`stopPoll()` + 刷新列表；`onBeforeUnmount(stopPoll)` 清理定时器。参照 `composables/useCarSyncJob.js`（车型）/ `NewsKnowledgePanel.vue`。
+
+- **「请求在途」也算忙**：`createJob` 发出到首次轮询之间 `jobId` 尚未拿到、`job.running` 也还是 false——只靠 `jobRunning` 防不住重复建任务。用同一忙碌位 `starting` 覆盖「请求在途 + 待首次进度」：请求前置位（`beginStart()`，失败必须 `cancelStart()` 复位）、`startPoll` 接管、首次成功响应清除（先例 `useCarSyncJob`）。
+- **恢复历史任务必须排除陈旧 RUNNING**：后端任务表通常有 60min 的 `SYNC_STALE_MS` 自愈，但自愈可能只在开关开启时跑；前端 `recoverLatest` 若无条件把 RUNNING 当运行中，会 `jobBusy` 恒真 → 永久无法再发起任务。恢复时按 `startedAt` 时效过滤，只恢复未过期 RUNNING + 24h 内**终态**任务。
+- **单次轮询失败不清忙碌位**：任务可能仍在跑（网络抖动），2s 后重试；连续 3 次失败停止轮询时才解除，避免「假空闲」窗口。
 
 ### Convention: 防抖定时器必须 `onBeforeUnmount` 清理
 

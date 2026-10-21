@@ -1,0 +1,5 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "车型域权威契约：intro_images 语义/派生字段/同步任务与接口表；cover_image_id 新字段与同步链路改动必须同步该文档"}
+{"file": "docs/spec/knowledge/center.md", "reason": "知识中心 Tab 信息架构与车型 Tab 定位；同步入口内聚、任务恢复、运维入口属于该文档职责边界"}
+{"file": "docs/spec/image.md", "reason": "BYD 图片来源/标签/去重管线契约；封面入库沿用统一管线与车型标签组，需按文档口径实现"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 Flyway/实体/服务/状态机与测试惯例；新增列、派生字段、失败回写必须遵守"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "三态、PC 密度、图标显式引入、缩略图 contain、Tab 懒挂载、同步任务轮询范式与 E2E 基线约定"}

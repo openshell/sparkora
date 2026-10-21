@@ -1,0 +1,4 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "逐条核对 cover_image_id/coverImageUrl 字段、同步与轻回填行为、接口契约是否与实现一致"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对车型 Tab 的同步/运维/任务能力描述是否与实现一致"}
+{"file": ".trellis/spec/backend/index.md", "reason": "核对迁移版本、实体审计字段、服务契约、测试命令与后端规范"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对三态/密度/图标/缩略图/轮询清理/E2E fixtures 与视觉基线规范"}

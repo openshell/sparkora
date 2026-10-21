@@ -7,6 +7,7 @@ import com.sparkora.car.service.CarSyncJobService;
 import com.sparkora.common.R;
 import com.sparkora.domain.entity.CarModelEntity;
 import com.sparkora.domain.entity.CarSyncJobEntity;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,6 +20,7 @@ import java.util.Map;
  * - sync:手动触发采集入库(异步任务化,创建任务即返回 jobId,前端轮询进度)。
  * - rag:内部问答检索(返回命中的知识块)。
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/car")
 public class CarModelController {
@@ -121,20 +123,36 @@ public class CarModelController {
         return R.fail(400, "全量同步已取消,请在同步页选择车型后同步");
     }
 
-    /** 同步单个车型(按 goodsId)。返回车型与清洗统计摘要。 */
+    /**
+     * 同步单个车型(按 goodsId)。返回车型与清洗统计摘要。
+     * 10-21 R2:阻塞式同步失败同样回写车型 FAILED + 原因(与异步任务 catch 同口径),
+     * 否则详情页同步失败后卡片/详情仍停在旧状态、看不到原因。
+     */
     @PostMapping("/models/{id}/sync")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<Map<String, Object>> syncOne(@PathVariable Long id) {
+        CarModelEntity m;
         try {
-            CarModelEntity m = service.get(id);
-            if (m == null) return R.fail(404, "车型不存在");
+            m = service.get(id);
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+        if (m == null) return R.fail(404, "车型不存在");
+        try {
             CarModelService.SyncOutcome outcome = service.syncOne(m.getGoodsId());
             Map<String, Object> data = new java.util.LinkedHashMap<>();
             data.put("model", outcome.model());
             data.put("cleanStats", outcome.cleanStats());
             return R.ok(data);
         } catch (Exception e) {
-            return R.fail(500, e.getMessage());
+            String err = e.getMessage() == null ? "未知错误" : e.getMessage();
+            // 回写自身失败仅告警,不覆盖原始错误/响应
+            try {
+                service.markSyncFailed(m.getGoodsId(), err);
+            } catch (Exception ex) {
+                log.warn("车型失败状态回写失败(忽略) goodsId={}: {}", m.getGoodsId(), ex.getMessage());
+            }
+            return R.fail(500, err);
         }
     }
 
