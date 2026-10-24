@@ -31,11 +31,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 知识中心/`/car/sync` 可打开同步记录抽屉，看到历史任务及明细。
-- [ ] 详情页与卡片显示官网 `createdAt` 的「创建时间」；空值不显示占位错误。
-- [ ] 全量同步/轻回填不会用 null 覆盖已有 `source_created_at`。
-- [ ] 一次性回填后 57 台中有官网 createdAt 的车型均可显示。
-- [ ] `mvn test`、`npm run build`、Playwright smoke 通过；代码已推送。
+- [x] 知识中心/`/car/sync` 可打开同步记录抽屉，看到历史任务及明细。
+- [x] 详情页与卡片显示官网 `createdAt` 的「创建时间」；空值不显示占位错误。
+- [x] 全量同步/轻回填不会用 null 覆盖已有 `source_created_at`。
+- [x] 一次性回填后 57 台中有官网 createdAt 的车型均可显示。
+- [x] `mvn test`、`npm run build`、Playwright smoke 通过；代码已推送。
 
 ## Out of Scope
 
