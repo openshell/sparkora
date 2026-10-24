@@ -60,6 +60,8 @@ public class CarModelEntity {
     /** 最近一次官网检查时间(空数据/跳过也更新);lastSyncAt 只在完整成功后更新。 */
     private LocalDateTime lastCheckedAt;
     private LocalDateTime lastSyncAt;
+    /** 官网 goodsInfo.createdAt(数据创建时间);UI 文案「创建时间」,不是系统审计 created_at。 */
+    private LocalDateTime sourceCreatedAt;
     private String lastSyncError;
     private String createdBy;
     private LocalDateTime createdAt;

@@ -1,0 +1,3 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "车型字段/同步历史/接口契约"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移/部分更新/任务历史"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "抽屉/任务面板/三态与 E2E"}

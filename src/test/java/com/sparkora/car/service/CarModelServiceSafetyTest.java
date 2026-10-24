@@ -523,4 +523,30 @@ class CarModelServiceSafetyTest {
         assertTrue(updates.stream().noneMatch(w -> setsColumn(w, "image_fingerprint")),
                 "图片失败时 updateFingerprints 不应写 image_fingerprint");
     }
+
+    @Test
+    void 解析官网创建时间_兼容空格与ISO_非法返回null() {
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 20, 17, 44, 53),
+                CarModelService.parseSourceCreatedAt("2026-10-20 17:44:53"));
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 20, 17, 44, 53),
+                CarModelService.parseSourceCreatedAt("2026-10-20T17:44:53"));
+        assertNull(CarModelService.parseSourceCreatedAt(""));
+        assertNull(CarModelService.parseSourceCreatedAt("not-a-date"));
+    }
+
+    @Test
+    void 回填官网创建时间_只更新source_created_at() {
+        CarModelEntity row = row();
+        GoodsInfoDto info = info("156", "汉EV");
+        info.getGoodsinfoList().getItems().get(0).setCreatedAt("2026-10-20 17:44:53");
+        when(modelMapper.selectList(any())).thenReturn(List.of(row));
+        when(client.goodsInfo("156")).thenReturn(info);
+
+        java.util.Map<String, Object> out = service.backfillSourceCreatedAt();
+
+        assertEquals(1, out.get("updated"));
+        List<Wrapper<CarModelEntity>> updates = captureUpdates(modelMapper);
+        assertTrue(updates.stream().anyMatch(w -> setsColumn(w, "source_created_at")));
+        assertTrue(updates.stream().noneMatch(w -> setsColumn(w, "sync_status")));
+    }
 }

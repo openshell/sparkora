@@ -7,6 +7,9 @@
           <h2>车型同步</h2>
         </div>
         <div class="actions">
+          <el-button @click="historyVisible = true">
+            <el-icon class="btn-icon"><Clock /></el-icon>同步记录
+          </el-button>
           <el-button @click="$router.push('/knowledge')">返回知识中心</el-button>
         </div>
       </div>
@@ -43,6 +46,8 @@
 
         <CarCatalogGrid v-model="selected" :catalog="catalog" :synced-ids="syncedIds" />
       </template>
+
+      <CarJobHistoryDrawer v-model="historyVisible" />
     </div>
   </div>
 </template>
@@ -52,8 +57,9 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, WarningFilled, Picture } from '@element-plus/icons-vue'
+import { Clock, Refresh, WarningFilled, Picture } from '@element-plus/icons-vue'
 import CarJobPanel from '../components/car/CarJobPanel.vue'
+import CarJobHistoryDrawer from '../components/car/CarJobHistoryDrawer.vue'
 import CarCatalogGrid from '../components/car/CarCatalogGrid.vue'
 import { useCarSyncJob } from '../composables/useCarSyncJob'
 
@@ -63,6 +69,7 @@ const error = ref('')
 const catalog = ref([])
 const syncedIds = ref(new Set())
 const selected = ref([])
+const historyVisible = ref(false)
 const creating = ref(false)
 const backfilling = ref(false)
 

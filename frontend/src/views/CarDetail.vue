@@ -22,6 +22,7 @@
               </el-tag>
               <span class="price">{{ formatPrice(detail.model.priceRange) || '价格待同步' }}</span>
               <span class="last-sync">{{ detail.model.sourceState === 'EMPTY' ? '最近检查' : '最近成功' }}：{{ fmtTime(detail.model.lastCheckedAt || detail.model.lastSyncAt) }}</span>
+              <span v-if="detail.model.sourceCreatedAt" class="last-sync">创建时间：{{ formatDate(detail.model.sourceCreatedAt) }}</span>
             </div>
           </div>
           <div class="actions">
@@ -137,7 +138,7 @@ import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
-import { coverIsFallback, coverUrlOf, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
+import { coverIsFallback, coverUrlOf, formatDate, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
 
 const route = useRoute()
 const user = useUserStore()

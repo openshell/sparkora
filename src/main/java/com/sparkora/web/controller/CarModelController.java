@@ -255,6 +255,18 @@ public class CarModelController {
         }
     }
 
+    /** 一次性回填官网 goodsInfo.createdAt（UI「创建时间」；只读，不动业务数据）。 */
+    @PostMapping("/models/backfill-created-at")
+    @PreAuthorize("hasRole('ADMIN')")
+    public R<Map<String, Object>> backfillCreatedAt() {
+        try {
+            return R.ok(service.backfillSourceCreatedAt());
+        } catch (Exception e) {
+            log.warn("回填官网创建时间失败: {}", e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
+        }
+    }
+
     /** 单车型清洗质量统计(可观测):按 clean_method 分组计数 + 可疑 STRING 兜底占比。 */
     @GetMapping("/models/{id}/clean-stats")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")

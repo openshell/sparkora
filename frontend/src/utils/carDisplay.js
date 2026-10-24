@@ -116,3 +116,10 @@ export function statusMeta(status) {
   }
   return map[status] || { label: status || '—', type: 'info' }
 }
+
+/** 官网 sourceCreatedAt → YYYY-MM-DD（无值/非法返回空串）。 */
+export function formatDate(value) {
+  if (!value) return ''
+  const s = String(value).replace('T', ' ')
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : ''
+}

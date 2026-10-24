@@ -67,6 +67,7 @@
 ### 4.1 车型 Tab 契约（10-21-knowledge-car-sync-ux）
 
 - **同步内聚**：不再强制跳 `/car/sync`；「同步车型」在 Tab 内打开 `components/car/CarCatalogDrawer.vue`（加载官网目录 → 选择 → 同步选中 / 图片补入库）。`/car/sync` 保留并与知识中心复用 `CarCatalogGrid` / `CarJobPanel` / `useCarSyncJob`。
+- **同步记录**：工具栏「同步记录」打开 `CarJobHistoryDrawer`，查看最近 50 条任务及明细；VIEWER 也可查看。
 - **任务恢复**：挂载时 `useCarSyncJob.recoverLatest()`——优先恢复**未过期**的 RUNNING 任务（`heartbeatAt` 60 分钟内，缺失回退 `startedAt`，与后端 `SYNC_STALE_MS` 同口径）并继续 2s 轮询；否则展示 24h 内最近**终态**任务。陈旧 RUNNING（JVM 中途死亡遗留）不恢复、不阻塞新建任务。切 Tab/刷新后可继续看到进度；运行中重复发起会被阻止并提示（`beginStart` 在 createJob 请求在途即置忙，覆盖「创建返回→首次轮询」与请求窗口）。
 - **统计口径**：「封面覆盖」= `coverImageUrl` 非空的车型数 / 总数（不再取图库 `source=byd` 全量图片数）；10-21 安全整改增加「官网无数据」统计（`sourceState=EMPTY`），并从「失败」中排除，避免同一批空数据车重复计数。
 - **空数据安全**：`sourceState=EMPTY` 的车型显示「官网无数据」，禁用全量同步，提示改用「图片补入库」；批量同步若包含空数据车会直接拦截。任务面板使用 `skipped` 独立计数，全跳过显示「检查完成(无变化)」。
