@@ -26,18 +26,23 @@
             </div>
           </div>
           <div class="actions">
-            <el-button v-if="user.isEditorOrAbove" type="primary" :loading="syncing"
+            <el-button v-if="user.isEditorOrAbove" type="primary" :loading="jobBusy"
               :disabled="detail.model.sourceState === 'EMPTY'"
-              :title="detail.model.sourceState === 'EMPTY' ? '官网无数据，请使用「图片补入库」' : ''"
+              :title="detail.model.sourceState === 'EMPTY' ? '官网无数据，全量同步不可用；可回到知识中心车型页勾选本车型，使用批量栏「补选中图片」补图' : ''"
               @click="onSync">
               <el-icon class="btn-icon"><Refresh /></el-icon>同步
             </el-button>
-            <el-button v-if="user.isEditorOrAbove && hasRawGroups" :loading="cleaning" @click="onClean">
+            <el-button v-if="user.isEditorOrAbove && hasRawGroups" :disabled="jobBusy" @click="onClean">
               重新清洗
             </el-button>
             <el-button @click="$router.push('/knowledge')">返回</el-button>
           </div>
         </div>
+
+        <!-- 同步/清洗任务面板（10-24 任务化接入）：进度/明细/取消/重试，终态后自动刷新详情 -->
+        <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove"
+          :can-cancel="user.isEditorOrAbove" :cancelling="cancelling" closable
+          @retry="onRetry" @cancel="onCancelJob" @close="onCloseJob" />
 
         <!-- 官网无数据/同步失败原因：完整展示，不截断 -->
         <el-alert v-if="detail.model.sourceState === 'EMPTY'" class="sync-error" type="warning" :closable="false" show-icon
@@ -132,13 +137,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { coverIsFallback, coverUrlOf, formatDate, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
+import CarJobPanel from '../components/car/CarJobPanel.vue'
+import { useCarSyncJob } from '../composables/useCarSyncJob'
 
 const route = useRoute()
 const user = useUserStore()
@@ -146,14 +153,15 @@ const id = Number(route.params.id)
 const loading = ref(false)
 const error = ref('')
 const detail = ref(null)
-const syncing = ref(false)
-const cleaning = ref(false)
 const curVersion = ref(null)
 const openGroups = ref([])
 const question = ref('')
 const asking = ref(false)
 const answer = ref('')
 const hits = ref([])
+
+// 同步/清洗任务化（10-24 车型运维 P0）：进度走任务面板，终态自动刷新详情
+const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
 
 const heroUrl = computed(() => (detail.value ? coverUrlOf(detail.value.model) : ''))
 const heroIsFallback = computed(() => (detail.value ? coverIsFallback(detail.value.model) : false))
@@ -230,39 +238,61 @@ const cleanValue = (row) => {
 }
 const typeLabel = (t) => ({ STRING: '文本', NUMBER: '数值', BOOLEAN: '布尔', ENUM: '枚举', LIST: '列表', RAW: '原始' }[t] || t || '—')
 
+// 重新清洗任务化（10-24 R2）：创建 CLEAN_ONE 异步任务（allowAi=true 与旧 /clean 同语义），
+// 进度走任务面板，终态后 onFinished 自动重载详情
 const onClean = async () => {
-  if (cleaning.value) return
+  if (jobBusy.value) return
   try {
     await ElMessageBox.confirm('基于库内原始参数重跑清洗，不请求官网；会重写本车型的清洗结果。确认执行？',
       '重新清洗', { type: 'info', confirmButtonText: '开始清洗', cancelButtonText: '取消' })
   } catch { return }
-  cleaning.value = true
+  if (!beginStart()) return
   try {
-    const res = await carApi.cleanOne(id)
-    if (res.code === 0) ElMessage.success(`清洗完成，生成 ${res.data.cleansAfter || 0} 条`)
-    else ElMessage.error(res.msg || '清洗失败')
+    const res = await carApi.createCleanOneJob(id)
+    if (res.code === 0 && res.data?.jobId) {
+      job.value = null
+      startPoll(res.data.jobId, { onFinished: load })
+    } else {
+      cancelStart()
+      ElMessage.error(res.msg || '创建清洗任务失败')
+    }
   } catch (e) {
-    ElMessage.error(e?.response?.data?.msg || e.message || '清洗失败')
-  } finally {
-    cleaning.value = false
-    await load()
+    cancelStart()
+    ElMessage.error(e?.response?.data?.msg || '创建清洗任务失败，请稍后重试')
   }
 }
 
+// 同步任务化（10-24 R2）：创建单车型 SELECTED 任务（复用既有任务分派/失败回写/清洗统计聚合），
+// 进度走任务面板，终态后 onFinished 自动重载详情（失败原因与状态须在详情页可见）
 const onSync = async () => {
-  if (syncing.value) return
-  syncing.value = true
-  try {
-    const res = await carApi.syncOne(id)
-    if (res.code === 0) ElMessage.success('同步完成')
-    else ElMessage.error(res.msg || '同步失败')
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.msg || e.message || '同步失败')
-  } finally {
-    syncing.value = false
-    // 成功/失败都刷新：失败原因与状态须在详情页可见（R2/R3）
-    await load()
+  if (jobBusy.value) return   // 已有任务在运行：后端 409 兜底，前端防重复发起
+  const goodsId = detail.value?.model?.goodsId
+  if (!goodsId) {
+    ElMessage.warning('该车型缺少官网 goodsId，无法发起同步任务')
+    return
   }
+  if (!beginStart()) return
+  try {
+    const res = await carApi.createJob([goodsId])
+    if (res.code === 0 && res.data?.jobId) {
+      job.value = null
+      startPoll(res.data.jobId, { onFinished: load })
+    } else {
+      cancelStart()
+      ElMessage.error(res.msg || '创建任务失败')
+    }
+  } catch (e) {
+    cancelStart()
+    ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
+  }
+}
+
+const onRetry = () => retryCurrent({ onFinished: load })
+const onCancelJob = () => cancelCurrent()
+const onCloseJob = () => {
+  stopPoll()
+  job.value = null
+  jobId.value = null
 }
 
 // 中文输入法组字中的回车是选词，不是提交（与项目 Enter 约定一致）
@@ -288,7 +318,12 @@ const ask = async () => {
   finally { asking.value = false }
 }
 
-onMounted(load)
+// 挂载恢复最近任务（只读轮询无害）：切走再切回/刷新后可继续看到运行中任务进度
+onMounted(() => {
+  load()
+  recoverLatest({ onFinished: load })
+})
+onBeforeUnmount(stopPoll)
 </script>
 
 <style scoped>

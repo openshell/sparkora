@@ -64,11 +64,14 @@ export function useCarSyncJob() {
     const type = data?.jobType
     const done = type === 'IMAGE_BACKFILL' ? '图片补入库完成'
       : type === 'CLEAN_BACKFILL' ? '补清洗完成'
+      : type === 'VECTOR_REBUILD' ? '重建向量完成'
+      : type === 'CLEAN_ONE' ? '清洗完成'
       : type === 'INCREMENTAL' ? '检查更新完成' : '同步完成'
     const skipped = Number(data?.skipped || 0)
     if (data?.status === 'SUCCESS') {
       if (data?.total && skipped >= data.total) ElMessage.success(`${done}：${skipped} 台无变化`)
-      else if (type === 'IMAGE_BACKFILL' || type === 'INCREMENTAL' || type === 'CLEAN_BACKFILL')
+      else if (type === 'IMAGE_BACKFILL' || type === 'INCREMENTAL' || type === 'CLEAN_BACKFILL'
+        || type === 'VECTOR_REBUILD' || type === 'CLEAN_ONE')
         ElMessage.success(`${done}，处理 ${data.success || 0} 个车型`)
       else ElMessage.success(`同步完成，入库 ${data.success || 0} 个车型`)
     } else if ((data?.failed || 0) > 0) {

@@ -1,0 +1,4 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "核对 §4 job_type/分派语义(VECTOR_REBUILD 失败明细可重试/CLEAN_ONE allowAi=true)、§5 接口表新行与「前端已迁移」标注是否与实现一致"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对 §4.1 车型 Tab 批量栏「补选中图片」、EMPTY 引导闭环、详情页任务面板契约是否落地"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对新接口错误映射(400 参数/409 任务冲突/500 分类)与 R<T> 包装、@PreAuthorize 方法级注解齐全"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对前端改动是否遵守 useCarSyncJob 范式、api/index.js 具名导出、无死绑定残留、onBeforeUnmount 轮询清理"}

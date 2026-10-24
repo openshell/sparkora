@@ -728,6 +728,21 @@ public class CarModelService {
         return out;
     }
 
+    /**
+     * 按 goodsId 重建单车型向量(10-24 车型运维 P0:VECTOR_REBUILD 任务逐车型入口)。
+     * 车型不存在抛 IllegalArgumentException(接口转 400);委托
+     * {@link CarChunkService#rebuildForModel}(两阶段:全部成功才替换旧块,失败保留旧数据)。
+     */
+    public EmbedStats rebuildOneByGoodsId(String goodsId) {
+        CarModelEntity m = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
+        if (m == null) throw new IllegalArgumentException("车型不存在");
+        log.info("单车型向量重建开始 model={} name={} goodsId={}", m.getId(), m.getName(), goodsId);
+        EmbedStats st = docService.rebuildForModel(m.getId());
+        log.info("单车型向量重建完成 model={} name={} total={} success={} failed={}",
+                m.getId(), m.getName(), st.total(), st.success(), st.failed());
+        return st;
+    }
+
     public record SyncOutcome(CarModelEntity model, CleanStats cleanStats) {}
 
     /**

@@ -119,7 +119,7 @@ provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全
 - **写入盖名**：4 条写路径（CAR/KB/NEWS/IMAGE）统一盖 `EmbeddingClient.modelName()`（store metadata `embeddingModel`）；**检索过滤**按当前模型。换模型后旧模型行自动失效（可见降级而非静默混空间），重嵌后新向量自动生效。
 - **维度校验 fail-fast**：`EmbeddingClient.embedList` 校验返回长度 == `AI_EMBEDDING_DIM`，不符抛 `AiException`（中文提示含实际/期望维度与模型名），首次写入或查询即暴露。
 - **启动对账**：`EmbeddingModelReconcileRunner`（`@Order(60)`，Flyway 之后）查单表 store `GROUP BY metadata.domain/embeddingModel`，存在非当前模型的行时 WARN（列出域+模型名+条数，提示重嵌），异常仅 warn 不阻断启动。
-- **重嵌入口**：CAR `POST /api/car/models/rebuild-all`、KB `POST /api/kb/docs/{id}/rebuild`、NEWS `POST /api/news/{id}/rebuild`（09-27 新增）、IMAGE `POST /api/images/embeddings/rebuild`；跨域一键重嵌编排 out of scope。
+- **重嵌入口**：CAR `POST /api/car/models/rebuild-jobs`（10-24 起异步任务，全库 `VECTOR_REBUILD`；旧同步接口 `rebuild-all` 保留兜底）、KB `POST /api/kb/docs/{id}/rebuild`、NEWS `POST /api/news/{id}/rebuild`（09-27 新增）、IMAGE `POST /api/images/embeddings/rebuild`；跨域一键重嵌编排 out of scope。
 
 ## 4.2 向量检索层（10-03 E1：Spring AI PgVectorStore 单表，阶段 A）
 
@@ -159,7 +159,7 @@ provider 未配置跳过（`UNCONFIGURED`）、异常/超时/空结果/结果全
 | PARAM_GROUP 块首行 | 固定 `车型：<全名>`（消除 EV/DM-i 同系跨版本检索混淆，即 S6.2 P1 遗留项）；块行文本 `参数名：清洗值` |
 | 清洗值展示 | 优先 `car_param_clean.param_value`，缺失回退 `raw_value`；NUMBER/LIST 类型且值不含单位时拼接单位（如 `2820mm`）；清洗与原始值均缺省跳过该行 |
 | 向量重建 | `rebuildForModel`：embedding 并发（固定线程池 ≤4）+ 单块失败重试 1 次；完成日志输出「成功 X/失败 Z」，失败块记 `sortOrder`（消除静默丢块） |
-| 批量重建/对账 | `POST /api/car/models/rebuild-all`（ADMIN/EDITOR）逐车型重建汇总；`GET /api/car/models/vector-stats`（三角色）返回 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅统计 `deleted=0`；2026-09-04 实测全库 380/380 缺失 0；**10-03 E6 起 embeddedCount 改查单表 `vector_store`**——见 §11） |
+| 批量重建/对账 | `POST /api/car/models/rebuild-jobs`（ADMIN，10-24 起异步 `VECTOR_REBUILD` 任务；旧同步 `POST /api/car/models/rebuild-all` 保留兜底）逐车型重建；`GET /api/car/models/vector-stats`（三角色）返回 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅统计 `deleted=0`；2026-09-04 实测全库 380/380 缺失 0；**10-03 E6 起 embeddedCount 改查单表 `vector_store`**——见 §11） |
 | 入库去重 | `persistVersions`/`persistParams` 同名版本/同名分组去重（官网接口历史上曾按模块重复推送，防再发）；重同步车型39 复测 clean 与参数版本值 1:1 精确对齐 |
 | AI 兜底空值防线 | `AiParamCleaner` 对 AI 返回 value 空白视为失败返回 null（走 FALLBACK 兜底），「无值清成空串」不再落库 |
 | 摊平核查结论 | 6432 清洗行疑云 = 历史上游重复推送 + `@TableLogic` 逻辑删先清后插堆积（非清洗层摊平）；详见 `archive/2026-09/09-04-clean-followup/research/flatten-findings.md` |

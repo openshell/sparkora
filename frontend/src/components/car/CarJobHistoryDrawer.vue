@@ -61,7 +61,8 @@ const error = ref('')
 
 const typeLabel = (t) => ({
   SELECTED: '选中同步', RETRY: '重试', IMAGE_BACKFILL: '图片补入库',
-  INCREMENTAL: '增量同步', CLEAN_BACKFILL: '补清洗', SCHEDULED: '定时同步'
+  INCREMENTAL: '增量同步', CLEAN_BACKFILL: '补清洗', SCHEDULED: '定时同步',
+  VECTOR_REBUILD: '重建向量', CLEAN_ONE: '单车型清洗'
 }[t] || '同步')
 
 const statusLabel = (s) => ({ RUNNING: '运行中', SUCCESS: '成功', PARTIAL: '部分', FAILED: '失败' }[s] || s || '—')

@@ -106,17 +106,23 @@ export const carApi = {
   catalog: () => http.get('/car/catalog'),
   // 创建同步任务：body={goodsIds:[...]}，异步执行，返回 {jobId}
   createJob: (goodsIds) => http.post('/car/sync/jobs', { goodsIds }),
-  // 创建「图片补入库」任务（10-15-car-image-backfill R1 存量回填）：无参，覆盖全部库存车型；
+  // 创建「图片补入库」任务（10-15-car-image-backfill R1 存量回填）：默认覆盖全部库存车型；
   // 轻回填只动图片域（下载/哈希去重/图床/打标）+指纹收敛，不触参数/清洗/向量。
   // 注意：返回 R<Long>，data 即 jobId（区别于 createJob 的 {jobId} 包装）；创建需同步落库+触发异步，给 60s 余量
   // full=true 显式全库重扫；默认只补缺失/失败/过期图片（2026-10-21 同步安全整改）
-  createBackfillJob: (full = false) => http.post('/car/sync/backfill', null, {
-    params: full ? { mode: 'FULL' } : {},
-    timeout: 60000
-  }),
-  // 仅基于库内原始参数补清洗（不请求官网）
-  cleanOne: (id) => http.post(`/car/models/${id}/clean`, null, { timeout: 300000 }),
-  cleanMissing: () => http.post('/car/models/clean-missing', null, { timeout: 900000 }),
+  // 10-24 定向化：goodsIds 非空时只处理指定车型（忽略 full 过滤，显式选择即目标，含 EMPTY 车型走
+  // 存量 URL 兜底；未知 goodsId → 400「车型不存在」）；空/缺省时行为不变（MISSING 过滤 / FULL 全库）
+  createBackfillJob: (full = false, goodsIds) => http.post('/car/sync/backfill',
+    goodsIds?.length ? { goodsIds } : null, {
+      params: full ? { mode: 'FULL' } : {},
+      timeout: 60000
+    }),
+  // 创建「重建全部向量」异步任务（10-24 车型运维 P0，job_type=VECTOR_REBUILD，ADMIN）：
+  // 全库逐车型重建，向量失败落任务明细（可「重试失败项」重跑），无切块车型计 skipped；返回 {jobId}
+  createRebuildJob: () => http.post('/car/models/rebuild-jobs', null, { timeout: 60000 }),
+  // 创建单车型清洗异步任务（10-24 车型运维 P0，job_type=CLEAN_ONE，allowAi=true 与旧 /clean 同语义）：
+  // 详情页「重新清洗」迁移入口；车型不存在 404 / 缺 goodsId 400；返回 {jobId}
+  createCleanOneJob: (id) => http.post(`/car/models/${id}/clean-jobs`, null, { timeout: 60000 }),
   // 异步补清洗任务；返回 {jobId}，前端复用同步任务轮询
   startCleanJob: (force = false) => http.post('/car/models/clean-jobs', null, {
     params: force ? { force: true } : {},
@@ -130,10 +136,6 @@ export const carApi = {
   retryJob: (id) => http.post(`/car/sync/jobs/${id}/retry`),
   // 请求取消运行中任务（当前车型跑完后停止后续；非强制中断）
   cancelJob: (id) => http.post(`/car/sync/jobs/${id}/cancel`),
-  // 同步单个车型（详情页用，同步阻塞）
-  syncOne: (id) => http.post(`/car/models/${id}/sync`, null, { timeout: 300000 }),
-  // 批量重建全部车型向量（ADMIN，一次性运维；耗时=车型数×块数×embedding，放宽超时）
-  rebuildAll: () => http.post('/car/models/rebuild-all', null, { timeout: 300000 }),
   remove: (id) => http.delete(`/car/models/${id}`),
   // 内部问答检索：body={modelId, query, topK?}
   rag: (modelId, query, topK) => http.post('/car/rag', { modelId, query, topK }, { timeout: 120000 })

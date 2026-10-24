@@ -42,7 +42,7 @@
             <el-dropdown-menu>
               <el-dropdown-item command="backfill">图片补入库（仅缺失/失败）</el-dropdown-item>
               <el-dropdown-item command="backfillFull" divided>全量图片重扫</el-dropdown-item>
-              <el-dropdown-item v-if="user.isAdmin" command="cleanMissing" divided>补全清洗参数</el-dropdown-item>
+              <el-dropdown-item v-if="user.isAdmin" command="cleanBackfill" divided>补全清洗参数</el-dropdown-item>
               <el-dropdown-item v-if="user.isAdmin" command="rebuild" divided>重建全部向量</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -98,6 +98,10 @@
         <el-button size="small" text type="primary" :loading="bulkSyncing" :disabled="jobBusy" @click="onBulkSync">
           批量同步
         </el-button>
+        <!-- 10-24 R3 定向补图：只对选中车型创建图片补入库任务（含 EMPTY 车型走存量 URL 兜底） -->
+        <el-button size="small" text type="primary" :loading="bulkBackfilling" :disabled="jobBusy" @click="onBulkBackfill">
+          补选中图片
+        </el-button>
         <el-button size="small" type="danger" plain :loading="bulkDeleting" :disabled="jobBusy"
           title="同步任务运行中不可删除车型" @click="onBulkDelete">
           批量删除
@@ -145,7 +149,7 @@
                   :loading="syncingId === row.id" :disabled="jobBusy" @click="onSyncOne(row)">重试</el-button>
                 <el-button v-else size="small" text :loading="syncingId === row.id"
                   :disabled="jobBusy || row.sourceState === 'EMPTY'"
-                  :title="row.sourceState === 'EMPTY' ? '官网无数据，请使用「图片补入库」；全量同步会保留旧数据但不会补主图' : ''"
+                  :title="row.sourceState === 'EMPTY' ? '官网无数据，全量同步不可用；可勾选后使用批量栏「补选中图片」补图' : ''"
                   @click="onSyncOne(row)">同步</el-button>
                 <el-button size="small" text type="danger" :disabled="jobBusy"
                   title="同步任务运行中不可删除车型" @click="onDel(row)">删除</el-button>
@@ -189,8 +193,8 @@ const selectedIds = ref([])
 
 const syncingId = ref(null)
 const bulkSyncing = ref(false)
+const bulkBackfilling = ref(false)
 const bulkDeleting = ref(false)
-const rebuildingAll = ref(false)
 
 const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
 
@@ -281,7 +285,7 @@ const onCloseJob = () => {
 
 const onSyncOne = async (row) => {
   if (row.sourceState === 'EMPTY') {
-    ElMessage.warning('官网无数据，请使用「图片补入库」；全量同步不会补主图')
+    ElMessage.warning('官网无数据，全量同步不可用；可勾选后使用批量栏「补选中图片」补图')
     return
   }
   if (!ensureIdle()) return
@@ -316,7 +320,7 @@ const onBulkSync = async () => {
   if (bulkSyncing.value) return
   const blocked = selectedRows.value.filter(r => r.sourceState === 'EMPTY')
   if (blocked.length) {
-    ElMessage.warning(`已选车型中有 ${blocked.length} 台官网无数据，请取消选择后使用「图片补入库」`)
+    ElMessage.warning(`已选车型中有 ${blocked.length} 台官网无数据，已跳过全量同步；如需补图请勾选后使用「补选中图片」`)
     return
   }
   const goodsIds = selectedRows.value.map(r => r.goodsId).filter(Boolean)
@@ -338,6 +342,38 @@ const onBulkSync = async () => {
   } finally {
     bulkSyncing.value = false
   }
+}
+
+// 定向图片补入库（10-24 R3）：只对选中车型创建任务，忽略缺失过滤（显式选择即目标，
+// 含 EMPTY 车型走存量 URL 兜底）；仅处理图片域，已有图片凭内容哈希去重
+const onBulkBackfill = () => {
+  if (!ensureIdle()) return
+  if (bulkBackfilling.value) return
+  const goodsIds = selectedRows.value.map(r => r.goodsId).filter(Boolean)
+  if (!goodsIds.length) { ElMessage.warning('选中的车型均缺少官网 goodsId，无法补图'); return }
+  ElMessageBox.confirm(
+    `只对选中的 ${goodsIds.length} 个车型执行图片补入库：仅处理图片域（封面+详情图集，下载/哈希去重/图床/打标），已有图片凭内容哈希去重，不重跑参数清洗与向量化。确认执行？`,
+    '补选中图片', { type: 'info', confirmButtonText: '开始补图', cancelButtonText: '取消' }
+  ).then(async () => {
+    if (!beginStart()) return
+    bulkBackfilling.value = true
+    try {
+      // backfill 返回裸 jobId（区别于 createJob 的 {jobId} 包装）
+      const res = await carApi.createBackfillJob(false, goodsIds)
+      if (res.code === 0) {
+        onJobCreated({ jobId: res.data })
+      } else {
+        cancelStart()
+        ElMessage.error(res.msg || '创建任务失败')
+      }
+    } catch (e) {
+      cancelStart()
+      if (e?.response?.status === 403) ElMessage.error('无权限：仅管理员/编辑可创建补入库任务')
+      else ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
+    } finally {
+      bulkBackfilling.value = false
+    }
+  }).catch(() => {})
 }
 
 const onBulkDelete = async () => {
@@ -411,28 +447,32 @@ const onBackfill = (full = false) => {
   }).catch(() => {})
 }
 
-const onRebuildAll = () => {
-  if (rebuildingAll.value) return
+// 「重建全部向量」迁移异步任务（10-24 R1）：全库逐车型 VECTOR_REBUILD，
+// 进度在任务面板实时查看；失败落任务明细可「重试失败项」，不再阻塞 HTTP
+const onRebuildJob = () => {
+  if (!ensureIdle()) return
   ElMessageBox.confirm(
-    '对全部车型重建向量（新切块口径 + 补齐缺失块），耗时较长（每车型约十几秒），执行期间请勿重复触发。确认执行？',
-    '重建全部向量', { type: 'warning', confirmButtonText: '开始重建', cancelButtonText: '取消' }
+    '创建全库重建任务（新切块口径 + 补齐缺失块），进度在任务面板实时查看；耗时较长（每车型约十几秒），执行期间请勿重复触发。确认执行？',
+    '重建全部向量', { type: 'warning', confirmButtonText: '创建重建任务', cancelButtonText: '取消' }
   ).then(async () => {
-    rebuildingAll.value = true
+    if (!beginStart()) return
     try {
-      const res = await carApi.rebuildAll()
-      const st = res.data || {}
-      st.failed > 0
-        ? ElMessage.warning(`重建完成：成功 ${st.success}/${st.total}，失败车型 ${st.failed}（id: ${st.failedModelIds}）`)
-        : ElMessage.success(`重建完成：${st.success}/${st.total} 个车型已按新口径重建`)
+      const res = await carApi.createRebuildJob()
+      if (res.code === 0) onJobCreated({ jobId: res.data?.jobId })
+      else {
+        cancelStart()
+        ElMessage.error(res.msg || '创建任务失败')
+      }
     } catch (e) {
-      ElMessage.error(e?.response?.data?.msg || '批量重建失败')
-    } finally {
-      rebuildingAll.value = false
+      cancelStart()
+      if (e?.response?.status === 403) ElMessage.error('无权限：仅管理员可重建向量')
+      else ElMessage.error(e?.response?.data?.msg || '创建任务失败，请稍后重试')
     }
   }).catch(() => {})
 }
 
-const onCleanMissing = () => {
+// 批量补清洗：创建异步 CLEAN_BACKFILL 任务（只处理有参数无清洗车型，allowAi=false）
+const onCleanBackfill = () => {
   if (!ensureIdle()) return
   ElMessageBox.confirm(
     '对「有原始参数、清洗结果为空」的车型，基于库内参数异步重跑清洗；不请求官网、不改版本/参数/图片。确认执行？',
@@ -457,8 +497,8 @@ const onCleanMissing = () => {
 const onOps = (cmd) => {
   if (cmd === 'backfill') onBackfill(false)
   else if (cmd === 'backfillFull') onBackfill(true)
-  else if (cmd === 'cleanMissing') onCleanMissing()
-  else if (cmd === 'rebuild') onRebuildAll()
+  else if (cmd === 'cleanBackfill') onCleanBackfill()
+  else if (cmd === 'rebuild') onRebuildJob()
 }
 
 onMounted(() => {

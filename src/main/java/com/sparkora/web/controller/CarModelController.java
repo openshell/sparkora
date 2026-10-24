@@ -80,13 +80,18 @@ public class CarModelController {
      * 创建「图片补入库」任务(10-15-car-image-backfill R1 存量回填;无参,覆盖全部库内存活车型)。
      * 逐车型轻回填:仅图片域(下载/哈希去重/图床/自动打标)+ 指纹收敛,不触参数/清洗/向量。
      * 返回 jobId(前端复用任务轮询面板看进度/明细;空图车型明细标注「官网无图」)。
+     * 10-24 定向化:可选 body {goodsIds:["156",...]} 非空时只处理指定车型(忽略 mode 过滤,
+     * 显式选择即目标,含 EMPTY 车型走存量 URL 兜底;未知 goodsId → 400「车型不存在」);
+     * 不传 body 时行为与现状完全一致(MISSING 过滤 / FULL 全库重扫)。
      */
     @PostMapping("/sync/backfill")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
-    public R<Long> createBackfillJob(@RequestParam(required = false, defaultValue = "MISSING") String mode) {
+    public R<Long> createBackfillJob(@RequestParam(required = false, defaultValue = "MISSING") String mode,
+                                     @RequestBody(required = false) Map<String, List<String>> body) {
         try {
             // 10-21:默认只补缺失/失败/过期图片;FULL 需显式指定(全库重扫较慢)
-            return R.ok(jobService.createBackfillJob("FULL".equalsIgnoreCase(mode)));
+            List<String> goodsIds = body == null ? null : body.get("goodsIds");
+            return R.ok(jobService.createBackfillJob("FULL".equalsIgnoreCase(mode), goodsIds));
         } catch (IllegalArgumentException ex) {
             return R.fail(400, ex.getMessage());   // 参数/前置错误(如库内无可回填车型)
         } catch (IllegalStateException ex) {
@@ -155,6 +160,7 @@ public class CarModelController {
 
     /**
      * 同步单个车型(按 goodsId)。返回车型与清洗统计摘要。
+     * 10-24 起前端已迁移任务体系(POST /sync/jobs 单车型 SELECTED 任务),本接口保留为兼容兜底。
      * 10-21 R2:阻塞式同步失败同样回写车型 FAILED + 原因(与异步任务 catch 同口径),
      * 否则详情页同步失败后卡片/详情仍停在旧状态、看不到原因。
      */
@@ -212,7 +218,10 @@ public class CarModelController {
         }
     }
 
-    /** 单车型补清洗(仅基于库内参数重跑,不请求官网)。 */
+    /**
+     * 单车型补清洗(仅基于库内参数重跑,不请求官网)。
+     * 10-24 起前端已迁移任务体系(POST /models/{id}/clean-jobs),本接口保留为兼容兜底。
+     */
     @PostMapping("/models/{id}/clean")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
     public R<CarCleanRepairService.CleanRepairResult> cleanOne(@PathVariable Long id) {
@@ -289,7 +298,10 @@ public class CarModelController {
         }
     }
 
-    /** 批量重建全部车型向量(一次性运维操作,同步接口;耗时=车型数×块数×embedding)。 */
+    /**
+     * 批量重建全部车型向量(一次性运维操作,同步接口;耗时=车型数×块数×embedding)。
+     * 10-24 起前端已迁移任务体系(POST /models/rebuild-jobs),本接口保留为兼容兜底。
+     */
     @PostMapping("/models/rebuild-all")
     @PreAuthorize("hasRole('ADMIN')")
     public R<Map<String, Object>> rebuildAll() {
@@ -297,6 +309,56 @@ public class CarModelController {
             return R.ok(service.rebuildAll());
         } catch (Exception e) {
             return R.fail(500, "批量重建失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 创建「重建全部向量」异步任务(10-24 车型运维 P0 R1,job_type=VECTOR_REBUILD)。
+     * 全库逐车型重建,失败落任务明细(可通过「重试失败项」重跑),不再阻塞 HTTP;
+     * 返回 {jobId},前端复用任务轮询面板看进度。
+     */
+    @PostMapping("/models/rebuild-jobs")
+    @PreAuthorize("hasRole('ADMIN')")
+    public R<Map<String, Object>> createRebuildJob() {
+        try {
+            Long jobId = jobService.createRebuildJob();
+            return R.ok(Map.of("jobId", jobId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            log.warn("创建重建向量任务失败: {}", e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
+        }
+    }
+
+    /**
+     * 创建单车型清洗异步任务(10-24 车型运维 P0 R2,job_type=CLEAN_ONE,allowAi=true 与旧 /clean 同语义)。
+     * 详情页迁移入口:任务面板展示进度,终态后前端自行刷新详情;已有任务运行中 → 409。
+     */
+    @PostMapping("/models/{id}/clean-jobs")
+    @PreAuthorize("hasAnyRole('ADMIN','EDITOR')")
+    public R<Map<String, Object>> createCleanOneJob(@PathVariable Long id) {
+        CarModelEntity m;
+        try {
+            m = service.get(id);
+        } catch (Exception e) {
+            return R.fail(500, e.getMessage());
+        }
+        if (m == null) return R.fail(404, "车型不存在");
+        String goodsId = m.getGoodsId();
+        if (goodsId == null || goodsId.isBlank()) return R.fail(400, "该车型缺少官网 goodsId,无法任务化清洗");
+        try {
+            Long jobId = jobService.createCleanOneJob(goodsId);
+            return R.ok(Map.of("jobId", jobId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            log.warn("创建单车型清洗任务失败 id={}: {}", id, e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
         }
     }
 

@@ -1,0 +1,5 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "车型域权威契约:job_type 全集/runJob 分派语义/接口表/错误码映射;新增 VECTOR_REBUILD 与 CLEAN_ONE 必须与 §4 任务体系、§5 接口表口径一致"}
+{"file": "docs/spec/knowledge/center.md", "reason": "车型 Tab 与详情页前端契约(§4.1):useCarSyncJob 范式/批量栏/EMPTY 引导文案的现行为,迁移后需同步更新"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "R<T> 语义与 400/409/500 错误映射矩阵;新接口(rebuild-jobs/clean-jobs/backfill body)沿用既有映射惯例"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "原子抢占/条件 UpdateWrapper 写法范式;runJob 新分支的进度写回与终态写必须遵循(WHERE status='RUNNING')"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 API 层约定(禁直调 http)+同步类异步任务前端范式(beginStart/cancelStart 防重/终态刷新/轮询清理)+防重入守卫"}

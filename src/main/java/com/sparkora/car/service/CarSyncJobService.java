@@ -3,6 +3,7 @@ package com.sparkora.car.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sparkora.ai.EmbedStats;
 import com.sparkora.car.client.CarSourceException;
 import com.sparkora.car.dto.CleanStats;
 import com.sparkora.domain.entity.CarModelEntity;
@@ -36,6 +37,8 @@ import java.util.Set;
  *   SELECTED / RETRY        —— 全量 syncOne
  *   IMAGE_BACKFILL          —— 轻回填:仅图片域 + 指纹收敛,不触参数/清洗/向量
  *   INCREMENTAL             —— 增量分派:按基础/图片/参数三类指纹决定 跳过/只更新图片/只更新参数/全量
+ *   VECTOR_REBUILD          —— 全库逐车型重建向量(10-24 运维任务化;失败只进任务明细,不写车型同步状态)
+ *   CLEAN_ONE               —— 单车型补清洗,allowAi=true(10-24 详情页任务化;区别于批量 CLEAN_BACKFILL 的 false)
  *   (SCHEDULED 为旧定时类型历史值)
  *
  * <p>10-21 关键语义:
@@ -108,25 +111,92 @@ public class CarSyncJobService {
      */
     @Transactional
     public Long createBackfillJob(boolean full) {
-        QueryWrapper<CarModelEntity> qw = new QueryWrapper<CarModelEntity>().select("id", "goods_id");
-        if (!full) {
-            qw.and(w -> w.isNull("cover_image_id")
-                    .or().isNull("intro_images")
-                    .or().eq("intro_images", "")
-                    .or().eq("intro_images", "[]")
-                    .or().eq("source_state", "STALE"));
+        return createBackfillJob(full, null);
+    }
+
+    /**
+     * 创建图片补入库任务(10-24 定向化 R3)。
+     *
+     * @param full    旧过滤开关,仅在 goodsIds 为空时生效
+     * @param goodsIds 非空 = 定向模式:只处理指定车型(忽略 full 过滤,显式选择即目标,
+     *                 含 EMPTY 车型走存量 URL 兜底);每个 goodsId 须在库内存在,未知 → 400。
+     *                 null/空 = 旧行为(full ? 全库 : 缺失/失败/过期过滤),既有调用方零感知。
+     */
+    @Transactional
+    public Long createBackfillJob(boolean full, List<String> goodsIds) {
+        List<String> targets;
+        if (goodsIds != null && !goodsIds.isEmpty()) {
+            // 定向模式:显式选择即目标,忽略 full 过滤;先归一(去重/上限/格式)再逐一校验存在
+            targets = normalizeGoodsIds(goodsIds);
+            Set<String> known = new LinkedHashSet<>();
+            for (CarModelEntity m : modelMapper.selectList(
+                    new QueryWrapper<CarModelEntity>().select("goods_id").in("goods_id", targets))) {
+                if (m.getGoodsId() != null) known.add(m.getGoodsId());
+            }
+            for (String id : targets) {
+                if (!known.contains(id)) throw new IllegalArgumentException("车型不存在: " + id);
+            }
+        } else {
+            QueryWrapper<CarModelEntity> qw = new QueryWrapper<CarModelEntity>().select("id", "goods_id");
+            if (!full) {
+                qw.and(w -> w.isNull("cover_image_id")
+                        .or().isNull("intro_images")
+                        .or().eq("intro_images", "")
+                        .or().eq("intro_images", "[]")
+                        .or().eq("source_state", "STALE"));
+            }
+            List<CarModelEntity> rows = modelMapper.selectList(qw.orderByAsc("id"));
+            List<String> goodsIdsAll = new ArrayList<>();
+            for (CarModelEntity m : rows) {
+                if (m.getGoodsId() != null && !m.getGoodsId().isBlank()) goodsIdsAll.add(m.getGoodsId());
+            }
+            if (goodsIdsAll.isEmpty()) throw new IllegalArgumentException("库内没有可回填的车型");
+            targets = normalizeGoodsIds(goodsIdsAll);
         }
-        List<CarModelEntity> rows = modelMapper.selectList(qw.orderByAsc("id"));
-        List<String> goodsIds = new ArrayList<>();
-        for (CarModelEntity m : rows) {
-            if (m.getGoodsId() != null && !m.getGoodsId().isBlank()) goodsIds.add(m.getGoodsId());
-        }
-        if (goodsIds.isEmpty()) throw new IllegalArgumentException("库内没有可回填的车型");
         (self == null ? this : self).markStaleRunningAsFailed();
         if (hasFreshRunning()) {
             throw new IllegalStateException("已有同步任务运行中,请稍后重试");
         }
-        return insertJobAndRun(normalizeGoodsIds(goodsIds), "IMAGE_BACKFILL");
+        return insertJobAndRun(targets, "IMAGE_BACKFILL");
+    }
+
+    /**
+     * 创建「重建全部向量」异步任务(10-24 车型运维 P0 R1:旧同步接口 57 台 × 十几秒必超时,任务化)。
+     * 目标 = 全部 goods_id 非空车型(按 id 升序);全库运维动作不套用单次 100 上限,
+     * 心跳逐车型刷新保证长任务不被陈旧自愈误杀。
+     */
+    @Transactional
+    public Long createRebuildJob() {
+        List<CarModelEntity> rows = modelMapper.selectList(
+                new QueryWrapper<CarModelEntity>().select("id", "goods_id").orderByAsc("id"));
+        // LinkedHashSet 保序去重(防御 goods_id 重复行);空库/无 goodsId → 400
+        Set<String> ids = new LinkedHashSet<>();
+        for (CarModelEntity m : rows) {
+            if (m.getGoodsId() != null && !m.getGoodsId().isBlank()) ids.add(m.getGoodsId());
+        }
+        if (ids.isEmpty()) throw new IllegalArgumentException("库内没有可重建向量的车型");
+        (self == null ? this : self).markStaleRunningAsFailed();
+        if (hasFreshRunning()) {
+            throw new IllegalStateException("已有同步任务运行中,请稍后重试");
+        }
+        return insertJobAndRun(new ArrayList<>(ids), "VECTOR_REBUILD");
+    }
+
+    /**
+     * 创建单车型清洗任务(10-24 车型运维 P0 R2,job_type=CLEAN_ONE):详情页「重新清洗」迁移入口。
+     * allowAi=true 与旧阻塞 cleanOne 同语义(区别于批量 CLEAN_BACKFILL 的 false)。
+     */
+    @Transactional
+    public Long createCleanOneJob(String goodsId) {
+        if (goodsId == null || goodsId.isBlank()) throw new IllegalArgumentException("车型不存在");
+        CarModelEntity m = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
+        if (m == null) throw new IllegalArgumentException("车型不存在");
+        List<String> ids = normalizeGoodsIds(List.of(goodsId));
+        (self == null ? this : self).markStaleRunningAsFailed();
+        if (hasFreshRunning()) {
+            throw new IllegalStateException("已有同步任务运行中,请稍后重试");
+        }
+        return insertJobAndRun(ids, "CLEAN_ONE");
     }
 
     /** 创建异步补清洗任务。force=false 只补有参数无清洗；force=true 重清洗全部有参数车型。 */
@@ -209,7 +279,7 @@ public class CarSyncJobService {
         }
     }
 
-    /** 异步执行任务:按 job_type 分派(全量/轻回填/增量),统计 成功/跳过/失败,写明细。 */
+    /** 异步执行任务:按 job_type 分派(全量/轻回填/增量/重建向量/单台清洗),统计 成功/跳过/失败,写明细。 */
     @Async
     public void runJob(Long jobId, List<String> goodsIds) {
         CarSyncJobEntity job = jobMapper.selectById(jobId);
@@ -303,6 +373,41 @@ public class CarSyncJobService {
                                     goodsId, o.note() == null ? "-" : o.note(),
                                     st == null ? 0 : st.getRule(), st == null ? 0 : st.getAi(), st == null ? 0 : st.getFallback());
                         }
+                    } else if ("VECTOR_REBUILD".equals(type)) {
+                        // 运维域(10-24):向量失败只进任务明细(可重试),不写车型同步状态
+                        EmbedStats st = modelService.rebuildOneByGoodsId(goodsId);
+                        if (st != null && st.failed() > 0) {
+                            failed++;
+                            Map<String, Object> item = new LinkedHashMap<>();
+                            item.put("goodsId", goodsId);
+                            item.put("name", modelName(goodsId));
+                            item.put("error", "向量失败 " + st.failed() + "/" + st.total() + " 块");
+                            detailItems.add(item);
+                            log.warn("车型向量重建失败 goodsId={} 失败块={}/{}", goodsId, st.failed(), st.total());
+                        } else if (st == null || st.total() == 0) {
+                            skipped++;
+                            appendNote(detailItems, goodsId, "跳过:无切块数据");
+                        } else {
+                            success++;
+                            appendNote(detailItems, goodsId, "重建 " + st.total() + " 块向量");
+                            log.info("车型向量重建完成 goodsId={} total={} success={}",
+                                    goodsId, st.total(), st.success());
+                        }
+                    } else if ("CLEAN_ONE".equals(type)) {
+                        // 运维域(10-24):allowAi=true(显式单台重跑允许 AI;批量 CLEAN_BACKFILL 为 false);
+                        // 失败只进任务明细,不写车型同步状态
+                        if (cleanRepairService == null) throw new IllegalStateException("补清洗服务未装配");
+                        CarCleanRepairService.CleanRepairResult r =
+                                cleanRepairService.cleanOneByGoodsId(goodsId, true);
+                        if (r.cleansAfter() > 0) {
+                            success++;
+                            appendNote(detailItems, goodsId, "补清洗 " + r.cleansAfter() + " 条");
+                        } else {
+                            skipped++;
+                            appendNote(detailItems, goodsId, "跳过:无可清洗参数/版本");
+                        }
+                        log.info("车型单台清洗完成 goodsId={} cleans {}→{}",
+                                goodsId, r.cleansBefore(), r.cleansAfter());
                     } else {
                         markSyncing(goodsId);
                         CarModelService.SyncOutcome outcome = modelService.syncOne(goodsId);
@@ -327,8 +432,10 @@ public class CarSyncJobService {
                     item.put("error", err);
                     detailItems.add(item);
                     log.warn("车型同步失败 goodsId={}: {}", goodsId, err, e);
-                    // 空/不完整响应已由 CarModelService 标记 source_state;其余失败回写 FAILED,避免永久 SYNCING
-                    if (!(e instanceof com.sparkora.car.client.SourceIncompleteException)) {
+                    // 空/不完整响应已由 CarModelService 标记 source_state;其余失败回写 FAILED,避免永久 SYNCING。
+                    // VECTOR_REBUILD/CLEAN_ONE 为独立运维域(10-24):异常只进任务明细,不改车型同步状态。
+                    boolean opsDomain = "VECTOR_REBUILD".equals(type) || "CLEAN_ONE".equals(type);
+                    if (!opsDomain && !(e instanceof com.sparkora.car.client.SourceIncompleteException)) {
                         try {
                             modelService.markSyncFailed(goodsId, err);
                         } catch (Exception ex) {
