@@ -238,6 +238,23 @@ public class CarModelController {
         }
     }
 
+    /** 创建异步补清洗任务；force=true 重清洗全部有参数车型（清理历史 null-version 行）。 */
+    @PostMapping("/models/clean-jobs")
+    @PreAuthorize("hasRole('ADMIN')")
+    public R<Map<String, Object>> createCleanJob(@RequestParam(required = false, defaultValue = "false") boolean force) {
+        try {
+            Long jobId = jobService.createCleanJob(force);
+            return R.ok(Map.of("jobId", jobId));
+        } catch (IllegalArgumentException e) {
+            return R.fail(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return R.fail(409, e.getMessage());
+        } catch (Exception e) {
+            log.warn("创建补清洗任务失败: {}", e.getMessage(), e);
+            return R.fail(500, com.sparkora.car.client.CarSourceException.classify(e));
+        }
+    }
+
     /** 单车型清洗质量统计(可观测):按 clean_method 分组计数 + 可疑 STRING 兜底占比。 */
     @GetMapping("/models/{id}/clean-stats")
     @PreAuthorize("hasAnyRole('ADMIN','EDITOR','VIEWER')")

@@ -1,0 +1,3 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "核对 CLEAN_BACKFILL/版本对齐契约"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对任务锁/心跳/陈旧与清洗幂等"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对任务轮询与前端入口"}

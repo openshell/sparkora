@@ -466,3 +466,9 @@ ALTER TABLE sparkora_article_version DROP COLUMN IF EXISTS body_image_ids;
 - 批量补清洗只处理「有原始参数、清洗为 0」的车型，基于库内参数重跑，不请求官网；补写只写 `car_param_clean`，不触版本/参数/图片/向量。
 - 同步成功不能只看流程跑完：清洗行数为 0 必须落 `PARTIAL`；图片补入库在无清洗结果时也不能标完整 `SUCCESS`/刷新 `last_sync_at`。
 - 清洗值按 `values_json` 下标对齐版本；数量不一致要记录，不伪造缺失版本。
+
+
+### 清洗版本对齐与异步补清洗（10-24-car-clean-async）
+
+- `values_json` 只能清洗到 `min(values.size(), versions.size())`；越界下标会生成 `version_id=NULL` 的不可见清洗行，污染统计/FALLBACK 比例，必须跳过并告警。
+- 批量补清洗走 `job_type=CLEAN_BACKFILL`，复用同步任务表/全局+按车锁/heartbeat/进度；默认只处理有参数无清洗，`force=true` 重清洗全部有参数车型（清理历史幽灵行）。不请求官网，不触版本/参数/图片/向量。

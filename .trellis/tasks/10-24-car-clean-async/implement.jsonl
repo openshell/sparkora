@@ -1,0 +1,3 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "清洗版本对齐与异步补清洗接口契约"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "异步任务/锁/幂等与派生数据写入约定"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "任务轮询与运维入口范式"}
