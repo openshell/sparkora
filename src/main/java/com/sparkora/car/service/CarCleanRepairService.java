@@ -59,6 +59,29 @@ public class CarCleanRepairService {
                 stats.getRule(), stats.getAi(), stats.getFallback());
     }
 
+    /** 按 goodsId 补清洗（异步 job 用）。 */
+    public CleanRepairResult cleanOneByGoodsId(String goodsId, boolean allowAi) {
+        CarModelEntity model = modelMapper.selectOne(new QueryWrapper<CarModelEntity>().eq("goods_id", goodsId));
+        if (model == null) throw new IllegalArgumentException("车型不存在: goodsId=" + goodsId);
+        return cleanOne(model.getId(), allowAi);
+    }
+
+    /**
+     * 异步补清洗目标列表：默认只取「有参数、无清洗」；force=true 取全部有参数车型，
+     * 用于清理历史 version_id=NULL 幽灵清洗行。
+     */
+    public List<String> listTargetGoodsIds(boolean force) {
+        List<CarModelEntity> models = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByAsc("id"));
+        List<String> out = new ArrayList<>();
+        for (CarModelEntity m : models) {
+            if (m.getGoodsId() == null || m.getGoodsId().isBlank()) continue;
+            long params = countParams(m.getId());
+            long cleans = countCleans(m.getId());
+            if (params > 0 && (force || cleans == 0)) out.add(m.getGoodsId());
+        }
+        return out;
+    }
+
     /** 对「有参数、无清洗」的车型批量补清洗；失败不中断其余车型。 */
     public CleanRepairSummary cleanMissing() {
         List<CarModelEntity> models = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByAsc("id"));

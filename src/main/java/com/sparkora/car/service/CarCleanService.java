@@ -91,10 +91,13 @@ public class CarCleanService {
             }
             if (!values.isEmpty() && values.size() != versions.size()) {
                 // 官网各参数可能只返回部分版本值;保留下标语义,但显式记录,便于发现错位。
-                log.debug("参数版本值数量不一致 model={} param={} values={} versions={}",
+                log.warn("参数版本值数量不一致 model={} param={} values={} versions={}",
                         modelId, p.getParamName(), values.size(), versions.size());
             }
-            for (int i = 0; i < values.size(); i++) {
+            // 只清洗能对齐到版本的值的下标。越界值不能生成 version_id=NULL 的“幽灵清洗行”:
+            // 这些行详情页/切块都读不到,却会污染 clean-stats 的 FALLBACK 比例。
+            int limit = Math.min(values.size(), versions.size());
+            for (int i = 0; i < limit; i++) {
                 Long versionId = i < versions.size() ? versions.get(i).getId() : null;
                 String raw = values.get(i);
                 ParamCleanResult r = cleanOne(p.getParamName(), raw, allowAi);

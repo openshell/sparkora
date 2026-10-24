@@ -68,6 +68,9 @@ public class CarSyncJobService {
     /** 互斥锁(字段注入:保持既有构造器签名,单测可不注入→降级为无锁)。 */
     @Autowired(required = false)
     private CarSyncLockService lockService;
+    /** 补清洗 job 使用；字段注入避免破坏既有构造器单测。 */
+    @Autowired(required = false)
+    private CarCleanRepairService cleanRepairService;
 
     public CarSyncJobService(CarSyncJobMapper jobMapper, CarModelMapper modelMapper,
                              CarModelService modelService, ObjectMapper json) {
@@ -124,6 +127,19 @@ public class CarSyncJobService {
             throw new IllegalStateException("已有同步任务运行中,请稍后重试");
         }
         return insertJobAndRun(normalizeGoodsIds(goodsIds), "IMAGE_BACKFILL");
+    }
+
+    /** 创建异步补清洗任务。force=false 只补有参数无清洗；force=true 重清洗全部有参数车型。 */
+    @Transactional
+    public Long createCleanJob(boolean force) {
+        if (cleanRepairService == null) throw new IllegalStateException("补清洗服务未装配");
+        (self == null ? this : self).markStaleRunningAsFailed();
+        if (hasFreshRunning()) {
+            throw new IllegalStateException("已有同步任务运行中,请稍后重试");
+        }
+        List<String> goodsIds = cleanRepairService.listTargetGoodsIds(force);
+        if (goodsIds.isEmpty()) throw new IllegalArgumentException("没有可补清洗的车型");
+        return insertJobAndRun(normalizeGoodsIds(goodsIds), "CLEAN_BACKFILL");
     }
 
     /** 去重/去空/长度与上限校验;非法输入抛 IllegalArgumentException(接口转 400)。 */
@@ -254,6 +270,17 @@ public class CarSyncJobService {
                         log.info("车型图片回填完成 goodsId={} note={} sourceState={}",
                                 goodsId, o.note() == null ? "-" : o.note(),
                                 o.outcome() == null || o.outcome().model() == null ? "-" : o.outcome().model().getSourceState());
+                    } else if ("CLEAN_BACKFILL".equals(type)) {
+                        if (cleanRepairService == null) throw new IllegalStateException("补清洗服务未装配");
+                        CarCleanRepairService.CleanRepairResult r =
+                                cleanRepairService.cleanOneByGoodsId(goodsId, false);
+                        if (r.cleansAfter() > 0) {
+                            success++;
+                            appendNote(detailItems, goodsId, "补清洗 " + r.cleansAfter() + " 条");
+                        } else {
+                            skipped++;
+                            appendNote(detailItems, goodsId, "跳过:无可清洗参数/版本");
+                        }
                     } else if ("INCREMENTAL".equals(type)) {
                         CarModelService.IncrementalOutcome o = modelService.dispatchIncremental(goodsId);
                         appendNote(detailItems, goodsId, o.note());

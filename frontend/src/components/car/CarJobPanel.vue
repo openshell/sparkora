@@ -102,7 +102,7 @@ const jobClass = computed(() => props.job?.status?.toLowerCase() || '')
 
 // job_type 中文标签（SELECTED/RETRY/IMAGE_BACKFILL/INCREMENTAL/SCHEDULED）
 const jobTypeLabel = computed(() => ({
-  SELECTED: '选中同步', RETRY: '重试', IMAGE_BACKFILL: '图片补入库', INCREMENTAL: '增量同步', SCHEDULED: '定时同步'
+  SELECTED: '选中同步', RETRY: '重试', IMAGE_BACKFILL: '图片补入库', INCREMENTAL: '增量同步', CLEAN_BACKFILL: '补清洗', SCHEDULED: '定时同步'
 }[props.job?.jobType] || '同步'))
 
 defineExpose({ jobRunning })

@@ -94,7 +94,7 @@
 - **安全写入**：`persistModel` 只合并非空字段；`intro_images` 只由图片入库结果写 asset id；`persistVersions/persistParams` 空数据保留旧行；主表+版本+参数通过 `persistCore` 单事务写入。图片集全有或全无，部分失败保留旧图集并写 note。
 - **成功口径**：`SUCCESS` + `last_sync_at` 只在采集、图片、清洗、向量全部成功/达到最低阈值后写；部分失败 `PARTIAL`，全失败 `FAILED`；图片失败不推进 `image_fingerprint`，下一次增量仍会重试；向量未全部成功时**不推进** `sync_fingerprint`/`params_fingerprint`（否则下次增量会因指纹一致跳过，旧块永不补齐）。
 - **状态分类**：业务 code/data 结构异常标 `INCOMPLETE`；429/5xx/超时等瞬态不可用标 `STALE`（保留旧数据，官网恢复后重同步收敛）；空条目 `EMPTY`。三者都只写状态列，不算成功。
-- **任务**：`createJob` 在事务提交后触发 `@Async`；全局锁 + 按 `goodsId` 锁（`sparkora_car_sync_lock`，锁 TTL 70min、按 JVM 时间判定过期）互斥；`heartbeat_at` 逐车型更新，`cancel_requested` 请求停止后续；外层 finally 保证终态；`skipped` 独立计数，增量跳过不再算 success。跳过只写 `last_checked_at`/`sync_note`（PRD R3），不触业务表。
+- **任务**：`createJob` 在事务提交后触发 `@Async`；`CLEAN_BACKFILL` 复用同一任务/锁/心跳/进度体系；全局锁 + 按 `goodsId` 锁（`sparkora_car_sync_lock`，锁 TTL 70min、按 JVM 时间判定过期）互斥；`heartbeat_at` 逐车型更新，`cancel_requested` 请求停止后续；外层 finally 保证终态；`skipped` 独立计数，增量跳过不再算 success。跳过只写 `last_checked_at`/`sync_note`（PRD R3），不触业务表。
 - **增量**：基础 `sync_fingerprint`（不含图片/参数）+ `image_fingerprint`（img+introduce）+ `params_fingerprint`（params+attrs）；只图片变化走图片域，只参数/版本变化走参数/清洗/块，避免不必要全量重清洗。
 - **向量**：`CarChunkService.rebuildForModel` 先构建新块并完成 embedding，全部成功后才在事务内替换旧块；失败保留旧块并返回 failed 计数，任务进入 PARTIAL/FAILED。
 - **图片下载**：HTTPS + 比亚迪/CDN 域名白名单、私网拦截、10MB/50MP 上限、Content-Type/严格魔数、`ImageReader` 只读尺寸；失败写 note 不写图库。
@@ -107,7 +107,7 @@
 - **补清洗**：`CarCleanRepairService.cleanOne/cleanMissing` 只读库内 `car_param` 重跑 `cleanForModel`，不请求官网、不重建图片；批量只处理 `params>0 && cleans=0`，失败逐台记录、不中断。
 - **删除保护**：`cleanForModel` 先读参数/版本，参数或版本为空时保留旧清洗，不执行 delete；所有参数值均为空同样保留。
 - **成功口径**：全量同步在清洗后校验 `CleanStats.total()>0`，为 0 记「清洗结果为空」并落 `PARTIAL`，不得完整 `SUCCESS`；图片补入库若该车型无清洗结果，只能 `PARTIAL`，不得单独刷新 `last_sync_at`。
-- **版本对齐**：继续按 `values_json` 下标对齐 `car_version.sort_order`；数量不一致只记录日志并保留可清洗值，不伪造缺失版本。
+- **版本对齐**：按 `values_json` 下标对齐 `car_version.sort_order`，**只清洗 `i < versions.size()`**；超出部分丢弃并告警，不再生成 `version_id=NULL` 的幽灵清洗行（这些行详情/切块读不到，却会污染 `clean-stats` 的 FALLBACK 比例）；数量不足时部分版本无清洗并记录日志。
 - **运维**：知识中心「运维 → 补全清洗参数」触发批量补清洗；详情页在 raw 回退时提供「重新清洗」。补清洗后参数块/向量仍是旧的，需按需执行「重建全部向量」。
 
 ## 5. 接口契约（`/api/car`，全部 `R<T>` + 方法级 `@PreAuthorize`）
@@ -127,7 +127,8 @@
 | POST | `/api/car/sync` | ADMIN/EDITOR | 全量同步**已取消**（S6 重构），恒 `R.fail(400, "全量同步已取消,请在同步页选择车型后同步")` |
 | DELETE | `/api/car/models/{id}` | ADMIN/EDITOR | 删除车型（逻辑删 + 物理清 store 向量，不删图库资产）；同步任务运行中或该车型正在同步返回 409（防任务把已删车型 `syncOne` 复活） |
 | POST | `/api/car/models/{id}/clean` | ADMIN/EDITOR | 仅基于库内原始参数重跑该车型清洗；不请求官网、不改版本/参数/图片/向量；返回前后清洗数 |
-| POST | `/api/car/models/clean-missing` | ADMIN | 批量补清洗「有原始参数、清洗为 0」的车型；逐台返回 cleaned/skipped/failed |
+| POST | `/api/car/models/clean-missing` | ADMIN | 同步批量补清洗兜底；逐台返回 cleaned/skipped/failed（耗时可能数分钟，前端优先用异步 job） |
+| POST | `/api/car/models/clean-jobs` | ADMIN | 创建异步补清洗任务；`?force=true` 重清洗全部有参数车型；返回 `{jobId}`，`job_type=CLEAN_BACKFILL`，复用任务进度/取消 |
 | GET | `/api/car/models/{id}/clean-stats` | 三角色 | 清洗统计（按 `method`/`valueType` 分组） |
 | GET | `/api/car/models/vector-stats` | 三角色 | 向量对账 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅 `deleted=0`；`embeddedCount` 10-03 E6 起查 `vector_store`，结构不变） |
 | POST | `/api/car/models/rebuild-all` | ADMIN | 逐车型重建向量汇总（同步接口；前端 300s 超时，异步化待后续） |

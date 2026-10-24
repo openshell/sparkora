@@ -100,4 +100,19 @@ class CarCleanServiceSafetyTest {
         assertEquals("轴距", cap.getAllValues().get(0).getParamKey());
         assertEquals("2820", cap.getAllValues().get(0).getParamValue());
     }
+
+    @Test
+    void 值数量多于版本_只清洗对齐版本_不产生null版本行() {
+        when(paramMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(param("轴距(mm)", "[\"2820\",\"2830\",\"2840\"]")));
+        when(versionMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(version(1L, 0), version(2L, 1)));
+
+        CleanStats stats = service.cleanForModel(7L);
+
+        assertEquals(2, stats.total());
+        ArgumentCaptor<CarParamCleanEntity> cap = ArgumentCaptor.forClass(CarParamCleanEntity.class);
+        verify(cleanMapper, org.mockito.Mockito.times(2)).insert(cap.capture());
+        assertEquals(List.of(1L, 2L), cap.getAllValues().stream().map(CarParamCleanEntity::getVersionId).toList());
+    }
 }
