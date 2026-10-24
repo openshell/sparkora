@@ -31,11 +31,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 2 个版本 + 3 个 values 时只插入 2 行 cleans，不产生 null version_id。
-- [ ] `POST /api/car/models/clean-jobs` 返回 jobId，异步执行并展示进度/跳过/失败。
-- [ ] force 补清洗 47 台后 `fallbackPct` 明显下降（目标 <2%），详情页仍有数据。
-- [ ] `mvn test`、`npm run build`、Playwright smoke 通过。
-- [ ] 代码已推送到 origin。
+- [x] 2 个版本 + 3 个 values 时只插入 2 行 cleans，不产生 null version_id。
+- [x] `POST /api/car/models/clean-jobs` 返回 jobId，异步执行并展示进度/跳过/失败。
+- [x] force 补清洗 47 台后 `fallbackPct` 明显下降（目标 <2%），详情页仍有数据。
+- [x] `mvn test`、`npm run build`、Playwright smoke 通过。
+- [x] 代码已推送到 origin。
 
 ## Out of Scope
 
