@@ -132,8 +132,88 @@ public class CarModelService {
     /** 车型列表(按 id 倒序)。 */
     public List<CarModelEntity> list() {
         List<CarModelEntity> list = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByDesc("id"));
-        for (CarModelEntity m : list) fillImageUrls(m);
+        fillImageUrlsBatch(list);
         return list;
+    }
+
+    /**
+     * 列表批量填充图片 URL：一次 selectBatchIds 取全部封面/详情图资产，避免逐车型
+     * 逐图片 selectById 的 N+1（57 台约 100 次单条查询，实测接口 2–4s）。
+     * 旧 URL 数组原样保留；缺失/未转存资产跳过；封面不回退详情图。
+     */
+    private void fillImageUrlsBatch(List<CarModelEntity> models) {
+        java.util.Set<Long> ids = new java.util.LinkedHashSet<>();
+        for (CarModelEntity m : models) {
+            if (m.getCoverImageId() != null) ids.add(m.getCoverImageId());
+            collectIntroIds(m, ids);
+        }
+        Map<Long, String> urlById = new LinkedHashMap<>();
+        if (!ids.isEmpty()) {
+            List<ImageAssetEntity> assets = imageMapper.selectBatchIds(ids);
+            if (assets != null) {
+                for (ImageAssetEntity a : assets) {
+                    if (a.getId() == null || a.getStorageKey() == null || a.getStorageKey().isBlank()) continue;
+                    try {
+                        urlById.put(a.getId(), imageStorage.publicUrl(a.getStorageKey()));
+                    } catch (Exception ignore) {
+                        // 单张图床 URL 失败不阻断列表
+                    }
+                }
+            }
+        }
+        for (CarModelEntity m : models) {
+            List<String> urls = new ArrayList<>();
+            String raw = m.getIntroImages();
+            if (raw != null && !raw.isBlank()) {
+                try {
+                    JsonNode arr = json.readTree(raw);
+                    if (arr.isArray()) {
+                        for (JsonNode node : arr) {
+                            String v = node.asText(null);
+                            if (v == null || v.isBlank()) continue;
+                            String t = v.trim();
+                            if (t.startsWith("http")) {
+                                urls.add(t);
+                            } else {
+                                try {
+                                    String u = urlById.get(Long.parseLong(t));
+                                    if (u != null && !u.isBlank()) urls.add(u);
+                                } catch (NumberFormatException ignore) {
+                                    // 非数字旧值跳过
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignore) {
+                    // 非法 JSON 留空
+                }
+            }
+            m.setIntroImageUrls(urls);
+            String cover = m.getCoverImageId() == null ? null : urlById.get(m.getCoverImageId());
+            m.setCoverImageUrl(cover == null || cover.isBlank() ? null : cover);
+        }
+    }
+
+    private void collectIntroIds(CarModelEntity m, java.util.Set<Long> ids) {
+        String raw = m.getIntroImages();
+        if (raw == null || raw.isBlank()) return;
+        try {
+            JsonNode arr = json.readTree(raw);
+            if (!arr.isArray()) return;
+            for (JsonNode node : arr) {
+                String v = node.asText(null);
+                if (v == null || v.isBlank()) continue;
+                String t = v.trim();
+                if (t.startsWith("http")) continue;
+                try {
+                    ids.add(Long.parseLong(t));
+                } catch (NumberFormatException ignore) {
+                    // 非数字旧值跳过
+                }
+            }
+        } catch (Exception ignore) {
+            // 非法 JSON 留空
+        }
     }
 
     /**

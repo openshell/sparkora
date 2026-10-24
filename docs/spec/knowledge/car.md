@@ -30,6 +30,7 @@
 
 - `intro_images` 字段级：图库资产 id 列表（JSON 字符串，TEXT 列），由 `CarModelService.persistImages` 在同步时转存图库后写入（单图失败不阻断）；标签 `车型-<车型名>`（见 [image.md](../image.md)「BYD 图片自动分类」）。**10-15 存量回填后统一收敛为 id 列表语义**（旧 URL 数组随 IMAGE_BACKFILL/增量轻回填自然替换）。
 - 封面字段级：`cover_image_id` 由 `persistImages` 从 `goodsInfo.img` 转存后写入，命名 `<车型名>-cover.<ext>`，标签 `[车型-<车型名>, 车型主图]`，`source=byd`、`project_id=null`、`created_by=system`。空 `img` 或下载失败**不冲写旧封面**。
+- 列表派生字段批量填充：`CarModelService.list()` 先收集全部 `cover_image_id`/`intro_images` asset id，一次 `imageMapper.selectBatchIds` 后内存拼 URL（旧 URL 数组原样保留、缺失跳过）；禁止逐车型/逐图 `publicUrl` 造成 N+1（57 台约 100 次单条查询，接口 2–4s）。
 - `introImageUrls`/`coverImageUrl` 与 `introImages`/`coverImageId` 的区别是前端常见 bug 来源：**不要把持久化 id 字段当 URL 用**；`coverImageUrl` 为空时由前端 `coverUrlOf` 回退详情图首图，`coverIsFallback` 标记回退态，长图用 `object-fit: cover` + `object-position: top` 裁出顶部，避免整张竖图缩成窄条。
 
 ---
