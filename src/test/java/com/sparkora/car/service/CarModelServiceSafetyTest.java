@@ -549,4 +549,24 @@ class CarModelServiceSafetyTest {
         assertTrue(updates.stream().anyMatch(w -> setsColumn(w, "source_created_at")));
         assertTrue(updates.stream().noneMatch(w -> setsColumn(w, "sync_status")));
     }
+
+    @Test
+    void 列表图片URL批量查询_只调用一次selectBatchIds() {
+        CarModelEntity m = row();
+        when(modelMapper.selectList(any())).thenReturn(List.of(m));
+        ImageAssetEntity cover = new ImageAssetEntity();
+        cover.setId(5L); cover.setStorageKey("k5");
+        ImageAssetEntity intro = new ImageAssetEntity();
+        intro.setId(9L); intro.setStorageKey("k9");
+        when(imageMapper.selectBatchIds(any())).thenReturn(List.of(cover, intro));
+        when(imageStorage.publicUrl("k5")).thenReturn("https://cdn.example/5.png");
+        when(imageStorage.publicUrl("k9")).thenReturn("https://cdn.example/9.png");
+
+        List<CarModelEntity> out = service.list();
+
+        assertEquals("https://cdn.example/5.png", out.get(0).getCoverImageUrl());
+        assertEquals(List.of("https://cdn.example/9.png"), out.get(0).getIntroImageUrls());
+        verify(imageMapper, org.mockito.Mockito.times(1)).selectBatchIds(any());
+        verify(imageMapper, never()).selectById(any());
+    }
 }
