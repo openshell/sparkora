@@ -5,6 +5,7 @@ const ROWS = [
   {
     id: 2, goodsId: '156', name: '大唐EV', salesNetwork: '王朝', priceRange: '239,900 - 309,900',
     syncStatus: 'SUCCESS', sourceState: 'OK', lastSyncAt: '2026-10-21T10:00:00',
+    sourceCreatedAt: '2026-10-20T17:44:53',
     coverImageUrl: 'https://img.example.com/cover.png',
     introImageUrls: ['https://img.example.com/detail2.png'], lastSyncError: null
   },
@@ -32,6 +33,8 @@ test('car tab renders cover fallback, stats and failure reason', async ({ page }
 
   const cards = page.locator('.car-grid .car-card')
   await expect(cards).toHaveCount(2)
+  // 官网 createdAt → 卡片「创建」时间
+  await expect(cards.nth(0).locator('.c-meta')).toContainText('创建 2026-10-20')
   // 封面优先 / 无封面回退详情图首图
   await expect(cards.nth(0).locator('img').first()).toHaveAttribute('src', 'https://img.example.com/cover.png')
   await expect(cards.nth(1).locator('img').first()).toHaveAttribute('src', 'https://img.example.com/detail1.png')
@@ -88,4 +91,23 @@ test('car detail falls back to raw params when cleans are empty', async ({ page 
   await expect(page.locator('.el-table')).toContainText('2820')
   await expect(page.locator('.el-table')).toContainText('原始')
   await expect(page.locator('button', { hasText: '重新清洗' })).toBeVisible()
+})
+
+
+test('car sync history drawer lists recent jobs', async ({ page }) => {
+  const job = {
+    id: 9, jobType: 'SELECTED', status: 'SUCCESS', success: 2, failed: 0, skipped: 0,
+    createdAt: '2026-10-24T13:00:00', createdBy: 'admin', failedItems: '[]'
+  }
+  await page.route('**/api/car/sync/jobs', (route) => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: [job] }) })
+    }
+    return route.fallback()
+  })
+  await page.goto('/knowledge')
+  await page.waitForLoadState('networkidle')
+  await page.getByRole('button', { name: '同步记录' }).click()
+  await expect(page.locator('.history-table')).toContainText('选中同步')
+  await expect(page.locator('.history-table')).toContainText('成功')
 })

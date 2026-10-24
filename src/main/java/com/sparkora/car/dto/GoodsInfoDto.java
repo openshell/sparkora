@@ -30,6 +30,7 @@ public class GoodsInfoDto {
         private String price;              // "239,900 - 309,900"
         private List<String> features;     // 卖点
         private String img;                // 车辆主体图 URL(封面来源,透明 PNG,实测绝对 URL)
+        private String createdAt;           // 官网数据创建时间(UI 文案「创建时间」,非上市/发布时间)
         private List<String> introduce;    // 图片 URL
         private DetailPage detailPage;
         private CarRights carRights;

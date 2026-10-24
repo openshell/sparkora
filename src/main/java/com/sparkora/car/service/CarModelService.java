@@ -660,6 +660,52 @@ public class CarModelService {
     /** 指纹序列化专用 Jackson(确定性输出,与全局实例解耦)。 */
     private static final ObjectMapper FP_JSON = new ObjectMapper();
 
+    /** 解析官网 createdAt（`yyyy-MM-dd HH:mm:ss` / ISO 前 19 位）；空/非法返回 null。 */
+    static LocalDateTime parseSourceCreatedAt(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        if (s.length() > 19) s = s.substring(0, 19);
+        try {
+            return LocalDateTime.parse(s.replace(' ', 'T'));
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    /**
+     * 一次性回填官网 createdAt（只读 goodsInfo，不触版本/参数/清洗/向量）。
+     * 逐台失败仅告警，不阻断其余车型；只写 source_created_at/updated_at。
+     */
+    public Map<String, Object> backfillSourceCreatedAt() {
+        List<CarModelEntity> models = modelMapper.selectList(new QueryWrapper<CarModelEntity>().orderByAsc("id"));
+        int updated = 0, skipped = 0, failed = 0;
+        List<String> failedGoodsIds = new ArrayList<>();
+        for (CarModelEntity m : models) {
+            if (m.getGoodsId() == null || m.getGoodsId().isBlank()) { skipped++; continue; }
+            try {
+                GoodsInfoDto.Item item = firstGoodsInfoItem(client.goodsInfo(m.getGoodsId()));
+                LocalDateTime dt = item == null ? null : parseSourceCreatedAt(item.getCreatedAt());
+                if (dt == null) { skipped++; continue; }
+                modelMapper.update(null, new UpdateWrapper<CarModelEntity>()
+                        .eq("goods_id", m.getGoodsId())
+                        .set("source_created_at", dt)
+                        .set("updated_at", LocalDateTime.now()));
+                updated++;
+            } catch (Exception e) {
+                failed++;
+                failedGoodsIds.add(m.getGoodsId());
+                log.warn("回填官网创建时间失败 goodsId={}: {}", m.getGoodsId(), e.getMessage());
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", models.size());
+        out.put("updated", updated);
+        out.put("skipped", skipped);
+        out.put("failed", failed);
+        out.put("failedGoodsIds", failedGoodsIds);
+        return out;
+    }
+
     /**
      * 基础信息指纹(10-21 拆分):name/salesNetworkName/vehicleId/price/features/carRights。
      * 图片域(introduce/img)移到 {@link #computeImageFingerprint}、参数域移到
@@ -961,6 +1007,8 @@ public class CarModelService {
         if (item != null) {
             ImagePersistResult r = persistImages(row, item);   // 封面 + 详情图集;失败保留旧值
             String imageFp = computeImageFingerprint(item);
+            LocalDateTime sourceCreatedAt = parseSourceCreatedAt(item.getCreatedAt());
+            if (sourceCreatedAt != null) row.setSourceCreatedAt(sourceCreatedAt);
             row.setSyncFingerprint(computeFingerprint(item));
             // 失败保留旧图片指纹,保证下一次补图仍会重试;成功才推进。
             if (r.failed() == 0) row.setImageFingerprint(imageFp);

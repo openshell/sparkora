@@ -25,6 +25,9 @@
       <el-button v-if="hasFilter" text class="clear-btn" @click="clearFilters">清除筛选</el-button>
 
       <div class="toolbar-actions">
+        <el-button @click="historyVisible = true">
+          <el-icon class="btn-icon"><Clock /></el-icon>同步记录
+        </el-button>
         <el-button :loading="loading" @click="load">
           <el-icon class="btn-icon"><Refresh /></el-icon>刷新
         </el-button>
@@ -124,6 +127,7 @@
               <div class="c-name serif" @click="goDetail(row)">{{ row.name }}</div>
               <div class="c-meta">
                 {{ row.salesNetwork || '—' }} · {{ formatPrice(row.priceRange) || '价格待同步' }}
+                <template v-if="formatDate(row.sourceCreatedAt)"> · 创建 {{ formatDate(row.sourceCreatedAt) }}</template>
               </div>
               <div class="c-status">
                 <el-tag size="small" :type="rowStatusMeta(row).type" effect="light" round>
@@ -153,6 +157,7 @@
     </template>
 
     <CarCatalogDrawer v-model="drawerVisible" :synced-ids="syncedGoodsIds" :busy="jobBusy" @created="onJobCreated" />
+    <CarJobHistoryDrawer v-model="historyVisible" />
   </div>
 </template>
 
@@ -162,11 +167,12 @@ import { useRouter } from 'vue-router'
 import { carApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, WarningFilled, Van, Setting } from '@element-plus/icons-vue'
+import { Search, Refresh, WarningFilled, Van, Setting, Clock } from '@element-plus/icons-vue'
 import CarJobPanel from '../../components/car/CarJobPanel.vue'
 import CarCatalogDrawer from '../../components/car/CarCatalogDrawer.vue'
+import CarJobHistoryDrawer from '../../components/car/CarJobHistoryDrawer.vue'
 import { useCarSyncJob } from '../../composables/useCarSyncJob'
-import { coverIsFallback, coverUrlOf, formatPrice, sortCars, statusMeta } from '../../utils/carDisplay'
+import { coverIsFallback, coverUrlOf, formatDate, formatPrice, sortCars, statusMeta } from '../../utils/carDisplay'
 
 const user = useUserStore()
 const router = useRouter()
@@ -178,6 +184,7 @@ const networkFilter = ref('all')
 const statusFilter = ref('all')
 const sortKey = ref('recent')
 const drawerVisible = ref(false)
+const historyVisible = ref(false)
 const selectedIds = ref([])
 
 const syncingId = ref(null)

@@ -19,6 +19,8 @@
 | `car_model.source_state` | 官网数据源状态（`OK/EMPTY/INCOMPLETE/STALE`；NULL=存量未标记，10-21 新增）。空/不完整响应只写此列 + `sync_note` + `last_checked_at`，**不写业务表**；`EMPTY` 车型全量同步入口禁用 |
 | `car_model.sync_note` | 最近一次检查/同步的面向用户短说明（如「官网无数据」「图片失败N张」「向量失败N/M块」） |
 | `car_model.last_checked_at` | 最近一次官网检查时间；空数据/跳过也更新，`last_sync_at` 只在完整成功后更新 |
+| `car_model.source_created_at` | 官网 `goodsInfo.createdAt`（数据创建时间，Flyway V28）；UI 文案固定「创建时间」，**不是上市/发布时间**；与系统审计 `created_at` 分离 |
+| `sourceCreatedAt` | 非持久化/实体派生字段（`LocalDateTime`），随列表/详情返回；空值前端不展示 |
 | `car_model.image_fingerprint` / `params_fingerprint` | 10-21 拆分的图片域/参数域 SHA-256（64 hex）；只换图只更新图片、只换参数只重建参数/清洗/块；空值=待初始化 |
 | `car_sync_job.heartbeat_at` / `cancel_requested` / `skipped` | 任务心跳、取消标记、跳过计数；逐车型更新心跳，`skipped` 不并入 `success` |
 | 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块；并按 `modelId` 物理清理单表 store（`deleteByCarModel`，兜底历史逻辑删除残留；**10-03 E6 前为 `sparkora_car_doc_embedding`，已退役**）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
@@ -129,6 +131,7 @@
 | POST | `/api/car/models/{id}/clean` | ADMIN/EDITOR | 仅基于库内原始参数重跑该车型清洗；不请求官网、不改版本/参数/图片/向量；返回前后清洗数 |
 | POST | `/api/car/models/clean-missing` | ADMIN | 同步批量补清洗兜底；逐台返回 cleaned/skipped/failed（耗时可能数分钟，前端优先用异步 job） |
 | POST | `/api/car/models/clean-jobs` | ADMIN | 创建异步补清洗任务；`?force=true` 重清洗全部有参数车型；返回 `{jobId}`，`job_type=CLEAN_BACKFILL`，复用任务进度/取消 |
+| POST | `/api/car/models/backfill-created-at` | ADMIN | 一次性回填官网 `goodsInfo.createdAt` 到 `source_created_at`；只读官网、只更新该列，返回 `{total,updated,skipped,failed,failedGoodsIds}` |
 | GET | `/api/car/models/{id}/clean-stats` | 三角色 | 清洗统计（按 `method`/`valueType` 分组） |
 | GET | `/api/car/models/vector-stats` | 三角色 | 向量对账 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅 `deleted=0`；`embeddedCount` 10-03 E6 起查 `vector_store`，结构不变） |
 | POST | `/api/car/models/rebuild-all` | ADMIN | 逐车型重建向量汇总（同步接口；前端 300s 超时，异步化待后续） |
@@ -139,6 +142,8 @@
 ## 6. 前端
 
 - `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改，见 [center.md](center.md)）：搜索/网络/状态（含「官网无数据」「无封面」）/排序（最近同步·名称·价格）/刷新；统计条为「全部·已同步·失败·官网无数据·同步中·封面覆盖」（失败口径排除 EMPTY）；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图）；主图 `fit="contain"` + 纸色底，回退详情图时 `fit="cover"` + 顶部对齐裁剪（`object-position: top`）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）。
+- 同步记录（10-24）：知识中心与 `/car/sync` 的「同步记录」打开 `CarJobHistoryDrawer.vue`，展示最近 50 条任务（类型/状态/成功·跳过·失败/操作人/时间），选中行复用 `CarJobPanel` 看明细/备注。
+- 创建时间（10-24）：卡片 `c-meta` 与详情 Hero 展示官网 `createdAt`，文案「创建 YYYY-MM-DD / 创建时间」，不称发布时间；空值不展示。
 - 内聚同步（R4）：`components/car/CarCatalogDrawer.vue`（抽屉内加载官网目录 + 同步选中 + 图片补入库）、`CarCatalogGrid.vue`（目录网格/筛选/全选，纯展示）、`CarJobPanel.vue`（任务进度 + 失败/备注明细 + 重试；`can-retry` 控写权限）。任务由 `composables/useCarSyncJob.js` 统一轮询（2s、终态停止、连续 3 次失败停止；`beginStart`/`cancelStart` 覆盖 createJob 请求在途 → 首次轮询的防重窗口；`recoverLatest` 只恢复 `heartbeatAt`（缺失回退 `startedAt`）60 分钟内的 RUNNING（陈旧 RUNNING 不阻塞新建，与后端 `SYNC_STALE_MS` 同口径），否则展示 24h 内最近终态任务）。
 - `views/CarSync.vue`（`/car/sync` 保留）：复用上述三组件 + composable，页面内直接展示目录网格；删除重复的轮询/任务面板实现；同步/补入库按钮按 EDITOR+ 显隐。
 - `views/CarDetail.vue`：Hero 封面（无则详情图首图顶部裁剪，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；同步后刷新详情。

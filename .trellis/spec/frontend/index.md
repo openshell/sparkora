@@ -624,3 +624,8 @@ await bydApi.createJob(projectId, {
 ### Convention: 详情聚合表缺清洗数据时必须回退原始值（10-21-car-clean-repair）
 
 详情页优先展示 `cleans`；`cleans` 为空但 `params` 非空时，必须展示原始参数并标注「原始参数/待清洗」，类型列显示「原始」，不能静默空白。RAW 行不得伪装成已清洗值；ADMIN/EDITOR 提供「重新清洗」入口。E2E 必须覆盖 `cleans=[] + params 非空` 的回退渲染。
+
+
+### Convention: 同步历史与创建时间展示（10-24-car-history-created-at）
+
+同步历史统一用 `CarJobHistoryDrawer` + `carApi.listJobs()`，前端截取最近 50 条；任务明细复用 `CarJobPanel`，不新增第二套状态文案。官网 `goodsInfo.createdAt` 字段统一显示为「创建时间」，禁止写成「发布时间/上市时间」；空值不渲染。
