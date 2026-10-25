@@ -1,0 +1,3 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "核对 rebuild-jobs 定向 body、任务/接口契约与前端条目是否与实现一致"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对车型 Tab 筛选口径/URL 契约/批量栏/详情页重建入口描述"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对 API 分层、URL query 双向同步、键盘与焦点规范符合项目约定"}

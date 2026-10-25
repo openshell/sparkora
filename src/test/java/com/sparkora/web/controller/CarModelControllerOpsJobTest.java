@@ -56,17 +56,43 @@ class CarModelControllerOpsJobTest {
     }
 
     @Test
-    void 创建重建向量任务_返回jobId() throws Exception {
-        when(jobService.createRebuildJob()).thenReturn(42L);
+    void 创建重建向量任务_不传body_全库返回jobId() throws Exception {
+        when(jobService.createRebuildJob((List<String>) null)).thenReturn(42L);
         mvc.perform(post("/api/car/models/rebuild-jobs"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.jobId").value(42));
+        // 无 body = 全库重建(传 null 给 service,旧行为不变)
+        verify(jobService).createRebuildJob((List<String>) null);
+    }
+
+    @Test
+    void 创建重建向量任务_带goodsIds_定向透传() throws Exception {
+        when(jobService.createRebuildJob(List.of("156"))).thenReturn(7L);
+        mvc.perform(post("/api/car/models/rebuild-jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"goodsIds\":[\"156\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.jobId").value(7));
+        verify(jobService).createRebuildJob(List.of("156"));
+    }
+
+    @Test
+    void 创建重建向量任务_定向未知车型_400() throws Exception {
+        when(jobService.createRebuildJob(List.of("999")))
+                .thenThrow(new IllegalArgumentException("车型不存在: 999"));
+        mvc.perform(post("/api/car/models/rebuild-jobs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"goodsIds\":[\"999\"]}"))
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.msg").value("车型不存在: 999"));
     }
 
     @Test
     void 创建重建向量任务_参数错误_400() throws Exception {
-        when(jobService.createRebuildJob()).thenThrow(new IllegalArgumentException("库内没有可重建向量的车型"));
+        when(jobService.createRebuildJob((List<String>) null))
+                .thenThrow(new IllegalArgumentException("库内没有可重建向量的车型"));
         mvc.perform(post("/api/car/models/rebuild-jobs"))
                 .andExpect(jsonPath("$.code").value(400))
                 .andExpect(jsonPath("$.msg").value("库内没有可重建向量的车型"));
@@ -74,7 +100,8 @@ class CarModelControllerOpsJobTest {
 
     @Test
     void 创建重建向量任务_任务冲突_409() throws Exception {
-        when(jobService.createRebuildJob()).thenThrow(new IllegalStateException("已有同步任务运行中,请稍后重试"));
+        when(jobService.createRebuildJob((List<String>) null))
+                .thenThrow(new IllegalStateException("已有同步任务运行中,请稍后重试"));
         mvc.perform(post("/api/car/models/rebuild-jobs"))
                 .andExpect(jsonPath("$.code").value(409))
                 .andExpect(jsonPath("$.msg").value("已有同步任务运行中,请稍后重试"));

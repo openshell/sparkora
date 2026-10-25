@@ -24,12 +24,16 @@ test('car tab renders cover fallback, stats and failure reason', async ({ page }
   await page.goto('/knowledge')
   await page.waitForLoadState('networkidle')
 
+  // 统计条 8 项：全部/已同步/失败/数据待复核/部分同步/官网无数据/同步中/封面覆盖
   const stats = page.locator('.stats-bar')
   await expect(stats.locator('.stat').nth(0).locator('.stat-num')).toHaveText('2')
   await expect(stats.locator('.stat').nth(1).locator('.stat-num')).toHaveText('1')
   await expect(stats.locator('.stat').nth(2).locator('.stat-num')).toHaveText('0')
-  await expect(stats.locator('.stat').nth(3).locator('.stat-num')).toHaveText('1')
-  await expect(stats.locator('.stat').nth(5)).toContainText('1 / 2')
+  await expect(stats.locator('.stat').nth(3).locator('.stat-num')).toHaveText('0')
+  await expect(stats.locator('.stat').nth(4).locator('.stat-num')).toHaveText('0')
+  await expect(stats.locator('.stat').nth(5).locator('.stat-num')).toHaveText('1')
+  await expect(stats.locator('.stat').nth(6).locator('.stat-num')).toHaveText('0')
+  await expect(stats.locator('.stat').nth(7)).toContainText('1 / 2')
 
   const cards = page.locator('.car-grid .car-card')
   await expect(cards).toHaveCount(2)
@@ -60,6 +64,58 @@ test('car tab renders cover fallback, stats and failure reason', async ({ page }
   await expect(cards).toHaveCount(2)
 })
 
+
+test('car panel status filter is URL-backed and shared with stats/labels', async ({ page }) => {
+  const rows = [
+    {
+      id: 1, goodsId: '900', name: '复核车型', salesNetwork: '王朝', priceRange: '100,000',
+      syncStatus: 'FAILED', sourceState: 'INCOMPLETE', lastSyncAt: '2026-10-21T10:00:00',
+      coverImageUrl: 'https://img.example.com/a.png', introImageUrls: [], lastSyncError: '结构异常'
+    },
+    {
+      id: 2, goodsId: '901', name: '部分车型', salesNetwork: '海洋', priceRange: '120,000',
+      syncStatus: 'PARTIAL', sourceState: 'OK', lastSyncAt: '2026-10-21T09:00:00',
+      coverImageUrl: 'https://img.example.com/b.png', introImageUrls: [], lastSyncError: null
+    },
+    {
+      id: 3, goodsId: '902', name: '正常车型', salesNetwork: '海洋', priceRange: '150,000',
+      syncStatus: 'SUCCESS', sourceState: 'OK', lastSyncAt: '2026-10-21T08:00:00',
+      coverImageUrl: null, introImageUrls: ['https://img.example.com/c.png'], lastSyncError: null
+    }
+  ]
+  await page.route('**/api/car/models', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: rows }) }))
+  await page.setViewportSize(SMOKE_VIEWPORT)
+
+  // R2：直接打开带 query 的链接即恢复筛选（REVIEW 优先于 FAILED）
+  await page.goto('/knowledge?status=REVIEW')
+  await page.waitForLoadState('networkidle')
+  const cards = page.locator('.car-grid .car-card')
+  await expect(cards).toHaveCount(1)
+  await expect(cards.nth(0).locator('.c-name')).toHaveText('复核车型')
+  await expect(cards.nth(0).locator('.c-status')).toContainText('数据待复核')
+  await expect(page).toHaveURL(/status=REVIEW/)
+
+  // R1：统计项可点击切换筛选，且 URL 同步
+  await page.locator('.stats-bar .stat', { hasText: '部分同步' }).click()
+  await expect(cards).toHaveCount(1)
+  await expect(cards.nth(0).locator('.c-name')).toHaveText('部分车型')
+  await expect(cards.nth(0).locator('.c-status')).toContainText('部分同步')
+  await expect(page).toHaveURL(/status=PARTIAL/)
+
+  // 「全部车型」清除状态筛选，query 中不再残留 status
+  await page.locator('.stats-bar .stat', { hasText: '全部车型' }).click()
+  await expect(cards).toHaveCount(3)
+  await expect(page).not.toHaveURL(/status=/)
+
+  // R3：全选筛选结果 → 批量栏计数联动；再点取消 = 清空全部
+  const selectAll = page.locator('.select-all')
+  await expect(selectAll).toBeVisible()
+  await selectAll.click()
+  await expect(page.locator('.bulk-bar')).toContainText('已选 3 个')
+  await selectAll.click()
+  await expect(page.locator('.bulk-bar')).toHaveCount(0)
+})
 
 test('car detail falls back to raw params when cleans are empty', async ({ page }) => {
   const detail = {

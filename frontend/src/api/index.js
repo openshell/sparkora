@@ -117,9 +117,11 @@ export const carApi = {
       params: full ? { mode: 'FULL' } : {},
       timeout: 60000
     }),
-  // 创建「重建全部向量」异步任务（10-24 车型运维 P0，job_type=VECTOR_REBUILD，ADMIN）：
-  // 全库逐车型重建，向量失败落任务明细（可「重试失败项」重跑），无切块车型计 skipped；返回 {jobId}
-  createRebuildJob: () => http.post('/car/models/rebuild-jobs', null, { timeout: 60000 }),
+  // 创建重建向量异步任务（10-24 车型运维 P0，job_type=VECTOR_REBUILD，ADMIN）：
+  // 不传 goodsIds = 全库逐车型重建（既有行为）；非空 = 定向单台/少量重建（10-25，未知 goodsId → 400
+  // 「车型不存在」）。向量失败落任务明细（可「重试失败项」重跑），无切块车型计 skipped；返回 {jobId}
+  createRebuildJob: (goodsIds) => http.post('/car/models/rebuild-jobs',
+    goodsIds?.length ? { goodsIds } : null, { timeout: 60000 }),
   // 创建单车型清洗异步任务（10-24 车型运维 P0，job_type=CLEAN_ONE，allowAi=true 与旧 /clean 同语义）：
   // 详情页「重新清洗」迁移入口；车型不存在 404 / 缺 goodsId 400；返回 {jobId}
   createCleanOneJob: (id) => http.post(`/car/models/${id}/clean-jobs`, null, { timeout: 60000 }),

@@ -37,7 +37,7 @@ import java.util.Set;
  *   SELECTED / RETRY        —— 全量 syncOne
  *   IMAGE_BACKFILL          —— 轻回填:仅图片域 + 指纹收敛,不触参数/清洗/向量
  *   INCREMENTAL             —— 增量分派:按基础/图片/参数三类指纹决定 跳过/只更新图片/只更新参数/全量
- *   VECTOR_REBUILD          —— 全库逐车型重建向量(10-24 运维任务化;失败只进任务明细,不写车型同步状态)
+ *   VECTOR_REBUILD          —— 逐车型重建向量(10-24 运维任务化,10-25 支持定向 goodsIds;失败只进任务明细,不写车型同步状态)
  *   CLEAN_ONE               —— 单车型补清洗,allowAi=true(10-24 详情页任务化;区别于批量 CLEAN_BACKFILL 的 false)
  *   (SCHEDULED 为旧定时类型历史值)
  *
@@ -167,19 +167,46 @@ public class CarSyncJobService {
      */
     @Transactional
     public Long createRebuildJob() {
-        List<CarModelEntity> rows = modelMapper.selectList(
-                new QueryWrapper<CarModelEntity>().select("id", "goods_id").orderByAsc("id"));
-        // LinkedHashSet 保序去重(防御 goods_id 重复行);空库/无 goodsId → 400
-        Set<String> ids = new LinkedHashSet<>();
-        for (CarModelEntity m : rows) {
-            if (m.getGoodsId() != null && !m.getGoodsId().isBlank()) ids.add(m.getGoodsId());
+        return createRebuildJob(null);
+    }
+
+    /**
+     * 创建重建向量任务(10-25 单车型定向):job_type=VECTOR_REBUILD。
+     *
+     * @param goodsIds 非空 = 定向模式:只重建指定车型(单台/少量),经 normalizeGoodsIds
+     *                 去重/格式校验/上限 100;每个 goodsId 须在库内存在,未知 → 400「车型不存在: x」。
+     *                 null/空 = 全库模式:全部 goods_id 非空车型(id 升序,不设上限),既有行为不变。
+     */
+    @Transactional
+    public Long createRebuildJob(List<String> goodsIds) {
+        List<String> targets;
+        if (goodsIds != null && !goodsIds.isEmpty()) {
+            // 定向模式:显式选择即目标;先归一(去重/上限/格式)再逐一校验库内存在
+            targets = normalizeGoodsIds(goodsIds);
+            Set<String> known = new LinkedHashSet<>();
+            for (CarModelEntity m : modelMapper.selectList(
+                    new QueryWrapper<CarModelEntity>().select("goods_id").in("goods_id", targets))) {
+                if (m.getGoodsId() != null) known.add(m.getGoodsId());
+            }
+            for (String id : targets) {
+                if (!known.contains(id)) throw new IllegalArgumentException("车型不存在: " + id);
+            }
+        } else {
+            List<CarModelEntity> rows = modelMapper.selectList(
+                    new QueryWrapper<CarModelEntity>().select("id", "goods_id").orderByAsc("id"));
+            // LinkedHashSet 保序去重(防御 goods_id 重复行);空库/无 goodsId → 400
+            Set<String> ids = new LinkedHashSet<>();
+            for (CarModelEntity m : rows) {
+                if (m.getGoodsId() != null && !m.getGoodsId().isBlank()) ids.add(m.getGoodsId());
+            }
+            if (ids.isEmpty()) throw new IllegalArgumentException("库内没有可重建向量的车型");
+            targets = new ArrayList<>(ids);
         }
-        if (ids.isEmpty()) throw new IllegalArgumentException("库内没有可重建向量的车型");
         (self == null ? this : self).markStaleRunningAsFailed();
         if (hasFreshRunning()) {
             throw new IllegalStateException("已有同步任务运行中,请稍后重试");
         }
-        return insertJobAndRun(new ArrayList<>(ids), "VECTOR_REBUILD");
+        return insertJobAndRun(targets, "VECTOR_REBUILD");
     }
 
     /**

@@ -17,8 +17,8 @@
             <h2>{{ detail.model.name }}</h2>
             <div class="sub-line">
               <el-tag size="small" effect="plain">{{ detail.model.salesNetwork || '—' }}</el-tag>
-              <el-tag size="small" :type="sourceStatusMeta(detail.model).type" effect="light" round>
-                {{ sourceStatusMeta(detail.model).label }}
+              <el-tag size="small" :type="rowStatusMeta(detail.model).type" effect="light" round>
+                {{ rowStatusMeta(detail.model).label }}
               </el-tag>
               <span class="price">{{ formatPrice(detail.model.priceRange) || '价格待同步' }}</span>
               <span class="last-sync">{{ detail.model.sourceState === 'EMPTY' ? '最近检查' : '最近成功' }}：{{ fmtTime(detail.model.lastCheckedAt || detail.model.lastSyncAt) }}</span>
@@ -34,6 +34,12 @@
             </el-button>
             <el-button v-if="user.isEditorOrAbove && hasRawGroups" :disabled="jobBusy" @click="onClean">
               重新清洗
+            </el-button>
+            <!-- 单车型重建向量（10-25 R5，ADMIN）：只重建本车型，不重新采集/清洗 -->
+            <el-button v-if="user.isAdmin" :disabled="jobBusy || !detail.model.goodsId"
+              :title="!detail.model.goodsId ? '该车型缺少官网 goodsId，无法定向重建' : '只重建本车型向量，不重新采集官网、不重跑参数清洗'"
+              @click="onRebuildVectors">
+              重建向量
             </el-button>
             <el-button @click="$router.push('/knowledge')">返回</el-button>
           </div>
@@ -143,7 +149,7 @@ import { carApi } from '../api'
 import { useUserStore } from '../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, WarningFilled } from '@element-plus/icons-vue'
-import { coverIsFallback, coverUrlOf, formatDate, formatPrice, parseFeatures, statusMeta } from '../utils/carDisplay'
+import { coverIsFallback, coverUrlOf, formatDate, formatPrice, parseFeatures, rowStatusMeta } from '../utils/carDisplay'
 import CarJobPanel from '../components/car/CarJobPanel.vue'
 import { useCarSyncJob } from '../composables/useCarSyncJob'
 
@@ -200,15 +206,6 @@ const displayRows = (g) => {
     raw: true
   }))
 }
-const sourceStatusMeta = (m) => {
-  if (!m) return statusMeta('PENDING')
-  if (m.sourceState === 'EMPTY') return { label: '官网无数据', type: 'info' }
-  if (m.sourceState === 'INCOMPLETE' || m.sourceState === 'STALE') {
-    return { label: '数据待复核', type: 'warning' }
-  }
-  if (m.syncStatus === 'PARTIAL') return { label: '部分同步', type: 'warning' }
-  return statusMeta(m.syncStatus)
-}
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 
 const load = async () => {
@@ -259,6 +256,33 @@ const onClean = async () => {
   } catch (e) {
     cancelStart()
     ElMessage.error(e?.response?.data?.msg || '创建清洗任务失败，请稍后重试')
+  }
+}
+
+// 单车型重建向量（10-25 R5）：定向 VECTOR_REBUILD，只重建本车型块/向量（不采集、不清洗）。
+// 进度复用任务面板，终态 onFinished 自动重载详情。
+const onRebuildVectors = async () => {
+  if (jobBusy.value) return
+  const goodsId = detail.value?.model?.goodsId
+  if (!goodsId) { ElMessage.warning('该车型缺少官网 goodsId，无法定向重建'); return }
+  try {
+    await ElMessageBox.confirm('只重建本车型向量（不重新采集官网、不重跑参数清洗）；进度在任务面板查看。确认执行？',
+      '重建向量', { type: 'info', confirmButtonText: '开始重建', cancelButtonText: '取消' })
+  } catch { return }
+  if (!beginStart()) return
+  try {
+    const res = await carApi.createRebuildJob([goodsId])
+    if (res.code === 0 && res.data?.jobId) {
+      job.value = null
+      startPoll(res.data.jobId, { onFinished: load })
+    } else {
+      cancelStart()
+      ElMessage.error(res.msg || '创建重建任务失败')
+    }
+  } catch (e) {
+    cancelStart()
+    if (e?.response?.status === 403) ElMessage.error('无权限：仅管理员可重建向量')
+    else ElMessage.error(e?.response?.data?.msg || '创建重建任务失败，请稍后重试')
   }
 }
 

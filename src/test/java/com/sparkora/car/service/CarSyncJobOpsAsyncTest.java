@@ -181,6 +181,71 @@ class CarSyncJobOpsAsyncTest {
     }
 
     @Test
+    void 定向向量重建_只圈定指定车型() {
+        when(modelMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
+                model(1L, "156", "海豚"), model(2L, "100", "唐EV")));
+        when(modelService.rebuildOneByGoodsId(anyString())).thenReturn(new EmbedStats(3, 3, 0));
+        CarSyncJobEntity job = runningJob(42L, "VECTOR_REBUILD");
+        when(jobMapper.selectById(42L)).thenReturn(job);
+
+        Long jobId = service.createRebuildJob(List.of("100"));
+
+        assertEquals(42L, jobId);
+        ArgumentCaptor<CarSyncJobEntity> cap = ArgumentCaptor.forClass(CarSyncJobEntity.class);
+        verify(jobMapper).insert(cap.capture());
+        assertEquals("VECTOR_REBUILD", cap.getValue().getJobType());
+        assertEquals(1, cap.getValue().getTotal());
+        // 只重建指定车型,其他车型不触发
+        verify(modelService).rebuildOneByGoodsId("100");
+        verify(modelService, never()).rebuildOneByGoodsId("156");
+        // 定向查询只按 goods_id IN,不走全库 id 升序分支
+        ArgumentCaptor<Wrapper<CarModelEntity>> listCap = (ArgumentCaptor) ArgumentCaptor.forClass(Wrapper.class);
+        verify(modelMapper, atLeastOnce()).selectList(listCap.capture());
+        String sql = listCap.getAllValues().stream()
+                .map(w -> ((AbstractWrapper<?, ?, ?>) w).getSqlSegment())
+                .filter(Objects::nonNull)
+                .findFirst().orElse("");
+        assertTrue(sql.contains("goods_id"), sql);
+        assertEquals(1, job.getSuccess());
+    }
+
+    @Test
+    void 定向向量重建_未知车型_400语义拒建() {
+        when(modelMapper.selectList(any(Wrapper.class))).thenReturn(List.of(model(1L, "156", "海豚")));
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createRebuildJob(List.of("156", "999")));
+        assertTrue(ex.getMessage().contains("车型不存在: 999"));
+        verify(jobMapper, never()).insert(any(CarSyncJobEntity.class));
+    }
+
+    @Test
+    void 定向向量重建_null_仍走全库分支() {
+        when(modelMapper.selectList(any(Wrapper.class))).thenReturn(List.of(
+                model(1L, "156", "海豚"), model(2L, "100", "唐EV")));
+        when(modelService.rebuildOneByGoodsId(anyString())).thenReturn(new EmbedStats(1, 1, 0));
+        CarSyncJobEntity job = runningJob(42L, "VECTOR_REBUILD");
+        when(jobMapper.selectById(42L)).thenReturn(job);
+
+        // null = 全库(既有行为不变)
+        service.createRebuildJob(null);
+        assertTrue(job.getFailedItems().contains("重建 1 块向量"));
+        verify(modelService).rebuildOneByGoodsId("156");
+        verify(modelService).rebuildOneByGoodsId("100");
+    }
+
+    @Test
+    void 定向向量重建_空列表_仍走全库分支() {
+        when(modelMapper.selectList(any(Wrapper.class))).thenReturn(List.of(model(1L, "156", "海豚")));
+        when(modelService.rebuildOneByGoodsId(anyString())).thenReturn(new EmbedStats(2, 2, 0));
+        CarSyncJobEntity job = runningJob(42L, "VECTOR_REBUILD");
+        when(jobMapper.selectById(42L)).thenReturn(job);
+
+        service.createRebuildJob(List.of());
+        assertEquals(1, job.getSuccess());
+        verify(modelService).rebuildOneByGoodsId("156");
+    }
+
+    @Test
     void 向量重建_分支异常_只进任务明细不写车型同步状态() {
         when(modelMapper.selectList(any(Wrapper.class))).thenReturn(List.of(model(1L, "156", "海豚")));
         when(modelService.rebuildOneByGoodsId("156")).thenThrow(new RuntimeException("embedding 服务不可用"));

@@ -115,7 +115,7 @@
 
 ### 4.4 运维任务化与 backfill 定向（10-24-car-ops-async-p0）
 
-- **`VECTOR_REBUILD`（全库重建向量异步任务）**：`POST /api/car/models/rebuild-jobs`（ADMIN）→ `R.ok({jobId})`；目标 = 全部 `goods_id` 非空车型（id 升序，LinkedHashSet 去重，**不套用单次 100 上限**——全库运维口径，心跳防陈旧误杀）；逐车型 `CarModelService.rebuildOneByGoodsId(goodsId)`（goods_id 解析 → `rebuildForModel`）。明细口径：`EmbedStats.failed>0` → failed++ + 失败明细「向量失败 N/M 块」（进 retry 候选）；`total==0` → skipped + note「跳过:无切块数据」；否则 success + note「重建 M 块向量」。取代旧同步接口 `rebuild-all`（300s 前端超时 < 全库实耗 570s+ 必超时，前端已迁移；旧接口保留为兼容兜底）。
+- **`VECTOR_REBUILD`（全库/定向重建向量异步任务）**：`POST /api/car/models/rebuild-jobs`（ADMIN）→ `R.ok({jobId})`；**10-25 起支持可选 body `{goodsIds:[...]}` 定向重建**——非空时只圈定指定车型（`normalizeGoodsIds` 去重/上限 100 + 逐个存在性校验，未知 → 400「车型不存在: x」）；不传 body 行为不变（全库 = 全部 `goods_id` 非空车型，id 升序，LinkedHashSet 去重，**不套用单次 100 上限**——全库运维口径，心跳防陈旧误杀）。逐车型 `CarModelService.rebuildOneByGoodsId(goodsId)`（goods_id 解析 → `rebuildForModel`）。明细口径：`EmbedStats.failed>0` → failed++ + 失败明细「向量失败 N/M 块」（进 retry 候选）；`total==0` → skipped + note「跳过:无切块数据」；否则 success + note「重建 M 块向量」。取代旧同步接口 `rebuild-all`（300s 前端超时 < 全库实耗 570s+ 必超时，前端已迁移；旧接口保留为兼容兜底）。详情页 ADMIN「重建向量」入口即走定向 body（单车型）。
 - **`CLEAN_ONE`（单车型清洗异步任务）**：`POST /api/car/models/{id}/clean-jobs`（ADMIN/EDITOR）→ `R.ok({jobId})`；车型不存在 404、缺 goodsId 400。`allowAi=true`（显式单台重跑允许 AI 兜底，**区别于批量 `CLEAN_BACKFILL` 的 `allowAi=false`**）；`cleansAfter>0` → success + note，否则 skipped + note「跳过:无可清洗参数/版本」。取代详情页旧阻塞接口 `POST /models/{id}/clean`（前端已迁移，接口保留兜底）。
 - **运维域失败不写车型同步状态**：`VECTOR_REBUILD`/`CLEAN_ONE` 分支与异常路径**均不调 `markSyncFailed`**——向量/清洗是独立运维域，失败只进任务明细（error 条目可重试），不污染 `sync_status`/`last_sync_error`。
 - **backfill 定向（10-24）**：`POST /api/car/sync/backfill` 支持可选 body `{goodsIds:[...]}`——非空时**只处理指定车型**（忽略 mode 过滤：显式选择即目标，含 `EMPTY` 车型走存量 URL 兜底）；未知 goodsId → 400「车型不存在」；沿用 `normalizeGoodsIds` 去重/上限 100 校验。不传 body 行为不变（MISSING 过滤 / FULL 全库）。前端入口 = 车型 Tab 批量栏「补选中图片」。
@@ -144,7 +144,7 @@
 | POST | `/api/car/models/backfill-created-at` | ADMIN | 一次性回填官网 `goodsInfo.createdAt` 到 `source_created_at`；只读官网、只更新该列，返回 `{total,updated,skipped,failed,failedGoodsIds}` |
 | GET | `/api/car/models/{id}/clean-stats` | 三角色 | 清洗统计（按 `method`/`valueType` 分组） |
 | GET | `/api/car/models/vector-stats` | 三角色 | 向量对账 `{modelCount, chunkCount, embeddedCount, missingCount, missingTopN}`（仅 `deleted=0`；`embeddedCount` 10-03 E6 起查 `vector_store`，结构不变） |
-| POST | `/api/car/models/rebuild-jobs` | ADMIN | 创建全库重建向量异步任务（10-24，取代下述同步接口）；返回 `{jobId}`，`job_type=VECTOR_REBUILD`，复用任务锁/心跳/取消/重试体系；空库 400 |
+| POST | `/api/car/models/rebuild-jobs` | ADMIN | 创建重建向量异步任务（10-24 全库；**10-25 起支持可选 body `{goodsIds:[...]}` 定向单台/少量**，未知 id 400「车型不存在」；不传 body = 全库，空库 400）；返回 `{jobId}`，`job_type=VECTOR_REBUILD`，复用任务锁/心跳/取消/重试体系 |
 | POST | `/api/car/models/rebuild-all` | ADMIN | 逐车型重建向量汇总（同步接口，**10-24 起前端已迁移 `rebuild-jobs` 异步任务**；保留为 ADMIN 兼容兜底——300s 前端超时 < 全库实耗，仅 curl/脚本场景使用） |
 | POST | `/api/car/rag` | 三角色 | 内部问答检索 `{modelId, query, topK?}` |
 
@@ -152,13 +152,13 @@
 
 ## 6. 前端
 
-- `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改 + 10-24 运维任务化，见 [center.md](center.md)）：搜索/网络/状态（含「官网无数据」「无封面」）/排序（最近同步·名称·价格）/刷新；统计条为「全部·已同步·失败·官网无数据·同步中·封面覆盖」（失败口径排除 EMPTY）；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图）；主图 `fit="contain"` + 纸色底，回退详情图时 `fit="cover"` + 顶部对齐裁剪（`object-position: top`）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）+ **「补选中图片」（10-24，定向 backfill，见 §4.4）**；「重建全部向量」为异步 `VECTOR_REBUILD` 任务（不再有 300s 阻塞等待）。
+- `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐，见 [center.md](center.md)）：搜索/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）/刷新；**状态口径单一真源 `rowStatusKey`（EMPTY > 复核 > 部分 > syncStatus）——筛选/统计/卡片标签三处同源**；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且**可点击切筛选**（「全部车型」清状态、「封面覆盖」= 无封面）；**筛选随 URL 持久化**（`kw`/`net`/`status`/`sort`，`router.replace` + 挂载恢复 + 清除筛选清 query）；**「全选筛选结果」checkbox**（EDITOR+，全选/indeterminate/取消清空，勾选=与已选并集）；批量栏 `position: sticky` 吸附（不透明背景）；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图）；主图 `fit="contain"` + 纸色底，回退详情图时 `fit="cover"` + 顶部对齐裁剪（`object-position: top`）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）+ **「补选中图片」（10-24，定向 backfill，见 §4.4）**；「重建全部向量」为异步 `VECTOR_REBUILD` 任务（不再有 300s 阻塞等待）。
 - 同步记录（10-24）：知识中心与 `/car/sync` 的「同步记录」打开 `CarJobHistoryDrawer.vue`，展示最近 50 条任务（类型/状态/成功·跳过·失败/操作人/时间），选中行复用 `CarJobPanel` 看明细/备注。
 - 创建时间（10-24）：卡片 `c-meta` 与详情 Hero 展示官网 `createdAt`，文案「创建 YYYY-MM-DD / 创建时间」，不称发布时间；空值不展示。
 - 内聚同步（R4）：`components/car/CarCatalogDrawer.vue`（抽屉内加载官网目录 + 同步选中 + 图片补入库）、`CarCatalogGrid.vue`（目录网格/筛选/全选，纯展示）、`CarJobPanel.vue`（任务进度 + 失败/备注明细 + 重试；`can-retry` 控写权限；job_type 文案含「选中同步/重试/图片补入库/增量同步/补清洗/单车型清洗/重建向量/定时同步」）。任务由 `composables/useCarSyncJob.js` 统一轮询（2s、终态停止、连续 3 次失败停止；`beginStart`/`cancelStart` 覆盖 createJob 请求在途 → 首次轮询的防重窗口；`recoverLatest` 只恢复 `heartbeatAt`（缺失回退 `startedAt`）60 分钟内的 RUNNING（陈旧 RUNNING 不阻塞新建，与后端 `SYNC_STALE_MS` 同口径），否则展示 24h 内最近终态任务；`toastFinished` 识别 `VECTOR_REBUILD`/`CLEAN_ONE`/`IMAGE_BACKFILL`/`INCREMENTAL`/`CLEAN_BACKFILL` 完成文案）。
 - `views/CarSync.vue`（`/car/sync` 保留）：复用上述三组件 + composable，页面内直接展示目录网格；删除重复的轮询/任务面板实现；同步/补入库按钮按 EDITOR+ 显隐。
-- `views/CarDetail.vue`：Hero 封面（无则详情图首图顶部裁剪，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；**10-24 起同步/清洗任务化**：「同步」创建单车型 SELECTED 任务（`createJob([goodsId])`，goodsId 缺失时拦截提示）、「重新清洗」创建 `CLEAN_ONE` 任务，均内嵌 `CarJobPanel` 展示进度、终态自动重载详情、挂载 `recoverLatest`；按钮 `jobBusy` 防重（409 兜底已有任务冲突）。
-- `utils/carDisplay.js`：`coverUrlOf` / `parseFeatures` / `formatPrice` / `sortCars` / `statusMeta` 纯函数（卡片、详情、同步页共用）。
+- `views/CarDetail.vue`：Hero 封面（无则详情图首图顶部裁剪，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；**10-24 起同步/清洗任务化**：「同步」创建单车型 SELECTED 任务（`createJob([goodsId])`，goodsId 缺失时拦截提示）、「重新清洗」创建 `CLEAN_ONE` 任务，均内嵌 `CarJobPanel` 展示进度、终态自动重载详情、挂载 `recoverLatest`；按钮 `jobBusy` 防重（409 兜底已有任务冲突）。**10-25 起 ADMIN 另有「重建向量」**：`createRebuildJob([goodsId])` 定向 `VECTOR_REBUILD`（同一任务面板/终态刷新，无 goodsId 禁用），状态标签统一用共享 `rowStatusMeta`。
+- `utils/carDisplay.js`：`coverUrlOf` / `parseFeatures` / `formatPrice` / `sortCars` / `statusMeta` / `rowStatusKey` / `rowStatusMeta` 纯函数（卡片、详情、同步页共用；`rowStatusKey` 是状态口径唯一真源，`statusMeta` 仅作 syncStatus 基础映射）。
 - 10-21 安全适配：卡片/详情按 `sourceState` 展示「官网无数据」（`EMPTY`）/「数据待复核」（`INCOMPLETE`/`STALE`）标签；`EMPTY` 车型禁用全量同步，10-24 起提示改为「勾选后使用批量栏『补选中图片』」（定向 backfill 闭环，见 §4.4）；`PARTIAL` 显示 `syncNote`；统计条增加「官网无数据」；任务面板显示 `skipped`，全跳过时标题为「检查完成(无变化)」，运行中可请求取消。
 - ~~`views/CarLibrary.vue`~~ 已不存在（其能力由知识中心车型 Tab 承接）。
 - `api/index.js` 的 `carApi`。

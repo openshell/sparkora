@@ -28,7 +28,7 @@
 | 文件 | 职责 |
 |---|---|
 | `views/KnowledgeCenter.vue` | 页头 + `el-tabs`；Tab 面板 `v-if` 懒挂载（首访加载、切回保留状态）；`loadedTabs` = `{car,kb,sources,qa}` |
-| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改 + 10-24 运维任务化）：`carApi.list()` + 关键词/网络/状态（含无封面）/排序（最近同步·名称·价格）+ 刷新 + 结果数/清除筛选；统计条「全部·已同步·失败·同步中·封面覆盖」；缩略图 `coverUrlOf(row)`（封面优先；无封面回退详情图首图并顶部裁剪，回退态 `fit="cover"` + `object-position: top`）；失败原因截断 + tooltip、失败可重试；EDITOR+ 批量选择/同步/删除 + **「补选中图片」（10-24 定向 backfill）**；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量——后者 10-24 起为异步 `VECTOR_REBUILD` 任务） |
+| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐）：`carApi.list()` + 关键词/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）+ 刷新 + 结果数/清除筛选；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且可点击切筛选；筛选随 URL 持久化（`kw`/`net`/`status`/`sort`）；EDITOR+「全选筛选结果」+ 批量选择/同步/删除 + **「补选中图片」（10-24 定向 backfill）**，批量栏 sticky；缩略图 `coverUrlOf(row)`（封面优先；无封面回退详情图首图并顶部裁剪，回退态 `fit="cover"` + `object-position: top`）；失败原因截断 + tooltip、失败可重试；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量——后者 10-24 起为异步 `VECTOR_REBUILD` 任务） |
 | `views/knowledge/KbLibraryPanel.vue` | 知识库 Tab：`kbApi` 列表/新建/编辑/重建/批量导入。**本任务未改动** |
 | `views/knowledge/SourceTab.vue` | 信源 Tab 容器：统一加载 `sourceApi.list()` 供子面板做来源名映射；上部「信源管理 + 采集任务」，下部「信源内容」 |
 | `views/knowledge/SourceManagePanel.vue` | 信源管理：列表（名称/类型/垂直/排期/最近采集状态/栏目数/启停）+ 编辑抽屉（el-form + rules，含**栏目列表** channels[]）+ 启停 switch + 手动触发采集（整源 / 单栏目 `channelId`） |
@@ -70,13 +70,17 @@
 - **同步记录**：工具栏「同步记录」打开 `CarJobHistoryDrawer`，查看最近 50 条任务及明细；VIEWER 也可查看。
 - **任务恢复**：挂载时 `useCarSyncJob.recoverLatest()`——优先恢复**未过期**的 RUNNING 任务（`heartbeatAt` 60 分钟内，缺失回退 `startedAt`，与后端 `SYNC_STALE_MS` 同口径）并继续 2s 轮询；否则展示 24h 内最近**终态**任务。陈旧 RUNNING（JVM 中途死亡遗留）不恢复、不阻塞新建任务。切 Tab/刷新后可继续看到进度；运行中重复发起会被阻止并提示（`beginStart` 在 createJob 请求在途即置忙，覆盖「创建返回→首次轮询」与请求窗口）。
 - **统计口径**：「封面覆盖」= `coverImageUrl` 非空的车型数 / 总数（不再取图库 `source=byd` 全量图片数）；10-21 安全整改增加「官网无数据」统计（`sourceState=EMPTY`），并从「失败」中排除，避免同一批空数据车重复计数。
+- **状态口径同源（10-25）**：`utils/carDisplay.js#rowStatusKey` 为唯一真源（EMPTY > 数据待复核(INCOMPLETE/STALE) > 部分同步(PARTIAL) > syncStatus）；状态下拉、统计计数、卡片标签全部复用，禁止各自 if 链。统计条 8 项可点击切筛选（「全部车型」清状态键、「封面覆盖」= 无封面）。
+- **筛选 URL 契约（10-25）**：`/knowledge` query 键 `kw`/`net`/`status`/`sort`；变更经 `router.replace` 写回（keyword 防抖 300ms，其余立即；写前比对短路），挂载从 query 恢复（status/sort 白名单兜底），外部回流（前进/后退/分享链接）短路应用；清除筛选同步清 query 四键。Tab 仍非路由，不得把 Tab 状态写入 query。
+- **全选与吸附（10-25）**：结果行 EDITOR+ 提供「全选筛选结果」checkbox（全选/indeterminate；勾选=与已选并集，取消=清空全部选择），与批量栏计数/同步/补图/删除联动；批量栏滚动时 `position: sticky; top: 0` 吸附 tab 内容区顶部（不透明背景 + z-index，不遮挡操作）。
 - **空数据安全**：`sourceState=EMPTY` 的车型显示「官网无数据」，禁用全量同步，10-24 起提示改用批量栏「补选中图片」（定向 backfill 闭环）；批量同步若包含空数据车会直接拦截并提示新入口。任务面板使用 `skipped` 独立计数，全跳过显示「检查完成(无变化)」。
 - **批量**：EDITOR+ 卡片 checkbox 恒定可见；批量同步按 `goodsId` 建任务，批量删除逐个调用 `carApi.remove`（`Promise.allSettled` 汇总成功/失败），确认文案明确「共享图库资产不会被删除」；同步任务运行中删除按钮禁用（避免与在跑任务竞争同一车型）；**10-24 新增「补选中图片」**（EDITOR+ 有选中时可见，`createBackfillJob(false, goodsIds)` 定向 backfill，独立 loading + `jobBusy` 禁用）。
 - **运维**：「运维」下拉内「图片补入库（仅缺失/失败）」「全量图片重扫」（EDITOR+）与「补全清洗参数」「重建全部向量」（ADMIN）。「补全清洗参数」创建异步 `CLEAN_BACKFILL` 任务（默认只处理有参数无清洗，不请求官网），任务面板展示进度/跳过/失败；**「重建全部向量」10-24 起创建异步 `VECTOR_REBUILD` 任务**（全库逐车型重建，进度/失败明细/重试走任务面板，取代旧 300s 阻塞调用）；写操作按钮按角色显隐（VIEWER 不可见），运行中可请求取消。
 - **图片体验**：主图 `fit="contain"` + 纸色底；无主图回退详情图首图时改为顶部裁剪（`fit="cover"` + `object-position: top`），避免 1 万～3.8 万像素高的详情长图缩成窄条；详情页 Hero、图集原图预览、卖点 chips、失败原因 `el-alert`。
-- 纯函数落位 `utils/carDisplay.js`（`coverUrlOf`/`parseFeatures`/`formatPrice`/`sortCars`/`statusMeta`）。
+- 纯函数落位 `utils/carDisplay.js`（`coverUrlOf`/`parseFeatures`/`formatPrice`/`sortCars`/`statusMeta`/`rowStatusKey`/`rowStatusMeta`；10-25 起 `rowStatusKey` 为状态口径唯一真源）。
 - **清洗兜底**：详情页 `cleans` 为空且 `params` 非空时展示原始参数并标注「原始参数/待清洗」；ADMIN/EDITOR 可「重新清洗」，不重新同步官网。
 - **详情页任务化（10-24-car-ops-async-p0）**：`CarDetail.vue` 的「同步」创建单车型 SELECTED 任务（`carApi.createJob([goodsId])`，缺 goodsId 拦截提示）、「重新清洗」创建 `CLEAN_ONE` 任务（`carApi.createCleanOneJob(id)`，allowAi=true）；页内嵌 `CarJobPanel` 展示进度/明细/重试，任务终态自动重载详情；挂载 `recoverLatest` 与知识中心 Tab 同口径（60min 心跳内 RUNNING 恢复轮询）；按钮 `jobBusy` 防重，后端 409 兜底「已有同步任务运行中」。旧阻塞接口 `{id}/sync`、`{id}/clean` 保留兼容兜底，前端不再调用。
+- **详情页单车型重建（10-25）**：ADMIN 另有「重建向量」按钮（无 goodsId 禁用），`carApi.createRebuildJob([goodsId])` 定向 `VECTOR_REBUILD`，同一任务面板展示进度、终态刷新详情；不传 goodsIds 的全库重建行为不变。
 
 ## 5. 验收清单
 

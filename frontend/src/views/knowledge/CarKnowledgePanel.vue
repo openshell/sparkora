@@ -12,6 +12,8 @@
         <el-option label="全部状态" value="all" />
         <el-option label="已同步" value="SUCCESS" />
         <el-option label="失败" value="FAILED" />
+        <el-option label="数据待复核" value="REVIEW" />
+        <el-option label="部分同步" value="PARTIAL" />
         <el-option label="同步中" value="SYNCING" />
         <el-option label="待同步" value="PENDING" />
         <el-option label="官网无数据" value="EMPTY" />
@@ -72,16 +74,14 @@
     </div>
 
     <template v-else>
+      <!-- 统计项即筛选入口：筛选/计数/卡片标签同源(rowStatusKey) -->
       <div class="stats-bar">
-        <div class="stat"><span class="stat-num">{{ rows.length }}</span><span class="stat-label">全部车型</span></div>
-        <div class="stat"><span class="stat-num ok">{{ countBy('SUCCESS') }}</span><span class="stat-label">已同步</span></div>
-        <div class="stat"><span class="stat-num err">{{ countBy('FAILED') }}</span><span class="stat-label">失败</span></div>
-        <div class="stat"><span class="stat-num warn">{{ emptyCount }}</span><span class="stat-label">官网无数据</span></div>
-        <div class="stat"><span class="stat-num warn">{{ countBy('SYNCING') }}</span><span class="stat-label">同步中</span></div>
-        <div class="stat">
-          <span class="stat-num">{{ coverCount }}<span class="stat-sub"> / {{ rows.length }}</span></span>
-          <span class="stat-label">封面覆盖</span>
-        </div>
+        <button v-for="item in statItems" :key="item.key" type="button" class="stat"
+          :class="{ active: statActive(item) }" :aria-pressed="statActive(item)"
+          :title="`筛选：${item.label}`" @click="onStatClick(item)">
+          <span class="stat-num" :class="item.cls">{{ item.num }}<span v-if="item.sub" class="stat-sub">{{ item.sub }}</span></span>
+          <span class="stat-label">{{ item.label }}</span>
+        </button>
       </div>
 
       <CarJobPanel v-if="job" :job="job" :retrying="retrying" :can-retry="user.isEditorOrAbove"
@@ -89,8 +89,13 @@
         @retry="onRetry" @cancel="onCancelJob" @close="onCloseJob" />
 
       <div v-if="rows.length" class="result-line">
-        <span>共 {{ rows.length }} 台 · 当前显示 {{ filtered.length }} 台</span>
-        <span v-if="hasFilter" class="filtered-hint">已按筛选条件过滤</span>
+        <div class="result-left">
+          <el-checkbox v-if="user.isEditorOrAbove && filtered.length" class="select-all"
+            :model-value="allFilteredSelected" :indeterminate="selectAllIndeterminate"
+            @change="onSelectAllFiltered">全选筛选结果</el-checkbox>
+          <span>共 {{ rows.length }} 台 · 当前显示 {{ filtered.length }} 台</span>
+          <span v-if="hasFilter" class="filtered-hint">已按筛选条件过滤</span>
+        </div>
       </div>
 
       <div v-if="user.isEditorOrAbove && selectedIds.length" class="bulk-bar">
@@ -166,8 +171,8 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { carApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -176,17 +181,26 @@ import CarJobPanel from '../../components/car/CarJobPanel.vue'
 import CarCatalogDrawer from '../../components/car/CarCatalogDrawer.vue'
 import CarJobHistoryDrawer from '../../components/car/CarJobHistoryDrawer.vue'
 import { useCarSyncJob } from '../../composables/useCarSyncJob'
-import { coverIsFallback, coverUrlOf, formatDate, formatPrice, sortCars, statusMeta } from '../../utils/carDisplay'
+import { coverIsFallback, coverUrlOf, formatDate, formatPrice, rowStatusKey, rowStatusMeta, sortCars } from '../../utils/carDisplay'
 
 const user = useUserStore()
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const rows = ref([])
-const keyword = ref('')
-const networkFilter = ref('all')
-const statusFilter = ref('all')
-const sortKey = ref('recent')
+
+// 筛选状态随 URL 持久化（10-25 R2）：kw/net/status/sort，非法值白名单兜底
+const STATUS_VALUES = ['SUCCESS', 'FAILED', 'SYNCING', 'PENDING', 'REVIEW', 'PARTIAL', 'EMPTY', 'NONE']
+const SORT_VALUES = ['recent', 'name', 'price']
+const queryString = (v) => (typeof v === 'string' ? v : '')
+const statusOf = (v) => (v === 'all' || STATUS_VALUES.includes(v) ? v : 'all')
+const sortOf = (v) => (SORT_VALUES.includes(v) ? v : 'recent')
+
+const keyword = ref(queryString(route.query.kw))
+const networkFilter = ref(queryString(route.query.net) || 'all')
+const statusFilter = ref(statusOf(route.query.status))
+const sortKey = ref(sortOf(route.query.sort))
 const drawerVisible = ref(false)
 const historyVisible = ref(false)
 const selectedIds = ref([])
@@ -200,7 +214,6 @@ const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, sto
 
 const networks = computed(() => [...new Set(rows.value.map(r => r.salesNetwork).filter(Boolean))])
 const coverCount = computed(() => rows.value.filter(r => r.coverImageUrl).length)
-const emptyCount = computed(() => rows.value.filter(r => r.sourceState === 'EMPTY').length)
 const syncedGoodsIds = computed(() => new Set(rows.value.map(r => r.goodsId)))
 
 const hasFilter = computed(() =>
@@ -208,37 +221,97 @@ const hasFilter = computed(() =>
 
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
+  const status = statusFilter.value
   const list = rows.value.filter(r => {
     if (kw && !(r.name || '').toLowerCase().includes(kw) && !(r.salesNetwork || '').toLowerCase().includes(kw)) return false
     if (networkFilter.value !== 'all' && r.salesNetwork !== networkFilter.value) return false
-    if (statusFilter.value === 'NONE') return !r.coverImageUrl
-    if (statusFilter.value === 'EMPTY') return r.sourceState === 'EMPTY'
-    // 官网无数据车 syncStatus 也是 FAILED,但统计口径已从「失败」排除,筛选必须同口径
-    if (statusFilter.value === 'FAILED') return r.syncStatus === 'FAILED' && r.sourceState !== 'EMPTY'
-    if (statusFilter.value !== 'all' && r.syncStatus !== statusFilter.value) return false
+    if (status === 'NONE') return !r.coverImageUrl
+    // 状态键单一真源(EMPTY > REVIEW > PARTIAL > syncStatus),与统计/标签同口径
+    if (status !== 'all' && rowStatusKey(r) !== status) return false
     return true
   })
   return sortCars(list, sortKey.value)
 })
 
-const countBy = (s) => rows.value.filter(r => r.syncStatus === s
-  && !(s === 'FAILED' && r.sourceState === 'EMPTY')).length
-const rowStatusMeta = (row) => {
-  if (!row) return statusMeta('PENDING')
-  if (row.sourceState === 'EMPTY') return { label: '官网无数据', type: 'info' }
-  if (row.sourceState === 'INCOMPLETE' || row.sourceState === 'STALE') {
-    return { label: '数据待复核', type: 'warning' }
-  }
-  if (row.syncStatus === 'PARTIAL') return { label: '部分同步', type: 'warning' }
-  return statusMeta(row.syncStatus)
+const countByKey = (key) => rows.value.filter(r => rowStatusKey(r) === key).length
+const statItems = computed(() => [
+  { key: 'all', label: '全部车型', num: rows.value.length, cls: '' },
+  { key: 'SUCCESS', label: '已同步', num: countByKey('SUCCESS'), cls: 'ok' },
+  { key: 'FAILED', label: '失败', num: countByKey('FAILED'), cls: 'err' },
+  { key: 'REVIEW', label: '数据待复核', num: countByKey('REVIEW'), cls: 'warn' },
+  { key: 'PARTIAL', label: '部分同步', num: countByKey('PARTIAL'), cls: 'warn' },
+  { key: 'EMPTY', label: '官网无数据', num: countByKey('EMPTY'), cls: 'warn' },
+  { key: 'SYNCING', label: '同步中', num: countByKey('SYNCING'), cls: 'warn' },
+  { key: 'cover', label: '封面覆盖', num: coverCount.value, sub: ` / ${rows.value.length}`, cls: '' }
+])
+const statActive = (item) => {
+  if (item.key === 'all') return statusFilter.value === 'all'
+  if (item.key === 'cover') return statusFilter.value === 'NONE'
+  return statusFilter.value === item.key
+}
+const onStatClick = (item) => {
+  if (item.key === 'all') statusFilter.value = 'all'
+  else if (item.key === 'cover') statusFilter.value = 'NONE'
+  else statusFilter.value = item.key
 }
 const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 
+// ---- URL 双向同步（R2，对齐 frontend spec「路由 query 双向同步」约定）----
+const pickFilters = (q) => ({
+  kw: queryString(q.kw),
+  net: queryString(q.net),
+  status: q.status ? statusOf(q.status) : 'all',
+  sort: q.sort ? sortOf(q.sort) : 'recent'
+})
+const currentFilters = () => ({
+  kw: keyword.value,
+  net: networkFilter.value === 'all' ? '' : networkFilter.value,
+  status: statusFilter.value,
+  sort: sortKey.value
+})
+const sameFilters = (a, b) =>
+  a.kw === b.kw && a.net === b.net && a.status === b.status && a.sort === b.sort
+
+let kwTimer = null
+const writeQuery = () => {
+  if (sameFilters(pickFilters(route.query), currentFilters())) return   // 自身回流短路
+  const next = currentFilters()
+  const query = { ...route.query }
+  const put = (k, v) => { if (v && v !== 'all' && !(k === 'sort' && v === 'recent')) query[k] = v; else delete query[k] }
+  put('kw', next.kw)
+  put('net', next.net)
+  put('status', next.status)
+  put('sort', next.sort)
+  router.replace({ query })
+}
+
 const clearFilters = () => {
+  clearTimeout(kwTimer)
   keyword.value = ''
   networkFilter.value = 'all'
   statusFilter.value = 'all'
+  sortKey.value = 'recent'
+  const query = { ...route.query }
+  ;['kw', 'net', 'status', 'sort'].forEach(k => delete query[k])
+  router.replace({ query })
 }
+
+// 关键词防抖 300ms（避免每键 replace 刷历史），其余筛选立即写回
+watch(keyword, () => {
+  clearTimeout(kwTimer)
+  kwTimer = setTimeout(writeQuery, 300)
+})
+watch([networkFilter, statusFilter, sortKey], writeQuery)
+// 浏览器前进/后退或外部链接：恢复筛选态（一致则短路，防写回死循环）
+watch(() => route.query, () => {
+  const ext = pickFilters(route.query)
+  if (sameFilters(ext, currentFilters())) return
+  clearTimeout(kwTimer)
+  keyword.value = ext.kw
+  networkFilter.value = ext.net || 'all'
+  statusFilter.value = ext.status
+  sortKey.value = ext.sort
+})
 
 const load = async () => {
   loading.value = true
@@ -314,6 +387,16 @@ const toggleSelect = (row) => {
 }
 
 const selectedRows = computed(() => rows.value.filter(r => selectedIds.value.includes(r.id)))
+
+// 「全选筛选结果」（R3）：勾选 = 选中当前筛选结果全部（保留已选中的非筛选行）；取消 = 清空全部
+const allFilteredSelected = computed(() =>
+  filtered.value.length > 0 && filtered.value.every(r => selectedIds.value.includes(r.id)))
+const selectAllIndeterminate = computed(() =>
+  !allFilteredSelected.value && filtered.value.some(r => selectedIds.value.includes(r.id)))
+const onSelectAllFiltered = (checked) => {
+  if (!checked) { selectedIds.value = []; return }
+  selectedIds.value = [...new Set([...selectedIds.value, ...filtered.value.map(r => r.id)])]
+}
 
 const onBulkSync = async () => {
   if (!ensureIdle()) return
@@ -505,7 +588,10 @@ onMounted(() => {
   load()
   recoverLatest({ onFinished: load })
 })
-onBeforeUnmount(stopPoll)
+onBeforeUnmount(() => {
+  clearTimeout(kwTimer)
+  stopPoll()
+})
 </script>
 
 <style scoped>
@@ -518,8 +604,16 @@ onBeforeUnmount(stopPoll)
 .btn-icon { margin-right: 4px; }
 .tab-empty { padding: 40px 0; text-align: center; color: var(--faint); display: flex; flex-direction: column; align-items: center; gap: 4px; }
 
-.stats-bar { display: flex; gap: 24px; padding: 14px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.stats-bar { display: flex; gap: 8px; padding: 14px 0; margin-bottom: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.stat {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 4px 10px; border: 0; border-radius: var(--radius-sm);
+  background: none; color: inherit; font: inherit; cursor: pointer;
+  transition: background .15s;
+}
+.stat:hover { background: color-mix(in srgb, var(--brand-weak) 45%, transparent); }
+.stat.active { background: var(--brand-weak); }
+.stat:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .stat-num { font-family: var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; }
 .stat-num.ok { color: var(--ok); }
 .stat-num.warn { color: var(--warn); }
@@ -528,6 +622,7 @@ onBeforeUnmount(stopPoll)
 .stat-label { font-size: 12px; color: var(--muted); }
 
 .result-line { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.result-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .filtered-hint { color: var(--brand); }
 
 .bulk-bar {
@@ -535,6 +630,8 @@ onBeforeUnmount(stopPoll)
   padding: 8px 12px; margin-bottom: 12px;
   border: 1px solid var(--brand-weak); border-radius: var(--radius);
   background: color-mix(in srgb, var(--brand-weak) 55%, var(--card));
+  /* R4 吸附：Tab pane 即滚动容器，top:0 直达内容区顶部；不透明背景避免透视 */
+  position: sticky; top: 0; z-index: 10;
 }
 .bulk-count { font-size: 13px; font-weight: 600; }
 

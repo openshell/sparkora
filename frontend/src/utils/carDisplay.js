@@ -117,6 +117,29 @@ export function statusMeta(status) {
   return map[status] || { label: status || '—', type: 'info' }
 }
 
+/**
+ * 单一状态判定键（10-25 车型 Tab P1）：筛选 / 统计 / 卡片标签三处同源。
+ *
+ * 优先级：EMPTY（官网无数据）> REVIEW（INCOMPLETE/STALE 数据待复核）> PARTIAL（部分同步）> syncStatus。
+ * EMPTY 因此天然不进 FAILED 统计；复核优先于失败/部分，避免同一台车重复计数。
+ */
+export function rowStatusKey(row) {
+  if (!row) return 'PENDING'
+  if (row.sourceState === 'EMPTY') return 'EMPTY'
+  if (row.sourceState === 'INCOMPLETE' || row.sourceState === 'STALE') return 'REVIEW'
+  if (row.syncStatus === 'PARTIAL') return 'PARTIAL'
+  return row.syncStatus || 'PENDING'
+}
+
+/** 状态键 → 标签（el-tag type + 中文文案）；REVIEW/PARTIAL/EMPTY 为派生键。 */
+export function rowStatusMeta(row) {
+  const key = rowStatusKey(row)
+  if (key === 'REVIEW') return { label: '数据待复核', type: 'warning' }
+  if (key === 'PARTIAL') return { label: '部分同步', type: 'warning' }
+  if (key === 'EMPTY') return { label: '官网无数据', type: 'info' }
+  return statusMeta(key)
+}
+
 /** 官网 sourceCreatedAt → YYYY-MM-DD（无值/非法返回空串）。 */
 export function formatDate(value) {
   if (!value) return ''

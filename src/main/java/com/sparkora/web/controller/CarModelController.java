@@ -313,15 +313,18 @@ public class CarModelController {
     }
 
     /**
-     * 创建「重建全部向量」异步任务(10-24 车型运维 P0 R1,job_type=VECTOR_REBUILD)。
-     * 全库逐车型重建,失败落任务明细(可通过「重试失败项」重跑),不再阻塞 HTTP;
-     * 返回 {jobId},前端复用任务轮询面板看进度。
+     * 创建重建向量异步任务(10-24 车型运维 P0 R1,job_type=VECTOR_REBUILD;
+     * 10-25 支持可选 body {@code {goodsIds:[...]}} 定向单台/少量重建)。
+     * 无 body 或 goodsIds 为空 → 全库逐车型重建(既有行为);定向时未知 goodsId → 400。
+     * 失败落任务明细(可通过「重试失败项」重跑),不阻塞 HTTP;返回 {jobId}。
      */
     @PostMapping("/models/rebuild-jobs")
     @PreAuthorize("hasRole('ADMIN')")
-    public R<Map<String, Object>> createRebuildJob() {
+    public R<Map<String, Object>> createRebuildJob(
+            @RequestBody(required = false) Map<String, List<String>> body) {
         try {
-            Long jobId = jobService.createRebuildJob();
+            List<String> goodsIds = body == null ? null : body.get("goodsIds");
+            Long jobId = jobService.createRebuildJob(goodsIds);
             return R.ok(Map.of("jobId", jobId));
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
