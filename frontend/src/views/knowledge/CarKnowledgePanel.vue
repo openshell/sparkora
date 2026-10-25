@@ -27,6 +27,10 @@
       <el-button v-if="hasFilter" text class="clear-btn" @click="clearFilters">清除筛选</el-button>
 
       <div class="toolbar-actions">
+        <!-- 质量（三角色只读）：全库向量对账，查看缺失块 TopN -->
+        <el-button @click="openQuality">
+          <el-icon class="btn-icon"><DataAnalysis /></el-icon>质量
+        </el-button>
         <el-button @click="historyVisible = true">
           <el-icon class="btn-icon"><Clock /></el-icon>同步记录
         </el-button>
@@ -167,6 +171,37 @@
 
     <CarCatalogDrawer v-model="drawerVisible" :synced-ids="syncedGoodsIds" :busy="jobBusy" @created="onJobCreated" />
     <CarJobHistoryDrawer v-model="historyVisible" />
+
+    <!-- 质量：全库向量对账（三角色只读，数据来自 GET /car/models/vector-stats） -->
+    <el-dialog v-model="qualityVisible" title="向量对账（质量）" width="560px">
+      <div v-if="qualityLoading" class="quality-skeleton">
+        <el-skeleton :rows="4" animated />
+      </div>
+      <div v-else-if="qualityError" class="state-error">
+        <el-icon :size="32" color="var(--faint)"><WarningFilled /></el-icon>
+        <div class="state-title">质量数据加载失败</div>
+        <div class="state-msg">{{ qualityError }}</div>
+        <el-button type="primary" plain @click="loadQuality">重试</el-button>
+      </div>
+      <template v-else>
+        <div class="quality-stats">
+          <div class="q-stat"><span class="q-num">{{ quality.modelCount || 0 }}</span><span class="q-label">车型数</span></div>
+          <div class="q-stat"><span class="q-num">{{ quality.chunkCount || 0 }}</span><span class="q-label">块总数</span></div>
+          <div class="q-stat"><span class="q-num">{{ quality.embeddedCount || 0 }}</span><span class="q-label">已嵌入块</span></div>
+          <div class="q-stat">
+            <span class="q-num" :class="{ err: (quality.missingCount || 0) > 0 }">{{ quality.missingCount || 0 }}</span>
+            <span class="q-label">缺失块</span>
+          </div>
+        </div>
+        <div class="q-missing-title">缺失向量 Top {{ qualityTop.length }}</div>
+        <el-table v-if="qualityTop.length" :data="qualityTop" size="small" class="q-table"
+          @row-click="goQualityModel">
+          <el-table-column prop="modelName" label="车型" min-width="160" />
+          <el-table-column prop="missing" label="缺失块数" width="100" align="right" />
+        </el-table>
+        <el-empty v-else :image-size="60" description="全部块均已有向量，无缺失" />
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -176,7 +211,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { carApi } from '../../api'
 import { useUserStore } from '../../store/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, WarningFilled, Van, Setting, Clock } from '@element-plus/icons-vue'
+import { Search, Refresh, WarningFilled, Van, Setting, Clock, DataAnalysis } from '@element-plus/icons-vue'
 import CarJobPanel from '../../components/car/CarJobPanel.vue'
 import CarCatalogDrawer from '../../components/car/CarCatalogDrawer.vue'
 import CarJobHistoryDrawer from '../../components/car/CarJobHistoryDrawer.vue'
@@ -210,7 +245,7 @@ const bulkSyncing = ref(false)
 const bulkBackfilling = ref(false)
 const bulkDeleting = ref(false)
 
-const { job, jobId, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
+const { job, jobId, jobRunning, jobBusy, retrying, cancelling, cancelCurrent, startPoll, stopPoll, beginStart, cancelStart, recoverLatest, retryCurrent } = useCarSyncJob()
 
 const networks = computed(() => [...new Set(rows.value.map(r => r.salesNetwork).filter(Boolean))])
 const coverCount = computed(() => rows.value.filter(r => r.coverImageUrl).length)
@@ -328,6 +363,65 @@ const load = async () => {
 }
 
 const goDetail = (row) => { router.push(`/car/${row.id}`) }
+
+// ---- 质量：全库向量对账（三角色只读，10-25 P2 R1）----
+const qualityVisible = ref(false)
+const qualityLoading = ref(false)
+const qualityError = ref('')
+const quality = ref({})
+const qualityTop = computed(() => (Array.isArray(quality.value.missingTopN) ? quality.value.missingTopN : []))
+
+const loadQuality = async () => {
+  qualityLoading.value = true
+  qualityError.value = ''
+  try {
+    const res = await carApi.vectorStats()
+    if (res.code === 0) quality.value = res.data || {}
+    else qualityError.value = res.msg || '质量数据加载失败'
+  } catch (e) {
+    qualityError.value = e.response?.data?.msg || e.message || '网络异常，请稍后重试'
+  } finally {
+    qualityLoading.value = false
+  }
+}
+
+const openQuality = () => {
+  qualityVisible.value = true
+  loadQuality()
+}
+
+// 行点击跳详情并关闭弹窗（missingTopN 条目含 modelId/modelName/missing）
+const goQualityModel = (row) => {
+  if (!row?.modelId) return
+  qualityVisible.value = false
+  router.push(`/car/${row.modelId}`)
+}
+
+// ---- 运行期静默刷新（10-25 P2 R2）：任务 RUNNING 时每 10s 刷新列表 ----
+// 与「刷新」按钮/终态 load 区分：不置 loading(无骨架闪烁)、不动 error、失败静默下次再试。
+let refreshTimer = null
+let refreshing = false
+const silentRefresh = async () => {
+  if (refreshing) return
+  refreshing = true
+  try {
+    const res = await carApi.list()
+    if (res.code === 0 && Array.isArray(res.data)) rows.value = res.data
+  } catch {
+    // 静默：网络抖动不清空已有数据，下一拍再试
+  } finally {
+    refreshing = false
+  }
+}
+
+watch(jobRunning, (running) => {
+  if (running) {
+    if (!refreshTimer) refreshTimer = setInterval(silentRefresh, 10000)
+  } else {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}, { immediate: true })
 
 const ensureIdle = () => {
   if (jobBusy.value) {
@@ -590,6 +684,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   clearTimeout(kwTimer)
+  clearInterval(refreshTimer)
+  refreshTimer = null
   stopPoll()
 })
 </script>
@@ -670,4 +766,17 @@ onBeforeUnmount(() => {
   overflow: hidden; word-break: break-all;
 }
 .c-actions { display: flex; justify-content: flex-end; gap: 2px; margin-top: 6px; flex-wrap: wrap; }
+
+/* 质量弹窗（向量对账） */
+.quality-skeleton { padding: var(--sp-2) 0; }
+.quality-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.q-stat {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper);
+}
+.q-num { font-family: var(--font-serif); font-size: 22px; font-weight: 700; line-height: 1; }
+.q-num.err { color: var(--err); }
+.q-label { font-size: 12px; color: var(--muted); }
+.q-missing-title { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.q-table :deep(.el-table__row) { cursor: pointer; }
 </style>

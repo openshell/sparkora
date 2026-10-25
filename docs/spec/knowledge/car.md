@@ -22,7 +22,7 @@
 | `car_model.source_created_at` | 官网 `goodsInfo.createdAt`（数据创建时间，Flyway V28）；UI 文案固定「创建时间」，**不是上市/发布时间**；与系统审计 `created_at` 分离 |
 | `sourceCreatedAt` | 非持久化/实体派生字段（`LocalDateTime`），随列表/详情返回；空值前端不展示 |
 | `car_model.image_fingerprint` / `params_fingerprint` | 10-21 拆分的图片域/参数域 SHA-256（64 hex）；只换图只更新图片、只换参数只重建参数/清洗/块；空值=待初始化 |
-| `car_sync_job.heartbeat_at` / `cancel_requested` / `skipped` | 任务心跳、取消标记、跳过计数；逐车型更新心跳，`skipped` 不并入 `success` |
+| `car_sync_job.heartbeat_at` / `cancel_requested` / `skipped` / `current_goods_id` | 任务心跳、取消标记、跳过计数、运行中当前车型（10-25，Flyway `V29__car_sync_job_current_model.sql`，终态/陈旧清理时置空）；逐车型更新心跳，`skipped` 不并入 `success` |
 | 删除车型清理 | 逻辑删主表/版本/分组/参数/文档块；并按 `modelId` 物理清理单表 store（`deleteByCarModel`，兜底历史逻辑删除残留；**10-03 E6 前为 `sparkora_car_doc_embedding`，已退役**）；**不删全局共享图库资产**（`project_id=null`、`source=byd`、内容哈希去重） |
 | 同步触发 | 手动 `POST /api/car/sync/jobs`（`job_type=SELECTED/RETRY`）+ 手动 `POST /api/car/sync/backfill`（`job_type=IMAGE_BACKFILL`，10-15 存量图片轻回填；10-21 起默认只补缺失/失败/过期，`?mode=FULL` 才全库重扫）+ 定时 `@Scheduled`（10-15 起每分钟 tick 读运行时设置，到点创建 `job_type=INCREMENTAL` 增量分派任务；**未过期** RUNNING 任务存在则跳过；陈旧 RUNNING（`heartbeat_at` 超 60 分钟，缺失回退 `started_at`）先置 FAILED 自愈并释放 `job:<id>` 全局锁后继续，见 [news.md §4](news.md)）；默认关闭（运行时设置 `sparkora_setting.car_sync_enabled=false`） |
 | 配置 | 运行时设置 `sparkora_setting.car_sync_enabled`（默认 false）/ `car_sync_cron`（默认 `0 0 3 * * ?`），设置 UI 改动免重启生效；`.env` 的 `CAR_SYNC_ENABLED`/`CAR_SYNC_CRON` **降级为遗留种子**（调度不再读取） |
@@ -61,7 +61,7 @@
 - **失败状态回写（10-21 R2）**：`runJob` 的 catch 分支与详情页阻塞同步 `POST /api/car/models/{id}/sync` 的异常分支都调用 `CarModelService.markSyncFailed(goodsId, error)`——按 `goods_id` 置 `sync_status='FAILED'` + `last_sync_error`（截断 500 字符）+ `updated_at`，**不改 `last_sync_at`**（保留最后成功时间）；回写自身失败仅 `log.warn`，不覆盖原始异常/响应。全量、`IMAGE_BACKFILL`、`INCREMENTAL` 与阻塞单车型同步同口径。成功路径（`persistModel`/`backfillInternal`）与 `markSyncing` 均清空 `lastSyncError`。车型不再永久停留在「同步中」。
 - `CarSyncScheduler`：10-15 起 `@Scheduled(cron = "0 * * * * ?")` **每分钟 tick**（不再直读 `.env` cron）——读 `SettingService.get()`（内存缓存）→ `car_sync_enabled=false` 早退 → `CronExpression.parse(car_sync_cron)` 维护 `nextRunAt`（cron 变化/首轮只装载不开跑；非法/未配置 log 后跳过不崩）；到点执行原编排（**先 `markStaleRunningAsFailed()` 清陈旧 RUNNING、再 `hasFreshRunning()` 防重叠**（顺序不可反）→ 官网目录取 goodsId → `createJob(goodsIds, "INCREMENTAL")`），完成后顺延下一拍（跳过/失败也顺延防同拍重复）；全程 try/catch，异常不中断 tick。设置改动下一 tick 生效，免重启。
 - **定时同步陈旧自愈（kb-cleanup，2026-09-12；10-21 心跳化）**：以 `heartbeat_at`（逐车型更新，缺失回退 `started_at`）为存活时间戳，阈值 `SYNC_STALE_MS=60 分钟`（全量 56 车型 + 清洗 + embedding 实测可超 20 分钟，10 分钟会误判活任务）。清理陈旧 RUNNING 时同时释放其 `job:<id>` 全局锁（锁 TTL 70min），否则崩溃残留锁会挡住新任务。车型与新闻两侧对称实现（细节见 [news.md §4](news.md)）。
-- 任务表 `sparkora_car_sync_job`：`job_type`（`SELECTED`/`RETRY` 全量 syncOne、`IMAGE_BACKFILL` 轻回填、`INCREMENTAL` 增量分派、`VECTOR_REBUILD` 全库重建向量、`CLEAN_ONE` 单车型清洗（10-24 新增，见 §4.4）、`SCHEDULED` 旧定时历史值）、`status`、计数、`failed_items`、`started_at`/`finished_at`/`error_msg`。明细条目两类：失败 `{goodsId,name,error}` 与备注 `{goodsId,name,note}`（如「官网无图」「跳过：指纹一致」，成功路径可观测信息）；**retry 只取含 `error` 的条目**（note 条目不进重试候选）。
+- 任务表 `sparkora_car_sync_job`：`job_type`（`SELECTED`/`RETRY` 全量 syncOne、`IMAGE_BACKFILL` 轻回填、`INCREMENTAL` 增量分派、`VECTOR_REBUILD` 全库/定向重建向量、`CLEAN_ONE` 单车型清洗（10-24 新增，见 §4.4）、`SCHEDULED` 旧定时历史值）、`status`、计数、`failed_items`、`started_at`/`finished_at`/`error_msg`、**`current_goods_id`（10-25 可观测，Flyway `V29__car_sync_job_current_model.sql`：RUNNING 时当前处理的车型 goods_id，终态/陈旧清理时置空）**。查询响应另带派生 `currentModelName`（按 `current_goods_id` 实时解析车型名，不落库）。明细条目两类：失败 `{goodsId,name,error}` 与备注 `{goodsId,name,note}`（如「官网无图」「跳过：指纹一致」，成功路径可观测信息）；**retry 只取含 `error` 的条目**（note 条目不进重试候选）。
 
 ### 4.1 同步指纹与增量分派（10-15-car-image-backfill）
 
@@ -119,7 +119,7 @@
 - **`CLEAN_ONE`（单车型清洗异步任务）**：`POST /api/car/models/{id}/clean-jobs`（ADMIN/EDITOR）→ `R.ok({jobId})`；车型不存在 404、缺 goodsId 400。`allowAi=true`（显式单台重跑允许 AI 兜底，**区别于批量 `CLEAN_BACKFILL` 的 `allowAi=false`**）；`cleansAfter>0` → success + note，否则 skipped + note「跳过:无可清洗参数/版本」。取代详情页旧阻塞接口 `POST /models/{id}/clean`（前端已迁移，接口保留兜底）。
 - **运维域失败不写车型同步状态**：`VECTOR_REBUILD`/`CLEAN_ONE` 分支与异常路径**均不调 `markSyncFailed`**——向量/清洗是独立运维域，失败只进任务明细（error 条目可重试），不污染 `sync_status`/`last_sync_error`。
 - **backfill 定向（10-24）**：`POST /api/car/sync/backfill` 支持可选 body `{goodsIds:[...]}`——非空时**只处理指定车型**（忽略 mode 过滤：显式选择即目标，含 `EMPTY` 车型走存量 URL 兜底）；未知 goodsId → 400「车型不存在」；沿用 `normalizeGoodsIds` 去重/上限 100 校验。不传 body 行为不变（MISSING 过滤 / FULL 全库）。前端入口 = 车型 Tab 批量栏「补选中图片」。
-- **已知行为**：任务「重试失败项」（`retry`）固定创建 `RETRY` 全量任务——对 `VECTOR_REBUILD`/`CLEAN_ONE` 的失败条目重试 = 对该车型做**全量同步**（含采集/清洗/向量，功能上收敛但比预期重）；如需仅重跑向量/清洗域的重试，留待后续任务让 retry 保留源 job_type。
+- **重试语义（10-25 更新）**：`retry` 对 `VECTOR_REBUILD`/`CLEAN_ONE`/`IMAGE_BACKFILL`/`CLEAN_BACKFILL` **保留源 job_type**——只对失败车型重跑对应域（`goodsIds` 仍只取含 `error` 条目）；其余类型（`SELECTED`/`RETRY`/`INCREMENTAL`/`SCHEDULED`/未知）仍创建 `RETRY` 全量任务。`INCREMENTAL` 刻意不保留：重试应只对失败车型做全量收敛，而非再走一次增量比对。
 
 ## 5. 接口契约（`/api/car`，全部 `R<T>` + 方法级 `@PreAuthorize`）
 
@@ -130,7 +130,7 @@
 | GET | `/api/car/models/{id}` | 三角色 | 车型详情（可带 `?versionId=`） |
 | POST | `/api/car/sync/jobs` | ADMIN/EDITOR | 创建同步任务（`{goodsIds:[...]}`），异步执行，返回 `{jobId}` |
 | POST | `/api/car/sync/backfill` | ADMIN/EDITOR | 创建「图片补入库」任务；10-21 起默认只补缺失/失败/过期图片，`?mode=FULL` 才全库重扫；**10-24 起支持可选 body `{goodsIds:[...]}` 定向执行**（只处理指定车型，忽略 mode 过滤；未知 id 400；不传 body 行为不变）；返回 `data=jobId`（数字，非 `{jobId}` 包装）；同时补**封面**（`img`）与详情图集；库内无车型 400 |
-| GET | `/api/car/sync/jobs/{id}` | 三角色 | 任务进度；不存在 404 |
+| GET | `/api/car/sync/jobs/{id}` | 三角色 | 任务进度（RUNNING 时含 `currentGoodsId` 与派生 `currentModelName`，终态为空）；不存在 404 |
 | GET | `/api/car/sync/jobs` | 三角色 | 任务历史 |
 | POST | `/api/car/sync/jobs/{id}/retry` | ADMIN/EDITOR | 重试失败项，返回新任务 `{jobId}`；备注条目（官网无图/跳过）不参与重试 |
 | POST | `/api/car/sync/jobs/{id}/cancel` | ADMIN/EDITOR | 请求取消运行中任务；当前车型结束后停止后续（非强制中断） |
@@ -152,12 +152,12 @@
 
 ## 6. 前端
 
-- `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐，见 [center.md](center.md)）：搜索/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）/刷新；**状态口径单一真源 `rowStatusKey`（EMPTY > 复核 > 部分 > syncStatus）——筛选/统计/卡片标签三处同源**；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且**可点击切筛选**（「全部车型」清状态、「封面覆盖」= 无封面）；**筛选随 URL 持久化**（`kw`/`net`/`status`/`sort`，`router.replace` + 挂载恢复 + 清除筛选清 query）；**「全选筛选结果」checkbox**（EDITOR+，全选/indeterminate/取消清空，勾选=与已选并集）；批量栏 `position: sticky` 吸附（不透明背景）；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图）；主图 `fit="contain"` + 纸色底，回退详情图时 `fit="cover"` + 顶部对齐裁剪（`object-position: top`）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）+ **「补选中图片」（10-24，定向 backfill，见 §4.4）**；「重建全部向量」为异步 `VECTOR_REBUILD` 任务（不再有 300s 阻塞等待）。
+- `views/knowledge/CarKnowledgePanel.vue`（知识中心车型 Tab，10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐与可观测，见 [center.md](center.md)）：搜索/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）/刷新；**状态口径单一真源 `rowStatusKey`（EMPTY > 复核 > 部分 > syncStatus）——筛选/统计/卡片标签三处同源**；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且**可点击切筛选**（「全部车型」清状态、「封面覆盖」= 无封面）；**筛选随 URL 持久化**（`kw`/`net`/`status`/`sort`，`router.replace` + 挂载恢复 + 清除筛选清 query）；**「全选筛选结果」checkbox**（EDITOR+，全选/indeterminate/取消清空，勾选=与已选并集）；批量栏 `position: sticky` 吸附（不透明背景）；**工具栏「质量」弹窗**（三角色只读：向量对账数字 + 缺失 TopN 可跳详情，失败中文提示可重试）；**任务 RUNNING 期间每 10s 静默刷新列表**（单飞、不置骨架、不清空错误态，终态与卸载停止）；卡片缩略图 `coverUrlOf(row)`（封面优先，回退详情图首图）；主图 `fit="contain"` + 纸色底，回退详情图时 `fit="cover"` + 顶部对齐裁剪（`object-position: top`）；失败原因截断 + tooltip、失败卡片可「重试」；EDITOR+ 恒定可见批量 checkbox + 批量同步/删除（删除文案说明不删共享图库资产）+ **「补选中图片」（10-24，定向 backfill，见 §4.4）**；「重建全部向量」为异步 `VECTOR_REBUILD` 任务（不再有 300s 阻塞等待）。
 - 同步记录（10-24）：知识中心与 `/car/sync` 的「同步记录」打开 `CarJobHistoryDrawer.vue`，展示最近 50 条任务（类型/状态/成功·跳过·失败/操作人/时间），选中行复用 `CarJobPanel` 看明细/备注。
 - 创建时间（10-24）：卡片 `c-meta` 与详情 Hero 展示官网 `createdAt`，文案「创建 YYYY-MM-DD / 创建时间」，不称发布时间；空值不展示。
-- 内聚同步（R4）：`components/car/CarCatalogDrawer.vue`（抽屉内加载官网目录 + 同步选中 + 图片补入库）、`CarCatalogGrid.vue`（目录网格/筛选/全选，纯展示）、`CarJobPanel.vue`（任务进度 + 失败/备注明细 + 重试；`can-retry` 控写权限；job_type 文案含「选中同步/重试/图片补入库/增量同步/补清洗/单车型清洗/重建向量/定时同步」）。任务由 `composables/useCarSyncJob.js` 统一轮询（2s、终态停止、连续 3 次失败停止；`beginStart`/`cancelStart` 覆盖 createJob 请求在途 → 首次轮询的防重窗口；`recoverLatest` 只恢复 `heartbeatAt`（缺失回退 `startedAt`）60 分钟内的 RUNNING（陈旧 RUNNING 不阻塞新建，与后端 `SYNC_STALE_MS` 同口径），否则展示 24h 内最近终态任务；`toastFinished` 识别 `VECTOR_REBUILD`/`CLEAN_ONE`/`IMAGE_BACKFILL`/`INCREMENTAL`/`CLEAN_BACKFILL` 完成文案）。
+- 内聚同步（R4）：`components/car/CarCatalogDrawer.vue`（抽屉内加载官网目录 + 同步选中 + 图片补入库）、`CarCatalogGrid.vue`（目录网格/筛选/全选，纯展示）、`CarJobPanel.vue`（任务进度 + 失败/备注明细 + 重试；`can-retry` 控写权限；job_type 文案含「选中同步/重试/图片补入库/增量同步/补清洗/单车型清洗/重建向量/定时同步」；**10-25 起运行态标题按 job_type 区分（同步进行中/图片补入库中/检查更新中/补清洗中/重建向量中/清洗中/定时检查中），RUNNING 展示「正在处理：<车型名>」，心跳 >10 分钟未更新显示停滞警示**）。任务由 `composables/useCarSyncJob.js` 统一轮询（2s、终态停止、连续 3 次失败停止；`beginStart`/`cancelStart` 覆盖 createJob 请求在途 → 首次轮询的防重窗口；`recoverLatest` 只恢复 `heartbeatAt`（缺失回退 `startedAt`）60 分钟内的 RUNNING（陈旧 RUNNING 不阻塞新建，与后端 `SYNC_STALE_MS` 同口径），否则展示 24h 内最近终态任务；`toastFinished` 识别 `VECTOR_REBUILD`/`CLEAN_ONE`/`IMAGE_BACKFILL`/`INCREMENTAL`/`CLEAN_BACKFILL` 完成文案）。
 - `views/CarSync.vue`（`/car/sync` 保留）：复用上述三组件 + composable，页面内直接展示目录网格；删除重复的轮询/任务面板实现；同步/补入库按钮按 EDITOR+ 显隐。
-- `views/CarDetail.vue`：Hero 封面（无则详情图首图顶部裁剪，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；**10-24 起同步/清洗任务化**：「同步」创建单车型 SELECTED 任务（`createJob([goodsId])`，goodsId 缺失时拦截提示）、「重新清洗」创建 `CLEAN_ONE` 任务，均内嵌 `CarJobPanel` 展示进度、终态自动重载详情、挂载 `recoverLatest`；按钮 `jobBusy` 防重（409 兜底已有任务冲突）。**10-25 起 ADMIN 另有「重建向量」**：`createRebuildJob([goodsId])` 定向 `VECTOR_REBUILD`（同一任务面板/终态刷新，无 goodsId 禁用），状态标签统一用共享 `rowStatusMeta`。
+- `views/CarDetail.vue`：Hero 封面（无则详情图首图顶部裁剪，原图预览）、详情图集缩略图（`preview-src-list` 指原图）、卖点 chips（`parseFeatures`）、失败告警（`lastSyncError` 完整展示）；**10-24 起同步/清洗任务化**：「同步」创建单车型 SELECTED 任务（`createJob([goodsId])`，goodsId 缺失时拦截提示）、「重新清洗」创建 `CLEAN_ONE` 任务，均内嵌 `CarJobPanel` 展示进度、终态自动重载详情、挂载 `recoverLatest`；按钮 `jobBusy` 防重（409 兜底已有任务冲突）。**10-25 起 ADMIN 另有「重建向量」**：`createRebuildJob([goodsId])` 定向 `VECTOR_REBUILD`（同一任务面板/终态刷新，无 goodsId 禁用），状态标签统一用共享 `rowStatusMeta`；**清洗质量区块**（`clean-stats`：总数 + RULE/AI/FALLBACK + 兜底占比，>20% warning；无数据/接口失败降级不阻塞详情），任务终态同时刷新详情与质量。
 - `utils/carDisplay.js`：`coverUrlOf` / `parseFeatures` / `formatPrice` / `sortCars` / `statusMeta` / `rowStatusKey` / `rowStatusMeta` 纯函数（卡片、详情、同步页共用；`rowStatusKey` 是状态口径唯一真源，`statusMeta` 仅作 syncStatus 基础映射）。
 - 10-21 安全适配：卡片/详情按 `sourceState` 展示「官网无数据」（`EMPTY`）/「数据待复核」（`INCOMPLETE`/`STALE`）标签；`EMPTY` 车型禁用全量同步，10-24 起提示改为「勾选后使用批量栏『补选中图片』」（定向 backfill 闭环，见 §4.4）；`PARTIAL` 显示 `syncNote`；统计条增加「官网无数据」；任务面板显示 `skipped`，全跳过时标题为「检查完成(无变化)」，运行中可请求取消。
 - ~~`views/CarLibrary.vue`~~ 已不存在（其能力由知识中心车型 Tab 承接）。
@@ -186,6 +186,6 @@
 ## 8. 已知限制
 
 - 清洗口径变更仅对新重建的车型生效；存量车型可一键「重建全部向量」（10-24 起为异步 `VECTOR_REBUILD` 任务）收敛。
-- 任务「重试失败项」对 `VECTOR_REBUILD`/`CLEAN_ONE` 失败条目是**全量同步**语义（`retry` 固定建 `RETRY` 任务，功能收敛但比仅重跑向量/清洗域重），见 §4.4；全库重建的互斥全局锁 TTL 70min，车型数超 ~250 台单任务可能超 TTL（锁过期仅失去互斥保护，任务靠心跳不会被陈旧清理误杀）。
+- 全库重建的互斥全局锁 TTL 70min，车型数超 ~250 台单任务可能超 TTL（锁过期仅失去互斥保护，任务靠心跳不会被陈旧清理误杀）。运行期「当前车型」为最新采样值：逐台处理极快时轮询可能跳过中间车型展示，属可接受的采样语义。
 - 10-21 起 `params_fingerprint` 已覆盖 `goodsParams + goodsAttrList`，参数/版本独立变化可触发定向重建；存量行首次需要一次图片/参数指纹初始化（图片可走 `图片补入库`，参数在首次增量时按现有数据初始化，避免全库重清洗）。
 - 车型库图片接入文章配图**预留**（暂不开发）；图库中 `source=byd` 的车型介绍图可经来源过滤/`车型` 标签组/关键词/语义搜索检索（10-15 存量回填后），但未接入文章配图面板。

@@ -25,6 +25,7 @@ import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -406,5 +407,96 @@ class CarSyncJobOpsAsyncTest {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> service.createBackfillJob(false, List.of()));
         assertTrue(ex.getMessage().contains("库内没有可回填的车型"));
+    }
+
+    // ================= retry 保留源 job_type(10-25 P2) =================
+
+    /** 构造带失败明细的源任务(failedItems 只含 error 条目才有重试候选)。 */
+    private static CarSyncJobEntity finishedJob(Long id, String type, String failedItems) {
+        CarSyncJobEntity job = new CarSyncJobEntity();
+        job.setId(id);
+        job.setJobType(type);
+        job.setStatus("FAILED");
+        job.setFailedItems(failedItems);
+        return job;
+    }
+
+    @Test
+    void 重试_重建向量任务_保留源类型且只圈定失败车型() {
+        String items = "[{\"goodsId\":\"156\",\"name\":\"海豚\",\"error\":\"向量失败 1/3 块\"}]";
+        when(jobMapper.selectById(9L)).thenReturn(finishedJob(9L, "VECTOR_REBUILD", items));
+        when(jobMapper.selectById(42L)).thenReturn(runningJob(42L, "VECTOR_REBUILD"));
+        when(modelService.rebuildOneByGoodsId("156")).thenReturn(new EmbedStats(3, 3, 0));
+
+        Long jobId = service.retry(9L);
+
+        assertEquals(42L, jobId);
+        ArgumentCaptor<CarSyncJobEntity> cap = ArgumentCaptor.forClass(CarSyncJobEntity.class);
+        verify(jobMapper).insert(cap.capture());
+        assertEquals("VECTOR_REBUILD", cap.getValue().getJobType());
+        assertEquals(1, cap.getValue().getTotal());
+        verify(modelService).rebuildOneByGoodsId("156");
+        verify(modelService, never()).syncOne(anyString());
+    }
+
+    @Test
+    void 重试_单车型清洗_保留源类型() {
+        setField(service, "cleanRepairService", cleanRepairService);
+        String items = "[{\"goodsId\":\"156\",\"name\":\"海豚\",\"error\":\"清洗中断\"}]";
+        when(jobMapper.selectById(9L)).thenReturn(finishedJob(9L, "CLEAN_ONE", items));
+        when(jobMapper.selectById(42L)).thenReturn(runningJob(42L, "CLEAN_ONE"));
+        when(modelMapper.selectOne(any())).thenReturn(model(7L, "156", "海豚"));
+        when(cleanRepairService.cleanOneByGoodsId("156", true))
+                .thenReturn(new CarCleanRepairService.CleanRepairResult(7L, "海豚", 3, 3, 8, 8, 0, 0));
+
+        service.retry(9L);
+
+        ArgumentCaptor<CarSyncJobEntity> cap = ArgumentCaptor.forClass(CarSyncJobEntity.class);
+        verify(jobMapper).insert(cap.capture());
+        assertEquals("CLEAN_ONE", cap.getValue().getJobType());
+        assertEquals(1, cap.getValue().getTotal());
+        verify(cleanRepairService).cleanOneByGoodsId("156", true);
+        verify(modelService, never()).syncOne(anyString());
+    }
+
+    @Test
+    void 重试_增量任务_退化为RETRY全量同步() {
+        String items = "[{\"goodsId\":\"156\",\"name\":\"海豚\",\"error\":\"官网超时\"}]";
+        when(jobMapper.selectById(9L)).thenReturn(finishedJob(9L, "INCREMENTAL", items));
+        when(jobMapper.selectById(42L)).thenReturn(runningJob(42L, "RETRY"));
+        when(modelMapper.selectOne(any())).thenReturn(model(1L, "156", "海豚"));
+        when(modelService.syncOne("156")).thenReturn(new CarModelService.SyncOutcome(model(1L, "156", "海豚"), null));
+
+        service.retry(9L);
+
+        ArgumentCaptor<CarSyncJobEntity> cap = ArgumentCaptor.forClass(CarSyncJobEntity.class);
+        verify(jobMapper).insert(cap.capture());
+        assertEquals("RETRY", cap.getValue().getJobType());
+        verify(modelService).syncOne("156");
+    }
+
+    // ================= 任务详情派生当前车型(10-25 P2) =================
+
+    @Test
+    void 查询任务_运行中补当前车型名() {
+        CarSyncJobEntity job = runningJob(42L, "VECTOR_REBUILD");
+        job.setCurrentGoodsId("156");
+        when(jobMapper.selectById(42L)).thenReturn(job);
+        when(modelMapper.selectOne(any())).thenReturn(model(1L, "156", "海豚"));
+
+        CarSyncJobEntity got = service.get(42L);
+
+        assertEquals("156", got.getCurrentGoodsId());
+        assertEquals("海豚", got.getCurrentModelName());
+    }
+
+    @Test
+    void 查询任务_无当前车型_不查车型且派生为空() {
+        when(jobMapper.selectById(42L)).thenReturn(runningJob(42L, "VECTOR_REBUILD"));
+
+        CarSyncJobEntity got = service.get(42L);
+
+        assertNull(got.getCurrentModelName());
+        verify(modelMapper, never()).selectOne(any());
     }
 }

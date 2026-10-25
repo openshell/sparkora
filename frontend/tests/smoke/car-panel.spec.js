@@ -167,3 +167,54 @@ test('car sync history drawer lists recent jobs', async ({ page }) => {
   await expect(page.locator('.history-table')).toContainText('选中同步')
   await expect(page.locator('.history-table')).toContainText('成功')
 })
+
+test('car job panel shows current model, stalled heartbeat and type-specific title', async ({ page }) => {
+  const staleAt = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+  const running = {
+    id: 9, jobType: 'VECTOR_REBUILD', status: 'RUNNING', total: 3, success: 0, failed: 0, skipped: 0,
+    heartbeatAt: staleAt, startedAt: staleAt,
+    currentGoodsId: '156', currentModelName: '大唐EV', failedItems: null
+  }
+  await page.route('**/api/car/models', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: ROWS }) }))
+  await page.route('**/api/car/sync/jobs', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: [running] }) }))
+  await page.route('**/api/car/sync/jobs/9', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: running }) }))
+  await page.setViewportSize(SMOKE_VIEWPORT)
+  await page.goto('/knowledge')
+  await page.waitForLoadState('networkidle')
+
+  const panel = page.locator('.job-panel')
+  await expect(panel.locator('.job-title')).toContainText('重建向量中…')
+  await expect(panel.locator('.job-current')).toContainText('正在处理：大唐EV')
+  await expect(panel.locator('.job-stalled')).toContainText('心跳超过 10 分钟未更新')
+})
+
+test('car quality dialog shows vector reconciliation and missing topN', async ({ page }) => {
+  const stats = {
+    modelCount: 3, chunkCount: 10, embeddedCount: 8, missingCount: 2,
+    missingTopN: [{ modelId: 14, modelName: '测试车型', missing: 2 }]
+  }
+  await page.route('**/api/car/models', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: ROWS }) }))
+  await page.route('**/api/car/models/vector-stats', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok', data: stats }) }))
+  await page.setViewportSize(SMOKE_VIEWPORT)
+  await page.goto('/knowledge')
+  await page.waitForLoadState('networkidle')
+
+  await page.getByRole('button', { name: '质量' }).click()
+  const dialog = page.locator('.el-dialog')
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('.q-stat').nth(0).locator('.q-num')).toHaveText('3')
+  await expect(dialog.locator('.q-stat').nth(1).locator('.q-num')).toHaveText('10')
+  await expect(dialog.locator('.q-stat').nth(2).locator('.q-num')).toHaveText('8')
+  await expect(dialog.locator('.q-stat').nth(3).locator('.q-num')).toHaveText('2')
+  await expect(dialog.locator('.q-table')).toContainText('测试车型')
+  await expect(dialog.locator('.q-table')).toContainText('2')
+
+  // 缺失 TopN 行点击跳详情并关闭弹窗
+  await dialog.locator('.el-table__row').first().click()
+  await expect(page).toHaveURL(/\/car\/14$/)
+})

@@ -28,7 +28,7 @@
 | 文件 | 职责 |
 |---|---|
 | `views/KnowledgeCenter.vue` | 页头 + `el-tabs`；Tab 面板 `v-if` 懒挂载（首访加载、切回保留状态）；`loadedTabs` = `{car,kb,sources,qa}` |
-| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐）：`carApi.list()` + 关键词/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）+ 刷新 + 结果数/清除筛选；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且可点击切筛选；筛选随 URL 持久化（`kw`/`net`/`status`/`sort`）；EDITOR+「全选筛选结果」+ 批量选择/同步/删除 + **「补选中图片」（10-24 定向 backfill）**，批量栏 sticky；缩略图 `coverUrlOf(row)`（封面优先；无封面回退详情图首图并顶部裁剪，回退态 `fit="cover"` + `object-position: top`）；失败原因截断 + tooltip、失败可重试；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量——后者 10-24 起为异步 `VECTOR_REBUILD` 任务） |
+| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐与可观测）：`carApi.list()` + 关键词/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）+ 刷新 + 结果数/清除筛选；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且可点击切筛选；筛选随 URL 持久化（`kw`/`net`/`status`/`sort`）；EDITOR+「全选筛选结果」+ 批量选择/同步/删除 + **「补选中图片」（10-24 定向 backfill）**，批量栏 sticky；**「质量」弹窗**（向量对账 + 缺失 TopN 跳详情）；**任务 RUNNING 期间 10s 静默刷新**；缩略图 `coverUrlOf(row)`（封面优先；无封面回退详情图首图并顶部裁剪，回退态 `fit="cover"` + `object-position: top`）；失败原因截断 + tooltip、失败可重试；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量——后者 10-24 起为异步 `VECTOR_REBUILD` 任务） |
 | `views/knowledge/KbLibraryPanel.vue` | 知识库 Tab：`kbApi` 列表/新建/编辑/重建/批量导入。**本任务未改动** |
 | `views/knowledge/SourceTab.vue` | 信源 Tab 容器：统一加载 `sourceApi.list()` 供子面板做来源名映射；上部「信源管理 + 采集任务」，下部「信源内容」 |
 | `views/knowledge/SourceManagePanel.vue` | 信源管理：列表（名称/类型/垂直/排期/最近采集状态/栏目数/启停）+ 编辑抽屉（el-form + rules，含**栏目列表** channels[]）+ 启停 switch + 手动触发采集（整源 / 单栏目 `channelId`） |
@@ -73,6 +73,8 @@
 - **状态口径同源（10-25）**：`utils/carDisplay.js#rowStatusKey` 为唯一真源（EMPTY > 数据待复核(INCOMPLETE/STALE) > 部分同步(PARTIAL) > syncStatus）；状态下拉、统计计数、卡片标签全部复用，禁止各自 if 链。统计条 8 项可点击切筛选（「全部车型」清状态键、「封面覆盖」= 无封面）。
 - **筛选 URL 契约（10-25）**：`/knowledge` query 键 `kw`/`net`/`status`/`sort`；变更经 `router.replace` 写回（keyword 防抖 300ms，其余立即；写前比对短路），挂载从 query 恢复（status/sort 白名单兜底），外部回流（前进/后退/分享链接）短路应用；清除筛选同步清 query 四键。Tab 仍非路由，不得把 Tab 状态写入 query。
 - **全选与吸附（10-25）**：结果行 EDITOR+ 提供「全选筛选结果」checkbox（全选/indeterminate；勾选=与已选并集，取消=清空全部选择），与批量栏计数/同步/补图/删除联动；批量栏滚动时 `position: sticky; top: 0` 吸附 tab 内容区顶部（不透明背景 + z-index，不遮挡操作）。
+- **质量可观测（10-25）**：工具栏「质量」弹窗（三角色只读）展示 `GET /models/vector-stats`（车型数/块数/已嵌入/缺失 + 缺失 TopN 可跳 `/car/:id`，失败中文提示可重试）；详情页展示 `GET /models/{id}/clean-stats`（总数 + RULE/AI/FALLBACK + 兜底占比 >20% warning；无数据/失败降级不阻塞详情）。
+- **任务可观测与运行期刷新（10-25）**：`GET /sync/jobs/{id}` 的 RUNNING 任务带 `currentGoodsId`/派生 `currentModelName`，任务面板显示「正在处理」，心跳 >10 分钟未更新显示停滞警示，运行态标题按 job_type 区分；列表在 RUNNING 期间每 10s 静默刷新（单飞、不置骨架、不清空错误态，终态与卸载停止）。
 - **空数据安全**：`sourceState=EMPTY` 的车型显示「官网无数据」，禁用全量同步，10-24 起提示改用批量栏「补选中图片」（定向 backfill 闭环）；批量同步若包含空数据车会直接拦截并提示新入口。任务面板使用 `skipped` 独立计数，全跳过显示「检查完成(无变化)」。
 - **批量**：EDITOR+ 卡片 checkbox 恒定可见；批量同步按 `goodsId` 建任务，批量删除逐个调用 `carApi.remove`（`Promise.allSettled` 汇总成功/失败），确认文案明确「共享图库资产不会被删除」；同步任务运行中删除按钮禁用（避免与在跑任务竞争同一车型）；**10-24 新增「补选中图片」**（EDITOR+ 有选中时可见，`createBackfillJob(false, goodsIds)` 定向 backfill，独立 loading + `jobBusy` 禁用）。
 - **运维**：「运维」下拉内「图片补入库（仅缺失/失败）」「全量图片重扫」（EDITOR+）与「补全清洗参数」「重建全部向量」（ADMIN）。「补全清洗参数」创建异步 `CLEAN_BACKFILL` 任务（默认只处理有参数无清洗，不请求官网），任务面板展示进度/跳过/失败；**「重建全部向量」10-24 起创建异步 `VECTOR_REBUILD` 任务**（全库逐车型重建，进度/失败明细/重试走任务面板，取代旧 300s 阻塞调用）；写操作按钮按角色显隐（VIEWER 不可见），运行中可请求取消。

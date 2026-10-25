@@ -97,6 +97,27 @@
           </el-radio-group>
         </div>
 
+        <!-- 清洗质量（10-25 P2 R1）：总数 + RULE/AI/FALLBACK 分布 + 兜底占比；失败/无数据不阻塞详情 -->
+        <div class="clean-quality">
+          <div class="cq-head">
+            <span class="cq-title">清洗质量</span>
+            <span v-if="cleanStats && !cleanLoading" class="cq-total">共 {{ cleanStats.total || 0 }} 条</span>
+          </div>
+          <el-skeleton v-if="cleanLoading" :rows="1" animated />
+          <div v-else-if="cleanError" class="cq-hint">{{ cleanError }}</div>
+          <div v-else-if="(cleanStats?.total || 0) === 0" class="cq-hint">暂无清洗数据（可先同步或重新清洗）</div>
+          <div v-else class="cq-body">
+            <el-tag size="small" effect="plain" type="success">规则 RULE {{ methodCount('RULE') }}</el-tag>
+            <el-tag size="small" effect="plain" type="primary">AI {{ methodCount('AI') }}</el-tag>
+            <el-tag size="small" effect="plain" :type="fallbackPct > 20 ? 'warning' : 'info'">
+              兜底 FALLBACK {{ methodCount('FALLBACK') }}
+            </el-tag>
+            <span v-if="fallbackPct > 0" class="cq-fallback" :class="{ warn: fallbackPct > 20 }">
+              兜底占比 {{ cleanStats.fallbackPct }}%
+            </span>
+          </div>
+        </div>
+
         <!-- 参数分组表（展示清洗后结构化参数） -->
         <el-collapse v-model="openGroups">
           <el-collapse-item v-for="g in detail.groups" :key="g.group.id" :name="g.group.id">
@@ -223,6 +244,31 @@ const load = async () => {
 // 切换版本时重新加载该版本的清洗参数
 const onVersionChange = () => { load() }
 
+// ---- 清洗质量（10-25 P2 R1）：独立请求，失败/无数据降级，不阻塞详情主体 ----
+const cleanStats = ref(null)
+const cleanLoading = ref(false)
+const cleanError = ref('')
+const methodCount = (key) => Number(cleanStats.value?.byMethod?.[key] || 0)
+const fallbackPct = computed(() => Number(cleanStats.value?.fallbackPct || 0))
+
+const loadCleanStats = async () => {
+  cleanLoading.value = true
+  cleanError.value = ''
+  try {
+    const res = await carApi.cleanStats(id)
+    if (res.code === 0) cleanStats.value = res.data || {}
+    else cleanError.value = res.msg || '清洗质量暂不可用'
+  } catch (e) {
+    // 静默降级：质量数据不影响详情主体可用性
+    cleanError.value = e.response?.data?.msg || '清洗质量暂不可用'
+  } finally {
+    cleanLoading.value = false
+  }
+}
+
+/** 任务终态/版本切换后的统一刷新：详情主体 + 清洗质量。 */
+const refreshAll = () => { load(); loadCleanStats() }
+
 // 清洗后参数值展示(类型化渲染)
 const cleanValue = (row) => {
   if (row.raw || row.valueType === 'RAW') return row.paramValue || '—'
@@ -248,7 +294,7 @@ const onClean = async () => {
     const res = await carApi.createCleanOneJob(id)
     if (res.code === 0 && res.data?.jobId) {
       job.value = null
-      startPoll(res.data.jobId, { onFinished: load })
+      startPoll(res.data.jobId, { onFinished: refreshAll })
     } else {
       cancelStart()
       ElMessage.error(res.msg || '创建清洗任务失败')
@@ -274,7 +320,7 @@ const onRebuildVectors = async () => {
     const res = await carApi.createRebuildJob([goodsId])
     if (res.code === 0 && res.data?.jobId) {
       job.value = null
-      startPoll(res.data.jobId, { onFinished: load })
+      startPoll(res.data.jobId, { onFinished: refreshAll })
     } else {
       cancelStart()
       ElMessage.error(res.msg || '创建重建任务失败')
@@ -300,7 +346,7 @@ const onSync = async () => {
     const res = await carApi.createJob([goodsId])
     if (res.code === 0 && res.data?.jobId) {
       job.value = null
-      startPoll(res.data.jobId, { onFinished: load })
+      startPoll(res.data.jobId, { onFinished: refreshAll })
     } else {
       cancelStart()
       ElMessage.error(res.msg || '创建任务失败')
@@ -311,7 +357,7 @@ const onSync = async () => {
   }
 }
 
-const onRetry = () => retryCurrent({ onFinished: load })
+const onRetry = () => retryCurrent({ onFinished: refreshAll })
 const onCancelJob = () => cancelCurrent()
 const onCloseJob = () => {
   stopPoll()
@@ -345,7 +391,8 @@ const ask = async () => {
 // 挂载恢复最近任务（只读轮询无害）：切走再切回/刷新后可继续看到运行中任务进度
 onMounted(() => {
   load()
-  recoverLatest({ onFinished: load })
+  loadCleanStats()
+  recoverLatest({ onFinished: refreshAll })
 })
 onBeforeUnmount(stopPoll)
 </script>
@@ -387,6 +434,19 @@ onBeforeUnmount(stopPoll)
 
 .version-bar { display: flex; align-items: center; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
 .v-label { color: var(--muted); font-size: 13px; }
+
+/* 清洗质量（10-25 P2） */
+.clean-quality {
+  margin: 4px 0 16px; padding: 10px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper);
+}
+.cq-head { display: flex; align-items: center; gap: 10px; }
+.cq-title { font-weight: 600; font-size: 13px; }
+.cq-total { font-size: 12px; color: var(--muted); }
+.cq-body { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.cq-hint { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.cq-fallback { font-size: 12px; color: var(--muted); }
+.cq-fallback.warn { color: var(--warn); font-weight: 600; }
 .group-title { font-weight: 600; }
 .param-val { white-space: pre-wrap; line-height: 1.6; }
 .qa-section { margin-top: 28px; }

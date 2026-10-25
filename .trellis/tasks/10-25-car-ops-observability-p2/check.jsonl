@@ -1,0 +1,4 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "核对 current_goods_id/jobs 派生字段/retry 映射/前端条目与实现逐字一致"}
+{"file": "docs/spec/knowledge/center.md", "reason": "核对质量入口与运行期自动刷新契约"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "核对轮询/定时器清理、API 分层与交互规范"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核对 V29 迁移脚本符合版本化迁移约定"}

@@ -26,6 +26,13 @@
     <div v-if="job.status === 'RUNNING'" class="job-progress-text">
       已处理 {{ processedCount }} / {{ job.total || 0 }} 个车型
     </div>
+    <div v-if="job.status === 'RUNNING' && currentName" class="job-current">
+      正在处理：{{ currentName }}
+    </div>
+    <div v-if="heartbeatStalled" class="job-stalled">
+      <el-icon><WarningFilled /></el-icon>
+      心跳超过 10 分钟未更新，任务可能停滞；可取消或等待后重试
+    </div>
 
     <div v-if="detailItems.length" class="job-failed">
       <div class="failed-title">{{ failedTitle }}</div>
@@ -45,7 +52,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Loading, CircleCheck, Close } from '@element-plus/icons-vue'
+import { Loading, CircleCheck, Close, WarningFilled } from '@element-plus/icons-vue'
 
 const props = defineProps({
   job: { type: Object, default: null },
@@ -90,13 +97,35 @@ const progress = computed(() => {
   return Math.round((processedCount.value / props.job.total) * 100)
 })
 
+/** 运行态标题映射（未列出的 SELECTED/RETRY 及未知类型走默认「同步进行中…」）。 */
+const RUNNING_TITLES = {
+  INCREMENTAL: '检查更新中…',
+  IMAGE_BACKFILL: '图片补入库中…',
+  CLEAN_BACKFILL: '补清洗中…',
+  VECTOR_REBUILD: '重建向量中…',
+  CLEAN_ONE: '清洗中…',
+  SCHEDULED: '定时检查中…'
+}
+
 const jobTitle = computed(() => {
   if (!props.job) return ''
   if (props.job.status === 'RUNNING') {
-    return props.job.jobType === 'INCREMENTAL' ? '检查更新中…' : '同步进行中…'
+    // 运行态标题按任务类型区分（10-25）：默认全量同步
+    return RUNNING_TITLES[props.job.jobType] || '同步进行中…'
   }
   if (allSkipped.value) return '检查完成(无变化)'
   return { SUCCESS: '同步完成', PARTIAL: '部分完成', FAILED: '同步失败' }[props.job.status] || '同步'
+})
+
+/** 当前处理车型：优先派生名称，回退缩略为 goodsId。 */
+const currentName = computed(() => props.job?.currentModelName || props.job?.currentGoodsId || '')
+
+/** 心跳停滞提示阈值（10 分钟）：远高于单车型正常耗时，只在真停滞时提示。 */
+const HEARTBEAT_STALE_MS = 10 * 60 * 1000
+const heartbeatStalled = computed(() => {
+  if (props.job?.status !== 'RUNNING') return false
+  const t = Date.parse(props.job?.heartbeatAt || props.job?.startedAt || '')
+  return Number.isFinite(t) && Date.now() - t > HEARTBEAT_STALE_MS
 })
 const jobClass = computed(() => props.job?.status?.toLowerCase() || '')
 
@@ -126,6 +155,13 @@ defineExpose({ jobRunning })
 .job-count { color: var(--muted); font-size: 13px; }
 .close-btn { padding: 2px; color: var(--muted); }
 .job-progress-text { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.job-current { font-size: 12px; color: var(--n-700); margin-top: 4px; }
+.job-stalled {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 6px 10px; font-size: 12px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: var(--radius-sm);
+}
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .job-failed { margin-top: 10px; }

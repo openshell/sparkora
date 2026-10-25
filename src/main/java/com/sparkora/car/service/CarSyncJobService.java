@@ -352,6 +352,8 @@ public class CarSyncJobService {
                     updateProgress(job, success, failed, skipped);
                     continue;
                 }
+                // 已真正开始处理该车型:写「当前车型」供前端展示(锁忙跳过分支不写)
+                markCurrent(jobId, goodsId);
                 try {
                     if ("IMAGE_BACKFILL".equals(type)) {
                         CarModelService.IncrementalOutcome o = modelService.backfillImages(goodsId);
@@ -490,6 +492,7 @@ public class CarSyncJobService {
                             .eq("id", jobId).eq("status", "RUNNING")
                             .set("status", "FAILED")
                             .set("finished_at", LocalDateTime.now())
+                            .set("current_goods_id", null)
                             .set("error_msg", truncate(CarSourceException.classify(e), 1000)));
                 } catch (Exception ex) {
                     log.error("同步任务 {} 兜底终态写入失败: {}", jobId, ex.getMessage(), ex);
@@ -510,6 +513,21 @@ public class CarSyncJobService {
     private boolean cancelRequested(Long jobId) {
         CarSyncJobEntity fresh = jobMapper.selectById(jobId);
         return fresh != null && Integer.valueOf(1).equals(fresh.getCancelRequested());
+    }
+
+    /**
+     * 写「当前处理车型」+ 心跳(10-25 可观测):只更新 RUNNING 行,异常仅告警不中断任务
+     * (可观测字段写失败不应影响同步本身)。
+     */
+    private void markCurrent(Long jobId, String goodsId) {
+        try {
+            jobMapper.update(null, new UpdateWrapper<CarSyncJobEntity>()
+                    .eq("id", jobId).eq("status", "RUNNING")
+                    .set("current_goods_id", goodsId)
+                    .set("heartbeat_at", LocalDateTime.now()));
+        } catch (Exception e) {
+            log.warn("写当前车型失败(忽略) jobId={} goodsId={}: {}", jobId, goodsId, e.getMessage());
+        }
     }
 
     /**
@@ -597,6 +615,7 @@ public class CarSyncJobService {
                 .set("skipped", skipped)
                 .set("finished_at", now)
                 .set("heartbeat_at", now)
+                .set("current_goods_id", null)
                 .set("failed_items", job.getFailedItems())
                 .set("error_msg", job.getErrorMsg()));
         if (updated == 0) {
@@ -604,9 +623,18 @@ public class CarSyncJobService {
         }
     }
 
-    /** 查询任务(含失败明细解析)。 */
+    /** 查询任务(含失败明细解析);运行中额外补派生「当前车型名」供前端展示。 */
     public CarSyncJobEntity get(Long id) {
-        return jobMapper.selectById(id);
+        CarSyncJobEntity job = jobMapper.selectById(id);
+        if (job == null) return null;
+        String currentGoodsId = job.getCurrentGoodsId();
+        if (currentGoodsId != null && !currentGoodsId.isBlank()) {
+            // 仅运行中/恢复时按需单行查询(2s 轮询,成本可忽略);查不到保持 null
+            CarModelEntity m = modelMapper.selectOne(
+                    new QueryWrapper<CarModelEntity>().eq("goods_id", currentGoodsId));
+            if (m != null) job.setCurrentModelName(m.getName());
+        }
+        return job;
     }
 
     /** 最近任务列表(按创建时间倒序)。 */
@@ -644,6 +672,7 @@ public class CarSyncJobService {
                         .or(w2 -> w2.isNull("heartbeat_at").lt("started_at", cutoff)))
                 .set("status", "FAILED")
                 .set("finished_at", LocalDateTime.now())
+                .set("current_goods_id", null)
                 .set("error_msg", "运行超时判定为陈旧,自动终止"));
         if (updated > 0) log.warn("清理陈旧运行中同步任务 {} 条(超 {} 分钟)", updated, SYNC_STALE_MS / 60000);
         for (CarSyncJobEntity j : stale) {
@@ -673,13 +702,24 @@ public class CarSyncJobService {
         }
     }
 
-    /** 重试失败项:从任务失败明细取 goodsId 列表,创建 RETRY 任务。 */
+    /**
+     * 重试失败项:从任务失败明细取 goodsId 列表,创建新任务。
+     *
+     * <p>10-25 起保留源 job_type(VECTOR_REBUILD / CLEAN_ONE / IMAGE_BACKFILL / CLEAN_BACKFILL):
+     * 这些类型的分派分支按 goodsIds 逐台执行,重试即「只重跑失败车型」的同类动作。
+     * 其余类型(SELECTED/RETRY/INCREMENTAL/SCHEDULED/未知)仍走 RETRY 全量同步语义——
+     * INCREMENTAL 刻意不保留:重试应对失败车型做一次全量收敛,而不是再走增量比对。
+     */
     public Long retry(Long jobId) {
         CarSyncJobEntity job = jobMapper.selectById(jobId);
         if (job == null) throw new IllegalArgumentException("任务不存在");
         List<String> goodsIds = parseFailedGoodsIds(job.getFailedItems());
         if (goodsIds.isEmpty()) throw new IllegalArgumentException("该任务没有可重试的失败车型");
-        return createJob(goodsIds, "RETRY");
+        String retryType = switch (job.getJobType() == null ? "" : job.getJobType()) {
+            case "VECTOR_REBUILD", "CLEAN_ONE", "IMAGE_BACKFILL", "CLEAN_BACKFILL" -> job.getJobType();
+            default -> "RETRY";
+        };
+        return createJob(goodsIds, retryType);
     }
 
     private void markSyncing(String goodsId) {

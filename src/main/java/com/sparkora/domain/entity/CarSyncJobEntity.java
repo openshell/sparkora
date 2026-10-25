@@ -1,6 +1,7 @@
 package com.sparkora.domain.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -31,6 +32,11 @@ public class CarSyncJobEntity {
     private LocalDateTime heartbeatAt;
     /** 取消请求(10-21):1 = 停止处理后续车型。 */
     private Integer cancelRequested;
+    /** 运行中任务当前处理的车型 goods_id(10-25 可观测;终态清空)。 */
+    private String currentGoodsId;
+    /** 派生字段(不落库):currentGoodsId 对应的车型名,仅任务详情接口填充。 */
+    @TableField(exist = false)
+    private String currentModelName;
     private String errorMsg;
     private String createdBy;
     private LocalDateTime createdAt;

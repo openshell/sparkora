@@ -1,0 +1,4 @@
+{"file": "docs/spec/knowledge/car.md", "reason": "车型域权威契约：任务表字段/jobs 接口/retry 语义/前端可观测组件，本任务核心契约"}
+{"file": "docs/spec/knowledge/center.md", "reason": "知识中心车型 Tab 契约（§4.1）：质量入口与运行期刷新规范"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范：API 分层、异步任务轮询范式、防抖/定时器清理、焦点与 PC-only 密度"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 迁移与表结构变更约定（V29 新增列三处同步）"}

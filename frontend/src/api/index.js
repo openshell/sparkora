@@ -134,6 +134,10 @@ export const carApi = {
   getJob: (id) => http.get(`/car/sync/jobs/${id}`),
   // 同步任务历史
   listJobs: () => http.get('/car/sync/jobs'),
+  // 清洗质量统计（三角色只读）：{modelName,total,byMethod,byValueType,fallbackCount,fallbackPct}
+  cleanStats: (id) => http.get(`/car/models/${id}/clean-stats`),
+  // 向量对账（三角色只读）：{modelCount,chunkCount,embeddedCount,missingCount,missingTopN}
+  vectorStats: () => http.get('/car/models/vector-stats'),
   // 重试任务失败项，返回新任务 {jobId}
   retryJob: (id) => http.post(`/car/sync/jobs/${id}/retry`),
   // 请求取消运行中任务（当前车型跑完后停止后续；非强制中断）
