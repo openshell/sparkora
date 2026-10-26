@@ -76,12 +76,23 @@ function timeOf(s) {
 
 /**
  * 前端排序（不改原数组）：
+ * - created：官网创建时间（sourceCreatedAt）倒序，无创建时间排最后（10-25 起默认）；
  * - recent：最近同步倒序，无同步时间的排最后；
  * - name：中文名称升序；
  * - price：价格下限升序，价格缺失排最后。
  */
 export function sortCars(rows, key) {
   const list = Array.isArray(rows) ? [...rows] : []
+  if (key === 'created') {
+    return list.sort((a, b) => {
+      const ta = timeOf(a?.sourceCreatedAt)
+      const tb = timeOf(b?.sourceCreatedAt)
+      if (ta == null && tb == null) return 0
+      if (ta == null) return 1
+      if (tb == null) return -1
+      return tb - ta
+    })
+  }
   if (key === 'name') {
     return list.sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'zh'))
   }

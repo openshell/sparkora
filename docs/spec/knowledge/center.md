@@ -28,7 +28,7 @@
 | 文件 | 职责 |
 |---|---|
 | `views/KnowledgeCenter.vue` | 页头 + `el-tabs`；Tab 面板 `v-if` 懒挂载（首访加载、切回保留状态）；`loadedTabs` = `{car,kb,sources,qa}` |
-| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐与可观测）：`carApi.list()` + 关键词/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（最近同步·名称·价格）+ 刷新 + 结果数/清除筛选；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且可点击切筛选；筛选随 URL 持久化（`kw`/`net`/`status`/`sort`）；EDITOR+「全选筛选结果」+ 批量选择/同步/删除 + **「补选中图片」（10-24 定向 backfill）**，批量栏 sticky；**「质量」弹窗**（向量对账 + 缺失 TopN 跳详情）；**任务 RUNNING 期间 10s 静默刷新**；缩略图 `coverUrlOf(row)`（封面优先；无封面回退详情图首图并顶部裁剪，回退态 `fit="cover"` + `object-position: top`）；失败原因截断 + tooltip、失败可重试；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量——后者 10-24 起为异步 `VECTOR_REBUILD` 任务） |
+| `views/knowledge/CarKnowledgePanel.vue` | 车型 Tab（10-21 整改 + 10-24 运维任务化 + 10-25 P1 交互补齐与可观测）：`carApi.list()` + 关键词/网络/状态（含「官网无数据」「数据待复核」「部分同步」「无封面」）/排序（**默认创建时间倒序**·最近同步·名称·价格；无创建时间排最后）+ 刷新 + 结果数/清除筛选；统计条 8 项「全部·已同步·失败·数据待复核·部分同步·官网无数据·同步中·封面覆盖」且可点击切筛选；筛选随 URL 持久化（`kw`/`net`/`status`/`sort`）；EDITOR+「全选筛选结果」+ 批量选择/同步/删除 + **「补选中图片」（10-24 定向 backfill）**，批量栏 sticky；**「质量」弹窗**（向量对账 + 缺失 TopN 跳详情）；**任务 RUNNING 期间 10s 静默刷新**；缩略图 `coverUrlOf(row)`（封面优先；无封面回退详情图首图并顶部裁剪，回退态 `fit="cover"` + `object-position: top`）；失败原因截断 + tooltip、失败可重试；内嵌「同步车型」抽屉与运维下拉（图片补入库 / 重建全部向量——后者 10-24 起为异步 `VECTOR_REBUILD` 任务） |
 | `views/knowledge/KbLibraryPanel.vue` | 知识库 Tab：`kbApi` 列表/新建/编辑/重建/批量导入。**本任务未改动** |
 | `views/knowledge/SourceTab.vue` | 信源 Tab 容器：统一加载 `sourceApi.list()` 供子面板做来源名映射；上部「信源管理 + 采集任务」，下部「信源内容」 |
 | `views/knowledge/SourceManagePanel.vue` | 信源管理：列表（名称/类型/垂直/排期/最近采集状态/栏目数/启停）+ 编辑抽屉（el-form + rules，含**栏目列表** channels[]）+ 启停 switch + 手动触发采集（整源 / 单栏目 `channelId`） |

@@ -37,6 +37,10 @@ test('car tab renders cover fallback, stats and failure reason', async ({ page }
 
   const cards = page.locator('.car-grid .car-card')
   await expect(cards).toHaveCount(2)
+  // 默认按官网创建时间倒序（有创建时间在前，无创建时间排最后）；默认排序不写入 URL
+  await expect(page.locator('.sort')).toContainText('创建时间')
+  await expect(cards.nth(0)).toContainText('大唐EV')
+  await expect(page).not.toHaveURL(/[?&]sort=/)
   // 官网 createdAt → 卡片「创建」时间
   await expect(cards.nth(0).locator('.c-meta')).toContainText('创建 2026-10-20')
   // 封面优先 / 无封面回退详情图首图

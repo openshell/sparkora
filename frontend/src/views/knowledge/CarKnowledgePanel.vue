@@ -20,6 +20,7 @@
         <el-option label="无封面" value="NONE" />
       </el-select>
       <el-select v-model="sortKey" class="sort" placeholder="排序">
+        <el-option label="创建时间" value="created" />
         <el-option label="最近同步" value="recent" />
         <el-option label="名称" value="name" />
         <el-option label="价格" value="price" />
@@ -227,10 +228,11 @@ const rows = ref([])
 
 // 筛选状态随 URL 持久化（10-25 R2）：kw/net/status/sort，非法值白名单兜底
 const STATUS_VALUES = ['SUCCESS', 'FAILED', 'SYNCING', 'PENDING', 'REVIEW', 'PARTIAL', 'EMPTY', 'NONE']
-const SORT_VALUES = ['recent', 'name', 'price']
+const SORT_VALUES = ['created', 'recent', 'name', 'price']
+const DEFAULT_SORT = 'created'   // 默认按官网创建时间倒序（无创建时间排最后）
 const queryString = (v) => (typeof v === 'string' ? v : '')
 const statusOf = (v) => (v === 'all' || STATUS_VALUES.includes(v) ? v : 'all')
-const sortOf = (v) => (SORT_VALUES.includes(v) ? v : 'recent')
+const sortOf = (v) => (SORT_VALUES.includes(v) ? v : DEFAULT_SORT)
 
 const keyword = ref(queryString(route.query.kw))
 const networkFilter = ref(queryString(route.query.net) || 'all')
@@ -296,7 +298,7 @@ const pickFilters = (q) => ({
   kw: queryString(q.kw),
   net: queryString(q.net),
   status: q.status ? statusOf(q.status) : 'all',
-  sort: q.sort ? sortOf(q.sort) : 'recent'
+  sort: q.sort ? sortOf(q.sort) : DEFAULT_SORT
 })
 const currentFilters = () => ({
   kw: keyword.value,
@@ -312,7 +314,7 @@ const writeQuery = () => {
   if (sameFilters(pickFilters(route.query), currentFilters())) return   // 自身回流短路
   const next = currentFilters()
   const query = { ...route.query }
-  const put = (k, v) => { if (v && v !== 'all' && !(k === 'sort' && v === 'recent')) query[k] = v; else delete query[k] }
+  const put = (k, v) => { if (v && v !== 'all' && !(k === 'sort' && v === DEFAULT_SORT)) query[k] = v; else delete query[k] }
   put('kw', next.kw)
   put('net', next.net)
   put('status', next.status)
@@ -325,7 +327,7 @@ const clearFilters = () => {
   keyword.value = ''
   networkFilter.value = 'all'
   statusFilter.value = 'all'
-  sortKey.value = 'recent'
+  sortKey.value = DEFAULT_SORT
   const query = { ...route.query }
   ;['kw', 'net', 'status', 'sort'].forEach(k => delete query[k])
   router.replace({ query })
